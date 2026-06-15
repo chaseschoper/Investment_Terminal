@@ -1,7 +1,4 @@
-
 require("dotenv").config();
-console.log("MONGO =", process.env.MONGO_URI);
-console.log("JWT =", process.env.JWT_SECRET);
 
 const express = require("express");
 const cors = require("cors");
@@ -10,15 +7,16 @@ const cheerio = require("cheerio");
 const mongoose = require("mongoose");
 const yahooFinance = require("yahoo-finance2").default || require("yahoo-finance2");
 
-
 const app = express();
+const cache = new Map();
+ 
+
+
+
 
 
 app.use(cors({
-  origin: [
-    "http://localhost:5173",
-    "https://investment-terminal-rho.vercel.app"
-  ],
+origin: "*",
   credentials: true
 }));
 
@@ -39,7 +37,9 @@ mongoose
 app.get("/api/stock/:ticker", async (req, res) => {
   try {
     const ticker = req.params.ticker.toUpperCase();
-
+if (!ticker) {
+  return res.status(400).json({ error: "No ticker provided" });
+}
     await new Promise(resolve =>
   setTimeout(resolve, 1000)
 );
@@ -120,10 +120,6 @@ const revenueData = [
   },
 ];
 
-    const statements =
-      financialData?.incomeStatementHistory?.incomeStatementHistory ||
-      financialData?.incomeStatementHistory?.incomeStatementHistoryQuarterly ||
-      [];
 
     
 
@@ -223,10 +219,14 @@ app.get(
       const ticker =
         req.params.ticker.toUpperCase();
 
-      const quote =
-        await yahooFinance.quote(
-          ticker
-        );
+// CHECK CACHE FIRST
+const cached = cache.get(ticker);
+if (cached && Date.now() - cached.time < 60000) {
+  return res.json(cached.data);
+}
+const quote = await yahooFinance.quote(ticker);
+
+
 
       const analysis = `
 ${quote.longName} (${ticker})
