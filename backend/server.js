@@ -36,16 +36,29 @@ async function throttle(key, fn) {
 async function yahooSafeCall(key, fn, retries = 3) {
   for (let i = 0; i < retries; i++) {
     try {
-      return await throttle(key, fn);
+      // HARD LIMIT CONCURRENCY
+      while (activeRequests >= MAX_CONCURRENT_REQUESTS) {
+        await new Promise(res => setTimeout(res, 300));
+      }
+
+      activeRequests++;
+      const result = await throttle(key, fn);
+      activeRequests--;
+
+      return result;
+
     } catch (err) {
+      activeRequests--;
+
       const msg = err?.message || "";
 
       if (
         msg.includes("Too Many Requests") ||
         msg.includes("rate") ||
-        msg.includes("429")
+        msg.includes("429") ||
+        msg.includes("Unexpected token")
       ) {
-        await new Promise(res => setTimeout(res, 2000 * (i + 1)));
+        await new Promise(res => setTimeout(res, 1500 * (i + 1)));
         continue;
       }
 
@@ -60,7 +73,8 @@ const app = express();
 app.set("trust proxy", 1);
 const cache = new Map();
 const CACHE_TTL = 1000 * 60 * 10; // 10 minutes
-
+let activeRequests = 0;
+const MAX_CONCURRENT_REQUESTS = 2;
 
 
 
