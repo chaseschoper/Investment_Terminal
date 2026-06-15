@@ -8,14 +8,20 @@ const cors = require("cors");
 const axios = require("axios");
 const cheerio = require("cheerio");
 const mongoose = require("mongoose");
-const YahooFinance =
-  require("yahoo-finance2").default;
+const yahooFinance = require("yahoo-finance2").default || require("yahoo-finance2");
 
 
 const app = express();
 
 
-app.use(cors());
+app.use(cors({
+  origin: [
+    "http://localhost:5173",
+    "https://investment-terminal-rho.vercel.app"
+  ],
+  credentials: true
+}));
+
 app.use(express.json());
 mongoose
   .connect(process.env.MONGO_URI)
@@ -26,338 +32,150 @@ mongoose
     console.error(err);
   });
 
-const yahooFinance =
-  new YahooFinance({
-    suppressNotices: [
-      "yahooSurvey",
-      "ripHistorical",
-    ],
-  });
 
 /* =========================================
    STOCK DATA
 ========================================= */
+app.get("/api/stock/:ticker", async (req, res) => {
+  try {
+    const ticker = req.params.ticker.toUpperCase();
 
-app.get(
-  "/api/stock/:ticker",
-  async (req, res) => {
-    try {
-      const ticker =
-        req.params.ticker.toUpperCase();
+    const quote = await yahooFinance.quote(ticker);
 
-      console.log(
-        "Loading ticker:",
-        ticker
-      );      // QUOTE
-      const quote =
-        await yahooFinance.quote(
-          ticker
-        );
+    const chart = await yahooFinance.chart(ticker, {
+      period1: new Date("2023-01-01"),
+      period2: new Date(),
+      interval: "1d",
+    });
 
-      // PRICE HISTORY
-      const chart =
-        await yahooFinance.chart(
-          ticker,
-          {
-            period1: new Date(
-              "2023-01-01"
-            ),
+    const result = chart?.chart?.result?.[0];
 
-            period2: new Date(),
+    const timestamps = result?.timestamp || [];
+    const closes = result?.indicators?.quote?.[0]?.close || [];
 
-            interval: "1d",
-          }
-        );
+    const history = timestamps.map((t, i) => ({
+      date: new Date(t * 1000).toISOString().split("T")[0],
+      close: closes[i] || 0,
+    }));
 
-      const history =
-        chart.quotes || [];
-
-      // FUNDAMENTALS
-      const fundamentals =
-        await yahooFinance.quoteSummary(
-          ticker,
-          {
-modules: [
-  "price",
-  "financialData",
-  "defaultKeyStatistics",
-  "summaryDetail",
-  "earningsTrend",
-  "earnings",
-]
-          }
-        );
-const financialData =
-  await yahooFinance.quoteSummary(
-    ticker,
-    {
+    const fundamentals = await yahooFinance.quoteSummary(ticker, {
       modules: [
-        "incomeStatementHistory",
+        "price",
+        "financialData",
+        "defaultKeyStatistics",
+        "summaryDetail",
+        "earningsTrend",
       ],
-    }
-  );
+    });
 
-const statements =
-  financialData
-    ?.incomeStatementHistory
-    ?.incomeStatementHistory ||
-  financialData
-    ?.incomeStatementHistory
-    ?.incomeStatementHistoryQuarterly ||
-  [];
+    const financialData = await yahooFinance.quoteSummary(ticker, {
+      modules: ["incomeStatementHistory"],
+    });
 
+    const statements =
+      financialData?.incomeStatementHistory?.incomeStatementHistory ||
+      financialData?.incomeStatementHistory?.incomeStatementHistoryQuarterly ||
+      [];
 
-/*
-  HISTORICAL DATA
-*/
-
-const revenueData =
-  statements
-    .slice(0, 4)
-    .reverse()
-    .map((item, index) => {
-
-      const revenue =
-        (
-          item.totalRevenue?.raw ||
-          item.totalRevenue ||
-          0
-        ) / 1e9;
-
-      const earnings =
-        (
-          item.netIncome?.raw ||
-          item.netIncome ||
-          0
-        ) / 1e9;
+    const revenueData = statements.slice(0, 4).reverse().map((item, index) => {
+      const revenue = (item.totalRevenue?.raw || item.totalRevenue || 0) / 1e9;
+      const earnings = (item.netIncome?.raw || item.netIncome || 0) / 1e9;
 
       const shares =
-        fundamentals
-          .defaultKeyStatistics
-          ?.sharesOutstanding || 1;
+        fundamentals.defaultKeyStatistics?.sharesOutstanding || 1;
 
-      const eps =
-        (
-          (
-            item.netIncome?.raw ||
-            item.netIncome ||
-            0
-          ) / shares
-        );
+      const eps = (item.netIncome?.raw || item.netIncome || 0) / shares;
 
       return {
         year: 2022 + index,
-
-        revenue:
-          Number(revenue.toFixed(1)),
-
-        earnings:
-          Number(earnings.toFixed(1)),
-
-        eps:
-          Number(eps.toFixed(2)),
+        revenue: Number(revenue.toFixed(1)),
+        earnings: Number(earnings.toFixed(1)),
+        eps: Number(eps.toFixed(2)),
       };
     });
 
+    const trend = fundamentals.earningsTrend?.trend || [];
 
-/*
-ANALYST ESTIMATES
-*/
+    const currentYearEstimate = trend.find((t) => t.period === "0y");
+    const nextYearEstimate = trend.find((t) => t.period === "+1y");
 
-const trend =
-  fundamentals.earningsTrend?.trend || [];
+    res.json({
+      symbol: quote.symbol || ticker,
+      name: quote.longName || quote.shortName || ticker,
+      price: quote.regularMarketPrice || 0,
 
-/*
-CURRENT YEAR ESTIMATE
-*/
+      marketCap:
+        fundamentals.price?.marketCap || quote.marketCap || 0,
 
-const currentYearEstimate =
-  trend.find(
-    (t) => t.period === "0y"
-  );
+      pe: fundamentals.summaryDetail?.trailingPE || 0,
+      forwardPE: fundamentals.summaryDetail?.forwardPE || 0,
 
-/*
-NEXT YEAR ESTIMATE
-*/
+      sharesOutstanding:
+        fundamentals.defaultKeyStatistics?.sharesOutstanding || 0,
 
-const nextYearEstimate =
-  trend.find(
-    (t) => t.period === "+1y"
-  );
-console.log(
-  JSON.stringify(trend, null, 2)
-);
+      revenueGrowth:
+        fundamentals.financialData?.revenueGrowth || 0,
 
+      earningsGrowth:
+        fundamentals.financialData?.earningsGrowth || 0,
 
+      grossMargins:
+        fundamentals.financialData?.grossMargins || 0,
 
-const latest =
-  revenueData[
-    revenueData.length - 1
-  ];
+      operatingMargins:
+        fundamentals.financialData?.operatingMargins || 0,
 
+      profitMargins:
+        fundamentals.financialData?.profitMargins || 0,
 
+      freeCashflow:
+        fundamentals.financialData?.freeCashflow || 0,
 
-/*
-RESPONSE
-*/
+      targetMean:
+        fundamentals.financialData?.targetMeanPrice || 0,
 
-res.json({
-  symbol:
-    quote.symbol || ticker,
+      recommendationKey:
+        fundamentals.financialData?.recommendationKey || "hold",
 
-  name:
-    quote.longName ||
-    quote.shortName ||
-    ticker,
+      fiftyTwoWeekHigh:
+        fundamentals.summaryDetail?.fiftyTwoWeekHigh || 0,
 
-  price:
-    quote.regularMarketPrice || 0,
+      fiftyTwoWeekLow:
+        fundamentals.summaryDetail?.fiftyTwoWeekLow || 0,
 
-  marketCap:
-    fundamentals.price
-      ?.marketCap ||
-    quote.marketCap ||
-    0,
+      dividendYield:
+        fundamentals.summaryDetail?.dividendYield || 0,
 
-  pe:
-    fundamentals.summaryDetail
-      ?.trailingPE || 0,
+      beta: fundamentals.summaryDetail?.beta || 0,
 
-  forwardPE:
-    fundamentals.summaryDetail
-      ?.forwardPE || 0,
+      analystEstimates: {
+        currentYear: {
+          revenue:
+            currentYearEstimate?.revenueEstimate?.avg || null,
+          earnings:
+            currentYearEstimate?.earningsEstimate?.avg || null,
+        },
+        nextYear: {
+          revenue:
+            nextYearEstimate?.revenueEstimate?.avg || null,
+          earnings:
+            nextYearEstimate?.earningsEstimate?.avg || null,
+        },
+      },
 
-  sharesOutstanding:
-    fundamentals.defaultKeyStatistics
-      ?.sharesOutstanding ||
-    0,
+      revenueData,
+      history,
+    });
 
-  revenueGrowth:
-    fundamentals.financialData
-      ?.revenueGrowth || 0,
+  } catch (err) {
+    console.error("FULL ERROR:", err);
 
-  earningsGrowth:
-    fundamentals.financialData
-      ?.earningsGrowth || 0,
-
-  grossMargins:
-    fundamentals.financialData
-      ?.grossMargins || 0,
-
-  operatingMargins:
-    fundamentals.financialData
-      ?.operatingMargins || 0,
-
-  profitMargins:
-    fundamentals.financialData
-      ?.profitMargins || 0,
-
-  freeCashflow:
-    fundamentals.financialData
-      ?.freeCashflow || 0,
-
-  targetMean:
-    fundamentals.financialData
-      ?.targetMeanPrice || 0,
-
-  recommendationKey:
-    fundamentals.financialData
-      ?.recommendationKey ||
-    "hold",
-
-  fiftyTwoWeekHigh:
-    fundamentals.summaryDetail
-      ?.fiftyTwoWeekHigh || 0,
-
-  fiftyTwoWeekLow:
-    fundamentals.summaryDetail
-      ?.fiftyTwoWeekLow || 0,
-
-  dividendYield:
-    fundamentals.summaryDetail
-      ?.dividendYield || 0,
-
-  beta:
-    fundamentals.summaryDetail
-      ?.beta || 0,
-analystEstimates: {
-
-  currentYear: {
-    revenue:
-      currentYearEstimate
-        ?.revenueEstimate
-        ?.avg || null,
-
-    earnings:
-      currentYearEstimate
-        ?.earningsEstimate
-        ?.avg || null,
-
-    eps:
-      currentYearEstimate
-        ?.epsTrend
-        ?.current || null,
-  },
-
-  nextYear: {
-    revenue:
-      nextYearEstimate
-        ?.revenueEstimate
-        ?.avg || null,
-
-    earnings:
-      nextYearEstimate
-        ?.earningsEstimate
-        ?.avg || null,
-
-    eps:
-      nextYearEstimate
-        ?.epsTrend
-        ?.current || null,
-  },
-},
-
-revenueData: revenueData.map(
-    (item) => ({
-      ...item,
-
-      revenueLabel:
-        `$${item.revenue}B`,
-
-      earningsLabel:
-        `$${item.earnings}B`,
-
-      epsLabel:
-        `$${item.eps}`,
-    })
-  ),
-
-  history: history.map(
-    (item) => ({
-      date:
-        item.date
-          .toISOString()
-          .split("T")[0],
-
-      close:
-        item.close || 0,
-    })
-  ),
-});
-
-
-
-    } catch (err) {
-      console.error(err);
-
-      res.status(500).json({
-        error:
-          "Failed to fetch stock data",
-      });
-    }
+    res.status(500).json({
+      error: err.message,
+      stack: err.stack,
+    });
   }
-);
-
+});
 
 /* =========================================
    AI ANALYSIS
@@ -511,7 +329,9 @@ app.get("/", (req, res) => {
     "Investment Terminal Backend Running"
   );
 });
-
+app.get("/health", (req, res) => {
+  res.json({ status: "ok" });
+});
 /* =========================================
    AUTH ROUTES
 ========================================= */
@@ -771,7 +591,7 @@ app.get(
    START SERVER
 ========================================= */
 
-const PORT = 5001;
+const PORT = process.env.PORT || 5001;
 
 app.listen(PORT, () => {
 

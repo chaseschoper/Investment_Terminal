@@ -26,6 +26,9 @@ const formatMoney = (value) => {
   return `$${value.toFixed(1)}B`;
 };
 import axios from "axios";
+const API_URL =
+  import.meta.env.VITE_API_URL ||
+  "https://investment-terminal-jtng.onrender.com";
 
 import "./App.css";
 function App() {
@@ -42,8 +45,8 @@ const handleAuth = async () => {
   try {
 
     const endpoint = isLogin
-      ? "http://localhost:5001/api/login"
-      : "http://localhost:5001/api/signup";
+      ? `${API_URL}/api/login`
+      : `${API_URL}/api/signup`;
 
     const body = isLogin
       ? {
@@ -240,7 +243,7 @@ useEffect(() => {
 
       const response =
         await axios.get(
-          `http://localhost:5001/api/stock/${ticker}`
+          `${API_URL}/api/stock/${ticker}`
         );
 console.log(response.data);
       setStockData(response.data);
@@ -266,7 +269,9 @@ useEffect(() => {
     try {
 
       await axios.post(
-        "http://localhost:5001/api/save-data",
+
+    `${API_URL}/api/save-data`,
+
         {
           watchlist,
           portfolio,
@@ -301,39 +306,24 @@ useEffect(() => {
        
   
 const loadUserData = async () => {
-
   try {
+    const token = localStorage.getItem("token");
 
-    const token =
-      localStorage.getItem("token");
-
-    const response =
-      await axios.get(
-        "http://localhost:5001/api/user-data",
-        {
-          headers: {
-            Authorization:
-              `Bearer ${token}`,
-          },
-        }
-      );
-
-    setWatchlist(
-      response.data.watchlist || []
+    const response = await axios.get(
+      `${API_URL}/api/user-data`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
     );
 
-    setPortfolio(
-      response.data.portfolio || []
-    );
+    setWatchlist(response.data.watchlist || []);
+    setPortfolio(response.data.portfolio || []);
 
-    console.log(
-      "Loaded user data"
-    );
-
+    console.log("Loaded user data");
   } catch (err) {
-
     console.error(err);
-
   }
 };
     
@@ -347,7 +337,8 @@ const loadUserData = async () => {
 
       const earningsRes =
         await axios.get(
-          "http://localhost:5001/api/earnings"
+
+    `${API_URL}/api/earnings`
         );
 
       setEarnings(
@@ -371,7 +362,7 @@ const loadUserData = async () => {
 
       const response =
         await axios.get(
-          `http://localhost:5001/api/stock/${symbol}`
+          `${API_URL}/api/stock/${symbol}`
         );
 
       setPortfolioPrices((prev) => ({
@@ -401,7 +392,7 @@ const loadUserData = async () => {
 
             const res =
               await axios.get(
-                `http://localhost:5001/api/stock/${symbol}`
+                `${API_URL}/api/stock/${symbol}`
               );
 
             return res.data;
@@ -961,7 +952,7 @@ return (
     >
 
       <BarChart
-        data={stockData.revenueData}
+        data={stockData?.revenueData || []}
       >
 
         <CartesianGrid
@@ -1013,7 +1004,7 @@ return (
     >
 
       <LineChart
-        data={stockData.revenueData}
+        data={stockData?.revenueData || []}
       >
 
         <CartesianGrid
@@ -1062,7 +1053,7 @@ return (
     >
 
       <LineChart
-        data={stockData.revenueData}
+       data={stockData?.revenueData || []}
       >
 
         <CartesianGrid
