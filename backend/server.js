@@ -44,37 +44,81 @@ app.get("/api/stock/:ticker", async (req, res) => {
   setTimeout(resolve, 1000)
 );
 
-const quote = await yahooFinance.quote(ticker);
+const quote = {
+  symbol: ticker,
+  longName: `${ticker} Inc.`,
+  regularMarketPrice: 150,
+  marketCap: 3000000000000,
+};
 
-    const chart = await yahooFinance.chart(ticker, {
-      period1: new Date("2023-01-01"),
-      period2: new Date(),
-      interval: "1d",
-    });
+const fundamentals = {
+  price: {
+    marketCap: 3000000000000,
+  },
 
-    const result = chart?.chart?.result?.[0];
+  summaryDetail: {
+    trailingPE: 32,
+    forwardPE: 25,
+    fiftyTwoWeekHigh: 250,
+    fiftyTwoWeekLow: 120,
+    dividendYield: 0.01,
+    beta: 1.1,
+  },
 
-    const timestamps = result?.timestamp || [];
-    const closes = result?.indicators?.quote?.[0]?.close || [];
+  defaultKeyStatistics: {
+    sharesOutstanding: 15000000000,
+  },
 
-    const history = timestamps.map((t, i) => ({
-      date: new Date(t * 1000).toISOString().split("T")[0],
-      close: closes[i] || 0,
-    }));
+  financialData: {
+    revenueGrowth: 0.22,
+    earningsGrowth: 0.35,
+    grossMargins: 0.55,
+    operatingMargins: 0.33,
+    profitMargins: 0.28,
+    freeCashflow: 95000000000,
+    targetMeanPrice: 220,
+    recommendationKey: "buy",
+  },
 
-    const fundamentals = await yahooFinance.quoteSummary(ticker, {
-      modules: [
-        "price",
-        "financialData",
-        "defaultKeyStatistics",
-        "summaryDetail",
-        "earningsTrend",
-      ],
-    });
+  earningsTrend: {
+    trend: [],
+  },
+};
 
-    const financialData = await yahooFinance.quoteSummary(ticker, {
-      modules: ["incomeStatementHistory"],
-    });
+const history = [
+  { date: "2024-01", close: 120 },
+  { date: "2024-02", close: 130 },
+  { date: "2024-03", close: 125 },
+  { date: "2024-04", close: 140 },
+  { date: "2024-05", close: 150 },
+];
+
+const revenueData = [
+  {
+    year: 2022,
+    revenue: 220,
+    earnings: 55,
+    eps: 4.2,
+  },
+  {
+    year: 2023,
+    revenue: 260,
+    earnings: 72,
+    eps: 5.1,
+  },
+  {
+    year: 2024,
+    revenue: 310,
+    earnings: 95,
+    eps: 6.4,
+  },
+  {
+    year: 2025,
+    revenue: 380,
+    earnings: 120,
+    eps: 7.8,
+  },
+];
 
     const statements =
       financialData?.incomeStatementHistory?.incomeStatementHistory ||
