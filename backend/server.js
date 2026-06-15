@@ -125,22 +125,7 @@ const revenueData = [
       financialData?.incomeStatementHistory?.incomeStatementHistoryQuarterly ||
       [];
 
-    const revenueData = statements.slice(0, 4).reverse().map((item, index) => {
-      const revenue = (item.totalRevenue?.raw || item.totalRevenue || 0) / 1e9;
-      const earnings = (item.netIncome?.raw || item.netIncome || 0) / 1e9;
-
-      const shares =
-        fundamentals.defaultKeyStatistics?.sharesOutstanding || 1;
-
-      const eps = (item.netIncome?.raw || item.netIncome || 0) / shares;
-
-      return {
-        year: 2022 + index,
-        revenue: Number(revenue.toFixed(1)),
-        earnings: Number(earnings.toFixed(1)),
-        eps: Number(eps.toFixed(2)),
-      };
-    });
+    
 
     const trend = fundamentals.earningsTrend?.trend || [];
 
