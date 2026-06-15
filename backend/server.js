@@ -12,8 +12,10 @@ process.on("unhandledRejection", (err) => {
 // ==========================
 // GLOBAL CACHE + THROTTLE
 // ==========================
-
+const inflightRequests = new Map();
 const requestQueue = new Map();
+let activeRequests = 0;
+const MAX_CONCURRENT_REQUESTS = 1;
 
 async function throttle(key, fn) {
   const last = requestQueue.get(key) || 0;
@@ -34,47 +36,61 @@ async function throttle(key, fn) {
   }
 }
 async function yahooSafeCall(key, fn, retries = 3) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      // HARD LIMIT CONCURRENCY
-      while (activeRequests >= MAX_CONCURRENT_REQUESTS) {
-        await new Promise(res => setTimeout(res, 300));
-      }
-
-      activeRequests++;
-      const result = await throttle(key, fn);
-      activeRequests--;
-
-      return result;
-
-    } catch (err) {
-      activeRequests--;
-
-      const msg = err?.message || "";
-
-      if (
-        msg.includes("Too Many Requests") ||
-        msg.includes("rate") ||
-        msg.includes("429") ||
-        msg.includes("Unexpected token")
-      ) {
-        await new Promise(res => setTimeout(res, 1500 * (i + 1)));
-        continue;
-      }
-
-      throw err;
-    }
+  // =========================
+  // 1. RETURN INFLIGHT REQUEST
+  // =========================
+  if (inflightRequests.has(key)) {
+    return inflightRequests.get(key);
   }
 
-  throw new Error("Yahoo Finance failed after retries");
+  const promise = (async () => {
+    for (let i = 0; i < retries; i++) {
+      try {
+        const result = await throttle(key, fn);
+        return result;
+      } catch (err) {
+        const msg = err?.message || "";
+
+        const isRateLimit =
+          msg.includes("Too Many Requests") ||
+          msg.includes("429") ||
+          msg.includes("rate") ||
+          msg.includes("Unexpected token");
+
+        if (isRateLimit) {
+          await new Promise(res => setTimeout(res, 2000 * (i + 1)));
+          continue;
+        }
+
+        throw err;
+      }
+    }
+
+    throw new Error("Yahoo failed after retries");
+  })();
+
+  inflightRequests.set(key, promise);
+
+  try {
+    return await promise;
+  } finally {
+    inflightRequests.delete(key);
+  }
 }
+  
+
+
+
 const app = express();
+app.use((req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  next();
+});
 
 app.set("trust proxy", 1);
 const cache = new Map();
-const CACHE_TTL = 1000 * 60 * 10; // 10 minutes
-let activeRequests = 0;
-const MAX_CONCURRENT_REQUESTS = 2;
+const CACHE_TTL = 1000 * 60 * 60; // 1 hour
+
 
 
 
@@ -110,12 +126,13 @@ const cached = cache.get(`stock-${ticker}`);
 if (cached && Date.now() - cached.time < CACHE_TTL) {
   return res.json(cached.data);
 }
-
+const inflightKey = `stock-${ticker}`;
     // ======================
     // THROTTLED YAHOO CALLS
     // ======================
-const quote = await yahooSafeCall(`quote-${ticker}`, () =>
-  yahooFinance.quote(ticker)
+const quote = await yahooSafeCall(
+  `quote-${ticker}`,
+  () => yahooFinance.quote(ticker)
 );
 
 const fundamentals = await yahooSafeCall(`summary-${ticker}`, () =>
@@ -130,17 +147,24 @@ const fundamentals = await yahooSafeCall(`summary-${ticker}`, () =>
   })
 );
 
-    const historyRaw = await yahooSafeCall(`history-${ticker}`, () =>
-      yahooFinance.historical(ticker, {
-        period1: "2024-01-01",
-        interval: "1mo",
-      })
-    );
+let history = [];
 
-    const history = historyRaw.map(item => ({
-      date: item.date.toISOString().slice(0, 7),
-      close: item.close,
-    }));
+try {
+  const historyRaw = await yahooSafeCall(`history-${ticker}`, () =>
+    yahooFinance.historical(ticker, {
+      period1: "2024-01-01",
+      interval: "1mo",
+    })
+  );
+
+  history = historyRaw.map(item => ({
+    date: item.date.toISOString().slice(0, 7),
+    close: item.close,
+  }));
+
+} catch (err) {
+  console.log("History skipped due to rate limit");
+}
 
 const trend = fundamentals?.earningsTrend?.trend || [];
 
@@ -630,10 +654,7 @@ app.get(
 ========================================= */
 
 const PORT = process.env.PORT || 5001;
-app.use((req, res, next) => {
-  res.setHeader("Cache-Control", "no-store");
-  next();
-});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
