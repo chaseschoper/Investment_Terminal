@@ -125,7 +125,7 @@ const [user, setUser] =
 }, []);
 
   const [ticker, setTicker] =
-    useState("AAPL");
+  useState("NVDA");
 
   const [stockData, setStockData] =
     useState(null);
@@ -154,8 +154,8 @@ const [user, setUser] =
   const [earnings, setEarnings] =
     useState([]);
 
-  const [compareTickers, setCompareTickers] =
-    useState(["AAPL", "MSFT", "NVDA"]);
+    const [compareTickers, setCompareTickers] =
+  useState([]);
 
   const [compareData, setCompareData] =
     useState([]);
@@ -211,17 +211,7 @@ useEffect(() => {
     LOAD PORTFOLIO PRICES
   */
 
-  useEffect(() => {
 
-    portfolio.forEach((position) => {
-
-      loadPortfolioPrice(
-        position.symbol
-      );
-
-    });
-
-  }, [portfolio]);
 
   /*
     LOAD COMPARISON STOCKS

@@ -40,7 +40,11 @@ app.get("/api/stock/:ticker", async (req, res) => {
   try {
     const ticker = req.params.ticker.toUpperCase();
 
-    const quote = await yahooFinance.quote(ticker);
+    await new Promise(resolve =>
+  setTimeout(resolve, 1000)
+);
+
+const quote = await yahooFinance.quote(ticker);
 
     const chart = await yahooFinance.chart(ticker, {
       period1: new Date("2023-01-01"),
