@@ -6,10 +6,60 @@ const axios = require("axios");
 const cheerio = require("cheerio");
 const mongoose = require("mongoose");
 const yahooFinance = require("yahoo-finance2").default || require("yahoo-finance2");
+process.on("unhandledRejection", (err) => {
+  console.error("Unhandled Rejection:", err);
+});
+// ==========================
+// GLOBAL CACHE + THROTTLE
+// ==========================
 
+const requestQueue = new Map();
+
+async function throttle(key, fn) {
+  const last = requestQueue.get(key) || 0;
+  const now = Date.now();
+
+  const wait = Math.max(0, 1500 - (now - last));
+  if (wait > 0) {
+    await new Promise(res => setTimeout(res, wait));
+  }
+
+  requestQueue.set(key, Date.now());
+
+  try {
+    return await fn();
+  } catch (err) {
+    console.error(`Throttle error for ${key}:`, err.message);
+    throw err;
+  }
+}
+async function yahooSafeCall(key, fn, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await throttle(key, fn);
+    } catch (err) {
+      const msg = err?.message || "";
+
+      if (
+        msg.includes("Too Many Requests") ||
+        msg.includes("rate") ||
+        msg.includes("429")
+      ) {
+        await new Promise(res => setTimeout(res, 2000 * (i + 1)));
+        continue;
+      }
+
+      throw err;
+    }
+  }
+
+  throw new Error("Yahoo Finance failed after retries");
+}
 const app = express();
+
+app.set("trust proxy", 1);
 const cache = new Map();
- 
+const CACHE_TTL = 1000 * 60 * 10; // 10 minutes
 
 
 
@@ -36,176 +86,112 @@ mongoose
 ========================================= */
 app.get("/api/stock/:ticker", async (req, res) => {
   try {
-    const ticker = req.params.ticker.toUpperCase();
-if (!ticker) {
-  return res.status(400).json({ error: "No ticker provided" });
+    const ticker = req.params.ticker?.toUpperCase();
+if (!ticker || ticker.length > 6) {
+  return res.status(400).json({ error: "Invalid ticker" });
 }
-    await new Promise(resolve =>
-  setTimeout(resolve, 1000)
+
+    // CACHE CHECK (FAST EXIT)
+const cached = cache.get(`stock-${ticker}`);
+if (cached && Date.now() - cached.time < CACHE_TTL) {
+  return res.json(cached.data);
+}
+
+    // ======================
+    // THROTTLED YAHOO CALLS
+    // ======================
+const quote = await yahooSafeCall(`quote-${ticker}`, () =>
+  yahooFinance.quote(ticker)
 );
 
-const quote = {
-  symbol: ticker,
-  longName: `${ticker} Inc.`,
-  regularMarketPrice: 150,
-  marketCap: 3000000000000,
-};
+const fundamentals = await yahooSafeCall(`summary-${ticker}`, () =>
+  yahooFinance.quoteSummary(ticker, {
+    modules: [
+      "price",
+      "summaryDetail",
+      "defaultKeyStatistics",
+      "financialData",
+      "earningsTrend",
+    ],
+  })
+);
 
-const fundamentals = {
-  price: {
-    marketCap: 3000000000000,
-  },
+    const historyRaw = await yahooSafeCall(`history-${ticker}`, () =>
+      yahooFinance.historical(ticker, {
+        period1: "2024-01-01",
+        interval: "1mo",
+      })
+    );
 
-  summaryDetail: {
-    trailingPE: 32,
-    forwardPE: 25,
-    fiftyTwoWeekHigh: 250,
-    fiftyTwoWeekLow: 120,
-    dividendYield: 0.01,
-    beta: 1.1,
-  },
+    const history = historyRaw.map(item => ({
+      date: item.date.toISOString().slice(0, 7),
+      close: item.close,
+    }));
 
-  defaultKeyStatistics: {
-    sharesOutstanding: 15000000000,
-  },
+const trend = fundamentals?.earningsTrend?.trend || [];
 
-  financialData: {
-    revenueGrowth: 0.22,
-    earningsGrowth: 0.35,
-    grossMargins: 0.55,
-    operatingMargins: 0.33,
-    profitMargins: 0.28,
-    freeCashflow: 95000000000,
-    targetMeanPrice: 220,
-    recommendationKey: "buy",
-  },
+const currentYearEstimate = trend.find(t => t.period === "0y") || null;
+const nextYearEstimate = trend.find(t => t.period === "+1y") || null;
+    const data = {
+      symbol: quote.symbol,
+      name: quote.longName,
+      price: quote.regularMarketPrice,
 
-  earningsTrend: {
-    trend: [],
-  },
-};
-
-const history = [
-  { date: "2024-01", close: 120 },
-  { date: "2024-02", close: 130 },
-  { date: "2024-03", close: 125 },
-  { date: "2024-04", close: 140 },
-  { date: "2024-05", close: 150 },
-];
-
-const revenueData = [
-  {
-    year: 2022,
-    revenue: 220,
-    earnings: 55,
-    eps: 4.2,
-  },
-  {
-    year: 2023,
-    revenue: 260,
-    earnings: 72,
-    eps: 5.1,
-  },
-  {
-    year: 2024,
-    revenue: 310,
-    earnings: 95,
-    eps: 6.4,
-  },
-  {
-    year: 2025,
-    revenue: 380,
-    earnings: 120,
-    eps: 7.8,
-  },
-];
-
-
-    
-
-    const trend = fundamentals.earningsTrend?.trend || [];
-
-    const currentYearEstimate = trend.find((t) => t.period === "0y");
-    const nextYearEstimate = trend.find((t) => t.period === "+1y");
-
-    res.json({
-      symbol: quote.symbol || ticker,
-      name: quote.longName || quote.shortName || ticker,
-      price: quote.regularMarketPrice || 0,
-
-      marketCap:
-        fundamentals.price?.marketCap || quote.marketCap || 0,
-
+      marketCap: fundamentals.price?.marketCap || 0,
       pe: fundamentals.summaryDetail?.trailingPE || 0,
       forwardPE: fundamentals.summaryDetail?.forwardPE || 0,
+      sharesOutstanding: fundamentals.defaultKeyStatistics?.sharesOutstanding || 0,
 
-      sharesOutstanding:
-        fundamentals.defaultKeyStatistics?.sharesOutstanding || 0,
+      revenueGrowth: fundamentals.financialData?.revenueGrowth || 0,
+      earningsGrowth: fundamentals.financialData?.earningsGrowth || 0,
 
-      revenueGrowth:
-        fundamentals.financialData?.revenueGrowth || 0,
+      grossMargins: fundamentals.financialData?.grossMargins || 0,
+      operatingMargins: fundamentals.financialData?.operatingMargins || 0,
+      profitMargins: fundamentals.financialData?.profitMargins || 0,
 
-      earningsGrowth:
-        fundamentals.financialData?.earningsGrowth || 0,
+      freeCashflow: fundamentals.financialData?.freeCashflow || 0,
+      targetMean: fundamentals.financialData?.targetMeanPrice || 0,
+      recommendationKey: fundamentals.financialData?.recommendationKey || "hold",
 
-      grossMargins:
-        fundamentals.financialData?.grossMargins || 0,
-
-      operatingMargins:
-        fundamentals.financialData?.operatingMargins || 0,
-
-      profitMargins:
-        fundamentals.financialData?.profitMargins || 0,
-
-      freeCashflow:
-        fundamentals.financialData?.freeCashflow || 0,
-
-      targetMean:
-        fundamentals.financialData?.targetMeanPrice || 0,
-
-      recommendationKey:
-        fundamentals.financialData?.recommendationKey || "hold",
-
-      fiftyTwoWeekHigh:
-        fundamentals.summaryDetail?.fiftyTwoWeekHigh || 0,
-
-      fiftyTwoWeekLow:
-        fundamentals.summaryDetail?.fiftyTwoWeekLow || 0,
-
-      dividendYield:
-        fundamentals.summaryDetail?.dividendYield || 0,
-
+      fiftyTwoWeekHigh: fundamentals.summaryDetail?.fiftyTwoWeekHigh || 0,
+      fiftyTwoWeekLow: fundamentals.summaryDetail?.fiftyTwoWeekLow || 0,
+      dividendYield: fundamentals.summaryDetail?.dividendYield || 0,
       beta: fundamentals.summaryDetail?.beta || 0,
 
-      analystEstimates: {
-        currentYear: {
-          revenue:
-            currentYearEstimate?.revenueEstimate?.avg || null,
-          earnings:
-            currentYearEstimate?.earningsEstimate?.avg || null,
-        },
-        nextYear: {
-          revenue:
-            nextYearEstimate?.revenueEstimate?.avg || null,
-          earnings:
-            nextYearEstimate?.earningsEstimate?.avg || null,
-        },
-      },
+analystEstimates: {
+  currentYear: {
+    revenue: currentYearEstimate?.revenueEstimate?.avg ?? null,
+    earnings: currentYearEstimate?.earningsEstimate?.avg ?? null,
+  },
+  nextYear: {
+    revenue: nextYearEstimate?.revenueEstimate?.avg ?? null,
+    earnings: nextYearEstimate?.earningsEstimate?.avg ?? null,
+  },
+},
 
-      revenueData,
       history,
+      revenueData: [
+  { year: 2022, revenue: null, earnings: null, eps: null },
+  { year: 2023, revenue: null, earnings: null, eps: null },
+  { year: 2024, revenue: null, earnings: null, eps: null },
+  { year: 2025, revenue: null, earnings: null, eps: null },
+],
+    };
+
+    // ======================
+    // SAVE CACHE
+    // ======================
+    cache.set(`stock-${ticker}`, {
+      time: Date.now(),
+      data,
     });
 
+    return res.json(data);
   } catch (err) {
-    console.error("FULL ERROR:", err);
-
-    res.status(500).json({
-      error: err.message,
-      stack: err.stack,
-    });
+    console.error("STOCK ERROR:", err);
+    return res.status(500).json({ error: err.message });
   }
 });
-
 /* =========================================
    AI ANALYSIS
 ========================================= */
@@ -220,11 +206,14 @@ app.get(
         req.params.ticker.toUpperCase();
 
 // CHECK CACHE FIRST
-const cached = cache.get(ticker);
+const cached = cache.get(`ai-${ticker}`);
 if (cached && Date.now() - cached.time < 60000) {
   return res.json(cached.data);
 }
-const quote = await yahooFinance.quote(ticker);
+const cachedStock = cache.get(`stock-${ticker}`);
+const quote = cachedStock?.data
+  ? cachedStock.data
+  : await yahooSafeCall(`quote-${ticker}`, () => yahooFinance.quote(ticker));
 
 
 
@@ -235,9 +224,7 @@ Current Price:
 $${quote.regularMarketPrice}
 
 Market Cap:
-$${(
-        quote.marketCap / 1e12
-      ).toFixed(2)}T
+$${((quote.marketCap || 0) / 1e12).toFixed(2)}T
 
 Forward PE:
 ${quote.forwardPE?.toFixed(2)}
@@ -251,10 +238,14 @@ Rating:
 ${quote.recommendationKey}
 `;
 
-      res.json({
-        analysis,
-      });
+cache.set(`ai-${ticker}`, {
+  time: Date.now(),
+  data: { analysis }
+});
 
+res.json({
+  analysis,
+});
     } catch (error) {
 
       console.error(error);
@@ -625,10 +616,10 @@ app.get(
 ========================================= */
 
 const PORT = process.env.PORT || 5001;
-
+app.use((req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  next();
+});
 app.listen(PORT, () => {
-
-  console.log(
-    `Server running on port ${PORT}`
-  );
+  console.log(`Server running on port ${PORT}`);
 });
