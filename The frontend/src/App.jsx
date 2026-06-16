@@ -1264,7 +1264,16 @@ return (
 </div>
 {/* Analyst Estimates */}
 
-<div className="bg-white rounded-xl shadow-md p-6 mt-6">
+<div
+  style={{
+    marginTop: "40px",
+    padding: "30px",
+    background: "#0b1117",
+    borderRadius: "18px",
+    border: "1px solid #1f2937",
+    color: "white",
+  }}
+>
 
 <h2
   style={{
@@ -1277,10 +1286,25 @@ return (
   Analyst Estimates
 </h2>
 
-  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+  <div
+  style={{
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: "80px",
+    maxWidth: "900px",
+    margin: "0 auto",
+  }}
+>
 
     {/* Current Year */}
-    <div className="border rounded-lg p-4">
+    <div
+  style={{
+    padding: "20px",
+    borderRadius: "14px",
+    background: "#111827",
+    border: "1px solid #1f2937",
+  }}
+>
 
       <h3 className="text-lg font-semibold mb-3">
         Current Year
@@ -1288,7 +1312,14 @@ return (
 
       <div className="space-y-2">
 
-        <div className="flex justify-between">
+        <div
+  style={{
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "20px",
+    marginBottom: "10px",
+  }}
+>
           <span>Revenue</span>
 
           <span>
@@ -1302,7 +1333,14 @@ return (
           </span>
         </div>
 
-        <div className="flex justify-between">
+        <div
+  style={{
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "20px",
+    marginBottom: "10px",
+  }}
+>
           <span>Earnings</span>
 
           <span>
@@ -1314,7 +1352,14 @@ return (
           </span>
         </div>
 
-        <div className="flex justify-between">
+<div
+  style={{
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "20px",
+    marginBottom: "10px",
+  }}
+>
           <span>EPS</span>
 
           <span>
@@ -1331,7 +1376,14 @@ return (
     </div>
 
     {/* Next Year */}
-    <div className="border rounded-lg p-4">
+    <div
+  style={{
+    padding: "20px",
+    borderRadius: "14px",
+    background: "#111827",
+    border: "1px solid #1f2937",
+  }}
+>
 
       <h3 className="text-lg font-semibold mb-3">
         Next Year
@@ -1339,7 +1391,14 @@ return (
 
       <div className="space-y-2">
 
-        <div className="flex justify-between">
+<div
+  style={{
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "20px",
+    marginBottom: "10px",
+  }}
+>
           <span>Revenue</span>
 
           <span>
@@ -1353,7 +1412,14 @@ return (
           </span>
         </div>
 
-        <div className="flex justify-between">
+<div
+  style={{
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "20px",
+    marginBottom: "10px",
+  }}
+>
           <span>Earnings</span>
 
           <span>
@@ -1365,7 +1431,14 @@ return (
           </span>
         </div>
 
-        <div className="flex justify-between">
+<div
+  style={{
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "20px",
+    marginBottom: "10px",
+  }}
+>
           <span>EPS</span>
 
           <span>
