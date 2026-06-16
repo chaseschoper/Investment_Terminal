@@ -13,6 +13,7 @@ import {
 
 import {
   useEffect,
+  useRef,
   useState
 } from "react";
 const formatMoney = (value) => {
@@ -46,6 +47,7 @@ const API_URL =
 
 import "./App.css";
 function App() {
+  const latestStockRequest = useRef(0);
   const [showAuth, setShowAuth] = useState(false);
 const [isLogin, setIsLogin] = useState(true);
 
@@ -241,20 +243,50 @@ useEffect(() => {
     LOAD SINGLE STOCK
   */
 
-  const loadStock = async () => {
+  const loadStock = async (
+    symbol = ticker,
+    attempt = 0,
+    requestId = Date.now()
+  ) => {
 
     try {
+      if (attempt === 0) {
+        latestStockRequest.current = requestId;
+      }
 
       const response =
         await axios.get(
-          `${API_URL}/api/stock/${ticker}`
+          `${API_URL}/api/stock/${symbol}`
         );
 console.log(response.data);
+      if (requestId !== latestStockRequest.current) {
+        return;
+      }
+
+      if (
+        response.data.status === "pending" &&
+        attempt < 12
+      ) {
+        setStockData(null);
+
+        setTimeout(
+          () =>
+            loadStock(
+              symbol,
+              attempt + 1,
+              requestId
+            ),
+          5000
+        );
+
+        return;
+      }
+
       setStockData(response.data);
 
       setPortfolioPrices((prev) => ({
         ...prev,
-        [ticker]: response.data.price,
+        [symbol]: response.data.price,
       }));
 
     } catch (error) {
