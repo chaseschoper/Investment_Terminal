@@ -143,6 +143,11 @@ function fillEstimatedEps(rows, sharesOutstanding) {
 
   return rows.map((row) => ({
     ...row,
+    earnings:
+      row.earnings ??
+      (row.eps !== null && row.eps !== undefined
+        ? (row.eps * shares) / 1000
+        : null),
     eps:
       row.eps ??
       (row.earnings !== null && row.earnings !== undefined
@@ -151,8 +156,26 @@ function fillEstimatedEps(rows, sharesOutstanding) {
   }));
 }
 
-function hasRevenueHistory(stock) {
-  return stock?.data?.revenueData?.some((row) => toNumberOrNull(row.revenue) !== null);
+function finalizeFinancialHistory(rows, sharesOutstanding) {
+  return fillEstimatedEps(rows, sharesOutstanding).map((row) => ({
+    year: row.year,
+    revenue: toNumberOrNull(row.revenue),
+    earnings: toNumberOrNull(row.earnings),
+    eps: toNumberOrNull(row.eps),
+    source: row.source
+  }));
+}
+
+function hasChartHistory(stock, key) {
+  return stock?.data?.revenueData?.some((row) => toNumberOrNull(row[key]) !== null);
+}
+
+function hasCompleteChartHistory(stock) {
+  return (
+    hasChartHistory(stock, "revenue") &&
+    hasChartHistory(stock, "earnings") &&
+    hasChartHistory(stock, "eps")
+  );
 }
 
 async function fetchYahooTimeSeriesFinancials(ticker) {
@@ -459,7 +482,7 @@ async function fetchStockData(ticker) {
     console.log("FMP cash flow skipped:", ticker, err.message);
   }
 
-  const revenueData = fillEstimatedEps(
+  const revenueData = finalizeFinancialHistory(
     mergeHistoricalFinancials(
       fmpIncomeStatementData,
       mergeHistoricalFinancials(
@@ -719,7 +742,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       });
     }
 
-    if (stock.status === "ready" && !hasRevenueHistory(stock)) {
+    if (stock.status === "ready" && !hasCompleteChartHistory(stock)) {
       const updatedAt = stock.updatedAt ? new Date(stock.updatedAt) : null;
       const isStale =
         !updatedAt || Date.now() - updatedAt.getTime() > 10 * 60 * 1000;
@@ -739,7 +762,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
         return res.status(202).json({
           ticker,
           status: "pending",
-          message: `${ticker} revenue history is being refreshed. Refresh in 30-60 seconds.`,
+          message: `${ticker} financial charts are being refreshed. Refresh in 30-60 seconds.`,
           updatedAt: new Date()
         });
       }

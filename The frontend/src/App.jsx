@@ -46,6 +46,18 @@ const formatChartBillions = (value) =>
 
 const formatChartEps = (value) =>
   isNumber(value) ? `$${value.toFixed(2)}` : "N/A";
+
+const buildChartRows = (rows, key) =>
+  (rows || [])
+    .map((item) => ({
+      year: item.year,
+      [key]: isNumber(item[key])
+        ? item[key]
+        : null,
+    }))
+    .filter((item) =>
+      item.year && item[key] !== null
+    );
 import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
@@ -493,19 +505,13 @@ const financialHistory =
   stockData?.revenueData || [];
 
 const revenueHistory =
-  financialHistory.filter((item) =>
-    isNumber(item.revenue)
-  );
+  buildChartRows(financialHistory, "revenue");
 
 const earningsHistory =
-  financialHistory.filter((item) =>
-    isNumber(item.earnings)
-  );
+  buildChartRows(financialHistory, "earnings");
 
 const epsHistory =
-  financialHistory.filter((item) =>
-    isNumber(item.eps)
-  );
+  buildChartRows(financialHistory, "eps");
 
 
  
@@ -1060,6 +1066,12 @@ return (
 
       <BarChart
         data={revenueHistory}
+        margin={{
+          top: 16,
+          right: 24,
+          left: 16,
+          bottom: 8,
+        }}
       >
 
         <CartesianGrid
@@ -1126,6 +1138,12 @@ return (
 
         <LineChart
           data={earningsHistory}
+          margin={{
+            top: 16,
+            right: 24,
+            left: 16,
+            bottom: 8,
+          }}
         >
 
           <CartesianGrid stroke="#1f2937" />
@@ -1150,6 +1168,7 @@ return (
             dataKey="earnings"
             stroke="#22c55e"
             strokeWidth={4}
+            connectNulls
             dot={{ r: 4 }}
             activeDot={{ r: 6 }}
           />
@@ -1194,6 +1213,12 @@ return (
 
         <LineChart
           data={epsHistory}
+          margin={{
+            top: 16,
+            right: 24,
+            left: 16,
+            bottom: 8,
+          }}
         >
 
           <CartesianGrid stroke="#1f2937" />
@@ -1218,6 +1243,7 @@ return (
             dataKey="eps"
             stroke="#f59e0b"
             strokeWidth={4}
+            connectNulls
             dot={{ r: 4 }}
             activeDot={{ r: 6 }}
           />

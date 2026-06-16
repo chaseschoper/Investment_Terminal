@@ -108,11 +108,26 @@ function fillEstimatedEps(rows, sharesOutstanding) {
 
   return rows.map((row) => ({
     ...row,
+    earnings:
+      row.earnings ??
+      (row.eps !== null && row.eps !== undefined
+        ? (row.eps * shares) / 1000
+        : null),
     eps:
       row.eps ??
       (row.earnings !== null && row.earnings !== undefined
         ? (row.earnings * 1000) / shares
         : null)
+  }));
+}
+
+function finalizeFinancialHistory(rows, sharesOutstanding) {
+  return fillEstimatedEps(rows, sharesOutstanding).map((row) => ({
+    year: row.year,
+    revenue: toNumberOrNull(row.revenue),
+    earnings: toNumberOrNull(row.earnings),
+    eps: toNumberOrNull(row.eps),
+    source: row.source
   }));
 }
 
@@ -424,7 +439,7 @@ try {
   console.log("FMP cash flow skipped:", ticker, err.message);
 }
 
-const revenueData = fillEstimatedEps(
+const revenueData = finalizeFinancialHistory(
   mergeHistoricalFinancials(
     fmpIncomeStatementData,
     mergeHistoricalFinancials(
