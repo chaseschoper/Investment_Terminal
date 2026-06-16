@@ -151,6 +151,97 @@ function fillEstimatedEps(rows, sharesOutstanding) {
   }));
 }
 
+function hasRevenueHistory(stock) {
+  return stock?.data?.revenueData?.some((row) => toNumberOrNull(row.revenue) !== null);
+}
+
+async function fetchYahooTimeSeriesFinancials(ticker) {
+  try {
+    const period1 = Math.floor(new Date("2016-01-01").getTime() / 1000);
+    const period2 = Math.floor(Date.now() / 1000);
+    const types = [
+      "annualTotalRevenue",
+      "annualOperatingRevenue",
+      "annualNetInterestIncome",
+      "annualNonInterestIncome",
+      "annualTotalPremiumsEarned",
+      "annualNetIncome",
+      "annualNetIncomeCommonStockholders",
+      "annualNetIncomeContinuousOperations",
+      "annualDilutedEPS",
+      "annualBasicEPS"
+    ].join(",");
+
+    const response = await axios.get(
+      `https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${ticker}`,
+      {
+        params: {
+          period1,
+          period2,
+          type: types
+        },
+        headers: {
+          "User-Agent": "Mozilla/5.0"
+        }
+      }
+    );
+
+    const rowsByTime = new Map();
+    const results = response.data?.timeseries?.result || [];
+
+    results.forEach((result) => {
+      const key = Object.keys(result).find((item) => item.startsWith("annual"));
+      if (!key || !Array.isArray(result.timestamp)) return;
+
+      result.timestamp.forEach((timestamp, index) => {
+        const rawValue = result[key]?.[index]?.reportedValue?.raw;
+        const value = toNumberOrNull(rawValue);
+        if (value === null) return;
+
+        const row = rowsByTime.get(timestamp) || {
+          year: getStatementYear(timestamp),
+          source: "Yahoo time series"
+        };
+
+        if (
+          [
+            "annualTotalRevenue",
+            "annualOperatingRevenue",
+            "annualNetInterestIncome",
+            "annualNonInterestIncome",
+            "annualTotalPremiumsEarned"
+          ].includes(key)
+        ) {
+          row.revenue = row.revenue ?? toBillions(value);
+        }
+
+        if (
+          [
+            "annualNetIncome",
+            "annualNetIncomeCommonStockholders",
+            "annualNetIncomeContinuousOperations"
+          ].includes(key)
+        ) {
+          row.earnings = row.earnings ?? toBillions(value);
+        }
+
+        if (["annualDilutedEPS", "annualBasicEPS"].includes(key)) {
+          row.eps = row.eps ?? value;
+        }
+
+        rowsByTime.set(timestamp, row);
+      });
+    });
+
+    return [...rowsByTime.values()]
+      .filter((row) => row.year)
+      .sort((a, b) => a.year - b.year);
+  } catch (err) {
+    console.log("Yahoo time-series financials skipped:", ticker, err.message);
+    return [];
+  }
+}
+
 async function fetchYahooFinancialHistory(ticker) {
   try {
     const summary = await yahooFinance.quoteSummary(ticker, {
@@ -187,11 +278,49 @@ async function fetchYahooFinancialHistory(ticker) {
       .filter((row) => row.year)
       .sort((a, b) => a.year - b.year);
 
-    return mergeHistoricalFinancials(incomeHistory, earningsHistory);
+    const timeSeriesHistory = await fetchYahooTimeSeriesFinancials(ticker);
+
+    return mergeHistoricalFinancials(
+      timeSeriesHistory,
+      mergeHistoricalFinancials(incomeHistory, earningsHistory)
+    );
   } catch (err) {
     console.log("Yahoo financial history skipped:", ticker, err.message);
-    return [];
+    return fetchYahooTimeSeriesFinancials(ticker);
   }
+}
+
+async function fetchFmpIncomeStatementHistory(ticker) {
+  if (!process.env.FMP_API_KEY) return [];
+
+  const urls = [
+    `https://financialmodelingprep.com/stable/income-statement?symbol=${ticker}&period=annual&limit=6&apikey=${process.env.FMP_API_KEY}`,
+    `https://financialmodelingprep.com/api/v3/income-statement/${ticker}?period=annual&limit=6&apikey=${process.env.FMP_API_KEY}`
+  ];
+
+  for (const url of urls) {
+    try {
+      const incomeRes = await axios.get(url);
+      const incomeRows = Array.isArray(incomeRes.data) ? incomeRes.data : [];
+
+      const rows = incomeRows
+        .map((row) => ({
+          year: Number(row.calendarYear || String(row.date || "").slice(0, 4)),
+          revenue: toBillions(row.revenue),
+          earnings: toBillions(row.netIncome),
+          eps: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
+          source: "FMP income statement"
+        }))
+        .filter((row) => row.year)
+        .sort((a, b) => a.year - b.year);
+
+      if (rows.length) return rows;
+    } catch (err) {
+      console.log("FMP income statement skipped:", ticker, err.message);
+    }
+  }
+
+  return [];
 }
 
 async function fetchStockData(ticker) {
@@ -302,8 +431,6 @@ async function fetchStockData(ticker) {
     .filter((item) => item.year)
     .sort((a, b) => a.year - b.year);
 
-  let fmpIncomeStatementData = [];
-
   let priceTarget = {};
   try {
     await wait(300);
@@ -318,28 +445,10 @@ async function fetchStockData(ticker) {
   let fmpPriceTarget = {};
   let fmpAnalystEstimates = [];
   const yahooFinancialData = await fetchYahooFinancialHistory(ticker);
+  const fmpIncomeStatementData = await fetchFmpIncomeStatementHistory(ticker);
 
   try {
     if (process.env.FMP_API_KEY) {
-      const incomeRes = await axios.get(
-        `https://financialmodelingprep.com/stable/income-statement?symbol=${ticker}&period=annual&limit=6&apikey=${process.env.FMP_API_KEY}`
-      );
-
-      const incomeRows = Array.isArray(incomeRes.data)
-        ? incomeRes.data
-        : [];
-
-      fmpIncomeStatementData = incomeRows
-        .map((row) => ({
-          year: Number(row.calendarYear || String(row.date || "").slice(0, 4)),
-          revenue: toBillions(row.revenue),
-          earnings: toBillions(row.netIncome),
-          eps: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
-          source: "FMP income statement"
-        }))
-        .filter((row) => row.year)
-        .sort((a, b) => a.year - b.year);
-
       const cashFlowRes = await axios.get(
         `https://financialmodelingprep.com/stable/cash-flow-statement?symbol=${ticker}&limit=1&apikey=${process.env.FMP_API_KEY}`
       );
@@ -608,6 +717,32 @@ app.get("/api/stock/:ticker", async (req, res) => {
         message: `${ticker} is still updating. Refresh in 30-60 seconds.`,
         updatedAt: stock.updatedAt
       });
+    }
+
+    if (stock.status === "ready" && !hasRevenueHistory(stock)) {
+      const updatedAt = stock.updatedAt ? new Date(stock.updatedAt) : null;
+      const isStale =
+        !updatedAt || Date.now() - updatedAt.getTime() > 10 * 60 * 1000;
+
+      if (isStale) {
+        await Stock.findOneAndUpdate(
+          { ticker },
+          {
+            status: "pending",
+            error: null,
+            updatedAt: new Date()
+          }
+        );
+
+        startStockFetch(ticker);
+
+        return res.status(202).json({
+          ticker,
+          status: "pending",
+          message: `${ticker} revenue history is being refreshed. Refresh in 30-60 seconds.`,
+          updatedAt: new Date()
+        });
+      }
     }
 
     if (stock.status === "failed") {
