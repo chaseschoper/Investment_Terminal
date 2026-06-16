@@ -62,37 +62,62 @@ app.get("/api/stock/:ticker", async (req, res) => {
   try {
     const ticker = req.params.ticker.toUpperCase();
 
-    let stock = await Stock.findOne({ ticker });
+    const quoteRes = await axios.get(
+      `https://finnhub.io/api/v1/quote?symbol=${ticker}&token=${process.env.FINNHUB_API_KEY}`
+    );
 
-    if (stock && stock.data?.price) {
-      return res.json({
-        ticker: stock.ticker,
-        ...stock.data,
-        updatedAt: stock.updatedAt,
+    const profileRes = await axios.get(
+      `https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}&token=${process.env.FINNHUB_API_KEY}`
+    );
+
+    const quote = quoteRes.data;
+    const profile = profileRes.data;
+
+    if (!quote || !quote.c) {
+      return res.status(404).json({
+        error: "No live price found",
+        symbol: ticker,
       });
     }
 
-    await Stock.findOneAndUpdate(
-      { ticker },
-      {
-        ticker,
-        status: "pending",
-        updatedAt: new Date(),
-      },
-      { upsert: true }
-    );
+    res.json({
+      symbol: ticker,
+      name: profile.name || ticker,
+      price: quote.c,
+      change: quote.d,
+      percentChange: quote.dp,
+      high: quote.h,
+      low: quote.l,
+      open: quote.o,
+      previousClose: quote.pc,
+      marketCap: profile.marketCapitalization
+        ? profile.marketCapitalization * 1000000
+        : null,
 
-    return res.status(202).json({
-      status: "loading",
-      message: `${ticker} is being fetched. Try again in a few seconds.`,
+      pe: null,
+      forwardPE: null,
+      revenueGrowth: 0,
+      earningsGrowth: 0,
+      grossMargins: 0,
+      operatingMargins: 0,
+      profitMargins: 0,
+      freeCashflow: 0,
+      targetMean: null,
+      recommendationKey: "hold",
+      sharesOutstanding: profile.shareOutstanding
+        ? profile.shareOutstanding * 1000000
+        : null,
+      revenueData: [],
+      analystEstimates: {
+        currentYear: {},
+        nextYear: {},
+      },
     });
   } catch (err) {
-    console.error(err);
+    console.error("Stock fetch failed:", err.message);
     res.status(500).json({ error: "Stock fetch failed" });
   }
 });
-
-
 // =========================
 // AI ANALYSIS (DB ONLY)
 // =========================
