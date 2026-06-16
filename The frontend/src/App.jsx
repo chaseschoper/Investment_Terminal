@@ -17,7 +17,7 @@ import {
 } from "react";
 const formatMoney = (value) => {
 
-  if (!value) return "N/A";
+  if (value === null || value === undefined) return "N/A";
 
   if (value >= 1000) {
     return `$${(value / 1000).toFixed(1)}T`;
@@ -25,6 +25,20 @@ const formatMoney = (value) => {
 
   return `$${value.toFixed(1)}B`;
 };
+const isNumber = (value) =>
+  typeof value === "number" && !Number.isNaN(value);
+
+const formatPercent = (value) =>
+  isNumber(value) ? `${value.toFixed(1)}%` : "N/A";
+
+const formatBillions = (value) =>
+  isNumber(value) ? `$${(value / 1e9).toFixed(1)}B` : "N/A";
+
+const formatPlain = (value) =>
+  isNumber(value) ? value.toFixed(2) : "N/A";
+
+const formatPrice = (value) =>
+  isNumber(value) ? `$${value.toFixed(2)}` : "N/A";
 import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
@@ -414,7 +428,13 @@ if (!stockData) {
   );
 }
 
-
+const hasRevenueData =
+  stockData?.revenueData?.some(
+    (item) =>
+      item.revenue !== null ||
+      item.earnings !== null ||
+      item.eps !== null
+  );
 
 
  
@@ -614,7 +634,7 @@ return (
         <strong>{stockData.name}</strong>
         {" "}currently trades at{" "}
         <strong>
-          ${stockData.price?.toFixed(2)}
+          ${stock.price?.toFixed(2)}
         </strong>
         .
       </p>
@@ -622,11 +642,11 @@ return (
       <p>
         Revenue growth is{" "}
         <strong>
-          {(stockData.revenueGrowth * 100).toFixed(1)}%
+          {formatPercent(stockData.revenueGrowth)}
         </strong>
         {" "}with earnings growth at{" "}
         <strong>
-          {(stockData.earningsGrowth * 100).toFixed(1)}%
+  {formatPercent(stockData.earningsGrowth)}
         </strong>
         .
       </p>
@@ -638,7 +658,7 @@ return (
         </strong>
         {" "}with an average price target of{" "}
         <strong>
-          ${stockData.targetMean?.toFixed(2)}
+          {formatPrice(stockData.targetMean)}
         </strong>
         .
       </p>
@@ -934,12 +954,14 @@ return (
     Revenue Chart
   </h2>
 
-  <div className="chart-box">
+<div className="chart-box">
 
-    <ResponsiveContainer
-      width="100%"
-      height={400}
-    >
+{hasRevenueData ? (
+
+<ResponsiveContainer
+  width="100%"
+  height={400}
+>
 
       <BarChart
         data={stockData?.revenueData || []}
@@ -974,12 +996,24 @@ return (
 
     </ResponsiveContainer>
 
-  </div>
+  ) : (
+
+    <p
+      style={{
+        color: "#9ca3af",
+        padding: "40px",
+      }}
+    >
+      No revenue history available.
+    </p>
+
+  )}
+
+</div>
 
 </div>
 
 {/* NET INCOME */}
-
 <div className="chart-section">
 
   <h2 className="section-title">
@@ -988,40 +1022,53 @@ return (
 
   <div className="chart-box">
 
-    <ResponsiveContainer
-      width="100%"
-      height={400}
-    >
+    {hasRevenueData ? (
 
-      <LineChart
-        data={stockData?.revenueData || []}
+      <ResponsiveContainer
+        width="100%"
+        height={400}
       >
 
-        <CartesianGrid
-          stroke="#1f2937"
-        />
+        <LineChart
+          data={stockData?.revenueData || []}
+        >
 
-        <XAxis dataKey="year" />
+          <CartesianGrid stroke="#1f2937" />
 
-        <YAxis />
+          <XAxis dataKey="year" />
 
-        <Tooltip
-  formatter={(value) => [
-    `$${value}B`,
-    "Net Income"
-  ]}
-/>
+          <YAxis />
 
-        <Line
-          type="monotone"
-          dataKey="earnings"
-          stroke="#22c55e"
-          strokeWidth={4}
-        />
+          <Tooltip
+            formatter={(value) => [
+              `$${value}B`,
+              "Net Income"
+            ]}
+          />
 
-      </LineChart>
+          <Line
+            type="monotone"
+            dataKey="earnings"
+            stroke="#22c55e"
+            strokeWidth={4}
+          />
 
-    </ResponsiveContainer>
+        </LineChart>
+
+      </ResponsiveContainer>
+
+    ) : (
+
+      <p
+        style={{
+          color: "#9ca3af",
+          padding: "40px",
+        }}
+      >
+        No net income history available.
+      </p>
+
+    )}
 
   </div>
 
@@ -1037,40 +1084,53 @@ return (
 
   <div className="chart-box">
 
-    <ResponsiveContainer
-      width="100%"
-      height={400}
-    >
+    {hasRevenueData ? (
 
-      <LineChart
-       data={stockData?.revenueData || []}
+      <ResponsiveContainer
+        width="100%"
+        height={400}
       >
 
-        <CartesianGrid
-          stroke="#1f2937"
-        />
+        <LineChart
+          data={stockData?.revenueData || []}
+        >
 
-        <XAxis dataKey="year" />
+          <CartesianGrid stroke="#1f2937" />
 
-        <YAxis />
+          <XAxis dataKey="year" />
 
-        <Tooltip
-  formatter={(value) => [
-    `$${value}`,
-    "EPS"
-  ]}
-/>
+          <YAxis />
 
-        <Line
-          type="monotone"
-          dataKey="eps"
-          stroke="#f59e0b"
-          strokeWidth={4}
-        />
+          <Tooltip
+            formatter={(value) => [
+              `$${value}`,
+              "EPS"
+            ]}
+          />
 
-      </LineChart>
+          <Line
+            type="monotone"
+            dataKey="eps"
+            stroke="#f59e0b"
+            strokeWidth={4}
+          />
 
-    </ResponsiveContainer>
+        </LineChart>
+
+      </ResponsiveContainer>
+
+    ) : (
+
+      <p
+        style={{
+          color: "#9ca3af",
+          padding: "40px",
+        }}
+      >
+        No EPS history available.
+      </p>
+
+    )}
 
   </div>
 
@@ -1085,11 +1145,7 @@ return (
     </div>
 
     <div className="card-value">
-      $
-      {(
-        stockData.marketCap / 1e9
-      ).toFixed(1)}
-      B
+{formatBillions(stockData.marketCap)}
     </div>
   </div>
 
@@ -1099,7 +1155,7 @@ return (
     </div>
 
     <div className="card-value">
-      {stockData.pe?.toFixed(2)}
+      {formatPlain(stockData.pe)}
     </div>
   </div>
 
@@ -1109,7 +1165,7 @@ return (
     </div>
 
     <div className="card-value">
-      {stockData.forwardPE?.toFixed(2)}
+      {formatPlain(stockData.forwardPE)}
     </div>
   </div>
 
@@ -1119,10 +1175,7 @@ return (
     </div>
 
     <div className="card-value">
-      {(
-        stockData.revenueGrowth * 100
-      ).toFixed(1)}
-      %
+{formatPercent(stockData.revenueGrowth)}
     </div>
   </div>
 
@@ -1132,10 +1185,7 @@ return (
     </div>
 
     <div className="card-value">
-      {(
-        stockData.earningsGrowth * 100
-      ).toFixed(1)}
-      %
+{formatPercent(stockData.earningsGrowth)}
     </div>
   </div>
 
@@ -1145,12 +1195,9 @@ return (
     </div>
 
     <div className="card-value">
-      {stockData.sharesOutstanding
-        ? `${(
-            stockData.sharesOutstanding /
-            1e9
-          ).toFixed(2)}B`
-        : "N/A"}
+{stockData.sharesOutstanding
+  ? `${(stockData.sharesOutstanding / 1000).toFixed(2)}B`
+  : "N/A"}
     </div>
   </div>
 
@@ -1160,10 +1207,7 @@ return (
     </div>
 
     <div className="card-value">
-      {(
-        stockData.grossMargins * 100
-      ).toFixed(1)}
-      %
+{formatPercent(stockData.grossMargins)}
     </div>
   </div>
 
@@ -1173,11 +1217,7 @@ return (
     </div>
 
     <div className="card-value">
-      {(
-        stockData.operatingMargins *
-        100
-      ).toFixed(1)}
-      %
+{formatPercent(stockData.operatingMargins)}
     </div>
   </div>
 
@@ -1187,11 +1227,7 @@ return (
     </div>
 
     <div className="card-value">
-      {(
-        stockData.profitMargins *
-        100
-      ).toFixed(1)}
-      %
+{formatPercent(stockData.profitMargins)}
     </div>
   </div>
 
@@ -1201,12 +1237,7 @@ return (
     </div>
 
     <div className="card-value">
-      $
-      {(
-        stockData.freeCashflow /
-        1e9
-      ).toFixed(1)}
-      B
+{formatBillions(stockData.freeCashflow)}
     </div>
   </div>
 
@@ -1216,8 +1247,7 @@ return (
     </div>
 
     <div className="card-value">
-      $
-      {stockData.targetMean?.toFixed(2)}
+{formatPrice(stockData.targetMean)}
     </div>
   </div>
 
@@ -1227,7 +1257,7 @@ return (
     </div>
 
     <div className="card-value">
-      {stockData.recommendationKey}
+      {stockData.recommendationKey || "N/A"}
     </div>
   </div>
 
@@ -1671,84 +1701,84 @@ return (
     </div>
 
     <div className="comparison-price">
-      ${stock.price?.toFixed(2)}
+      {formatPrice(stock.price)}
     </div>
 
     <div className="comparison-stat">
       <span>Market Cap</span>
-      <strong>
-        ${(stock.marketCap / 1e9).toFixed(1)}B
-      </strong>
+<strong>
+  {formatBillions(stock.marketCap)}
+</strong>
     </div>
 
     <div className="comparison-stat">
       <span>Current P/E</span>
-      <strong>
-        {stock.pe?.toFixed(2)}
-      </strong>
+<strong>
+  {formatPlain(stock.pe)}
+</strong>
     </div>
 
     <div className="comparison-stat">
       <span>Forward P/E</span>
-      <strong>
-        {stock.forwardPE?.toFixed(2)}
-      </strong>
+<strong>
+  {formatPlain(stock.forwardPE)}
+</strong>
     </div>
 
     <div className="comparison-stat">
       <span>Revenue Growth</span>
-      <strong>
-        {(stock.revenueGrowth * 100).toFixed(1)}%
-      </strong>
+<strong>
+  {formatPercent(stock.revenueGrowth)}
+</strong>
     </div>
 
     <div className="comparison-stat">
       <span>Earnings Growth</span>
-      <strong>
-        {(stock.earningsGrowth * 100).toFixed(1)}%
-      </strong>
+<strong>
+  {formatPercent(stock.earningsGrowth)}
+</strong>
     </div>
 
     <div className="comparison-stat">
       <span>Gross Margin</span>
-      <strong>
-        {(stock.grossMargins * 100).toFixed(1)}%
-      </strong>
+<strong>
+  {formatPercent(stock.grossMargins)}
+</strong>
     </div>
 
     <div className="comparison-stat">
       <span>Operating Margin</span>
-      <strong>
-        {(stock.operatingMargins * 100).toFixed(1)}%
-      </strong>
+<strong>
+  {formatPercent(stock.operatingMargins)}
+</strong>
     </div>
 
     <div className="comparison-stat">
       <span>Profit Margin</span>
-      <strong>
-        {(stock.profitMargins * 100).toFixed(1)}%
-      </strong>
+<strong>
+  {formatPercent(stock.profitMargins)}
+</strong>
     </div>
 
     <div className="comparison-stat">
       <span>Free Cash Flow</span>
-      <strong>
-        ${(stock.freeCashflow / 1e9).toFixed(1)}B
-      </strong>
+<strong>
+  {formatBillions(stock.freeCashflow)}
+</strong>
     </div>
 
     <div className="comparison-stat">
       <span>Price Target</span>
-      <strong>
-        ${stock.targetMean?.toFixed(2)}
-      </strong>
+<strong>
+  {formatPrice(stock.targetMean)}
+</strong>
     </div>
 
     <div className="comparison-stat">
       <span>Analyst Rating</span>
-      <strong>
-        {stock.recommendationKey}
-      </strong>
+<strong>
+  {stock.recommendationKey || "N/A"}
+</strong>
     </div>
 
     <div className="comparison-stat">

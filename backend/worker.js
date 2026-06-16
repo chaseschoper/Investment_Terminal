@@ -24,58 +24,70 @@ const STARTER_STOCKS = [
   "PLTR"
 ];
 
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function getFinnhub(url) {
+  const res = await axios.get(`${url}&token=${process.env.FINNHUB_API_KEY}`);
+  return res.data;
+}
+
+function findFinancialValue(items, concepts) {
+  const row = items.find((item) => concepts.includes(item.concept));
+  return row?.value ?? null;
+}
+
 async function updateStock(ticker) {
   try {
     console.log("Updating:", ticker);
 
-    const quoteRes = await axios.get(
-      `https://finnhub.io/api/v1/quote?symbol=${ticker}&token=${process.env.FINNHUB_API_KEY}`
+    const quote = await getFinnhub(
+      `https://finnhub.io/api/v1/quote?symbol=${ticker}`
     );
 
-    const profileRes = await axios.get(
-      `https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}&token=${process.env.FINNHUB_API_KEY}`
+    await wait(300);
+
+    const profile = await getFinnhub(
+      `https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}`
     );
 
-    const quote = quoteRes.data;
-    const profile = profileRes.data;
-const metricRes = await axios.get(
-  `https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=all&token=${process.env.FINNHUB_API_KEY}`
-);
+    await wait(300);
 
-const metrics = metricRes.data?.metric || {};
+    const metricData = await getFinnhub(
+      `https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=all`
+    );
+
+    const metrics = metricData?.metric || {};
+
     let revenueData = [];
 
     try {
-      const financialsRes = await axios.get(
-        `https://finnhub.io/api/v1/stock/financials-reported?symbol=${ticker}&freq=annual&token=${process.env.FINNHUB_API_KEY}`
+      await wait(300);
+
+      const financials = await getFinnhub(
+        `https://finnhub.io/api/v1/stock/financials-reported?symbol=${ticker}&freq=annual`
       );
 
-      const reports = financialsRes.data?.data || [];
+      const reports = financials?.data || [];
 
       revenueData = reports
         .slice(0, 5)
         .map((report) => {
           const ic = report.report?.ic || [];
 
-          const findValue = (concepts) => {
-            const row = ic.find((item) => concepts.includes(item.concept));
-            return row?.value || null;
-          };
+          const revenue = findFinancialValue(ic, [
+            "us-gaap_Revenues",
+            "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+            "us-gaap_SalesRevenueNet",
+            "us-gaap_SalesRevenueGoodsNet",
+            "ifrs-full_Revenue"
+          ]);
 
-const revenue = findValue([
-  "us-gaap_Revenues",
-  "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
-  "us-gaap_SalesRevenueNet",
-  "us-gaap_SalesRevenueGoodsNet",
-  "ifrs-full_Revenue"
-]);
-
-          const earnings = findValue([
+          const earnings = findFinancialValue(ic, [
             "us-gaap_NetIncomeLoss",
             "ifrs-full_ProfitLoss"
           ]);
 
-          const eps = findValue([
+          const eps = findFinancialValue(ic, [
             "us-gaap_EarningsPerShareDiluted",
             "us-gaap_EarningsPerShareBasic"
           ]);
@@ -84,14 +96,84 @@ const revenue = findValue([
             year: report.year,
             revenue: revenue ? revenue / 1000000000 : null,
             earnings: earnings ? earnings / 1000000000 : null,
-            eps: eps || null
+            eps: eps ?? null
           };
         })
         .filter((item) => item.year)
         .reverse();
-
     } catch (err) {
-      console.log("Financials skipped:", ticker, err.message);
+      console.log("Financials reported skipped:", ticker, err.message);
+    }
+
+    if (!revenueData.length) {
+      const annual = metricData?.series?.annual || {};
+
+      const revenues = annual.revenue || [];
+      const netIncome = annual.netIncome || [];
+      const eps = annual.eps || [];
+
+      revenueData = revenues
+        .slice(0, 5)
+        .map((item) => {
+          const year = new Date(item.period).getFullYear();
+
+          const incomeItem = netIncome.find(
+            (x) => new Date(x.period).getFullYear() === year
+          );
+
+          const epsItem = eps.find(
+            (x) => new Date(x.period).getFullYear() === year
+          );
+
+          return {
+            year,
+            revenue: item.v ? item.v / 1000000000 : null,
+            earnings: incomeItem?.v ? incomeItem.v / 1000000000 : null,
+            eps: epsItem?.v ?? null
+          };
+        })
+        .filter((item) => item.year)
+        .sort((a, b) => a.year - b.year);
+    }
+
+    let priceTarget = {};
+    try {
+      await wait(300);
+      priceTarget = await getFinnhub(
+        `https://finnhub.io/api/v1/stock/price-target?symbol=${ticker}`
+      );
+    } catch (err) {
+      console.log("Price target skipped:", ticker);
+    }
+
+    let recommendation = [];
+    try {
+      await wait(300);
+      recommendation = await getFinnhub(
+        `https://finnhub.io/api/v1/stock/recommendation?symbol=${ticker}`
+      );
+    } catch (err) {
+      console.log("Recommendation skipped:", ticker);
+    }
+
+    let epsEstimate = {};
+    try {
+      await wait(300);
+      epsEstimate = await getFinnhub(
+        `https://finnhub.io/api/v1/stock/eps-estimate?symbol=${ticker}&freq=annual`
+      );
+    } catch (err) {
+      console.log("EPS estimate skipped:", ticker);
+    }
+
+    let revenueEstimate = {};
+    try {
+      await wait(300);
+      revenueEstimate = await getFinnhub(
+        `https://finnhub.io/api/v1/stock/revenue-estimate?symbol=${ticker}&freq=annual`
+      );
+    } catch (err) {
+      console.log("Revenue estimate skipped:", ticker);
     }
 
     if (!quote || !quote.c || quote.c === 0) {
@@ -101,7 +183,7 @@ const revenue = findValue([
           ticker,
           status: "failed",
           error: "No price returned",
-          updatedAt: new Date(),
+          updatedAt: new Date()
         },
         { upsert: true }
       );
@@ -110,65 +192,89 @@ const revenue = findValue([
       return;
     }
 
+    const latestRecommendation = recommendation?.[0];
+
+    const rating =
+      latestRecommendation?.strongBuy || latestRecommendation?.buy
+        ? "buy"
+        : latestRecommendation?.sell || latestRecommendation?.strongSell
+        ? "sell"
+        : latestRecommendation?.hold
+        ? "hold"
+        : "N/A";
+
+    const epsEstimates = epsEstimate?.data || [];
+    const revenueEstimates = revenueEstimate?.data || [];
+
+    const currentEps = epsEstimates[0]?.epsAvg ?? null;
+    const nextEps = epsEstimates[1]?.epsAvg ?? null;
+
+    const currentRevenue = revenueEstimates[0]?.revenueAvg ?? null;
+    const nextRevenue = revenueEstimates[1]?.revenueAvg ?? null;
+
     await Stock.findOneAndUpdate(
       { ticker },
       {
         ticker,
         status: "ready",
-data: {
-  name: profile.name || ticker,
-  symbol: ticker,
+        data: {
+          name: profile.name || ticker,
+          symbol: ticker,
 
-  price: quote.c,
-  change: quote.d,
-  percentChange: quote.dp,
-  previousClose: quote.pc,
-  high: quote.h,
-  low: quote.l,
-  open: quote.o,
+          price: quote.c,
+          change: quote.d,
+          percentChange: quote.dp,
+          previousClose: quote.pc,
+          high: quote.h,
+          low: quote.l,
+          open: quote.o,
 
-  marketCap: profile.marketCapitalization || null,
-  sharesOutstanding: profile.shareOutstanding || null,
+          marketCap: profile.marketCapitalization
+            ? profile.marketCapitalization * 1000000
+            : null,
 
-  pe: metrics.peNormalizedAnnual || metrics.peTTM || null,
-  forwardPE: metrics.forwardPE || null,
+          sharesOutstanding: profile.shareOutstanding || null,
 
-  revenueGrowth: metrics.revenueGrowthTTMYoy || null,
-  earningsGrowth: metrics.epsGrowthTTMYoy || null,
+          pe: metrics.peNormalizedAnnual ?? metrics.peTTM ?? null,
+          forwardPE: metrics.forwardPE ?? null,
 
-  grossMargins: metrics.grossMarginTTM || null,
-  operatingMargins: metrics.operatingMarginTTM || null,
-  profitMargins: metrics.netProfitMarginTTM || null,
+          revenueGrowth: metrics.revenueGrowthTTMYoy ?? null,
+          earningsGrowth: metrics.epsGrowthTTMYoy ?? null,
 
-  freeCashflow: metrics.freeCashFlowPerShareTTM || null,
+          grossMargins: metrics.grossMarginTTM ?? null,
+          operatingMargins: metrics.operatingMarginTTM ?? null,
+          profitMargins: metrics.netProfitMarginTTM ?? null,
 
-  targetMean: metrics.ptMean || null,
-  recommendationKey: metrics.recommendationMean
-    ? String(metrics.recommendationMean)
-    : "N/A",
+          freeCashflow:
+            metrics.freeCashFlowTTM ??
+            metrics.freeCashFlowPerShareTTM ??
+            null,
 
-  analystEstimates: {
-    currentYear: {
-      revenue: null,
-      earnings: null,
-      eps: metrics.epsInclExtraItemsAnnual || null,
-    },
-    nextYear: {
-      revenue: null,
-      earnings: null,
-      eps: metrics.epsEstimateNextYear || null,
-    },
-  },
+          targetMean: priceTarget?.targetMean ?? null,
+          recommendationKey: rating,
 
-  revenueData: revenueData,
-},
-        updatedAt: new Date(),
+          analystEstimates: {
+            currentYear: {
+              revenue: currentRevenue,
+              earnings: null,
+              eps: currentEps
+            },
+            nextYear: {
+              revenue: nextRevenue,
+              earnings: null,
+              eps: nextEps
+            }
+          },
+
+          revenueData
+        },
+        error: null,
+        updatedAt: new Date()
       },
       { upsert: true }
     );
 
     console.log("SUCCESS:", ticker);
-
   } catch (err) {
     console.log("FAILED:", ticker);
     console.log(err.message);
@@ -179,7 +285,7 @@ data: {
         ticker,
         status: "failed",
         error: err.message,
-        updatedAt: new Date(),
+        updatedAt: new Date()
       },
       { upsert: true }
     );
@@ -205,11 +311,10 @@ async function run() {
 
     for (const ticker of allTickers) {
       await updateStock(ticker);
-      await new Promise((r) => setTimeout(r, 1500));
+      await wait(2000);
     }
 
     console.log("Worker cycle complete");
-
   } catch (err) {
     console.log("Worker run failed:", err.message);
   }

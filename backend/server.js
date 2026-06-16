@@ -154,44 +154,71 @@ async function fetchStockData(ticker) {
 }
 
 // =========================
-// STOCK ROUTE - INSTANT FETCH IF MISSING
+// STOCK ROUTE - AUTO ONBOARD TICKERS
 // =========================
 app.get("/api/stock/:ticker", async (req, res) => {
   try {
     const ticker = req.params.ticker.trim().toUpperCase();
 
+    if (!ticker || ticker.length > 10) {
+      return res.status(400).json({
+        error: "Invalid ticker"
+      });
+    }
+
     let stock = await Stock.findOne({ ticker });
 
-    const isFresh =
-      stock &&
-      stock.updatedAt &&
-      Date.now() - new Date(stock.updatedAt).getTime() < 5 * 60 * 1000;
+    if (!stock) {
+      stock = await Stock.findOneAndUpdate(
+        { ticker },
+        {
+          ticker,
+          status: "pending",
+          data: {},
+          updatedAt: new Date()
+        },
+        {
+          upsert: true,
+          new: true
+        }
+      );
 
-    if (stock && stock.status === "ready" && isFresh) {
-      return res.json({
+      return res.status(202).json({
+        ticker,
+        status: "pending",
+        message: `${ticker} has been added. Data is being fetched. Refresh in 30-60 seconds.`
+      });
+    }
+
+    if (stock.status === "pending") {
+      return res.status(202).json({
         ticker: stock.ticker,
-        status: stock.status,
-        ...stock.data,
+        status: "pending",
+        message: `${ticker} is still updating. Refresh in 30-60 seconds.`,
         updatedAt: stock.updatedAt
       });
     }
 
-    const data = await fetchStockData(ticker);
+    if (stock.status === "failed") {
+      return res.status(200).json({
+        ticker: stock.ticker,
+        status: "failed",
+        error: stock.error || "Could not fetch this ticker.",
+        updatedAt: stock.updatedAt
+      });
+    }
 
     return res.json({
-      ticker,
-      status: "ready",
-      ...data,
-      updatedAt: new Date()
+      ticker: stock.ticker,
+      status: stock.status,
+      ...stock.data,
+      error: stock.error,
+      updatedAt: stock.updatedAt
     });
 
   } catch (err) {
     console.error("Stock fetch failed:", err.message);
-
-    res.status(500).json({
-      error: "Stock fetch failed",
-      message: err.message
-    });
+    res.status(500).json({ error: "Stock fetch failed" });
   }
 });
 // =========================
