@@ -70,9 +70,21 @@ app.get("/api/stock/:ticker", async (req, res) => {
       `https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}&token=${process.env.FINNHUB_API_KEY}`
     );
 
-    const financialsRes = await axios.get(
-      `https://finnhub.io/api/v1/stock/financials?symbol=${ticker}&statement=ic&freq=annual&token=${process.env.FINNHUB_API_KEY}`
-    );
+let financials = [];
+
+try {
+  const financialsRes = await axios.get(
+    `https://finnhub.io/api/v1/stock/financials?symbol=${ticker}&statement=ic&freq=annual&token=${process.env.FINNHUB_API_KEY}`
+  );
+
+  financials = financialsRes.data?.financials || [];
+} catch (financialErr) {
+  console.error(
+    "Financials fetch failed:",
+    financialErr.response?.status,
+    financialErr.response?.data || financialErr.message
+  );
+}
 
     const quote = quoteRes.data;
     const profile = profileRes.data;
