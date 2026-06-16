@@ -145,7 +145,47 @@ async function updateStock(ticker) {
     } catch (err) {
       console.log("Price target skipped:", ticker);
     }
+let fmpCashFlow = [];
+let fmpPriceTarget = {};
+let fmpAnalystEstimates = [];
 
+try {
+  if (process.env.FMP_API_KEY) {
+    const cashFlowRes = await axios.get(
+      `https://financialmodelingprep.com/stable/cash-flow-statement?symbol=${ticker}&limit=1&apikey=${process.env.FMP_API_KEY}`
+    );
+
+    fmpCashFlow = cashFlowRes.data || [];
+  }
+} catch (err) {
+  console.log("FMP cash flow skipped:", ticker, err.message);
+}
+
+try {
+  if (process.env.FMP_API_KEY) {
+    const targetRes = await axios.get(
+      `https://financialmodelingprep.com/stable/price-target-consensus?symbol=${ticker}&apikey=${process.env.FMP_API_KEY}`
+    );
+
+    fmpPriceTarget = Array.isArray(targetRes.data)
+      ? targetRes.data[0] || {}
+      : targetRes.data || {};
+  }
+} catch (err) {
+  console.log("FMP price target skipped:", ticker, err.message);
+}
+
+try {
+  if (process.env.FMP_API_KEY) {
+    const estimatesRes = await axios.get(
+      `https://financialmodelingprep.com/stable/analyst-estimates?symbol=${ticker}&period=annual&limit=2&apikey=${process.env.FMP_API_KEY}`
+    );
+
+    fmpAnalystEstimates = estimatesRes.data || [];
+  }
+} catch (err) {
+  console.log("FMP analyst estimates skipped:", ticker, err.message);
+}
     let recommendation = [];
     try {
       await wait(300);
@@ -206,11 +246,25 @@ async function updateStock(ticker) {
     const epsEstimates = epsEstimate?.data || [];
     const revenueEstimates = revenueEstimate?.data || [];
 
-    const currentEps = epsEstimates[0]?.epsAvg ?? null;
-    const nextEps = epsEstimates[1]?.epsAvg ?? null;
+const currentEps =
+  epsEstimates[0]?.epsAvg ??
+  metrics.epsEstimateCurrentYear ??
+  metrics.epsInclExtraItemsAnnual ??
+  null;
 
-    const currentRevenue = revenueEstimates[0]?.revenueAvg ?? null;
-    const nextRevenue = revenueEstimates[1]?.revenueAvg ?? null;
+const nextEps =
+  epsEstimates[1]?.epsAvg ??
+  metrics.epsEstimateNextYear ??
+  null;
+
+const currentRevenue =
+  revenueEstimates[0]?.revenueAvg ??
+  metrics.revenuePerShareTTM ??
+  null;
+
+const nextRevenue =
+  revenueEstimates[1]?.revenueAvg ??
+  null;
 
     await Stock.findOneAndUpdate(
       { ticker },
@@ -245,26 +299,53 @@ async function updateStock(ticker) {
           operatingMargins: metrics.operatingMarginTTM ?? null,
           profitMargins: metrics.netProfitMarginTTM ?? null,
 
-          freeCashflow:
-            metrics.freeCashFlowTTM ??
-            metrics.freeCashFlowPerShareTTM ??
-            null,
+freeCashflow:
+  metrics.freeCashFlowTTM ??
+  metrics.fcfTTM ??
+  fmpCashFlow[0]?.freeCashFlow ??
+  null,
 
-          targetMean: priceTarget?.targetMean ?? null,
+targetMean:
+  priceTarget?.targetMean ??
+  metrics.ptMean ??
+  fmpPriceTarget?.targetConsensus ??
+  fmpPriceTarget?.targetMean ??
+  null,
           recommendationKey: rating,
 
-          analystEstimates: {
-            currentYear: {
-              revenue: currentRevenue,
-              earnings: null,
-              eps: currentEps
-            },
-            nextYear: {
-              revenue: nextRevenue,
-              earnings: null,
-              eps: nextEps
-            }
-          },
+analystEstimates: {
+  currentYear: {
+revenue:
+  fmpAnalystEstimates[0]?.revenueAvg ??
+  currentRevenue ??
+  null,
+
+    earnings:
+      fmpAnalystEstimates[0]?.netIncomeAvg ??
+      null,
+
+    eps:
+      currentEps ??
+      fmpAnalystEstimates[0]?.epsAvg ??
+      null,
+  },
+
+  nextYear: {
+revenue:
+  fmpAnalystEstimates[1]?.revenueAvg ??
+  nextRevenue ??
+  null,
+
+    earnings:
+      fmpAnalystEstimates[1]?.netIncomeAvg ??
+      null,
+
+    eps:
+      nextEps ??
+      fmpAnalystEstimates[1]?.epsAvg ??
+      null,
+  },
+},
 
           revenueData
         },
