@@ -88,7 +88,7 @@ try {
 
     const quote = quoteRes.data;
     const profile = profileRes.data;
-    const financials = financialsRes.data?.financials || [];
+    
 
     const revenueData = financials
       .map((item) => ({
