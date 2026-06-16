@@ -14,6 +14,7 @@ const Stock = require("./models/Stock");
 const User = require("./models/User");
 
 const app = express();
+const activeStockFetches = new Set();
 
 // =========================
 // BASIC SETUP
@@ -135,7 +136,9 @@ async function fetchStockData(ticker) {
     high: quote.h,
     low: quote.l,
     open: quote.o,
-    marketCap: profile.marketCapitalization || null,
+    marketCap: profile.marketCapitalization
+      ? profile.marketCapitalization * 1000000
+      : null,
     revenueData
   };
 
@@ -151,6 +154,34 @@ async function fetchStockData(ticker) {
   );
 
   return data;
+}
+
+async function markStockFetchFailed(ticker, error) {
+  await Stock.findOneAndUpdate(
+    { ticker },
+    {
+      ticker,
+      status: "failed",
+      error: error.message || "Stock data fetch failed",
+      updatedAt: new Date()
+    },
+    { upsert: true }
+  );
+}
+
+function startStockFetch(ticker) {
+  if (activeStockFetches.has(ticker)) return;
+
+  activeStockFetches.add(ticker);
+
+  fetchStockData(ticker)
+    .catch(async (err) => {
+      console.error(`Stock fetch failed for ${ticker}:`, err.message);
+      await markStockFetchFailed(ticker, err);
+    })
+    .finally(() => {
+      activeStockFetches.delete(ticker);
+    });
 }
 
 // =========================
@@ -183,6 +214,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
         }
       );
 
+      startStockFetch(ticker);
+
       return res.status(202).json({
         ticker,
         status: "pending",
@@ -191,6 +224,23 @@ app.get("/api/stock/:ticker", async (req, res) => {
     }
 
     if (stock.status === "pending") {
+      const updatedAt = stock.updatedAt ? new Date(stock.updatedAt) : null;
+      const isStale =
+        !updatedAt || Date.now() - updatedAt.getTime() > 2 * 60 * 1000;
+
+      if (isStale) {
+        await Stock.findOneAndUpdate(
+          { ticker },
+          {
+            status: "pending",
+            error: null,
+            updatedAt: new Date()
+          }
+        );
+
+        startStockFetch(ticker);
+      }
+
       return res.status(202).json({
         ticker: stock.ticker,
         status: "pending",
