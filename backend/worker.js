@@ -38,7 +38,11 @@ async function updateStock(ticker) {
 
     const quote = quoteRes.data;
     const profile = profileRes.data;
+const metricRes = await axios.get(
+  `https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=all&token=${process.env.FINNHUB_API_KEY}`
+);
 
+const metrics = metricRes.data?.metric || {};
     let revenueData = [];
 
     try {
@@ -111,19 +115,53 @@ const revenue = findValue([
       {
         ticker,
         status: "ready",
-        data: {
-          name: profile.name || ticker,
-          symbol: ticker,
-          price: quote.c,
-          change: quote.d,
-          percentChange: quote.dp,
-          previousClose: quote.pc,
-          high: quote.h,
-          low: quote.l,
-          open: quote.o,
-          marketCap: profile.marketCapitalization || null,
-          revenueData: revenueData,
-        },
+data: {
+  name: profile.name || ticker,
+  symbol: ticker,
+
+  price: quote.c,
+  change: quote.d,
+  percentChange: quote.dp,
+  previousClose: quote.pc,
+  high: quote.h,
+  low: quote.l,
+  open: quote.o,
+
+  marketCap: profile.marketCapitalization || null,
+  sharesOutstanding: profile.shareOutstanding || null,
+
+  pe: metrics.peNormalizedAnnual || metrics.peTTM || null,
+  forwardPE: metrics.forwardPE || null,
+
+  revenueGrowth: metrics.revenueGrowthTTMYoy || null,
+  earningsGrowth: metrics.epsGrowthTTMYoy || null,
+
+  grossMargins: metrics.grossMarginTTM || null,
+  operatingMargins: metrics.operatingMarginTTM || null,
+  profitMargins: metrics.netProfitMarginTTM || null,
+
+  freeCashflow: metrics.freeCashFlowPerShareTTM || null,
+
+  targetMean: metrics.ptMean || null,
+  recommendationKey: metrics.recommendationMean
+    ? String(metrics.recommendationMean)
+    : "N/A",
+
+  analystEstimates: {
+    currentYear: {
+      revenue: null,
+      earnings: null,
+      eps: metrics.epsInclExtraItemsAnnual || null,
+    },
+    nextYear: {
+      revenue: null,
+      earnings: null,
+      eps: metrics.epsEstimateNextYear || null,
+    },
+  },
+
+  revenueData: revenueData,
+},
         updatedAt: new Date(),
       },
       { upsert: true }
