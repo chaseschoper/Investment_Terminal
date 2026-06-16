@@ -70,35 +70,55 @@ app.get("/api/stock/:ticker", async (req, res) => {
       `https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}&token=${process.env.FINNHUB_API_KEY}`
     );
 
-let financials = [];
 
-try {
-  const financialsRes = await axios.get(
-    `https://finnhub.io/api/v1/stock/financials?symbol=${ticker}&statement=ic&freq=annual&token=${process.env.FINNHUB_API_KEY}`
-  );
-
-  financials = financialsRes.data?.financials || [];
-} catch (financialErr) {
-  console.error(
-    "Financials fetch failed:",
-    financialErr.response?.status,
-    financialErr.response?.data || financialErr.message
-  );
-}
 
     const quote = quoteRes.data;
     const profile = profileRes.data;
     
+let revenueData = [];
 
-    const revenueData = financials
-      .map((item) => ({
-        year: item.year,
-        revenue: item.revenue ? Number((item.revenue / 1e9).toFixed(2)) : 0,
-        earnings: item.netIncome ? Number((item.netIncome / 1e9).toFixed(2)) : 0,
-        eps: item.epsBasic || item.epsDiluted || 0,
-      }))
-      .filter((item) => item.year)
-      .sort((a, b) => a.year - b.year);
+try {
+  const metricRes = await axios.get(
+    `https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=all&token=${process.env.FINNHUB_API_KEY}`
+  );
+
+  const annual = metricRes.data?.series?.annual || {};
+
+  const revenues = annual.revenue || [];
+  const netIncome = annual.netIncome || [];
+  const eps = annual.eps || [];
+
+  revenueData = revenues
+    .map((item) => {
+      const year = new Date(item.period).getFullYear();
+
+      const incomeItem = netIncome.find(
+        (x) => new Date(x.period).getFullYear() === year
+      );
+
+      const epsItem = eps.find(
+        (x) => new Date(x.period).getFullYear() === year
+      );
+
+      return {
+        year,
+        revenue: item.v ? Number((item.v / 1e9).toFixed(2)) : 0,
+        earnings: incomeItem?.v
+          ? Number((incomeItem.v / 1e9).toFixed(2))
+          : 0,
+        eps: epsItem?.v || 0,
+      };
+    })
+    .filter((item) => item.year)
+    .sort((a, b) => a.year - b.year);
+} catch (metricErr) {
+  console.error(
+    "Metric fetch failed:",
+    metricErr.response?.status,
+    metricErr.response?.data || metricErr.message
+  );
+}
+
 
     res.json({
       symbol: ticker,
