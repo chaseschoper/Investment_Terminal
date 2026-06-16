@@ -634,7 +634,7 @@ return (
         <strong>{stockData.name}</strong>
         {" "}currently trades at{" "}
         <strong>
-          ${stock.price?.toFixed(2)}
+          {formatPrice(stockData.price)}
         </strong>
         .
       </p>
