@@ -5,6 +5,7 @@ const axios = require("axios");
 const yahooFinance = require("yahoo-finance2").default;
 
 const Stock = require("./models/Stock");
+const FINANCIAL_HISTORY_VERSION = 2;
 
 mongoose
   .connect(process.env.MONGO_URI)
@@ -441,9 +442,9 @@ try {
 
 const revenueData = finalizeFinancialHistory(
   mergeHistoricalFinancials(
-    fmpIncomeStatementData,
+    yahooFinancialData,
     mergeHistoricalFinancials(
-      yahooFinancialData,
+      fmpIncomeStatementData,
       mergeHistoricalFinancials(finnhubReportedData, finnhubMetricData)
     )
   ),
@@ -635,6 +636,7 @@ revenue:
       null,
   },
 },
+          financialHistoryVersion: FINANCIAL_HISTORY_VERSION,
 
           revenueData
         },

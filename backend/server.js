@@ -16,6 +16,7 @@ const User = require("./models/User");
 
 const app = express();
 const activeStockFetches = new Set();
+const FINANCIAL_HISTORY_VERSION = 2;
 
 // =========================
 // BASIC SETUP
@@ -175,6 +176,13 @@ function hasCompleteChartHistory(stock) {
     hasChartHistory(stock, "revenue") &&
     hasChartHistory(stock, "earnings") &&
     hasChartHistory(stock, "eps")
+  );
+}
+
+function needsFinancialHistoryRefresh(stock) {
+  return (
+    stock?.data?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
+    !hasCompleteChartHistory(stock)
   );
 }
 
@@ -484,9 +492,9 @@ async function fetchStockData(ticker) {
 
   const revenueData = finalizeFinancialHistory(
     mergeHistoricalFinancials(
-      fmpIncomeStatementData,
+      yahooFinancialData,
       mergeHistoricalFinancials(
-        yahooFinancialData,
+        fmpIncomeStatementData,
         mergeHistoricalFinancials(finnhubReportedData, finnhubMetricData)
       )
     ),
@@ -632,6 +640,7 @@ async function fetchStockData(ticker) {
         eps: nextEps ?? fmpAnalystEstimates[1]?.epsAvg ?? null
       }
     },
+    financialHistoryVersion: FINANCIAL_HISTORY_VERSION,
     revenueData
   };
 
@@ -742,10 +751,14 @@ app.get("/api/stock/:ticker", async (req, res) => {
       });
     }
 
-    if (stock.status === "ready" && !hasCompleteChartHistory(stock)) {
+    if (stock.status === "ready" && needsFinancialHistoryRefresh(stock)) {
       const updatedAt = stock.updatedAt ? new Date(stock.updatedAt) : null;
+      const isOutdated =
+        stock.data?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION;
       const isStale =
-        !updatedAt || Date.now() - updatedAt.getTime() > 10 * 60 * 1000;
+        isOutdated ||
+        !updatedAt ||
+        Date.now() - updatedAt.getTime() > 10 * 60 * 1000;
 
       if (isStale) {
         await Stock.findOneAndUpdate(
