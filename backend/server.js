@@ -70,15 +70,23 @@ app.get("/api/stock/:ticker", async (req, res) => {
       `https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}&token=${process.env.FINNHUB_API_KEY}`
     );
 
+    const financialsRes = await axios.get(
+      `https://finnhub.io/api/v1/stock/financials?symbol=${ticker}&statement=ic&freq=annual&token=${process.env.FINNHUB_API_KEY}`
+    );
+
     const quote = quoteRes.data;
     const profile = profileRes.data;
+    const financials = financialsRes.data?.financials || [];
 
-    if (!quote || !quote.c) {
-      return res.status(404).json({
-        error: "No live price found",
-        symbol: ticker,
-      });
-    }
+    const revenueData = financials
+      .map((item) => ({
+        year: item.year,
+        revenue: item.revenue ? Number((item.revenue / 1e9).toFixed(2)) : 0,
+        earnings: item.netIncome ? Number((item.netIncome / 1e9).toFixed(2)) : 0,
+        eps: item.epsBasic || item.epsDiluted || 0,
+      }))
+      .filter((item) => item.year)
+      .sort((a, b) => a.year - b.year);
 
     res.json({
       symbol: ticker,
@@ -90,9 +98,16 @@ app.get("/api/stock/:ticker", async (req, res) => {
       low: quote.l,
       open: quote.o,
       previousClose: quote.pc,
+
       marketCap: profile.marketCapitalization
         ? profile.marketCapitalization * 1000000
         : null,
+
+      sharesOutstanding: profile.shareOutstanding
+        ? profile.shareOutstanding * 1000000
+        : null,
+
+      revenueData,
 
       pe: null,
       forwardPE: null,
@@ -104,10 +119,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       freeCashflow: 0,
       targetMean: null,
       recommendationKey: "hold",
-      sharesOutstanding: profile.shareOutstanding
-        ? profile.shareOutstanding * 1000000
-        : null,
-      revenueData: [],
+
       analystEstimates: {
         currentYear: {},
         nextYear: {},
