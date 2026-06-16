@@ -2,6 +2,7 @@ require("dotenv").config();
 
 const mongoose = require("mongoose");
 const axios = require("axios");
+const yahooFinance = require("yahoo-finance2").default;
 
 const Stock = require("./models/Stock");
 
@@ -46,6 +47,34 @@ const toBillions = (value) => {
   return number === null ? null : number / 1000000000;
 };
 
+const unwrapFinancialValue = (value) => {
+  if (value && typeof value === "object" && "raw" in value) {
+    return toNumberOrNull(value.raw);
+  }
+
+  return toNumberOrNull(value);
+};
+
+const getStatementYear = (value) => {
+  if (!value) return null;
+
+  if (value instanceof Date) {
+    return value.getFullYear();
+  }
+
+  if (value && typeof value === "object") {
+    return getStatementYear(value.raw || value.fmt);
+  }
+
+  if (typeof value === "number") {
+    const date = new Date(value * 1000);
+    return Number.isNaN(date.getTime()) ? null : date.getFullYear();
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? Number(value) || null : date.getFullYear();
+};
+
 function mergeHistoricalFinancials(primary, fallback) {
   const rowsByYear = new Map();
 
@@ -73,6 +102,63 @@ function mergeHistoricalFinancials(primary, fallback) {
     .slice(-6);
 }
 
+function fillEstimatedEps(rows, sharesOutstanding) {
+  const shares = toNumberOrNull(sharesOutstanding);
+  if (!shares) return rows;
+
+  return rows.map((row) => ({
+    ...row,
+    eps:
+      row.eps ??
+      (row.earnings !== null && row.earnings !== undefined
+        ? (row.earnings * 1000) / shares
+        : null)
+  }));
+}
+
+async function fetchYahooFinancialHistory(ticker) {
+  try {
+    const summary = await yahooFinance.quoteSummary(ticker, {
+      modules: ["incomeStatementHistory", "earnings"]
+    });
+
+    const incomeRows =
+      summary?.incomeStatementHistory?.incomeStatementHistory || [];
+
+    const incomeHistory = incomeRows
+      .map((row) => ({
+        year: getStatementYear(row.endDate),
+        revenue: toBillions(unwrapFinancialValue(row.totalRevenue)),
+        earnings: toBillions(unwrapFinancialValue(row.netIncome)),
+        eps: toNumberOrNull(
+          unwrapFinancialValue(row.dilutedEPS) ??
+            unwrapFinancialValue(row.basicEPS)
+        ),
+        source: "Yahoo income statement"
+      }))
+      .filter((row) => row.year)
+      .sort((a, b) => a.year - b.year);
+
+    const earningsRows = summary?.earnings?.financialsChart?.yearly || [];
+
+    const earningsHistory = earningsRows
+      .map((row) => ({
+        year: getStatementYear(row.date),
+        revenue: toBillions(unwrapFinancialValue(row.revenue)),
+        earnings: toBillions(unwrapFinancialValue(row.earnings)),
+        eps: null,
+        source: "Yahoo earnings"
+      }))
+      .filter((row) => row.year)
+      .sort((a, b) => a.year - b.year);
+
+    return mergeHistoricalFinancials(incomeHistory, earningsHistory);
+  } catch (err) {
+    console.log("Yahoo financial history skipped:", ticker, err.message);
+    return [];
+  }
+}
+
 async function updateStock(ticker) {
   try {
     console.log("Updating:", ticker);
@@ -94,6 +180,7 @@ async function updateStock(ticker) {
     );
 
     const metrics = metricData?.metric || {};
+    const sharesOutstanding = profile.shareOutstanding || null;
 
     let finnhubReportedData = [];
     let finnhubMetricData = [];
@@ -115,14 +202,22 @@ async function updateStock(ticker) {
           const revenue = findFinancialValue(ic, [
             "us-gaap_Revenues",
             "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+            "us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax",
             "us-gaap_SalesRevenueNet",
             "us-gaap_SalesRevenueGoodsNet",
+            "us-gaap_RevenuesNetOfInterestExpense",
+            "us-gaap_TotalRevenuesAndOtherIncome",
+            "us-gaap_InterestAndDividendIncomeOperating",
+            "us-gaap_NoninterestIncome",
+            "us-gaap_PremiumsEarnedNet",
+            "us-gaap_RealEstateRevenueNet",
             "ifrs-full_Revenue"
           ]);
 
           const earnings = findFinancialValue(ic, [
             "us-gaap_NetIncomeLoss",
             "us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic",
+            "us-gaap_NetIncomeLossAvailableToCommonStockholdersDiluted",
             "us-gaap_ProfitLoss",
             "ifrs-full_ProfitLoss"
           ]);
@@ -190,6 +285,7 @@ let fmpCashFlow = [];
 let fmpPriceTarget = {};
 let fmpAnalystEstimates = [];
 let fmpIncomeStatementData = [];
+const yahooFinancialData = await fetchYahooFinancialHistory(ticker);
 
 try {
   if (process.env.FMP_API_KEY) {
@@ -206,7 +302,7 @@ try {
         year: Number(row.calendarYear || String(row.date || "").slice(0, 4)),
         revenue: toBillions(row.revenue),
         earnings: toBillions(row.netIncome),
-        eps: toNumberOrNull(row.epsdiluted ?? row.eps),
+        eps: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
         source: "FMP income statement"
       }))
       .filter((row) => row.year)
@@ -222,9 +318,15 @@ try {
   console.log("FMP cash flow skipped:", ticker, err.message);
 }
 
-const revenueData = mergeHistoricalFinancials(
-  fmpIncomeStatementData,
-  mergeHistoricalFinancials(finnhubReportedData, finnhubMetricData)
+const revenueData = fillEstimatedEps(
+  mergeHistoricalFinancials(
+    fmpIncomeStatementData,
+    mergeHistoricalFinancials(
+      yahooFinancialData,
+      mergeHistoricalFinancials(finnhubReportedData, finnhubMetricData)
+    )
+  ),
+  sharesOutstanding
 );
 
 try {
@@ -353,7 +455,7 @@ const nextRevenue =
             ? profile.marketCapitalization * 1000000
             : null,
 
-          sharesOutstanding: profile.shareOutstanding || null,
+          sharesOutstanding,
 
           pe: metrics.peNormalizedAnnual ?? metrics.peTTM ?? null,
           forwardPE: metrics.forwardPE ?? null,
