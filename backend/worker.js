@@ -36,6 +36,43 @@ function findFinancialValue(items, concepts) {
   return row?.value ?? null;
 }
 
+const toNumberOrNull = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
+const toBillions = (value) => {
+  const number = toNumberOrNull(value);
+  return number === null ? null : number / 1000000000;
+};
+
+function mergeHistoricalFinancials(primary, fallback) {
+  const rowsByYear = new Map();
+
+  [...fallback, ...primary].forEach((row) => {
+    if (!row?.year) return;
+
+    const existing = rowsByYear.get(row.year) || { year: row.year };
+
+    rowsByYear.set(row.year, {
+      year: row.year,
+      revenue: row.revenue ?? existing.revenue ?? null,
+      earnings: row.earnings ?? existing.earnings ?? null,
+      eps: row.eps ?? existing.eps ?? null,
+      source: row.source || existing.source
+    });
+  });
+
+  return [...rowsByYear.values()]
+    .filter((row) =>
+      row.revenue !== null ||
+      row.earnings !== null ||
+      row.eps !== null
+    )
+    .sort((a, b) => a.year - b.year)
+    .slice(-6);
+}
+
 async function updateStock(ticker) {
   try {
     console.log("Updating:", ticker);
@@ -58,7 +95,8 @@ async function updateStock(ticker) {
 
     const metrics = metricData?.metric || {};
 
-    let revenueData = [];
+    let finnhubReportedData = [];
+    let finnhubMetricData = [];
 
     try {
       await wait(300);
@@ -69,7 +107,7 @@ async function updateStock(ticker) {
 
       const reports = financials?.data || [];
 
-      revenueData = reports
+      finnhubReportedData = reports
         .slice(0, 5)
         .map((report) => {
           const ic = report.report?.ic || [];
@@ -84,19 +122,23 @@ async function updateStock(ticker) {
 
           const earnings = findFinancialValue(ic, [
             "us-gaap_NetIncomeLoss",
+            "us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic",
+            "us-gaap_ProfitLoss",
             "ifrs-full_ProfitLoss"
           ]);
 
           const eps = findFinancialValue(ic, [
             "us-gaap_EarningsPerShareDiluted",
-            "us-gaap_EarningsPerShareBasic"
+            "us-gaap_EarningsPerShareBasic",
+            "us-gaap_EarningsPerShareBasicAndDiluted"
           ]);
 
           return {
             year: report.year,
             revenue: revenue ? revenue / 1000000000 : null,
             earnings: earnings ? earnings / 1000000000 : null,
-            eps: eps ?? null
+            eps: eps ?? null,
+            source: "Finnhub filings"
           };
         })
         .filter((item) => item.year)
@@ -105,36 +147,35 @@ async function updateStock(ticker) {
       console.log("Financials reported skipped:", ticker, err.message);
     }
 
-    if (!revenueData.length) {
-      const annual = metricData?.series?.annual || {};
+    const annual = metricData?.series?.annual || {};
 
-      const revenues = annual.revenue || [];
-      const netIncome = annual.netIncome || [];
-      const eps = annual.eps || [];
+    const revenues = annual.revenue || [];
+    const netIncome = annual.netIncome || [];
+    const eps = annual.eps || [];
 
-      revenueData = revenues
-        .slice(0, 5)
-        .map((item) => {
-          const year = new Date(item.period).getFullYear();
+    finnhubMetricData = revenues
+      .slice(0, 6)
+      .map((item) => {
+        const year = new Date(item.period).getFullYear();
 
-          const incomeItem = netIncome.find(
-            (x) => new Date(x.period).getFullYear() === year
-          );
+        const incomeItem = netIncome.find(
+          (x) => new Date(x.period).getFullYear() === year
+        );
 
-          const epsItem = eps.find(
-            (x) => new Date(x.period).getFullYear() === year
-          );
+        const epsItem = eps.find(
+          (x) => new Date(x.period).getFullYear() === year
+        );
 
-          return {
-            year,
-            revenue: item.v ? item.v / 1000000000 : null,
-            earnings: incomeItem?.v ? incomeItem.v / 1000000000 : null,
-            eps: epsItem?.v ?? null
-          };
-        })
-        .filter((item) => item.year)
-        .sort((a, b) => a.year - b.year);
-    }
+        return {
+          year,
+          revenue: toBillions(item.v),
+          earnings: toBillions(incomeItem?.v),
+          eps: toNumberOrNull(epsItem?.v),
+          source: "Finnhub metrics"
+        };
+      })
+      .filter((item) => item.year)
+      .sort((a, b) => a.year - b.year);
 
     let priceTarget = {};
     try {
@@ -148,9 +189,29 @@ async function updateStock(ticker) {
 let fmpCashFlow = [];
 let fmpPriceTarget = {};
 let fmpAnalystEstimates = [];
+let fmpIncomeStatementData = [];
 
 try {
   if (process.env.FMP_API_KEY) {
+    const incomeRes = await axios.get(
+      `https://financialmodelingprep.com/stable/income-statement?symbol=${ticker}&period=annual&limit=6&apikey=${process.env.FMP_API_KEY}`
+    );
+
+    const incomeRows = Array.isArray(incomeRes.data)
+      ? incomeRes.data
+      : [];
+
+    fmpIncomeStatementData = incomeRows
+      .map((row) => ({
+        year: Number(row.calendarYear || String(row.date || "").slice(0, 4)),
+        revenue: toBillions(row.revenue),
+        earnings: toBillions(row.netIncome),
+        eps: toNumberOrNull(row.epsdiluted ?? row.eps),
+        source: "FMP income statement"
+      }))
+      .filter((row) => row.year)
+      .sort((a, b) => a.year - b.year);
+
     const cashFlowRes = await axios.get(
       `https://financialmodelingprep.com/stable/cash-flow-statement?symbol=${ticker}&limit=1&apikey=${process.env.FMP_API_KEY}`
     );
@@ -160,6 +221,11 @@ try {
 } catch (err) {
   console.log("FMP cash flow skipped:", ticker, err.message);
 }
+
+const revenueData = mergeHistoricalFinancials(
+  fmpIncomeStatementData,
+  mergeHistoricalFinancials(finnhubReportedData, finnhubMetricData)
+);
 
 try {
   if (process.env.FMP_API_KEY) {

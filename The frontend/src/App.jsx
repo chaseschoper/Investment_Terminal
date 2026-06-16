@@ -40,6 +40,12 @@ const formatPlain = (value) =>
 
 const formatPrice = (value) =>
   isNumber(value) ? `$${value.toFixed(2)}` : "N/A";
+
+const formatChartBillions = (value) =>
+  isNumber(value) ? `$${value.toFixed(1)}B` : "N/A";
+
+const formatChartEps = (value) =>
+  isNumber(value) ? `$${value.toFixed(2)}` : "N/A";
 import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
@@ -483,12 +489,22 @@ if (!stockData) {
   };
 }
 
-const hasRevenueData =
-  stockData?.revenueData?.some(
-    (item) =>
-      item.revenue !== null ||
-      item.earnings !== null ||
-      item.eps !== null
+const financialHistory =
+  stockData?.revenueData || [];
+
+const revenueHistory =
+  financialHistory.filter((item) =>
+    isNumber(item.revenue)
+  );
+
+const earningsHistory =
+  financialHistory.filter((item) =>
+    isNumber(item.earnings)
+  );
+
+const epsHistory =
+  financialHistory.filter((item) =>
+    isNumber(item.eps)
   );
 
 
@@ -1035,7 +1051,7 @@ return (
 
 <div className="chart-box">
 
-{hasRevenueData ? (
+{revenueHistory.length ? (
 
 <ResponsiveContainer
   width="100%"
@@ -1043,7 +1059,7 @@ return (
 >
 
       <BarChart
-        data={stockData?.revenueData || []}
+        data={revenueHistory}
       >
 
         <CartesianGrid
@@ -1054,13 +1070,13 @@ return (
 
         <YAxis
   tickFormatter={(value) =>
-    `$${value}B`
+    formatChartBillions(value)
   }
 />
 
         <Tooltip
   formatter={(value) => [
-    `$${value}B`,
+    formatChartBillions(value),
     "Revenue"
   ]}
 />
@@ -1101,7 +1117,7 @@ return (
 
   <div className="chart-box">
 
-    {hasRevenueData ? (
+    {earningsHistory.length ? (
 
       <ResponsiveContainer
         width="100%"
@@ -1109,18 +1125,22 @@ return (
       >
 
         <LineChart
-          data={stockData?.revenueData || []}
+          data={earningsHistory}
         >
 
           <CartesianGrid stroke="#1f2937" />
 
           <XAxis dataKey="year" />
 
-          <YAxis />
+          <YAxis
+            tickFormatter={(value) =>
+              formatChartBillions(value)
+            }
+          />
 
           <Tooltip
             formatter={(value) => [
-              `$${value}B`,
+              formatChartBillions(value),
               "Net Income"
             ]}
           />
@@ -1130,6 +1150,8 @@ return (
             dataKey="earnings"
             stroke="#22c55e"
             strokeWidth={4}
+            dot={{ r: 4 }}
+            activeDot={{ r: 6 }}
           />
 
         </LineChart>
@@ -1163,7 +1185,7 @@ return (
 
   <div className="chart-box">
 
-    {hasRevenueData ? (
+    {epsHistory.length ? (
 
       <ResponsiveContainer
         width="100%"
@@ -1171,18 +1193,22 @@ return (
       >
 
         <LineChart
-          data={stockData?.revenueData || []}
+          data={epsHistory}
         >
 
           <CartesianGrid stroke="#1f2937" />
 
           <XAxis dataKey="year" />
 
-          <YAxis />
+          <YAxis
+            tickFormatter={(value) =>
+              formatChartEps(value)
+            }
+          />
 
           <Tooltip
             formatter={(value) => [
-              `$${value}`,
+              formatChartEps(value),
               "EPS"
             ]}
           />
@@ -1192,6 +1218,8 @@ return (
             dataKey="eps"
             stroke="#f59e0b"
             strokeWidth={4}
+            dot={{ r: 4 }}
+            activeDot={{ r: 6 }}
           />
 
         </LineChart>
