@@ -16,7 +16,7 @@ const User = require("./models/User");
 
 const app = express();
 const activeStockFetches = new Set();
-const FINANCIAL_HISTORY_VERSION = 2;
+const FINANCIAL_HISTORY_VERSION = 3;
 
 // =========================
 // BASIC SETUP
@@ -274,7 +274,13 @@ async function fetchYahooTimeSeriesFinancials(ticker) {
 }
 
 async function fetchYahooFinancialHistory(ticker) {
+  const timeSeriesHistory = await fetchYahooTimeSeriesFinancials(ticker);
+
   try {
+    if (hasCompleteChartHistory({ data: { revenueData: timeSeriesHistory } })) {
+      return timeSeriesHistory;
+    }
+
     const summary = await yahooFinance.quoteSummary(ticker, {
       modules: ["incomeStatementHistory", "earnings"]
     });
@@ -309,15 +315,13 @@ async function fetchYahooFinancialHistory(ticker) {
       .filter((row) => row.year)
       .sort((a, b) => a.year - b.year);
 
-    const timeSeriesHistory = await fetchYahooTimeSeriesFinancials(ticker);
-
     return mergeHistoricalFinancials(
       timeSeriesHistory,
       mergeHistoricalFinancials(incomeHistory, earningsHistory)
     );
   } catch (err) {
     console.log("Yahoo financial history skipped:", ticker, err.message);
-    return fetchYahooTimeSeriesFinancials(ticker);
+    return timeSeriesHistory;
   }
 }
 
@@ -367,9 +371,14 @@ async function fetchStockData(ticker) {
 
   await wait(300);
 
-  const metricData = await getFinnhub(
-    `https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=all`
-  );
+  let metricData = {};
+  try {
+    metricData = await getFinnhub(
+      `https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=all`
+    );
+  } catch (err) {
+    console.log("Finnhub metrics skipped:", ticker, err.message);
+  }
 
   const metrics = metricData?.metric || {};
   const sharesOutstanding = profile.shareOutstanding || null;
