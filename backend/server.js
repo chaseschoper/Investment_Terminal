@@ -62,46 +62,35 @@ app.get("/api/stock/:ticker", async (req, res) => {
   try {
     const ticker = req.params.ticker.toUpperCase();
 
-    // CHECK DATABASE
     let stock = await Stock.findOne({ ticker });
 
-    // IF STOCK EXISTS -> RETURN FAST
-    if (stock) {
+    if (stock && stock.data?.price) {
       return res.json({
-        success: true,
-        source: "database",
         ticker: stock.ticker,
         ...stock.data,
-        updatedAt: stock.updatedAt
+        updatedAt: stock.updatedAt,
       });
     }
 
-    // IF NOT FOUND -> CREATE PLACEHOLDER
     await Stock.findOneAndUpdate(
       { ticker },
       {
         ticker,
         status: "pending",
-        updatedAt: new Date()
+        updatedAt: new Date(),
       },
       { upsert: true }
     );
 
     return res.status(202).json({
-      success: false,
       status: "loading",
-      message: "Stock is being fetched"
+      message: `${ticker} is being fetched. Try again in a few seconds.`,
     });
-
   } catch (err) {
     console.error(err);
-
-    res.status(500).json({
-      error: "Stock fetch failed"
-    });
+    res.status(500).json({ error: "Stock fetch failed" });
   }
 });
-
 
 
 // =========================
