@@ -54,55 +54,35 @@ return res.status(401).json({ error: "Invalid token" });
 }
 };
 
-
 // =========================
-// STOCK ROUTE
+// STOCK ROUTE (FAST - DB ONLY)
 // =========================
 app.get("/api/stock/:ticker", async (req, res) => {
-  try {
-    const ticker = req.params.ticker.toUpperCase();
+try {
+const ticker = req.params.ticker.toUpperCase();
 
-    // CHECK DATABASE
-    let stock = await Stock.findOne({ ticker });
 
-    // IF STOCK EXISTS -> RETURN FAST
-    if (stock) {
-      return res.json({
-        success: true,
-        source: "database",
-        ticker: stock.ticker,
-        ...stock.data,
-        updatedAt: stock.updatedAt
-      });
-    }
+const stock = await Stock.findOne({ ticker });
 
-    // IF NOT FOUND -> CREATE PLACEHOLDER
-    await Stock.findOneAndUpdate(
-      { ticker },
-      {
-        ticker,
-        status: "pending",
-        updatedAt: new Date()
-      },
-      { upsert: true }
-    );
+if (!stock) {
+  return res.status(202).json({
+    status: "loading",
+    message: "No data yet. Worker is updating database."
+  });
+}
 
-    return res.status(202).json({
-      success: false,
-      status: "loading",
-      message: "Stock is being fetched"
-    });
-
-  } catch (err) {
-    console.error(err);
-
-    res.status(500).json({
-      error: "Stock fetch failed"
-    });
-  }
+res.json({
+  ticker: stock.ticker,
+  ...stock.data,
+  updatedAt: stock.updatedAt
 });
 
 
+} catch (err) {
+console.error(err);
+res.status(500).json({ error: "Stock fetch failed" });
+}
+});
 
 // =========================
 // AI ANALYSIS (DB ONLY)
