@@ -150,7 +150,7 @@ const revenue = findValue([
 
 async function run() {
   try {
-    const dbStocks = await Stock.find({}).limit(500);
+    const dbStocks = await Stock.find({}).limit(1000);
 
     const dbTickers = dbStocks
       .map((stock) => stock.ticker)
@@ -159,9 +159,11 @@ async function run() {
     const allTickers = [
       ...new Set([
         ...STARTER_STOCKS,
-        ...dbTickers,
-      ]),
+        ...dbTickers
+      ])
     ];
+
+    console.log("Tickers to update:", allTickers);
 
     for (const ticker of allTickers) {
       await updateStock(ticker);

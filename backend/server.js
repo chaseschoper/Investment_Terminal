@@ -60,7 +60,7 @@ return res.status(401).json({ error: "Invalid token" });
 // =========================
 app.get("/api/stock/:ticker", async (req, res) => {
   try {
-    const ticker = req.params.ticker.toUpperCase();
+    const ticker = req.params.ticker.trim().toUpperCase();
 
     let stock = await Stock.findOne({ ticker });
 
@@ -70,21 +70,24 @@ app.get("/api/stock/:ticker", async (req, res) => {
         {
           ticker,
           status: "pending",
+          data: {},
           updatedAt: new Date()
         },
         { upsert: true }
       );
 
       return res.status(202).json({
-        status: "loading",
-        message: `${ticker} is being fetched. Try again in a few seconds.`
+        ticker,
+        status: "pending",
+        message: `${ticker} is being fetched. Refresh in a few seconds.`
       });
     }
 
-    res.json({
+    return res.json({
       ticker: stock.ticker,
       status: stock.status,
       ...stock.data,
+      error: stock.error,
       updatedAt: stock.updatedAt
     });
 
