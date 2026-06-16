@@ -143,8 +143,14 @@ const [user, setUser] =
   const [ticker, setTicker] =
   useState("NVDA");
 
-  const [stockData, setStockData] =
+  const [searchInput, setSearchInput] =
+    useState("NVDA");
+
+  let [stockData, setStockData] =
     useState(null);
+
+  const [isStockLoading, setIsStockLoading] =
+    useState(false);
 
    const [watchlist, setWatchlist] =
   useState([]);
@@ -213,6 +219,23 @@ useEffect(() => {
 
   }, [ticker]);
 
+  useEffect(() => {
+    const symbol =
+      searchInput.trim().toUpperCase();
+
+    if (!symbol || symbol === ticker) {
+      return;
+    }
+
+    const timeout =
+      setTimeout(() => {
+        setTicker(symbol);
+      }, 700);
+
+    return () =>
+      clearTimeout(timeout);
+  }, [searchInput, ticker]);
+
   /*
     LOAD EARNINGS ON START
   */
@@ -252,6 +275,7 @@ useEffect(() => {
     try {
       if (attempt === 0) {
         latestStockRequest.current = requestId;
+        setIsStockLoading(true);
       }
 
       const response =
@@ -264,10 +288,12 @@ console.log(response.data);
       }
 
       if (
-        response.data.status === "pending" &&
-        attempt < 12
+        response.data.status === "pending"
       ) {
-        setStockData(null);
+        if (attempt >= 12) {
+          setIsStockLoading(false);
+          return;
+        }
 
         setTimeout(
           () =>
@@ -283,6 +309,7 @@ console.log(response.data);
       }
 
       setStockData(response.data);
+      setIsStockLoading(false);
 
       setPortfolioPrices((prev) => ({
         ...prev,
@@ -292,6 +319,7 @@ console.log(response.data);
     } catch (error) {
 
       console.error(error);
+      setIsStockLoading(false);
 
     }
   };
@@ -446,18 +474,13 @@ const loadUserData = async () => {
   };
 
 if (!stockData) {
-
-  return (
-    <div
-      style={{
-        color: "white",
-        padding: "40px",
-        fontSize: "24px",
-      }}
-    >
-      Loading stock data...
-    </div>
-  );
+  stockData = {
+    name: isStockLoading
+      ? `Loading ${ticker}...`
+      : ticker,
+    symbol: ticker,
+    revenueData: []
+  };
 }
 
 const hasRevenueData =
@@ -486,7 +509,10 @@ return (
           <div
             key={item}
             className="watchlist-stock"
-            onClick={() => setTicker(item)}
+            onClick={() => {
+              setSearchInput(item);
+              setTicker(item);
+            }}
           >
 
             <span className="watch-symbol">
@@ -568,14 +594,35 @@ return (
 
   <input
     className="search"
-    value={ticker}
+    value={searchInput}
     onChange={(e) =>
-      setTicker(
+      setSearchInput(
         e.target.value.toUpperCase()
       )
     }
+    onKeyDown={(e) => {
+      if (e.key === "Enter") {
+        const symbol =
+          searchInput.trim().toUpperCase();
+
+        if (symbol) {
+          setTicker(symbol);
+        }
+      }
+    }}
     placeholder="Search ticker..."
   />
+
+  {isStockLoading && (
+    <span
+      style={{
+        color: "#9ca3af",
+        fontSize: "14px",
+      }}
+    >
+      Loading...
+    </span>
+  )}
 
   <button
     className="portfolio-btn"
