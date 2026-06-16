@@ -16,7 +16,14 @@ const User = require("./models/User");
 
 const app = express();
 const activeStockFetches = new Set();
-const FINANCIAL_HISTORY_VERSION = 3;
+const FINANCIAL_HISTORY_VERSION = 5;
+const REVENUE_KEY_PRIORITY = {
+  annualTotalRevenue: 5,
+  annualOperatingRevenue: 4,
+  annualNetInterestIncome: 3,
+  annualTotalPremiumsEarned: 3,
+  annualNonInterestIncome: 2
+};
 
 // =========================
 // BASIC SETUP
@@ -167,6 +174,32 @@ function finalizeFinancialHistory(rows, sharesOutstanding) {
   }));
 }
 
+function finalizeRevenueHistory(rows) {
+  const revenueRows = (rows || [])
+    .map((row) => ({
+      year: row.year,
+      revenue: toNumberOrNull(row.revenue),
+      source: row.source
+    }))
+    .filter((row) => row.year && row.revenue !== null)
+    .sort((a, b) => a.year - b.year)
+    .slice(-6);
+
+  const positiveRevenues = revenueRows
+    .map((row) => row.revenue)
+    .filter((value) => value > 0)
+    .sort((a, b) => a - b);
+
+  if (positiveRevenues.length < 3) return revenueRows;
+
+  const median =
+    positiveRevenues[Math.floor(positiveRevenues.length / 2)];
+
+  return revenueRows.filter(
+    (row) => row.revenue <= 0 || row.revenue >= median * 0.1
+  );
+}
+
 function hasChartHistory(stock, key) {
   return stock?.data?.revenueData?.some((row) => toNumberOrNull(row[key]) !== null);
 }
@@ -234,16 +267,13 @@ async function fetchYahooTimeSeriesFinancials(ticker) {
           source: "Yahoo time series"
         };
 
-        if (
-          [
-            "annualTotalRevenue",
-            "annualOperatingRevenue",
-            "annualNetInterestIncome",
-            "annualNonInterestIncome",
-            "annualTotalPremiumsEarned"
-          ].includes(key)
-        ) {
-          row.revenue = row.revenue ?? toBillions(value);
+        if (REVENUE_KEY_PRIORITY[key]) {
+          const priority = REVENUE_KEY_PRIORITY[key];
+
+          if (!row.revenuePriority || priority > row.revenuePriority) {
+            row.revenue = toBillions(value);
+            row.revenuePriority = priority;
+          }
         }
 
         if (
@@ -265,6 +295,7 @@ async function fetchYahooTimeSeriesFinancials(ticker) {
     });
 
     return [...rowsByTime.values()]
+      .map(({ revenuePriority, ...row }) => row)
       .filter((row) => row.year)
       .sort((a, b) => a.year - b.year);
   } catch (err) {
@@ -509,6 +540,12 @@ async function fetchStockData(ticker) {
     ),
     sharesOutstanding
   );
+  const revenueHistory = finalizeRevenueHistory(
+    mergeHistoricalFinancials(
+      yahooFinancialData,
+      mergeHistoricalFinancials(fmpIncomeStatementData, finnhubReportedData)
+    )
+  );
 
   try {
     if (process.env.FMP_API_KEY) {
@@ -650,6 +687,7 @@ async function fetchStockData(ticker) {
       }
     },
     financialHistoryVersion: FINANCIAL_HISTORY_VERSION,
+    revenueHistory,
     revenueData
   };
 
