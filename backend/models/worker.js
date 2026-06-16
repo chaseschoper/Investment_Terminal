@@ -4,7 +4,7 @@ const mongoose = require("mongoose");
 const finnhub = require("finnhub");
 
 const Stock = require("./models/Stock");
-
+const axios = require("axios");
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB connected"))
@@ -49,7 +49,57 @@ async function updateStock(ticker) {
         }
       );
     });
+let revenueData = [];
 
+try {
+  const financialsRes = await axios.get(
+    `https://finnhub.io/api/v1/stock/financials-reported?symbol=${ticker}&freq=annual&token=${process.env.FINNHUB_API_KEY}`
+  );
+
+  const reports = financialsRes.data?.data || [];
+
+  revenueData = reports
+    .slice(0, 5)
+    .map((report) => {
+      const ic = report.report?.ic || [];
+
+      const findValue = (concepts) => {
+        const row = ic.find((item) =>
+          concepts.includes(item.concept)
+        );
+
+        return row?.value || null;
+      };
+
+      const revenue = findValue([
+        "us-gaap_Revenues",
+        "us-gaap_SalesRevenueNet",
+        "ifrs-full_Revenue"
+      ]);
+
+      const earnings = findValue([
+        "us-gaap_NetIncomeLoss",
+        "ifrs-full_ProfitLoss"
+      ]);
+
+      const eps = findValue([
+        "us-gaap_EarningsPerShareDiluted",
+        "us-gaap_EarningsPerShareBasic"
+      ]);
+
+      return {
+        year: report.year,
+        revenue: revenue ? revenue / 1000000000 : null,
+        earnings: earnings ? earnings / 1000000000 : null,
+        eps: eps || null
+      };
+    })
+    .filter((item) => item.year)
+    .reverse();
+
+} catch (err) {
+  console.log("Financials skipped:", ticker, err.message);
+}
     if (!quote || quote.c === 0) {
       await Stock.findOneAndUpdate(
         { ticker },
@@ -71,18 +121,19 @@ async function updateStock(ticker) {
       {
         ticker,
         status: "ready",
-        data: {
-          name: profile.name || ticker,
-          symbol: ticker,
-          price: quote.c,
-          change: quote.d,
-          percentChange: quote.dp,
-          previousClose: quote.pc,
-          high: quote.h,
-          low: quote.l,
-          open: quote.o,
-          marketCap: profile.marketCapitalization || null,
-        },
+data: {
+  name: profile.name || ticker,
+  symbol: ticker,
+  price: quote.c,
+  change: quote.d,
+  percentChange: quote.dp,
+  previousClose: quote.pc,
+  high: quote.h,
+  low: quote.l,
+  open: quote.o,
+  marketCap: profile.marketCapitalization || null,
+  revenueData: revenueData,
+},
         updatedAt: new Date(),
       },
       { upsert: true }

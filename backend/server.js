@@ -56,107 +56,38 @@ return res.status(401).json({ error: "Invalid token" });
 
 
 // =========================
-// STOCK ROUTE
+// STOCK ROUTE DB ONLY
 // =========================
 app.get("/api/stock/:ticker", async (req, res) => {
   try {
     const ticker = req.params.ticker.toUpperCase();
 
-    const quoteRes = await axios.get(
-      `https://finnhub.io/api/v1/quote?symbol=${ticker}&token=${process.env.FINNHUB_API_KEY}`
-    );
+    let stock = await Stock.findOne({ ticker });
 
-    const profileRes = await axios.get(
-      `https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}&token=${process.env.FINNHUB_API_KEY}`
-    );
-
-
-
-    const quote = quoteRes.data;
-    const profile = profileRes.data;
-    
-let revenueData = [];
-
-try {
-  const metricRes = await axios.get(
-    `https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=all&token=${process.env.FINNHUB_API_KEY}`
-  );
-
-  const annual = metricRes.data?.series?.annual || {};
-
-  const revenues = annual.revenue || [];
-  const netIncome = annual.netIncome || [];
-  const eps = annual.eps || [];
-
-  revenueData = revenues
-    .map((item) => {
-      const year = new Date(item.period).getFullYear();
-
-      const incomeItem = netIncome.find(
-        (x) => new Date(x.period).getFullYear() === year
+    if (!stock) {
+      await Stock.findOneAndUpdate(
+        { ticker },
+        {
+          ticker,
+          status: "pending",
+          updatedAt: new Date()
+        },
+        { upsert: true }
       );
 
-      const epsItem = eps.find(
-        (x) => new Date(x.period).getFullYear() === year
-      );
-
-      return {
-        year,
-        revenue: item.v ? Number((item.v / 1e9).toFixed(2)) : 0,
-        earnings: incomeItem?.v
-          ? Number((incomeItem.v / 1e9).toFixed(2))
-          : 0,
-        eps: epsItem?.v || 0,
-      };
-    })
-    .filter((item) => item.year)
-    .sort((a, b) => a.year - b.year);
-} catch (metricErr) {
-  console.error(
-    "Metric fetch failed:",
-    metricErr.response?.status,
-    metricErr.response?.data || metricErr.message
-  );
-}
-
+      return res.status(202).json({
+        status: "loading",
+        message: `${ticker} is being fetched. Try again in a few seconds.`
+      });
+    }
 
     res.json({
-      symbol: ticker,
-      name: profile.name || ticker,
-      price: quote.c,
-      change: quote.d,
-      percentChange: quote.dp,
-      high: quote.h,
-      low: quote.l,
-      open: quote.o,
-      previousClose: quote.pc,
-
-      marketCap: profile.marketCapitalization
-        ? profile.marketCapitalization * 1000000
-        : null,
-
-      sharesOutstanding: profile.shareOutstanding
-        ? profile.shareOutstanding * 1000000
-        : null,
-
-      revenueData,
-
-      pe: null,
-      forwardPE: null,
-      revenueGrowth: 0,
-      earningsGrowth: 0,
-      grossMargins: 0,
-      operatingMargins: 0,
-      profitMargins: 0,
-      freeCashflow: 0,
-      targetMean: null,
-      recommendationKey: "hold",
-
-      analystEstimates: {
-        currentYear: {},
-        nextYear: {},
-      },
+      ticker: stock.ticker,
+      status: stock.status,
+      ...stock.data,
+      updatedAt: stock.updatedAt
     });
+
   } catch (err) {
     console.error("Stock fetch failed:", err.message);
     res.status(500).json({ error: "Stock fetch failed" });
@@ -183,15 +114,15 @@ ${stock.ticker}
 
 Price: $${stock.data?.price}
 
-Market Cap: ${stock.marketCap}
+Market Cap: ${stock.data?.marketCap}
 
-PE: ${stock.pe}
+PE: ${stock.data?.pe}
 
-Forward PE: ${stock.forwardPE}
+Forward PE: ${stock.data?.forwardPE}
 
-Revenue Growth: ${(stock.revenueGrowth * 100)?.toFixed(1)}%
+Revenue Growth: ${stock.data?.revenueGrowth}
 
-Earnings Growth: ${(stock.earningsGrowth * 100)?.toFixed(1)}%
+Earnings Growth: ${stock.data?.earningsGrowth}
 `;
 
 

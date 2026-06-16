@@ -5,100 +5,176 @@ const axios = require("axios");
 
 const Stock = require("./models/Stock");
 
-mongoose.connect(process.env.MONGO_URI)
-.then(() => console.log("MongoDB connected"))
-.catch(err => console.error(err));
+mongoose
+  .connect(process.env.MONGO_URI)
+  .then(() => console.log("MongoDB connected"))
+  .catch((err) => console.error("MongoDB error:", err));
 
-const WATCHLIST = [
-"AAPL",
-"NVDA",
-"MSFT",
-"TSLA",
-"AMD"
+const STARTER_STOCKS = [
+  "AAPL",
+  "NVDA",
+  "MSFT",
+  "TSLA",
+  "AMD",
+  "AMZN",
+  "META",
+  "GOOGL",
+  "NFLX",
+  "SOFI",
+  "PLTR"
 ];
 
 async function updateStock(ticker) {
-try {
+  try {
+    console.log("Updating:", ticker);
 
-console.log("Updating:", ticker);
+    const quoteRes = await axios.get(
+      `https://finnhub.io/api/v1/quote?symbol=${ticker}&token=${process.env.FINNHUB_API_KEY}`
+    );
 
-const quoteRes = await axios.get(
-  `https://finnhub.io/api/v1/quote?symbol=${ticker}&token=${process.env.FINNHUB_API_KEY}`
-);
+    const profileRes = await axios.get(
+      `https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}&token=${process.env.FINNHUB_API_KEY}`
+    );
 
-const metricRes = await axios.get(
-  `https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=all&token=${process.env.FINNHUB_API_KEY}`
-);
+    const quote = quoteRes.data;
+    const profile = profileRes.data;
 
-const profileRes = await axios.get(
-  `https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}&token=${process.env.FINNHUB_API_KEY}`
-);
+    let revenueData = [];
 
-const quote = quoteRes.data;
-const metrics = metricRes.data.metric || {};
-const profile = profileRes.data || {};
+    try {
+      const financialsRes = await axios.get(
+        `https://finnhub.io/api/v1/stock/financials-reported?symbol=${ticker}&freq=annual&token=${process.env.FINNHUB_API_KEY}`
+      );
 
-await Stock.findOneAndUpdate(
-  { ticker },
+      const reports = financialsRes.data?.data || [];
 
-  {
-    ticker,
+      revenueData = reports
+        .slice(0, 5)
+        .map((report) => {
+          const ic = report.report?.ic || [];
 
-    data: {
-      name: profile.name,
-      ticker,
+          const findValue = (concepts) => {
+            const row = ic.find((item) => concepts.includes(item.concept));
+            return row?.value || null;
+          };
 
-      price: quote.c,
+const revenue = findValue([
+  "us-gaap_Revenues",
+  "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+  "us-gaap_SalesRevenueNet",
+  "us-gaap_SalesRevenueGoodsNet",
+  "ifrs-full_Revenue"
+]);
 
-      marketCap: profile.marketCapitalization,
+          const earnings = findValue([
+            "us-gaap_NetIncomeLoss",
+            "ifrs-full_ProfitLoss"
+          ]);
 
-      pe: metrics.peTTM,
+          const eps = findValue([
+            "us-gaap_EarningsPerShareDiluted",
+            "us-gaap_EarningsPerShareBasic"
+          ]);
 
-      forwardPE: metrics.forwardPE,
+          return {
+            year: report.year,
+            revenue: revenue ? revenue / 1000000000 : null,
+            earnings: earnings ? earnings / 1000000000 : null,
+            eps: eps || null
+          };
+        })
+        .filter((item) => item.year)
+        .reverse();
 
-      revenueGrowth: metrics.revenueGrowthTTMYoy,
+    } catch (err) {
+      console.log("Financials skipped:", ticker, err.message);
+    }
 
-      earningsGrowth: metrics.netIncomeGrowth5Y,
+    if (!quote || !quote.c || quote.c === 0) {
+      await Stock.findOneAndUpdate(
+        { ticker },
+        {
+          ticker,
+          status: "failed",
+          error: "No price returned",
+          updatedAt: new Date(),
+        },
+        { upsert: true }
+      );
 
-      sharesOutstanding: profile.shareOutstanding
-    },
+      console.log("FAILED:", ticker, "No price returned");
+      return;
+    }
 
-    updatedAt: new Date()
-  },
+    await Stock.findOneAndUpdate(
+      { ticker },
+      {
+        ticker,
+        status: "ready",
+        data: {
+          name: profile.name || ticker,
+          symbol: ticker,
+          price: quote.c,
+          change: quote.d,
+          percentChange: quote.dp,
+          previousClose: quote.pc,
+          high: quote.h,
+          low: quote.l,
+          open: quote.o,
+          marketCap: profile.marketCapitalization || null,
+          revenueData: revenueData,
+        },
+        updatedAt: new Date(),
+      },
+      { upsert: true }
+    );
 
-  { upsert: true }
-);
+    console.log("SUCCESS:", ticker);
 
-console.log("SUCCESS:", ticker);
+  } catch (err) {
+    console.log("FAILED:", ticker);
+    console.log(err.message);
 
-
-} catch (err) {
-
-console.log("FAILED:", ticker);
-
-if (err.response) {
-  console.log(err.response.data);
-} else {
-  console.log(err.message);
-}
-
-
-}
+    await Stock.findOneAndUpdate(
+      { ticker },
+      {
+        ticker,
+        status: "failed",
+        error: err.message,
+        updatedAt: new Date(),
+      },
+      { upsert: true }
+    );
+  }
 }
 
 async function run() {
+  try {
+    const dbStocks = await Stock.find({}).limit(500);
 
-for (const ticker of WATCHLIST) {
+    const dbTickers = dbStocks
+      .map((stock) => stock.ticker)
+      .filter(Boolean);
 
+    const allTickers = [
+      ...new Set([
+        ...STARTER_STOCKS,
+        ...dbTickers,
+      ]),
+    ];
 
-await updateStock(ticker);
+    for (const ticker of allTickers) {
+      await updateStock(ticker);
+      await new Promise((r) => setTimeout(r, 1500));
+    }
 
-await new Promise(r => setTimeout(r, 1500));
+    console.log("Worker cycle complete");
 
-
-}
+  } catch (err) {
+    console.log("Worker run failed:", err.message);
+  }
 }
 
 run();
 
-setInterval(run, 1000 * 60 * 10);
+setInterval(run, 5 * 60 * 1000);
