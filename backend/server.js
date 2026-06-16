@@ -56,7 +56,105 @@ return res.status(401).json({ error: "Invalid token" });
 
 
 // =========================
-// STOCK ROUTE DB ONLY
+// FETCH STOCK DATA HELPER
+// =========================
+async function fetchStockData(ticker) {
+  const quoteRes = await axios.get(
+    `https://finnhub.io/api/v1/quote?symbol=${ticker}&token=${process.env.FINNHUB_API_KEY}`
+  );
+
+  const profileRes = await axios.get(
+    `https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}&token=${process.env.FINNHUB_API_KEY}`
+  );
+
+  const quote = quoteRes.data;
+  const profile = profileRes.data;
+
+  let revenueData = [];
+
+  try {
+    const financialsRes = await axios.get(
+      `https://finnhub.io/api/v1/stock/financials-reported?symbol=${ticker}&freq=annual&token=${process.env.FINNHUB_API_KEY}`
+    );
+
+    const reports = financialsRes.data?.data || [];
+
+    revenueData = reports
+      .slice(0, 5)
+      .map((report) => {
+        const ic = report.report?.ic || [];
+
+        const findValue = (concepts) => {
+          const row = ic.find((item) => concepts.includes(item.concept));
+          return row?.value || null;
+        };
+
+        const revenue = findValue([
+          "us-gaap_Revenues",
+          "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+          "us-gaap_SalesRevenueNet",
+          "us-gaap_SalesRevenueGoodsNet",
+          "ifrs-full_Revenue"
+        ]);
+
+        const earnings = findValue([
+          "us-gaap_NetIncomeLoss",
+          "ifrs-full_ProfitLoss"
+        ]);
+
+        const eps = findValue([
+          "us-gaap_EarningsPerShareDiluted",
+          "us-gaap_EarningsPerShareBasic"
+        ]);
+
+        return {
+          year: report.year,
+          revenue: revenue ? revenue / 1000000000 : null,
+          earnings: earnings ? earnings / 1000000000 : null,
+          eps: eps || null
+        };
+      })
+      .filter((item) => item.year)
+      .reverse();
+
+  } catch (err) {
+    console.log("Financials skipped:", ticker, err.message);
+  }
+
+  if (!quote || !quote.c || quote.c === 0) {
+    throw new Error("No price returned");
+  }
+
+  const data = {
+    name: profile.name || ticker,
+    symbol: ticker,
+    price: quote.c,
+    change: quote.d,
+    percentChange: quote.dp,
+    previousClose: quote.pc,
+    high: quote.h,
+    low: quote.l,
+    open: quote.o,
+    marketCap: profile.marketCapitalization || null,
+    revenueData
+  };
+
+  await Stock.findOneAndUpdate(
+    { ticker },
+    {
+      ticker,
+      status: "ready",
+      data,
+      updatedAt: new Date()
+    },
+    { upsert: true }
+  );
+
+  return data;
+}
+
+// =========================
+// STOCK ROUTE - INSTANT FETCH IF MISSING
 // =========================
 app.get("/api/stock/:ticker", async (req, res) => {
   try {
@@ -64,36 +162,36 @@ app.get("/api/stock/:ticker", async (req, res) => {
 
     let stock = await Stock.findOne({ ticker });
 
-    if (!stock) {
-      await Stock.findOneAndUpdate(
-        { ticker },
-        {
-          ticker,
-          status: "pending",
-          data: {},
-          updatedAt: new Date()
-        },
-        { upsert: true }
-      );
+    const isFresh =
+      stock &&
+      stock.updatedAt &&
+      Date.now() - new Date(stock.updatedAt).getTime() < 5 * 60 * 1000;
 
-      return res.status(202).json({
-        ticker,
-        status: "pending",
-        message: `${ticker} is being fetched. Refresh in a few seconds.`
+    if (stock && stock.status === "ready" && isFresh) {
+      return res.json({
+        ticker: stock.ticker,
+        status: stock.status,
+        ...stock.data,
+        updatedAt: stock.updatedAt
       });
     }
 
+    const data = await fetchStockData(ticker);
+
     return res.json({
-      ticker: stock.ticker,
-      status: stock.status,
-      ...stock.data,
-      error: stock.error,
-      updatedAt: stock.updatedAt
+      ticker,
+      status: "ready",
+      ...data,
+      updatedAt: new Date()
     });
 
   } catch (err) {
     console.error("Stock fetch failed:", err.message);
-    res.status(500).json({ error: "Stock fetch failed" });
+
+    res.status(500).json({
+      error: "Stock fetch failed",
+      message: err.message
+    });
   }
 });
 // =========================
