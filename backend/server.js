@@ -16,7 +16,7 @@ const User = require("./models/User");
 
 const app = express();
 const activeStockFetches = new Set();
-const FINANCIAL_HISTORY_VERSION = 5;
+const FINANCIAL_HISTORY_VERSION = 6;
 const REVENUE_KEY_PRIORITY = {
   annualTotalRevenue: 5,
   annualOperatingRevenue: 4,
@@ -88,6 +88,21 @@ const toNumberOrNull = (value) => {
 const toBillions = (value) => {
   const number = toNumberOrNull(value);
   return number === null ? null : number / 1000000000;
+};
+
+const firstNumber = (...values) => {
+  for (const value of values) {
+    const number = toNumberOrNull(value);
+    if (number !== null && number !== 0) return number;
+  }
+
+  return null;
+};
+
+const normalizePercent = (value) => {
+  const number = toNumberOrNull(value);
+  if (number === null) return null;
+  return Math.abs(number) <= 1 ? number * 100 : number;
 };
 
 const unwrapFinancialValue = (value) => {
@@ -232,6 +247,9 @@ async function fetchYahooTimeSeriesFinancials(ticker) {
       "annualNetIncome",
       "annualNetIncomeCommonStockholders",
       "annualNetIncomeContinuousOperations",
+      "annualGrossProfit",
+      "annualOperatingIncome",
+      "annualFreeCashFlow",
       "annualDilutedEPS",
       "annualBasicEPS"
     ].join(",");
@@ -288,6 +306,18 @@ async function fetchYahooTimeSeriesFinancials(ticker) {
 
         if (["annualDilutedEPS", "annualBasicEPS"].includes(key)) {
           row.eps = row.eps ?? value;
+        }
+
+        if (key === "annualGrossProfit") {
+          row.grossProfit = row.grossProfit ?? toBillions(value);
+        }
+
+        if (key === "annualOperatingIncome") {
+          row.operatingIncome = row.operatingIncome ?? toBillions(value);
+        }
+
+        if (key === "annualFreeCashFlow") {
+          row.freeCashflow = row.freeCashflow ?? toBillions(value);
         }
 
         rowsByTime.set(timestamp, row);
@@ -387,6 +417,57 @@ async function fetchFmpIncomeStatementHistory(ticker) {
   }
 
   return [];
+}
+
+async function fetchYahooSupplementalData(ticker) {
+  try {
+    const summary = await yahooFinance.quoteSummary(ticker, {
+      modules: [
+        "financialData",
+        "defaultKeyStatistics",
+        "summaryDetail",
+        "earningsTrend"
+      ]
+    });
+
+    const financialData = summary?.financialData || {};
+    const keyStats = summary?.defaultKeyStatistics || {};
+    const detail = summary?.summaryDetail || {};
+    const trends = summary?.earningsTrend?.trend || [];
+
+    const currentYear =
+      trends.find((item) => item.period === "0y") || {};
+    const nextYear =
+      trends.find((item) => item.period === "+1y") || {};
+
+    const estimateFromTrend = (trend) => ({
+      revenue: firstNumber(trend?.revenueEstimate?.avg),
+      earnings: null,
+      eps: firstNumber(trend?.earningsEstimate?.avg)
+    });
+
+    return {
+      marketCap: firstNumber(detail.marketCap, keyStats.marketCap),
+      pe: firstNumber(detail.trailingPE, keyStats.trailingPE),
+      forwardPE: firstNumber(keyStats.forwardPE, financialData.forwardPE),
+      sharesOutstanding: firstNumber(keyStats.sharesOutstanding),
+      revenueGrowth: normalizePercent(financialData.revenueGrowth),
+      earningsGrowth: normalizePercent(financialData.earningsGrowth),
+      grossMargins: normalizePercent(financialData.grossMargins),
+      operatingMargins: normalizePercent(financialData.operatingMargins),
+      profitMargins: normalizePercent(financialData.profitMargins),
+      freeCashflow: firstNumber(financialData.freeCashflow),
+      targetMean: firstNumber(financialData.targetMeanPrice),
+      recommendationKey: financialData.recommendationKey || null,
+      analystEstimates: {
+        currentYear: estimateFromTrend(currentYear),
+        nextYear: estimateFromTrend(nextYear)
+      }
+    };
+  } catch (err) {
+    console.log("Yahoo supplemental data skipped:", ticker, err.message);
+    return {};
+  }
 }
 
 async function fetchStockData(ticker) {
@@ -517,6 +598,7 @@ async function fetchStockData(ticker) {
   let fmpAnalystEstimates = [];
   const yahooFinancialData = await fetchYahooFinancialHistory(ticker);
   const fmpIncomeStatementData = await fetchFmpIncomeStatementHistory(ticker);
+  const yahooSupplementalData = await fetchYahooSupplementalData(ticker);
 
   try {
     if (process.env.FMP_API_KEY) {
@@ -546,6 +628,33 @@ async function fetchStockData(ticker) {
       mergeHistoricalFinancials(fmpIncomeStatementData, finnhubReportedData)
     )
   );
+  const annualRows = [...yahooFinancialData]
+    .filter((row) => row.year)
+    .sort((a, b) => a.year - b.year);
+  const latestAnnual = annualRows[annualRows.length - 1] || {};
+  const previousAnnual = annualRows[annualRows.length - 2] || {};
+
+  const annualGrowth = (current, previous) => {
+    const currentNumber = toNumberOrNull(current);
+    const previousNumber = toNumberOrNull(previous);
+
+    if (currentNumber === null || previousNumber === null || previousNumber === 0) {
+      return null;
+    }
+
+    return ((currentNumber - previousNumber) / Math.abs(previousNumber)) * 100;
+  };
+
+  const annualMargin = (numerator, revenue) => {
+    const numeratorNumber = toNumberOrNull(numerator);
+    const revenueNumber = toNumberOrNull(revenue);
+
+    if (numeratorNumber === null || revenueNumber === null || revenueNumber === 0) {
+      return null;
+    }
+
+    return (numeratorNumber / revenueNumber) * 100;
+  };
 
   try {
     if (process.env.FMP_API_KEY) {
@@ -625,6 +734,7 @@ async function fetchStockData(ticker) {
     epsEstimates[0]?.epsAvg ??
     metrics.epsEstimateCurrentYear ??
     metrics.epsInclExtraItemsAnnual ??
+    latestAnnual.eps ??
     null;
 
   const nextEps =
@@ -634,12 +744,30 @@ async function fetchStockData(ticker) {
 
   const currentRevenue =
     revenueEstimates[0]?.revenueAvg ??
-    metrics.revenuePerShareTTM ??
-    null;
+    yahooSupplementalData.analystEstimates?.currentYear?.revenue ??
+    (latestAnnual.revenue ? latestAnnual.revenue * 1000000000 : null);
 
   const nextRevenue =
     revenueEstimates[1]?.revenueAvg ??
+    yahooSupplementalData.analystEstimates?.nextYear?.revenue ??
     null;
+
+  const currentEarnings =
+    firstNumber(
+      fmpAnalystEstimates[0]?.netIncomeAvg,
+      latestAnnual.earnings ? latestAnnual.earnings * 1000000000 : null,
+      currentEps && sharesOutstanding
+        ? currentEps * sharesOutstanding * 1000000
+        : null
+    );
+
+  const nextEarnings =
+    firstNumber(
+      fmpAnalystEstimates[1]?.netIncomeAvg,
+      nextEps && sharesOutstanding
+        ? nextEps * sharesOutstanding * 1000000
+        : null
+    );
 
   const data = {
     name: profile.name || ticker,
@@ -651,39 +779,69 @@ async function fetchStockData(ticker) {
     high: quote.h,
     low: quote.l,
     open: quote.o,
-    marketCap: profile.marketCapitalization
+    marketCap: yahooSupplementalData.marketCap ??
+      (profile.marketCapitalization
       ? profile.marketCapitalization * 1000000
-      : null,
-    sharesOutstanding,
-    pe: metrics.peNormalizedAnnual ?? metrics.peTTM ?? null,
-    forwardPE: metrics.forwardPE ?? null,
-    revenueGrowth: metrics.revenueGrowthTTMYoy ?? null,
-    earningsGrowth: metrics.epsGrowthTTMYoy ?? null,
-    grossMargins: metrics.grossMarginTTM ?? null,
-    operatingMargins: metrics.operatingMarginTTM ?? null,
-    profitMargins: metrics.netProfitMarginTTM ?? null,
+      : null),
+    sharesOutstanding:
+      sharesOutstanding ??
+      (yahooSupplementalData.sharesOutstanding
+        ? yahooSupplementalData.sharesOutstanding / 1000000
+        : null),
+    pe: firstNumber(metrics.peNormalizedAnnual, metrics.peTTM, yahooSupplementalData.pe),
+    forwardPE: firstNumber(metrics.forwardPE, yahooSupplementalData.forwardPE),
+    revenueGrowth: firstNumber(
+      metrics.revenueGrowthTTMYoy,
+      yahooSupplementalData.revenueGrowth,
+      annualGrowth(latestAnnual.revenue, previousAnnual.revenue)
+    ),
+    earningsGrowth: firstNumber(
+      metrics.epsGrowthTTMYoy,
+      yahooSupplementalData.earningsGrowth,
+      annualGrowth(latestAnnual.earnings, previousAnnual.earnings)
+    ),
+    grossMargins: firstNumber(
+      metrics.grossMarginTTM,
+      yahooSupplementalData.grossMargins,
+      annualMargin(latestAnnual.grossProfit, latestAnnual.revenue)
+    ),
+    operatingMargins: firstNumber(
+      metrics.operatingMarginTTM,
+      yahooSupplementalData.operatingMargins,
+      annualMargin(latestAnnual.operatingIncome, latestAnnual.revenue)
+    ),
+    profitMargins: firstNumber(
+      metrics.netProfitMarginTTM,
+      yahooSupplementalData.profitMargins,
+      annualMargin(latestAnnual.earnings, latestAnnual.revenue)
+    ),
     freeCashflow:
-      metrics.freeCashFlowTTM ??
-      metrics.fcfTTM ??
-      fmpCashFlow[0]?.freeCashFlow ??
-      null,
+      firstNumber(
+        metrics.freeCashFlowTTM,
+        metrics.fcfTTM,
+        fmpCashFlow[0]?.freeCashFlow,
+        yahooSupplementalData.freeCashflow,
+        latestAnnual.freeCashflow ? latestAnnual.freeCashflow * 1000000000 : null
+      ),
     targetMean:
-      priceTarget?.targetMean ??
-      metrics.ptMean ??
-      fmpPriceTarget?.targetConsensus ??
-      fmpPriceTarget?.targetMean ??
-      null,
-    recommendationKey: rating,
+      firstNumber(
+        priceTarget?.targetMean,
+        metrics.ptMean,
+        fmpPriceTarget?.targetConsensus,
+        fmpPriceTarget?.targetMean,
+        yahooSupplementalData.targetMean
+      ),
+    recommendationKey: rating !== "N/A" ? rating : yahooSupplementalData.recommendationKey,
     analystEstimates: {
       currentYear: {
-        revenue: fmpAnalystEstimates[0]?.revenueAvg ?? currentRevenue ?? null,
-        earnings: fmpAnalystEstimates[0]?.netIncomeAvg ?? null,
-        eps: currentEps ?? fmpAnalystEstimates[0]?.epsAvg ?? null
+        revenue: firstNumber(fmpAnalystEstimates[0]?.revenueAvg, currentRevenue),
+        earnings: currentEarnings,
+        eps: firstNumber(currentEps, fmpAnalystEstimates[0]?.epsAvg)
       },
       nextYear: {
-        revenue: fmpAnalystEstimates[1]?.revenueAvg ?? nextRevenue ?? null,
-        earnings: fmpAnalystEstimates[1]?.netIncomeAvg ?? null,
-        eps: nextEps ?? fmpAnalystEstimates[1]?.epsAvg ?? null
+        revenue: firstNumber(fmpAnalystEstimates[1]?.revenueAvg, nextRevenue),
+        earnings: nextEarnings,
+        eps: firstNumber(nextEps, fmpAnalystEstimates[1]?.epsAvg)
       }
     },
     financialHistoryVersion: FINANCIAL_HISTORY_VERSION,
@@ -790,6 +948,17 @@ app.get("/api/stock/:ticker", async (req, res) => {
         startStockFetch(ticker);
       }
 
+      if (stock.data && Object.keys(stock.data).length) {
+        return res.json({
+          ticker: stock.ticker,
+          status: "ready",
+          refreshing: true,
+          ...stock.data,
+          error: stock.error,
+          updatedAt: stock.updatedAt
+        });
+      }
+
       return res.status(202).json({
         ticker: stock.ticker,
         status: "pending",
@@ -808,22 +977,15 @@ app.get("/api/stock/:ticker", async (req, res) => {
         Date.now() - updatedAt.getTime() > 10 * 60 * 1000;
 
       if (isStale) {
-        await Stock.findOneAndUpdate(
-          { ticker },
-          {
-            status: "pending",
-            error: null,
-            updatedAt: new Date()
-          }
-        );
-
         startStockFetch(ticker);
 
-        return res.status(202).json({
-          ticker,
-          status: "pending",
-          message: `${ticker} financial charts are being refreshed. Refresh in 30-60 seconds.`,
-          updatedAt: new Date()
+        return res.json({
+          ticker: stock.ticker,
+          status: "ready",
+          refreshing: true,
+          ...stock.data,
+          error: stock.error,
+          updatedAt: stock.updatedAt
         });
       }
     }

@@ -47,6 +47,12 @@ const formatChartBillions = (value) =>
 const formatChartEps = (value) =>
   isNumber(value) ? `$${value.toFixed(2)}` : "N/A";
 
+const formatEstimateMoney = (value) =>
+  isNumber(value) ? formatMoney(value / 1e9) : "N/A";
+
+const formatEstimateEps = (value) =>
+  isNumber(value) ? `$${value.toFixed(2)}` : "N/A";
+
 const buildChartRows = (rows, key) =>
   (rows || [])
     .map((item) => ({
@@ -248,7 +254,7 @@ useEffect(() => {
     const timeout =
       setTimeout(() => {
         setTicker(symbol);
-      }, 700);
+      }, 300);
 
     return () =>
       clearTimeout(timeout);
@@ -320,7 +326,7 @@ console.log(response.data);
               attempt + 1,
               requestId
             ),
-          5000
+          2000
         );
 
         return;
@@ -1461,13 +1467,9 @@ return (
           <span>Revenue</span>
 
           <span>
-            {
+            {formatEstimateMoney(
               stockData?.analystEstimates?.currentYear?.revenue
-                ? formatMoney(
-                    stockData.analystEstimates.currentYear.revenue / 1e9
-                  )
-                : "N/A"
-            }
+            )}
           </span>
         </div>
 
@@ -1482,11 +1484,9 @@ return (
           <span>Earnings</span>
 
           <span>
-            {
+            {formatEstimateMoney(
               stockData?.analystEstimates?.currentYear?.earnings
-                ? `$${stockData.analystEstimates.currentYear.earnings.toFixed(2)}`
-                : "N/A"
-            }
+            )}
           </span>
         </div>
 
@@ -1501,11 +1501,9 @@ return (
           <span>EPS</span>
 
           <span>
-            {
+            {formatEstimateEps(
               stockData?.analystEstimates?.currentYear?.eps
-                ? `$${stockData.analystEstimates.currentYear.eps.toFixed(2)}`
-                : "N/A"
-            }
+            )}
           </span>
         </div>
 
@@ -1540,13 +1538,9 @@ return (
           <span>Revenue</span>
 
           <span>
-            {
+            {formatEstimateMoney(
               stockData?.analystEstimates?.nextYear?.revenue
-                ? formatMoney(
-                    stockData.analystEstimates.nextYear.revenue / 1e9
-                  )
-                : "N/A"
-            }
+            )}
           </span>
         </div>
 
@@ -1561,11 +1555,9 @@ return (
           <span>Earnings</span>
 
           <span>
-            {
+            {formatEstimateMoney(
               stockData?.analystEstimates?.nextYear?.earnings
-                ? `$${stockData.analystEstimates.nextYear.earnings.toFixed(2)}`
-                : "N/A"
-            }
+            )}
           </span>
         </div>
 
@@ -1580,11 +1572,9 @@ return (
           <span>EPS</span>
 
           <span>
-            {
+            {formatEstimateEps(
               stockData?.analystEstimates?.nextYear?.eps
-                ? `$${stockData.analystEstimates.nextYear.eps.toFixed(2)}`
-                : "N/A"
-            }
+            )}
           </span>
         </div>
 
