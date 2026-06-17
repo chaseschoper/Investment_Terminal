@@ -1481,7 +1481,7 @@ return (
     marginBottom: "10px",
   }}
 >
-          <span>Earnings</span>
+          <span>Net Income</span>
 
           <span>
             {formatEstimateMoney(
@@ -1552,7 +1552,7 @@ return (
     marginBottom: "10px",
   }}
 >
-          <span>Earnings</span>
+          <span>Net Income</span>
 
           <span>
             {formatEstimateMoney(

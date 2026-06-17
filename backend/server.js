@@ -16,7 +16,7 @@ const User = require("./models/User");
 
 const app = express();
 const activeStockFetches = new Set();
-const FINANCIAL_HISTORY_VERSION = 6;
+const FINANCIAL_HISTORY_VERSION = 7;
 const REVENUE_KEY_PRIORITY = {
   annualTotalRevenue: 5,
   annualOperatingRevenue: 4,
@@ -103,6 +103,51 @@ const normalizePercent = (value) => {
   const number = toNumberOrNull(value);
   if (number === null) return null;
   return Math.abs(number) <= 1 ? number * 100 : number;
+};
+
+const toDollarsFromBillions = (value) => {
+  const number = toNumberOrNull(value);
+  return number === null ? null : number * 1000000000;
+};
+
+const estimateField = (row, ...keys) =>
+  firstNumber(...keys.map((key) => row?.[key]));
+
+const safeGrowthRate = (...values) => {
+  for (const value of values) {
+    const number = toNumberOrNull(value);
+    if (number === null || number === 0) continue;
+
+    const rate = Math.abs(number) > 1 ? number / 100 : number;
+    if (rate > -0.8 && rate < 1.5) return rate;
+  }
+
+  return 0.05;
+};
+
+const estimateNextValue = (current, growthRate) => {
+  const number = toNumberOrNull(current);
+  if (number === null) return null;
+  return number * (1 + growthRate);
+};
+
+const getAnalystRating = (recommendation, fallback) => {
+  const latest = recommendation?.[0] || {};
+  const strongBuy = toNumberOrNull(latest.strongBuy) || 0;
+  const buy = toNumberOrNull(latest.buy) || 0;
+  const hold = toNumberOrNull(latest.hold) || 0;
+  const sell = toNumberOrNull(latest.sell) || 0;
+  const strongSell = toNumberOrNull(latest.strongSell) || 0;
+  const bullish = strongBuy + buy;
+  const bearish = sell + strongSell;
+
+  if (bullish || hold || bearish) {
+    if (bearish >= bullish && bearish >= hold) return "sell";
+    if (hold >= bullish && hold >= bearish) return "hold";
+    return "buy";
+  }
+
+  return fallback || "N/A";
 };
 
 const unwrapFinancialValue = (value) => {
@@ -716,46 +761,75 @@ async function fetchStockData(ticker) {
     throw new Error("No price returned");
   }
 
-  const latestRecommendation = recommendation?.[0];
-
-  const rating =
-    latestRecommendation?.strongBuy || latestRecommendation?.buy
-      ? "buy"
-      : latestRecommendation?.sell || latestRecommendation?.strongSell
-      ? "sell"
-      : latestRecommendation?.hold
-      ? "hold"
-      : "N/A";
-
   const epsEstimates = epsEstimate?.data || [];
   const revenueEstimates = revenueEstimate?.data || [];
+  const fmpCurrentEstimate = fmpAnalystEstimates[0] || {};
+  const fmpNextEstimate = fmpAnalystEstimates[1] || {};
+  const revenueGrowthRate = safeGrowthRate(
+    metrics.revenueGrowthTTMYoy,
+    yahooSupplementalData.revenueGrowth,
+    annualGrowth(latestAnnual.revenue, previousAnnual.revenue)
+  );
+  const earningsGrowthRate = safeGrowthRate(
+    metrics.epsGrowthTTMYoy,
+    yahooSupplementalData.earningsGrowth,
+    annualGrowth(latestAnnual.earnings, previousAnnual.earnings),
+    revenueGrowthRate
+  );
+  const currentRevenueBase = toDollarsFromBillions(latestAnnual.revenue);
+  const currentEarningsBase = toDollarsFromBillions(latestAnnual.earnings);
+  const currentEpsBase = latestAnnual.eps ?? null;
+  const rating = getAnalystRating(
+    recommendation,
+    yahooSupplementalData.recommendationKey
+  );
 
   const currentEps =
+    estimateField(fmpCurrentEstimate, "epsAvg", "estimatedEpsAvg", "epsAverage") ??
     epsEstimates[0]?.epsAvg ??
     metrics.epsEstimateCurrentYear ??
     metrics.epsInclExtraItemsAnnual ??
-    latestAnnual.eps ??
+    currentEpsBase ??
     null;
 
   const nextEps =
+    estimateField(fmpNextEstimate, "epsAvg", "estimatedEpsAvg", "epsAverage") ??
     epsEstimates[1]?.epsAvg ??
     metrics.epsEstimateNextYear ??
+    estimateNextValue(currentEps, earningsGrowthRate) ??
     null;
 
   const currentRevenue =
+    estimateField(
+      fmpCurrentEstimate,
+      "revenueAvg",
+      "estimatedRevenueAvg",
+      "revenueAverage"
+    ) ??
     revenueEstimates[0]?.revenueAvg ??
     yahooSupplementalData.analystEstimates?.currentYear?.revenue ??
-    (latestAnnual.revenue ? latestAnnual.revenue * 1000000000 : null);
+    currentRevenueBase;
 
   const nextRevenue =
+    estimateField(
+      fmpNextEstimate,
+      "revenueAvg",
+      "estimatedRevenueAvg",
+      "revenueAverage"
+    ) ??
     revenueEstimates[1]?.revenueAvg ??
     yahooSupplementalData.analystEstimates?.nextYear?.revenue ??
-    null;
+    estimateNextValue(currentRevenue, revenueGrowthRate);
 
   const currentEarnings =
     firstNumber(
-      fmpAnalystEstimates[0]?.netIncomeAvg,
-      latestAnnual.earnings ? latestAnnual.earnings * 1000000000 : null,
+      estimateField(
+        fmpCurrentEstimate,
+        "netIncomeAvg",
+        "estimatedNetIncomeAvg",
+        "netIncomeAverage"
+      ),
+      currentEarningsBase,
       currentEps && sharesOutstanding
         ? currentEps * sharesOutstanding * 1000000
         : null
@@ -763,10 +837,16 @@ async function fetchStockData(ticker) {
 
   const nextEarnings =
     firstNumber(
-      fmpAnalystEstimates[1]?.netIncomeAvg,
+      estimateField(
+        fmpNextEstimate,
+        "netIncomeAvg",
+        "estimatedNetIncomeAvg",
+        "netIncomeAverage"
+      ),
       nextEps && sharesOutstanding
         ? nextEps * sharesOutstanding * 1000000
-        : null
+        : null,
+      estimateNextValue(currentEarnings, earningsGrowthRate)
     );
 
   const data = {
@@ -821,27 +901,32 @@ async function fetchStockData(ticker) {
         metrics.fcfTTM,
         fmpCashFlow[0]?.freeCashFlow,
         yahooSupplementalData.freeCashflow,
-        latestAnnual.freeCashflow ? latestAnnual.freeCashflow * 1000000000 : null
+        toDollarsFromBillions(latestAnnual.freeCashflow)
       ),
     targetMean:
       firstNumber(
         priceTarget?.targetMean,
+        priceTarget?.targetMedian,
         metrics.ptMean,
         fmpPriceTarget?.targetConsensus,
         fmpPriceTarget?.targetMean,
+        fmpPriceTarget?.targetMedian,
+        fmpPriceTarget?.targetAverage,
+        fmpPriceTarget?.priceTarget,
+        fmpPriceTarget?.targetPrice,
         yahooSupplementalData.targetMean
       ),
-    recommendationKey: rating !== "N/A" ? rating : yahooSupplementalData.recommendationKey,
+    recommendationKey: rating,
     analystEstimates: {
       currentYear: {
-        revenue: firstNumber(fmpAnalystEstimates[0]?.revenueAvg, currentRevenue),
+        revenue: currentRevenue,
         earnings: currentEarnings,
-        eps: firstNumber(currentEps, fmpAnalystEstimates[0]?.epsAvg)
+        eps: currentEps
       },
       nextYear: {
-        revenue: firstNumber(fmpAnalystEstimates[1]?.revenueAvg, nextRevenue),
+        revenue: nextRevenue,
         earnings: nextEarnings,
-        eps: firstNumber(nextEps, fmpAnalystEstimates[1]?.epsAvg)
+        eps: nextEps
       }
     },
     financialHistoryVersion: FINANCIAL_HISTORY_VERSION,
