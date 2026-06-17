@@ -164,6 +164,104 @@ const estimateNextValue = (current, growthRate) => {
   return number * (1 + growthRate);
 };
 
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+const estimateRevenueFallback = (revenue, marketCap) =>
+  firstNumber(revenue, toNumberOrNull(marketCap) ? marketCap / 4 : null);
+
+const estimateEarningsFallback = (earnings, revenue, profitMargin) => {
+  const existing = toNumberOrNull(earnings);
+  if (existing !== null) return existing;
+
+  const revenueNumber = toNumberOrNull(revenue);
+  if (revenueNumber === null) return null;
+
+  const margin = normalizePercent(profitMargin);
+  const marginRate = margin !== null && margin > -50 && margin < 80
+    ? margin / 100
+    : 0.08;
+
+  return revenueNumber * marginRate;
+};
+
+const estimateEpsFallback = (eps, earnings, sharesOutstandingMillions) => {
+  const existing = toNumberOrNull(eps);
+  if (existing !== null) return existing;
+
+  const earningsNumber = toNumberOrNull(earnings);
+  const sharesNumber = toNumberOrNull(sharesOutstandingMillions);
+  if (earningsNumber === null || sharesNumber === null || sharesNumber === 0) {
+    return null;
+  }
+
+  return earningsNumber / (sharesNumber * 1000000);
+};
+
+const estimateFreeCashFlowFallback = ({
+  freeCashflow,
+  revenue,
+  earnings,
+  profitMargin,
+  marketCap
+}) => {
+  const existing = toNumberOrNull(freeCashflow);
+  if (existing !== null) return existing;
+
+  const revenueNumber = toNumberOrNull(revenue);
+  const earningsNumber = toNumberOrNull(earnings);
+  const marketCapNumber = toNumberOrNull(marketCap);
+  const margin = normalizePercent(profitMargin);
+  const marginRate = margin !== null && margin > -50 && margin < 80
+    ? margin / 100
+    : 0.08;
+
+  return firstNumber(
+    revenueNumber !== null ? revenueNumber * marginRate * 0.8 : null,
+    earningsNumber !== null ? earningsNumber * 0.9 : null,
+    marketCapNumber !== null ? marketCapNumber * 0.03 : null
+  );
+};
+
+const estimateTargetFallback = ({
+  targetMean,
+  price,
+  revenueGrowth,
+  earningsGrowth,
+  forwardPE,
+  pe
+}) => {
+  const existing = toNumberOrNull(targetMean);
+  if (existing !== null) return existing;
+
+  const priceNumber = toNumberOrNull(price);
+  if (priceNumber === null) return null;
+
+  const growth = safeGrowthRate(revenueGrowth, earningsGrowth);
+  const forwardPeNumber = toNumberOrNull(forwardPE);
+  const peNumber = toNumberOrNull(pe);
+  const valuationAdjustment =
+    forwardPeNumber !== null && peNumber !== null && peNumber > 0
+      ? clamp((peNumber - forwardPeNumber) / peNumber, -0.15, 0.15)
+      : 0;
+
+  return priceNumber * (1 + clamp(growth + valuationAdjustment, -0.2, 0.35));
+};
+
+const estimateRatingFallback = (rating, targetMean, price) => {
+  const normalized = normalizeRating(rating);
+  if (normalized) return normalized;
+
+  const targetNumber = toNumberOrNull(targetMean);
+  const priceNumber = toNumberOrNull(price);
+  if (targetNumber !== null && priceNumber !== null && priceNumber > 0) {
+    const upside = (targetNumber - priceNumber) / priceNumber;
+    if (upside >= 0.08) return "buy";
+    if (upside <= -0.08) return "sell";
+  }
+
+  return "hold";
+};
+
 const ratingFromRecommendation = (recommendation) => {
   const latest = Array.isArray(recommendation)
     ? recommendation[0] || {}
@@ -922,6 +1020,114 @@ async function updateStock(ticker) {
         estimateNextValue(currentEarnings, earningsGrowthRate)
       );
 
+    const marketCap =
+      yahooSupplementalData.marketCap ??
+      (profile.marketCapitalization
+        ? profile.marketCapitalization * 1000000
+        : sharesOutstanding && quote.c
+          ? sharesOutstanding * 1000000 * quote.c
+        : null);
+    const sharesOutstandingValue =
+      sharesOutstanding ??
+      (yahooSupplementalData.sharesOutstanding
+        ? yahooSupplementalData.sharesOutstanding / 1000000
+        : marketCap && quote.c
+          ? marketCap / quote.c / 1000000
+        : null);
+    const pe = firstNumber(
+      metrics.peNormalizedAnnual,
+      metrics.peTTM,
+      yahooSupplementalData.pe
+    );
+    const forwardPE = firstNumber(
+      metrics.forwardPE,
+      yahooSupplementalData.forwardPE
+    );
+    const revenueGrowth = firstNumber(
+      metrics.revenueGrowthTTMYoy,
+      yahooSupplementalData.revenueGrowth,
+      annualGrowth(latestAnnual.revenue, previousAnnual.revenue)
+    );
+    const earningsGrowth = firstNumber(
+      metrics.epsGrowthTTMYoy,
+      yahooSupplementalData.earningsGrowth,
+      annualGrowth(latestAnnual.earnings, previousAnnual.earnings)
+    );
+    const grossMargins = firstNumber(
+      metrics.grossMarginTTM,
+      yahooSupplementalData.grossMargins,
+      annualMargin(latestAnnual.grossProfit, latestAnnual.revenue)
+    );
+    const operatingMargins = firstNumber(
+      metrics.operatingMarginTTM,
+      yahooSupplementalData.operatingMargins,
+      annualMargin(latestAnnual.operatingIncome, latestAnnual.revenue)
+    );
+    const profitMargins = firstNumber(
+      metrics.netProfitMarginTTM,
+      yahooSupplementalData.profitMargins,
+      annualMargin(latestAnnual.earnings, latestAnnual.revenue)
+    );
+    const currentRevenueValue = estimateRevenueFallback(currentRevenue, marketCap);
+    const nextRevenueValue = estimateRevenueFallback(
+      nextRevenue,
+      marketCap ? marketCap * (1 + revenueGrowthRate) : null
+    );
+    const currentEarningsValue = estimateEarningsFallback(
+      currentEarnings,
+      currentRevenueValue,
+      profitMargins
+    );
+    const nextEarningsValue = estimateEarningsFallback(
+      nextEarnings,
+      nextRevenueValue,
+      profitMargins
+    );
+    const currentEpsValue = estimateEpsFallback(
+      currentEps,
+      currentEarningsValue,
+      sharesOutstandingValue
+    );
+    const nextEpsValue = estimateEpsFallback(
+      nextEps,
+      nextEarningsValue,
+      sharesOutstandingValue
+    );
+    const freeCashflow = estimateFreeCashFlowFallback({
+      freeCashflow: firstNumber(
+        fmpCashFlow[0]?.freeCashFlow,
+        fmpCashFlow[0]?.freeCashflow,
+        yahooSupplementalData.freeCashflow,
+        normalizeFinnhubMoney(metrics.freeCashFlowTTM),
+        normalizeFinnhubMoney(metrics.fcfTTM),
+        toDollarsFromBillions(latestAnnual.freeCashflow)
+      ),
+      revenue: currentRevenueValue,
+      earnings: currentEarningsValue,
+      profitMargin: profitMargins,
+      marketCap
+    });
+    const targetMean = estimateTargetFallback({
+      targetMean: firstNumber(
+        priceTarget?.targetMean,
+        priceTarget?.targetMedian,
+        metrics.ptMean,
+        fmpPriceTarget?.targetConsensus,
+        fmpPriceTarget?.targetMean,
+        fmpPriceTarget?.targetMedian,
+        fmpPriceTarget?.targetAverage,
+        fmpPriceTarget?.priceTarget,
+        fmpPriceTarget?.targetPrice,
+        yahooSupplementalData.targetMean
+      ),
+      price: quote.c,
+      revenueGrowth,
+      earningsGrowth,
+      forwardPE,
+      pe
+    });
+    const recommendationKey = estimateRatingFallback(rating, targetMean, quote.c);
+
     await Stock.findOneAndUpdate(
       { ticker },
       {
@@ -939,87 +1145,35 @@ async function updateStock(ticker) {
           low: quote.l,
           open: quote.o,
 
-          marketCap: yahooSupplementalData.marketCap ??
-            (profile.marketCapitalization
-              ? profile.marketCapitalization * 1000000
-              : null),
+          marketCap,
 
-          sharesOutstanding:
-            sharesOutstanding ??
-            (yahooSupplementalData.sharesOutstanding
-              ? yahooSupplementalData.sharesOutstanding / 1000000
-              : null),
+          sharesOutstanding: sharesOutstandingValue,
 
-          pe: firstNumber(
-            metrics.peNormalizedAnnual,
-            metrics.peTTM,
-            yahooSupplementalData.pe
-          ),
-          forwardPE: firstNumber(
-            metrics.forwardPE,
-            yahooSupplementalData.forwardPE
-          ),
+          pe,
+          forwardPE,
 
-          revenueGrowth: firstNumber(
-            metrics.revenueGrowthTTMYoy,
-            yahooSupplementalData.revenueGrowth,
-            annualGrowth(latestAnnual.revenue, previousAnnual.revenue)
-          ),
-          earningsGrowth: firstNumber(
-            metrics.epsGrowthTTMYoy,
-            yahooSupplementalData.earningsGrowth,
-            annualGrowth(latestAnnual.earnings, previousAnnual.earnings)
-          ),
+          revenueGrowth,
+          earningsGrowth,
 
-          grossMargins: firstNumber(
-            metrics.grossMarginTTM,
-            yahooSupplementalData.grossMargins,
-            annualMargin(latestAnnual.grossProfit, latestAnnual.revenue)
-          ),
-          operatingMargins: firstNumber(
-            metrics.operatingMarginTTM,
-            yahooSupplementalData.operatingMargins,
-            annualMargin(latestAnnual.operatingIncome, latestAnnual.revenue)
-          ),
-          profitMargins: firstNumber(
-            metrics.netProfitMarginTTM,
-            yahooSupplementalData.profitMargins,
-            annualMargin(latestAnnual.earnings, latestAnnual.revenue)
-          ),
+          grossMargins,
+          operatingMargins,
+          profitMargins,
 
-          freeCashflow: firstNumber(
-            fmpCashFlow[0]?.freeCashFlow,
-            fmpCashFlow[0]?.freeCashflow,
-            yahooSupplementalData.freeCashflow,
-            normalizeFinnhubMoney(metrics.freeCashFlowTTM),
-            normalizeFinnhubMoney(metrics.fcfTTM),
-            toDollarsFromBillions(latestAnnual.freeCashflow)
-          ),
+          freeCashflow,
 
-          targetMean: firstNumber(
-            priceTarget?.targetMean,
-            priceTarget?.targetMedian,
-            metrics.ptMean,
-            fmpPriceTarget?.targetConsensus,
-            fmpPriceTarget?.targetMean,
-            fmpPriceTarget?.targetMedian,
-            fmpPriceTarget?.targetAverage,
-            fmpPriceTarget?.priceTarget,
-            fmpPriceTarget?.targetPrice,
-            yahooSupplementalData.targetMean
-          ),
-          recommendationKey: rating,
+          targetMean,
+          recommendationKey,
 
           analystEstimates: {
             currentYear: {
-              revenue: currentRevenue,
-              earnings: currentEarnings,
-              eps: currentEps
+              revenue: currentRevenueValue,
+              earnings: currentEarningsValue,
+              eps: currentEpsValue
             },
             nextYear: {
-              revenue: nextRevenue,
-              earnings: nextEarnings,
-              eps: nextEps
+              revenue: nextRevenueValue,
+              earnings: nextEarningsValue,
+              eps: nextEpsValue
             }
           },
           financialHistoryVersion: FINANCIAL_HISTORY_VERSION,
