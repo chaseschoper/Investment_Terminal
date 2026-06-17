@@ -554,6 +554,37 @@ function withGuaranteedAnalystSection(data = {}) {
     targetMean,
     price
   );
+  const hasCompleteModeledHistory =
+    revenueRows.some((row) => toNumberOrNull(row.revenue) !== null) &&
+    revenueRows.some((row) => toNumberOrNull(row.earnings) !== null) &&
+    revenueRows.some((row) => toNumberOrNull(row.eps) !== null);
+  const latestYear =
+    toNumberOrNull(latestRevenueRow.year) || new Date().getFullYear();
+  const modeledGrowthRate = safeGrowthRate(revenueGrowth);
+  const modeledRevenueData = Array.from({ length: 5 }, (_, index) => {
+    const yearsBack = 4 - index;
+    const growthFactor = Math.pow(1 + modeledGrowthRate, yearsBack);
+    const revenue = currentRevenue !== null
+      ? currentRevenue / growthFactor / 1000000000
+      : null;
+    const earnings = currentEarnings !== null
+      ? currentEarnings / growthFactor / 1000000000
+      : null;
+    const eps = currentEps !== null
+      ? currentEps / growthFactor
+      : null;
+
+    return {
+      year: latestYear - yearsBack,
+      revenue,
+      earnings,
+      eps,
+      source: "Modeled fallback"
+    };
+  });
+  const guaranteedRevenueData = hasCompleteModeledHistory
+    ? revenueRows
+    : modeledRevenueData;
 
   return {
     ...data,
@@ -573,7 +604,8 @@ function withGuaranteedAnalystSection(data = {}) {
         earnings: nextEarnings,
         eps: nextEps
       }
-    }
+    },
+    revenueData: guaranteedRevenueData
   };
 }
 
@@ -1268,7 +1300,7 @@ async function fetchStockData(ticker) {
   });
   const recommendationKey = estimateRatingFallback(rating, targetMean, quote.c);
 
-  const data = {
+  const data = withGuaranteedAnalystSection({
     name: profile.name || ticker,
     symbol: ticker,
     price: quote.c,
@@ -1305,7 +1337,7 @@ async function fetchStockData(ticker) {
     financialHistoryVersion: FINANCIAL_HISTORY_VERSION,
     revenueHistory,
     revenueData
-  };
+  });
 
   await Stock.findOneAndUpdate(
     { ticker },
