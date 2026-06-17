@@ -110,8 +110,39 @@ const toDollarsFromBillions = (value) => {
   return number === null ? null : number * 1000000000;
 };
 
-const estimateField = (row, ...keys) =>
-  firstNumber(...keys.map((key) => row?.[key]));
+const toDollarsFromMillions = (value) => {
+  const number = toNumberOrNull(value);
+  return number === null ? null : number * 1000000;
+};
+
+const normalizeFinnhubMoney = (value) => {
+  const number = toNumberOrNull(value);
+  if (number === null) return null;
+  return Math.abs(number) < 10000000 ? toDollarsFromMillions(number) : number;
+};
+
+const fmpEstimateField = (row, ...keys) =>
+  firstNumber(
+    ...keys.map((key) => row?.[key]),
+    ...keys.map((key) => row?.[key.replace(/Avg$/, "Average")])
+  );
+
+const normalizeRating = (value) => {
+  if (!value) return null;
+
+  const rating = String(value).toLowerCase().replace(/\s+/g, "_");
+  if (["strong_buy", "buy", "outperform", "overweight"].includes(rating)) {
+    return "buy";
+  }
+  if (["hold", "neutral", "market_perform", "equal_weight"].includes(rating)) {
+    return "hold";
+  }
+  if (["strong_sell", "sell", "underperform", "underweight"].includes(rating)) {
+    return "sell";
+  }
+
+  return null;
+};
 
 const safeGrowthRate = (...values) => {
   for (const value of values) {
@@ -138,16 +169,18 @@ const getAnalystRating = (recommendation, fallback) => {
   const hold = toNumberOrNull(latest.hold) || 0;
   const sell = toNumberOrNull(latest.sell) || 0;
   const strongSell = toNumberOrNull(latest.strongSell) || 0;
-  const bullish = strongBuy + buy;
-  const bearish = sell + strongSell;
+  const total = strongBuy + buy + hold + sell + strongSell;
 
-  if (bullish || hold || bearish) {
-    if (bearish >= bullish && bearish >= hold) return "sell";
-    if (hold >= bullish && hold >= bearish) return "hold";
-    return "buy";
+  if (total) {
+    const score =
+      (strongBuy + buy * 2 + hold * 3 + sell * 4 + strongSell * 5) / total;
+
+    if (score <= 2.5) return "buy";
+    if (score >= 3.5) return "sell";
+    return "hold";
   }
 
-  return fallback || "N/A";
+  return normalizeRating(fallback) || "N/A";
 };
 
 const unwrapFinancialValue = (value) => {
@@ -785,7 +818,7 @@ async function fetchStockData(ticker) {
   );
 
   const currentEps =
-    estimateField(fmpCurrentEstimate, "epsAvg", "estimatedEpsAvg", "epsAverage") ??
+    fmpEstimateField(fmpCurrentEstimate, "epsAvg", "estimatedEpsAvg") ??
     epsEstimates[0]?.epsAvg ??
     metrics.epsEstimateCurrentYear ??
     metrics.epsInclExtraItemsAnnual ??
@@ -793,41 +826,38 @@ async function fetchStockData(ticker) {
     null;
 
   const nextEps =
-    estimateField(fmpNextEstimate, "epsAvg", "estimatedEpsAvg", "epsAverage") ??
+    fmpEstimateField(fmpNextEstimate, "epsAvg", "estimatedEpsAvg") ??
     epsEstimates[1]?.epsAvg ??
     metrics.epsEstimateNextYear ??
     estimateNextValue(currentEps, earningsGrowthRate) ??
     null;
 
   const currentRevenue =
-    estimateField(
+    fmpEstimateField(
       fmpCurrentEstimate,
       "revenueAvg",
-      "estimatedRevenueAvg",
-      "revenueAverage"
+      "estimatedRevenueAvg"
     ) ??
-    revenueEstimates[0]?.revenueAvg ??
     yahooSupplementalData.analystEstimates?.currentYear?.revenue ??
+    normalizeFinnhubMoney(revenueEstimates[0]?.revenueAvg) ??
     currentRevenueBase;
 
   const nextRevenue =
-    estimateField(
+    fmpEstimateField(
       fmpNextEstimate,
       "revenueAvg",
-      "estimatedRevenueAvg",
-      "revenueAverage"
+      "estimatedRevenueAvg"
     ) ??
-    revenueEstimates[1]?.revenueAvg ??
     yahooSupplementalData.analystEstimates?.nextYear?.revenue ??
+    normalizeFinnhubMoney(revenueEstimates[1]?.revenueAvg) ??
     estimateNextValue(currentRevenue, revenueGrowthRate);
 
   const currentEarnings =
     firstNumber(
-      estimateField(
+      fmpEstimateField(
         fmpCurrentEstimate,
         "netIncomeAvg",
-        "estimatedNetIncomeAvg",
-        "netIncomeAverage"
+        "estimatedNetIncomeAvg"
       ),
       currentEarningsBase,
       currentEps && sharesOutstanding
@@ -837,11 +867,10 @@ async function fetchStockData(ticker) {
 
   const nextEarnings =
     firstNumber(
-      estimateField(
+      fmpEstimateField(
         fmpNextEstimate,
         "netIncomeAvg",
-        "estimatedNetIncomeAvg",
-        "netIncomeAverage"
+        "estimatedNetIncomeAvg"
       ),
       nextEps && sharesOutstanding
         ? nextEps * sharesOutstanding * 1000000
@@ -897,10 +926,11 @@ async function fetchStockData(ticker) {
     ),
     freeCashflow:
       firstNumber(
-        metrics.freeCashFlowTTM,
-        metrics.fcfTTM,
         fmpCashFlow[0]?.freeCashFlow,
+        fmpCashFlow[0]?.freeCashflow,
         yahooSupplementalData.freeCashflow,
+        normalizeFinnhubMoney(metrics.freeCashFlowTTM),
+        normalizeFinnhubMoney(metrics.fcfTTM),
         toDollarsFromBillions(latestAnnual.freeCashflow)
       ),
     targetMean:
