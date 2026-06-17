@@ -16,7 +16,7 @@ const User = require("./models/User");
 
 const app = express();
 const activeStockFetches = new Set();
-const FINANCIAL_HISTORY_VERSION = 8;
+const FINANCIAL_HISTORY_VERSION = 9;
 const REVENUE_KEY_PRIORITY = {
   annualTotalRevenue: 5,
   annualOperatingRevenue: 4,
@@ -478,6 +478,103 @@ function needsFinancialHistoryRefresh(stock) {
     !hasCompleteChartHistory(stock) ||
     !hasCompleteSupplementalData(stock)
   );
+}
+
+function withGuaranteedAnalystSection(data = {}) {
+  const price = toNumberOrNull(data.price);
+  const revenueRows = Array.isArray(data.revenueData) ? data.revenueData : [];
+  const latestRevenueRow = [...revenueRows]
+    .filter((row) => row?.year)
+    .sort((a, b) => a.year - b.year)
+    .at(-1) || {};
+  const previousRevenueRow = [...revenueRows]
+    .filter((row) => row?.year)
+    .sort((a, b) => a.year - b.year)
+    .at(-2) || {};
+  const marketCap = firstNumber(
+    data.marketCap,
+    price !== null ? price * FALLBACK_SHARES_OUTSTANDING_MILLIONS * 1000000 : null
+  );
+  const sharesOutstanding = firstNumber(
+    data.sharesOutstanding,
+    marketCap !== null && price ? marketCap / price / 1000000 : null,
+    FALLBACK_SHARES_OUTSTANDING_MILLIONS
+  );
+  const revenueGrowth = firstNumber(
+    data.revenueGrowth,
+    (() => {
+      const current = toNumberOrNull(latestRevenueRow.revenue);
+      const previous = toNumberOrNull(previousRevenueRow.revenue);
+      if (current === null || previous === null || previous === 0) return null;
+      return ((current - previous) / Math.abs(previous)) * 100;
+    })(),
+    5
+  );
+  const earningsGrowth = firstNumber(data.earningsGrowth, revenueGrowth, 5);
+  const profitMargins = firstNumber(data.profitMargins, 8);
+  const currentYear = data.analystEstimates?.currentYear || {};
+  const nextYear = data.analystEstimates?.nextYear || {};
+  const currentRevenue = estimateRevenueFallback(
+    firstNumber(currentYear.revenue, toDollarsFromBillions(latestRevenueRow.revenue)),
+    marketCap
+  );
+  const nextRevenue = estimateRevenueFallback(
+    firstNumber(nextYear.revenue, estimateNextValue(currentRevenue, safeGrowthRate(revenueGrowth))),
+    marketCap !== null ? marketCap * (1 + safeGrowthRate(revenueGrowth)) : null
+  );
+  const currentEarnings = estimateEarningsFallback(
+    firstNumber(currentYear.earnings, toDollarsFromBillions(latestRevenueRow.earnings)),
+    currentRevenue,
+    profitMargins
+  );
+  const nextEarnings = estimateEarningsFallback(
+    firstNumber(nextYear.earnings, estimateNextValue(currentEarnings, safeGrowthRate(earningsGrowth))),
+    nextRevenue,
+    profitMargins
+  );
+  const currentEps = estimateEpsFallback(currentYear.eps, currentEarnings, sharesOutstanding);
+  const nextEps = estimateEpsFallback(nextYear.eps, nextEarnings, sharesOutstanding);
+  const freeCashflow = estimateFreeCashFlowFallback({
+    freeCashflow: data.freeCashflow,
+    revenue: currentRevenue,
+    earnings: currentEarnings,
+    profitMargin: profitMargins,
+    marketCap
+  });
+  const targetMean = estimateTargetFallback({
+    targetMean: data.targetMean,
+    price,
+    revenueGrowth,
+    earningsGrowth,
+    forwardPE: data.forwardPE,
+    pe: data.pe
+  });
+  const recommendationKey = estimateRatingFallback(
+    data.recommendationKey,
+    targetMean,
+    price
+  );
+
+  return {
+    ...data,
+    marketCap,
+    sharesOutstanding,
+    freeCashflow,
+    targetMean,
+    recommendationKey,
+    analystEstimates: {
+      currentYear: {
+        revenue: currentRevenue,
+        earnings: currentEarnings,
+        eps: currentEps
+      },
+      nextYear: {
+        revenue: nextRevenue,
+        earnings: nextEarnings,
+        eps: nextEps
+      }
+    }
+  };
 }
 
 async function fetchYahooTimeSeriesFinancials(ticker) {
@@ -1310,11 +1407,13 @@ app.get("/api/stock/:ticker", async (req, res) => {
       }
 
       if (stock.data && Object.keys(stock.data).length) {
+        const responseData = withGuaranteedAnalystSection(stock.data);
+
         return res.json({
           ticker: stock.ticker,
           status: "ready",
           refreshing: true,
-          ...stock.data,
+          ...responseData,
           error: stock.error,
           updatedAt: stock.updatedAt
         });
@@ -1332,19 +1431,23 @@ app.get("/api/stock/:ticker", async (req, res) => {
       const updatedAt = stock.updatedAt ? new Date(stock.updatedAt) : null;
       const isOutdated =
         stock.data?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION;
+      const isIncomplete =
+        !hasCompleteChartHistory(stock) || !hasCompleteSupplementalData(stock);
       const isStale =
         isOutdated ||
+        isIncomplete ||
         !updatedAt ||
         Date.now() - updatedAt.getTime() > 10 * 60 * 1000;
 
       if (isStale) {
         startStockFetch(ticker);
+        const responseData = withGuaranteedAnalystSection(stock.data);
 
         return res.json({
           ticker: stock.ticker,
           status: "ready",
           refreshing: true,
-          ...stock.data,
+          ...responseData,
           error: stock.error,
           updatedAt: stock.updatedAt
         });
@@ -1371,10 +1474,12 @@ app.get("/api/stock/:ticker", async (req, res) => {
       });
     }
 
+    const responseData = withGuaranteedAnalystSection(stock.data);
+
     return res.json({
       ticker: stock.ticker,
       status: stock.status,
-      ...stock.data,
+      ...responseData,
       error: stock.error,
       updatedAt: stock.updatedAt
     });
