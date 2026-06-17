@@ -164,6 +164,8 @@ const estimateNextValue = (current, growthRate) => {
   return number * (1 + growthRate);
 };
 
+const FALLBACK_SHARES_OUTSTANDING_MILLIONS = 100;
+
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 const estimateRevenueFallback = (revenue, marketCap) =>
@@ -1034,6 +1036,11 @@ async function updateStock(ticker) {
         : marketCap && quote.c
           ? marketCap / quote.c / 1000000
         : null);
+    const modeledMarketCap =
+      marketCap ??
+      (quote.c ? quote.c * FALLBACK_SHARES_OUTSTANDING_MILLIONS * 1000000 : null);
+    const modeledSharesOutstanding =
+      sharesOutstandingValue ?? FALLBACK_SHARES_OUTSTANDING_MILLIONS;
     const pe = firstNumber(
       metrics.peNormalizedAnnual,
       metrics.peTTM,
@@ -1068,10 +1075,10 @@ async function updateStock(ticker) {
       yahooSupplementalData.profitMargins,
       annualMargin(latestAnnual.earnings, latestAnnual.revenue)
     );
-    const currentRevenueValue = estimateRevenueFallback(currentRevenue, marketCap);
+    const currentRevenueValue = estimateRevenueFallback(currentRevenue, modeledMarketCap);
     const nextRevenueValue = estimateRevenueFallback(
       nextRevenue,
-      marketCap ? marketCap * (1 + revenueGrowthRate) : null
+      modeledMarketCap ? modeledMarketCap * (1 + revenueGrowthRate) : null
     );
     const currentEarningsValue = estimateEarningsFallback(
       currentEarnings,
@@ -1086,12 +1093,12 @@ async function updateStock(ticker) {
     const currentEpsValue = estimateEpsFallback(
       currentEps,
       currentEarningsValue,
-      sharesOutstandingValue
+      modeledSharesOutstanding
     );
     const nextEpsValue = estimateEpsFallback(
       nextEps,
       nextEarningsValue,
-      sharesOutstandingValue
+      modeledSharesOutstanding
     );
     const freeCashflow = estimateFreeCashFlowFallback({
       freeCashflow: firstNumber(
@@ -1105,7 +1112,7 @@ async function updateStock(ticker) {
       revenue: currentRevenueValue,
       earnings: currentEarningsValue,
       profitMargin: profitMargins,
-      marketCap
+      marketCap: modeledMarketCap
     });
     const targetMean = estimateTargetFallback({
       targetMean: firstNumber(
