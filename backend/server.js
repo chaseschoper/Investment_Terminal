@@ -16,7 +16,7 @@ const User = require("./models/User");
 
 const app = express();
 const activeStockFetches = new Set();
-const FINANCIAL_HISTORY_VERSION = 7;
+const FINANCIAL_HISTORY_VERSION = 8;
 const REVENUE_KEY_PRIORITY = {
   annualTotalRevenue: 5,
   annualOperatingRevenue: 4,
@@ -75,6 +75,28 @@ async function getFinnhub(url) {
   return res.data;
 }
 
+async function getFmpData(ticker, label, endpoints) {
+  if (!process.env.FMP_API_KEY) return null;
+
+  for (const endpoint of endpoints) {
+    const path = endpoint.replace("{ticker}", ticker);
+    const separator = path.includes("?") ? "&" : "?";
+    const url = `https://financialmodelingprep.com${path}${separator}apikey=${process.env.FMP_API_KEY}`;
+
+    try {
+      const res = await axios.get(url);
+      const data = res.data;
+      if (data?.["Error Message"] || data?.error) continue;
+      if (Array.isArray(data) && !data.length) continue;
+      if (data && typeof data === "object") return data;
+    } catch (err) {
+      console.log(`FMP ${label} endpoint skipped:`, ticker, err.response?.status || err.message);
+    }
+  }
+
+  return null;
+}
+
 function findFinancialValue(items, concepts) {
   const row = items.find((item) => concepts.includes(item.concept));
   return row?.value ?? null;
@@ -130,15 +152,30 @@ const fmpEstimateField = (row, ...keys) =>
 const normalizeRating = (value) => {
   if (!value) return null;
 
-  const rating = String(value).toLowerCase().replace(/\s+/g, "_");
-  if (["strong_buy", "buy", "outperform", "overweight"].includes(rating)) {
-    return "buy";
+  const rating = String(value).toLowerCase().replace(/[_-]+/g, " ");
+  if (
+    rating.includes("strong sell") ||
+    rating.includes("sell") ||
+    rating.includes("underperform") ||
+    rating.includes("underweight")
+  ) {
+    return "sell";
   }
-  if (["hold", "neutral", "market_perform", "equal_weight"].includes(rating)) {
+  if (
+    rating.includes("hold") ||
+    rating.includes("neutral") ||
+    rating.includes("market perform") ||
+    rating.includes("equal weight")
+  ) {
     return "hold";
   }
-  if (["strong_sell", "sell", "underperform", "underweight"].includes(rating)) {
-    return "sell";
+  if (
+    rating.includes("strong buy") ||
+    rating.includes("buy") ||
+    rating.includes("outperform") ||
+    rating.includes("overweight")
+  ) {
+    return "buy";
   }
 
   return null;
@@ -162,8 +199,10 @@ const estimateNextValue = (current, growthRate) => {
   return number * (1 + growthRate);
 };
 
-const getAnalystRating = (recommendation, fallback) => {
-  const latest = recommendation?.[0] || {};
+const ratingFromRecommendation = (recommendation) => {
+  const latest = Array.isArray(recommendation)
+    ? recommendation[0] || {}
+    : recommendation || {};
   const strongBuy = toNumberOrNull(latest.strongBuy) || 0;
   const buy = toNumberOrNull(latest.buy) || 0;
   const hold = toNumberOrNull(latest.hold) || 0;
@@ -180,7 +219,16 @@ const getAnalystRating = (recommendation, fallback) => {
     return "hold";
   }
 
-  return normalizeRating(fallback) || "N/A";
+  return null;
+};
+
+const getAnalystRating = (...sources) => {
+  for (const source of sources) {
+    const rating = ratingFromRecommendation(source) || normalizeRating(source);
+    if (rating) return rating;
+  }
+
+  return "N/A";
 };
 
 const unwrapFinancialValue = (value) => {
@@ -190,6 +238,9 @@ const unwrapFinancialValue = (value) => {
 
   return toNumberOrNull(value);
 };
+
+const firstYahooNumber = (...values) =>
+  firstNumber(...values.map((value) => unwrapFinancialValue(value)));
 
 const getStatementYear = (value) => {
   if (!value) return null;
@@ -305,10 +356,27 @@ function hasCompleteChartHistory(stock) {
   );
 }
 
+function hasCompleteSupplementalData(stock) {
+  const data = stock?.data || {};
+  const currentYear = data.analystEstimates?.currentYear || {};
+  const nextYear = data.analystEstimates?.nextYear || {};
+
+  return (
+    toNumberOrNull(data.freeCashflow) !== null &&
+    toNumberOrNull(data.targetMean) !== null &&
+    ["buy", "hold", "sell"].includes(data.recommendationKey) &&
+    toNumberOrNull(currentYear.revenue) !== null &&
+    toNumberOrNull(currentYear.eps) !== null &&
+    toNumberOrNull(nextYear.revenue) !== null &&
+    toNumberOrNull(nextYear.eps) !== null
+  );
+}
+
 function needsFinancialHistoryRefresh(stock) {
   return (
     stock?.data?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
-    !hasCompleteChartHistory(stock)
+    !hasCompleteChartHistory(stock) ||
+    !hasCompleteSupplementalData(stock)
   );
 }
 
@@ -499,19 +567,32 @@ async function fetchFmpIncomeStatementHistory(ticker) {
 
 async function fetchYahooSupplementalData(ticker) {
   try {
-    const summary = await yahooFinance.quoteSummary(ticker, {
-      modules: [
-        "financialData",
-        "defaultKeyStatistics",
-        "summaryDetail",
-        "earningsTrend"
-      ]
-    });
+    const [summary, quoteData] = await Promise.all([
+      yahooFinance
+        .quoteSummary(ticker, {
+          modules: [
+            "financialData",
+            "defaultKeyStatistics",
+            "summaryDetail",
+            "earningsTrend",
+            "recommendationTrend"
+          ]
+        })
+        .catch((err) => {
+          console.log("Yahoo quote summary skipped:", ticker, err.message);
+          return {};
+        }),
+      yahooFinance.quote(ticker).catch((err) => {
+        console.log("Yahoo quote skipped:", ticker, err.message);
+        return {};
+      })
+    ]);
 
     const financialData = summary?.financialData || {};
     const keyStats = summary?.defaultKeyStatistics || {};
     const detail = summary?.summaryDetail || {};
     const trends = summary?.earningsTrend?.trend || [];
+    const recommendationTrend = summary?.recommendationTrend?.trend || [];
 
     const currentYear =
       trends.find((item) => item.period === "0y") || {};
@@ -519,24 +600,27 @@ async function fetchYahooSupplementalData(ticker) {
       trends.find((item) => item.period === "+1y") || {};
 
     const estimateFromTrend = (trend) => ({
-      revenue: firstNumber(trend?.revenueEstimate?.avg),
+      revenue: firstYahooNumber(trend?.revenueEstimate?.avg),
       earnings: null,
-      eps: firstNumber(trend?.earningsEstimate?.avg)
+      eps: firstYahooNumber(trend?.earningsEstimate?.avg)
     });
 
     return {
-      marketCap: firstNumber(detail.marketCap, keyStats.marketCap),
-      pe: firstNumber(detail.trailingPE, keyStats.trailingPE),
-      forwardPE: firstNumber(keyStats.forwardPE, financialData.forwardPE),
-      sharesOutstanding: firstNumber(keyStats.sharesOutstanding),
-      revenueGrowth: normalizePercent(financialData.revenueGrowth),
-      earningsGrowth: normalizePercent(financialData.earningsGrowth),
-      grossMargins: normalizePercent(financialData.grossMargins),
-      operatingMargins: normalizePercent(financialData.operatingMargins),
-      profitMargins: normalizePercent(financialData.profitMargins),
-      freeCashflow: firstNumber(financialData.freeCashflow),
-      targetMean: firstNumber(financialData.targetMeanPrice),
-      recommendationKey: financialData.recommendationKey || null,
+      marketCap: firstYahooNumber(detail.marketCap, keyStats.marketCap, quoteData.marketCap),
+      pe: firstYahooNumber(detail.trailingPE, keyStats.trailingPE, quoteData.trailingPE),
+      forwardPE: firstYahooNumber(keyStats.forwardPE, financialData.forwardPE, quoteData.forwardPE),
+      sharesOutstanding: firstYahooNumber(keyStats.sharesOutstanding, quoteData.sharesOutstanding),
+      revenueGrowth: normalizePercent(unwrapFinancialValue(financialData.revenueGrowth)),
+      earningsGrowth: normalizePercent(unwrapFinancialValue(financialData.earningsGrowth)),
+      grossMargins: normalizePercent(unwrapFinancialValue(financialData.grossMargins)),
+      operatingMargins: normalizePercent(unwrapFinancialValue(financialData.operatingMargins)),
+      profitMargins: normalizePercent(unwrapFinancialValue(financialData.profitMargins)),
+      freeCashflow: firstYahooNumber(financialData.freeCashflow),
+      targetMean: firstYahooNumber(financialData.targetMeanPrice),
+      recommendationKey:
+        normalizeRating(financialData.recommendationKey) ||
+        normalizeRating(quoteData.averageAnalystRating),
+      recommendationTrend,
       analystEstimates: {
         currentYear: estimateFromTrend(currentYear),
         nextYear: estimateFromTrend(nextYear)
@@ -674,21 +758,20 @@ async function fetchStockData(ticker) {
   let fmpCashFlow = [];
   let fmpPriceTarget = {};
   let fmpAnalystEstimates = [];
+  let fmpRating = {};
   const yahooFinancialData = await fetchYahooFinancialHistory(ticker);
   const fmpIncomeStatementData = await fetchFmpIncomeStatementHistory(ticker);
   const yahooSupplementalData = await fetchYahooSupplementalData(ticker);
 
-  try {
-    if (process.env.FMP_API_KEY) {
-      const cashFlowRes = await axios.get(
-        `https://financialmodelingprep.com/stable/cash-flow-statement?symbol=${ticker}&limit=1&apikey=${process.env.FMP_API_KEY}`
-      );
-
-      fmpCashFlow = cashFlowRes.data || [];
-    }
-  } catch (err) {
-    console.log("FMP cash flow skipped:", ticker, err.message);
-  }
+  const fmpCashFlowData = await getFmpData(ticker, "cash flow", [
+    "/stable/cash-flow-statement?symbol={ticker}&limit=1",
+    "/api/v3/cash-flow-statement/{ticker}?period=annual&limit=1"
+  ]);
+  fmpCashFlow = Array.isArray(fmpCashFlowData)
+    ? fmpCashFlowData
+    : fmpCashFlowData
+      ? [fmpCashFlowData]
+      : [];
 
   const revenueData = finalizeFinancialHistory(
     mergeHistoricalFinancials(
@@ -734,31 +817,31 @@ async function fetchStockData(ticker) {
     return (numeratorNumber / revenueNumber) * 100;
   };
 
-  try {
-    if (process.env.FMP_API_KEY) {
-      const targetRes = await axios.get(
-        `https://financialmodelingprep.com/stable/price-target-consensus?symbol=${ticker}&apikey=${process.env.FMP_API_KEY}`
-      );
+  const fmpPriceTargetData = await getFmpData(ticker, "price target", [
+    "/stable/price-target-consensus?symbol={ticker}",
+    "/api/v4/price-target-consensus?symbol={ticker}"
+  ]);
+  fmpPriceTarget = Array.isArray(fmpPriceTargetData)
+    ? fmpPriceTargetData[0] || {}
+    : fmpPriceTargetData || {};
 
-      fmpPriceTarget = Array.isArray(targetRes.data)
-        ? targetRes.data[0] || {}
-        : targetRes.data || {};
-    }
-  } catch (err) {
-    console.log("FMP price target skipped:", ticker, err.message);
-  }
+  const fmpAnalystEstimateData = await getFmpData(ticker, "analyst estimates", [
+    "/stable/analyst-estimates?symbol={ticker}&period=annual&limit=2",
+    "/api/v3/analyst-estimates/{ticker}?period=annual&limit=2"
+  ]);
+  fmpAnalystEstimates = Array.isArray(fmpAnalystEstimateData)
+    ? fmpAnalystEstimateData
+    : fmpAnalystEstimateData
+      ? [fmpAnalystEstimateData]
+      : [];
 
-  try {
-    if (process.env.FMP_API_KEY) {
-      const estimatesRes = await axios.get(
-        `https://financialmodelingprep.com/stable/analyst-estimates?symbol=${ticker}&period=annual&limit=2&apikey=${process.env.FMP_API_KEY}`
-      );
-
-      fmpAnalystEstimates = estimatesRes.data || [];
-    }
-  } catch (err) {
-    console.log("FMP analyst estimates skipped:", ticker, err.message);
-  }
+  const fmpRatingData = await getFmpData(ticker, "rating", [
+    "/stable/ratings-snapshot?symbol={ticker}",
+    "/api/v3/rating/{ticker}"
+  ]);
+  fmpRating = Array.isArray(fmpRatingData)
+    ? fmpRatingData[0] || {}
+    : fmpRatingData || {};
 
   let recommendation = [];
   try {
@@ -814,7 +897,11 @@ async function fetchStockData(ticker) {
   const currentEpsBase = latestAnnual.eps ?? null;
   const rating = getAnalystRating(
     recommendation,
-    yahooSupplementalData.recommendationKey
+    yahooSupplementalData.recommendationTrend,
+    yahooSupplementalData.recommendationKey,
+    fmpRating.ratingRecommendation,
+    fmpRating.rating,
+    fmpRating.recommendation
   );
 
   const currentEps =
