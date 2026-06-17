@@ -16,7 +16,7 @@ const User = require("./models/User");
 
 const app = express();
 const activeStockFetches = new Set();
-const FINANCIAL_HISTORY_VERSION = 13;
+const FINANCIAL_HISTORY_VERSION = 14;
 const TICKER_ALIASES = {
   ZILLOW: "Z",
   SALESFORCE: "CRM",
@@ -126,10 +126,25 @@ const firstNumber = (...values) => {
   return null;
 };
 
+const firstFiniteNumber = (...values) => {
+  for (const value of values) {
+    const number = toNumberOrNull(value);
+    if (number !== null) return number;
+  }
+
+  return null;
+};
+
 const normalizePercent = (value) => {
   const number = toNumberOrNull(value);
   if (number === null) return null;
   return Math.abs(number) <= 1 ? number * 100 : number;
+};
+
+const normalizeDividendYield = (value) => {
+  const number = toNumberOrNull(value);
+  if (number === null) return null;
+  return Math.abs(number) > 1 ? number / 100 : number;
 };
 
 const toDollarsFromBillions = (value) => {
@@ -489,6 +504,8 @@ function hasCompleteSupplementalData(stock) {
   return (
     toNumberOrNull(data.freeCashflow) !== null &&
     toNumberOrNull(data.targetMean) !== null &&
+    toNumberOrNull(data.fiftyTwoWeekHigh) !== null &&
+    toNumberOrNull(data.fiftyTwoWeekLow) !== null &&
     ["buy", "hold", "sell"].includes(data.recommendationKey) &&
     toNumberOrNull(currentYear.revenue) !== null &&
     toNumberOrNull(currentYear.eps) !== null &&
@@ -877,6 +894,24 @@ async function fetchYahooSupplementalData(ticker) {
       pe: firstYahooNumber(detail.trailingPE, keyStats.trailingPE, quoteData.trailingPE),
       forwardPE: firstYahooNumber(keyStats.forwardPE, financialData.forwardPE, quoteData.forwardPE),
       sharesOutstanding: firstYahooNumber(keyStats.sharesOutstanding, quoteData.sharesOutstanding),
+      dividendYield: normalizeDividendYield(
+        firstFiniteNumber(
+          unwrapFinancialValue(detail.dividendYield),
+          unwrapFinancialValue(detail.trailingAnnualDividendYield),
+          unwrapFinancialValue(quoteData.dividendYield),
+          unwrapFinancialValue(quoteData.trailingAnnualDividendYield)
+        )
+      ),
+      fiftyTwoWeekHigh: firstYahooNumber(
+        detail.fiftyTwoWeekHigh,
+        quoteData.fiftyTwoWeekHigh,
+        quoteData.fiftyTwoWeekRange?.high
+      ),
+      fiftyTwoWeekLow: firstYahooNumber(
+        detail.fiftyTwoWeekLow,
+        quoteData.fiftyTwoWeekLow,
+        quoteData.fiftyTwoWeekRange?.low
+      ),
       revenueGrowth: normalizePercent(unwrapFinancialValue(financialData.revenueGrowth)),
       earningsGrowth: normalizePercent(unwrapFinancialValue(financialData.earningsGrowth)),
       grossMargins: normalizePercent(unwrapFinancialValue(financialData.grossMargins)),
@@ -1359,6 +1394,26 @@ async function fetchStockData(ticker) {
     pe
   });
   const recommendationKey = estimateRatingFallback(rating, targetMean, quote.c);
+  const finnhubDividendYield = firstFiniteNumber(
+    metrics.dividendYieldIndicatedAnnual,
+    metrics.currentDividendYieldTTM,
+    metrics.dividendYieldTTM
+  );
+  const dividendYield = normalizeDividendYield(
+    finnhubDividendYield !== null
+      ? finnhubDividendYield / 100
+      : yahooSupplementalData.dividendYield
+  );
+  const fiftyTwoWeekHigh = firstNumber(
+    metrics["52WeekHigh"],
+    metrics["52WeekHighPrice"],
+    yahooSupplementalData.fiftyTwoWeekHigh
+  );
+  const fiftyTwoWeekLow = firstNumber(
+    metrics["52WeekLow"],
+    metrics["52WeekLowPrice"],
+    yahooSupplementalData.fiftyTwoWeekLow
+  );
 
   const data = withGuaranteedAnalystSection({
     name: profile.name || ticker,
@@ -1370,6 +1425,9 @@ async function fetchStockData(ticker) {
     high: quote.h,
     low: quote.l,
     open: quote.o,
+    dividendYield,
+    fiftyTwoWeekHigh,
+    fiftyTwoWeekLow,
     marketCap,
     sharesOutstanding: sharesOutstandingValue,
     pe,

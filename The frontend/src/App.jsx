@@ -32,6 +32,9 @@ const isNumber = (value) =>
 const formatPercent = (value) =>
   isNumber(value) ? `${value.toFixed(1)}%` : "N/A";
 
+const formatDividendYield = (value) =>
+  isNumber(value) ? `${(Math.abs(value) > 1 ? value : value * 100).toFixed(2)}%` : "N/A";
+
 const formatBillions = (value) =>
   isNumber(value) ? `$${(value / 1e9).toFixed(1)}B` : "N/A";
 
@@ -1996,30 +1999,21 @@ return (
     <div className="comparison-stat">
       <span>Dividend Yield</span>
       <strong>
-        {stock.dividendYield
-          ? `${(stock.dividendYield * 100).toFixed(2)}%`
-          : "N/A"}
+        {formatDividendYield(stock.dividendYield)}
       </strong>
     </div>
 
     <div className="comparison-stat">
       <span>52W High</span>
       <strong>
-        ${stock.fiftyTwoWeekHigh?.toFixed(2)}
+        {formatPrice(stock.fiftyTwoWeekHigh)}
       </strong>
     </div>
 
     <div className="comparison-stat">
       <span>52W Low</span>
       <strong>
-        ${stock.fiftyTwoWeekLow?.toFixed(2)}
-      </strong>
-    </div>
-
-    <div className="comparison-stat">
-      <span>Beta</span>
-      <strong>
-        {stock.beta?.toFixed(2)}
+        {formatPrice(stock.fiftyTwoWeekLow)}
       </strong>
     </div>
 
