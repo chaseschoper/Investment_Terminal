@@ -41,8 +41,20 @@ const formatPlain = (value) =>
 const formatPrice = (value) =>
   isNumber(value) ? `$${value.toFixed(2)}` : "N/A";
 
-const formatChartBillions = (value) =>
-  isNumber(value) ? `$${value.toFixed(1)}B` : "N/A";
+const formatChartBillions = (value) => {
+  if (!isNumber(value)) return "N/A";
+
+  if (value === 0) return "$0";
+
+  const absValue = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+
+  if (absValue < 1) {
+    return `${sign}$${(absValue * 1000).toFixed(0)}M`;
+  }
+
+  return `${sign}$${absValue.toFixed(1)}B`;
+};
 
 const formatChartEps = (value) =>
   isNumber(value) ? `$${value.toFixed(2)}` : "N/A";

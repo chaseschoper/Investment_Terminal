@@ -25,6 +25,21 @@ const formatMoney = (value) => {
 
   return `$${value.toFixed(1)}B`;
 };
+
+const formatChartBillions = (value) => {
+  if (typeof value !== "number" || Number.isNaN(value)) return "N/A";
+
+  if (value === 0) return "$0";
+
+  const absValue = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+
+  if (absValue < 1) {
+    return `${sign}$${(absValue * 1000).toFixed(0)}M`;
+  }
+
+  return `${sign}$${absValue.toFixed(1)}B`;
+};
 import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
@@ -953,13 +968,13 @@ return (
 
         <YAxis
   tickFormatter={(value) =>
-    `$${value}B`
+    formatChartBillions(value)
   }
 />
 
         <Tooltip
   formatter={(value) => [
-    `$${value}B`,
+    formatChartBillions(value),
     "Revenue"
   ]}
 />
@@ -1003,11 +1018,15 @@ return (
 
         <XAxis dataKey="year" />
 
-        <YAxis />
+        <YAxis
+  tickFormatter={(value) =>
+    formatChartBillions(value)
+  }
+/>
 
         <Tooltip
   formatter={(value) => [
-    `$${value}B`,
+    formatChartBillions(value),
     "Net Income"
   ]}
 />
