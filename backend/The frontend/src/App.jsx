@@ -1249,11 +1249,11 @@ return (
 
   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
-    {/* Current Year */}
+    {/* Previous Year */}
     <div className="border rounded-lg p-4">
 
       <h3 className="text-lg font-semibold mb-3">
-        Current Year
+        Previous Year
       </h3>
 
       <div className="space-y-2">
@@ -1300,11 +1300,11 @@ return (
 
     </div>
 
-    {/* Next Year */}
+    {/* Current Year */}
     <div className="border rounded-lg p-4">
 
       <h3 className="text-lg font-semibold mb-3">
-        Next Year
+        Current Year
       </h3>
 
       <div className="space-y-2">

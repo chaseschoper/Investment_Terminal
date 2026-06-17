@@ -1440,7 +1440,7 @@ return (
   }}
 >
 
-    {/* Current Year */}
+    {/* Previous Year */}
     <div
   style={{
     padding: "20px",
@@ -1451,7 +1451,7 @@ return (
 >
 
       <h3 className="text-lg font-semibold mb-3">
-        Current Year
+        Previous Year
       </h3>
 
       <div className="space-y-2">
@@ -1511,7 +1511,7 @@ return (
 
     </div>
 
-    {/* Next Year */}
+    {/* Current Year */}
     <div
   style={{
     padding: "20px",
@@ -1522,7 +1522,7 @@ return (
 >
 
       <h3 className="text-lg font-semibold mb-3">
-        Next Year
+        Current Year
       </h3>
 
       <div className="space-y-2">

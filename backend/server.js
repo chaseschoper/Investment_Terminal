@@ -16,7 +16,7 @@ const User = require("./models/User");
 
 const app = express();
 const activeStockFetches = new Set();
-const FINANCIAL_HISTORY_VERSION = 11;
+const FINANCIAL_HISTORY_VERSION = 12;
 const REVENUE_KEY_PRIORITY = {
   annualTotalRevenue: 5,
   annualOperatingRevenue: 4,
@@ -242,7 +242,7 @@ const estimateEarningsFallback = (earnings, revenue, profitMargin) => {
 };
 
 const estimateEpsFallback = (eps, earnings, sharesOutstandingMillions) => {
-  const existing = toNumberOrNull(eps);
+  const existing = firstNumber(eps);
   if (existing !== null) return existing;
 
   const earningsNumber = toNumberOrNull(earnings);
@@ -888,9 +888,14 @@ async function fetchStockData(ticker) {
 
   await wait(300);
 
-  const profile = await getFinnhub(
-    `https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}`
-  );
+  let profile = {};
+  try {
+    profile = await getFinnhub(
+      `https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}`
+    );
+  } catch (err) {
+    console.log("Profile skipped:", ticker, err.message);
+  }
 
   await wait(300);
 
