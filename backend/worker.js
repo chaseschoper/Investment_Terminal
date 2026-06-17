@@ -5,7 +5,7 @@ const axios = require("axios");
 const yahooFinance = require("yahoo-finance2").default;
 
 const Stock = require("./models/Stock");
-const FINANCIAL_HISTORY_VERSION = 10;
+const FINANCIAL_HISTORY_VERSION = 11;
 const REVENUE_KEY_PRIORITY = {
   annualTotalRevenue: 5,
   annualOperatingRevenue: 4,
@@ -100,6 +100,20 @@ const toDollarsFromBillions = (value) => {
 const toDollarsFromMillions = (value) => {
   const number = toNumberOrNull(value);
   return number === null ? null : number * 1000000;
+};
+
+const toDollarsFromPerShare = (value, sharesOutstandingMillions) => {
+  const perShare = toNumberOrNull(value);
+  const shares = toNumberOrNull(sharesOutstandingMillions);
+  if (perShare === null || shares === null || shares === 0) return null;
+  return perShare * shares * 1000000;
+};
+
+const epsFromForwardPE = (price, forwardPE) => {
+  const priceNumber = toNumberOrNull(price);
+  const peNumber = toNumberOrNull(forwardPE);
+  if (priceNumber === null || peNumber === null || peNumber <= 0) return null;
+  return priceNumber / peNumber;
 };
 
 const normalizeStatementDollars = (value) => {
@@ -955,9 +969,23 @@ async function updateStock(ticker) {
       annualGrowth(latestAnnual.earnings, previousAnnual.earnings),
       revenueGrowthRate
     );
-    const currentRevenueBase = toDollarsFromBillions(latestAnnual.revenue);
-    const currentEarningsBase = toDollarsFromBillions(latestAnnual.earnings);
-    const currentEpsBase = latestAnnual.eps ?? null;
+    const currentRevenueBase = firstNumber(
+      toDollarsFromBillions(latestAnnual.revenue),
+      toDollarsFromPerShare(metrics.revenuePerShareTTM, sharesOutstanding),
+      toDollarsFromPerShare(metrics.revenuePerShareAnnual, sharesOutstanding)
+    );
+    const currentEarningsBase = firstNumber(
+      toDollarsFromBillions(latestAnnual.earnings),
+      toDollarsFromPerShare(metrics.epsTTM, sharesOutstanding),
+      toDollarsFromPerShare(metrics.epsAnnual, sharesOutstanding)
+    );
+    const currentEpsBase = firstNumber(
+      latestAnnual.eps,
+      metrics.epsTTM,
+      metrics.epsAnnual,
+      metrics.epsInclExtraItemsTTM,
+      metrics.epsInclExtraItemsAnnual
+    );
     const rating = getAnalystRating(
       recommendation,
       yahooSupplementalData.recommendationTrend,
@@ -979,6 +1007,7 @@ async function updateStock(ticker) {
       fmpEstimateField(fmpNextEstimate, "epsAvg", "estimatedEpsAvg") ??
       epsEstimates[1]?.epsAvg ??
       metrics.epsEstimateNextYear ??
+      epsFromForwardPE(quote.c, metrics.forwardPE ?? yahooSupplementalData.forwardPE) ??
       estimateNextValue(currentEps, earningsGrowthRate) ??
       null;
 
@@ -1111,6 +1140,8 @@ async function updateStock(ticker) {
         fmpCashFlow[0]?.freeCashFlow,
         fmpCashFlow[0]?.freeCashflow,
         yahooSupplementalData.freeCashflow,
+        toDollarsFromPerShare(metrics.cashFlowPerShareTTM, sharesOutstanding),
+        toDollarsFromPerShare(metrics.cashFlowPerShareAnnual, sharesOutstanding),
         normalizeFinnhubMoney(metrics.freeCashFlowTTM),
         normalizeFinnhubMoney(metrics.fcfTTM),
         toDollarsFromBillions(latestAnnual.freeCashflow)
