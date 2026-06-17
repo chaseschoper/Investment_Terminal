@@ -5,7 +5,7 @@ const axios = require("axios");
 const yahooFinance = require("yahoo-finance2").default;
 
 const Stock = require("./models/Stock");
-const FINANCIAL_HISTORY_VERSION = 9;
+const FINANCIAL_HISTORY_VERSION = 10;
 const REVENUE_KEY_PRIORITY = {
   annualTotalRevenue: 5,
   annualOperatingRevenue: 4,
@@ -102,6 +102,12 @@ const toDollarsFromMillions = (value) => {
   return number === null ? null : number * 1000000;
 };
 
+const normalizeStatementDollars = (value) => {
+  const number = toNumberOrNull(value);
+  if (number === null || number === 0) return null;
+  return Math.abs(number) < 1000000 ? number * 1000000000 : number;
+};
+
 const normalizeFinnhubMoney = (value) => {
   const number = toNumberOrNull(value);
   if (number === null) return null;
@@ -169,10 +175,10 @@ const FALLBACK_SHARES_OUTSTANDING_MILLIONS = 100;
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 const estimateRevenueFallback = (revenue, marketCap) =>
-  firstNumber(revenue, toNumberOrNull(marketCap) ? marketCap / 4 : null);
+  firstNumber(normalizeStatementDollars(revenue), toNumberOrNull(marketCap) ? marketCap / 4 : null);
 
 const estimateEarningsFallback = (earnings, revenue, profitMargin) => {
-  const existing = toNumberOrNull(earnings);
+  const existing = normalizeStatementDollars(earnings);
   if (existing !== null) return existing;
 
   const revenueNumber = toNumberOrNull(revenue);
@@ -206,7 +212,7 @@ const estimateFreeCashFlowFallback = ({
   profitMargin,
   marketCap
 }) => {
-  const existing = toNumberOrNull(freeCashflow);
+  const existing = normalizeStatementDollars(freeCashflow);
   if (existing !== null) return existing;
 
   const revenueNumber = toNumberOrNull(revenue);
@@ -232,7 +238,7 @@ const estimateTargetFallback = ({
   forwardPE,
   pe
 }) => {
-  const existing = toNumberOrNull(targetMean);
+  const existing = firstNumber(targetMean);
   if (existing !== null) return existing;
 
   const priceNumber = toNumberOrNull(price);
