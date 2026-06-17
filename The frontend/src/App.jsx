@@ -509,14 +509,13 @@ if (!stockData) {
 
 const financialHistory =
   stockData?.revenueData || [];
+const revenueHistorySource =
+  buildChartRows(stockData?.revenueHistory || [], "revenue");
 
 const revenueHistory =
-  buildChartRows(
-    stockData?.revenueHistory?.length
-      ? stockData.revenueHistory
-      : financialHistory,
-    "revenue"
-  );
+  revenueHistorySource.length
+    ? revenueHistorySource
+    : buildChartRows(financialHistory, "revenue");
 
 const earningsHistory =
   buildChartRows(financialHistory, "earnings");

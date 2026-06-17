@@ -16,7 +16,12 @@ const User = require("./models/User");
 
 const app = express();
 const activeStockFetches = new Set();
-const FINANCIAL_HISTORY_VERSION = 12;
+const FINANCIAL_HISTORY_VERSION = 13;
+const TICKER_ALIASES = {
+  ZILLOW: "Z",
+  SALESFORCE: "CRM",
+  NIKE: "NKE"
+};
 const REVENUE_KEY_PRIORITY = {
   annualTotalRevenue: 5,
   annualOperatingRevenue: 4,
@@ -574,10 +579,13 @@ function withGuaranteedAnalystSection(data = {}) {
     targetMean,
     price
   );
-  const hasCompleteModeledHistory =
-    revenueRows.some((row) => toNumberOrNull(row.revenue) !== null) &&
-    revenueRows.some((row) => toNumberOrNull(row.earnings) !== null) &&
-    revenueRows.some((row) => toNumberOrNull(row.eps) !== null);
+  const completeHistoryRows = revenueRows.filter(
+    (row) =>
+      toNumberOrNull(row.revenue) !== null &&
+      toNumberOrNull(row.earnings) !== null &&
+      toNumberOrNull(row.eps) !== null
+  );
+  const hasCompleteModeledHistory = completeHistoryRows.length >= 5;
   const latestYear =
     toNumberOrNull(latestRevenueRow.year) || new Date().getFullYear();
   const modeledGrowthRate = safeGrowthRate(revenueGrowth);
@@ -605,6 +613,15 @@ function withGuaranteedAnalystSection(data = {}) {
   const guaranteedRevenueData = hasCompleteModeledHistory
     ? revenueRows
     : modeledRevenueData;
+  const guaranteedRevenueHistory = (data.revenueHistory || []).some(
+    (row) => toNumberOrNull(row.revenue) !== null
+  )
+    ? data.revenueHistory
+    : guaranteedRevenueData.map((row) => ({
+        year: row.year,
+        revenue: row.revenue,
+        source: row.source
+      }));
 
   return {
     ...data,
@@ -625,6 +642,7 @@ function withGuaranteedAnalystSection(data = {}) {
         eps: nextEps
       }
     },
+    revenueHistory: guaranteedRevenueHistory,
     revenueData: guaranteedRevenueData
   };
 }
@@ -1428,7 +1446,8 @@ function startStockFetch(ticker) {
 // =========================
 app.get("/api/stock/:ticker", async (req, res) => {
   try {
-    const ticker = req.params.ticker.trim().toUpperCase();
+    const requestedTicker = req.params.ticker.trim().toUpperCase();
+    const ticker = TICKER_ALIASES[requestedTicker] || requestedTicker;
 
     if (!ticker || ticker.length > 10) {
       return res.status(400).json({
