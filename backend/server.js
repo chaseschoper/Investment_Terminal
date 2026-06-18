@@ -2493,8 +2493,17 @@ async function getLatestSecFiscalPeriod(ticker) {
   }
 }
 
+function getAlphaVantageApiKey() {
+  return String(process.env.ALPHA_VANTAGE_API_KEY || "")
+    .trim()
+    .replace(/^ALPHA_VANTAGE_API_KEY\s*=\s*/i, "")
+    .replace(/^['"]|['"]$/g, "")
+    .trim();
+}
+
 async function fetchAlphaVantageEarningsCall(ticker) {
-  if (!process.env.ALPHA_VANTAGE_API_KEY) return null;
+  const apiKey = getAlphaVantageApiKey();
+  if (!apiKey) return null;
   const fiscalPeriod = await getLatestSecFiscalPeriod(ticker);
   const now = new Date();
   const currentQuarter = Math.floor(now.getUTCMonth() / 3) + 1;
@@ -2507,7 +2516,7 @@ async function fetchAlphaVantageEarningsCall(ticker) {
       function: "EARNINGS_CALL_TRANSCRIPT",
       symbol: ticker,
       quarter: `${year}Q${quarter}`,
-      apikey: process.env.ALPHA_VANTAGE_API_KEY
+      apikey: apiKey
     },
     timeout: 25000
   });
@@ -2720,11 +2729,11 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
 
   try {
     let data = null;
-    let unavailableReason = process.env.ALPHA_VANTAGE_API_KEY
+    let unavailableReason = getAlphaVantageApiKey()
       ? "provider_unavailable"
       : "alpha_key_missing";
     let requestedFiscalPeriod = null;
-    if (process.env.ALPHA_VANTAGE_API_KEY) {
+    if (getAlphaVantageApiKey()) {
       try {
         data = await fetchAlphaVantageEarningsCall(ticker);
       } catch (err) {
