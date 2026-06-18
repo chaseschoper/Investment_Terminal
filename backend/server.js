@@ -13,6 +13,7 @@ const jwt = require("jsonwebtoken");
 
 const Stock = require("./models/Stock");
 const User = require("./models/User");
+const EarningsCall = require("./models/EarningsCall");
 
 const app = express();
 const activeStockFetches = new Set();
@@ -2501,17 +2502,17 @@ function getAlphaVantageApiKey() {
     .trim();
 }
 
-async function fetchAlphaVantageEarningsCall(ticker) {
+async function fetchAlphaVantageEarningsCall(ticker, knownFiscalPeriod = null) {
   const apiKey = getAlphaVantageApiKey();
   if (!apiKey) return null;
-  const fiscalPeriod = await getLatestSecFiscalPeriod(ticker);
+  const fiscalPeriod = knownFiscalPeriod || await getLatestSecFiscalPeriod(ticker);
   const now = new Date();
   const currentQuarter = Math.floor(now.getUTCMonth() / 3) + 1;
   const fallbackQuarter = currentQuarter === 1 ? 4 : currentQuarter - 1;
   const fallbackYear = currentQuarter === 1 ? now.getUTCFullYear() - 1 : now.getUTCFullYear();
   const startingYear = fiscalPeriod?.year || fallbackYear;
   const startingQuarter = fiscalPeriod?.quarter || fallbackQuarter;
-  const periods = Array.from({ length: 3 }, (_, index) => {
+  const periods = Array.from({ length: 2 }, (_, index) => {
     const zeroBasedQuarter = startingQuarter - 1 - index;
     return {
       year: startingYear + Math.floor(zeroBasedQuarter / 4),
@@ -2753,13 +2754,33 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
 
   try {
     let data = null;
+    const latestFiscalPeriod = await getLatestSecFiscalPeriod(ticker);
+    let savedCall = null;
+    try {
+      savedCall = await EarningsCall.findOne({ ticker }).lean();
+    } catch (err) {
+      console.log("Saved earnings call lookup skipped:", ticker, err.message);
+    }
+    const expectedFiscalPeriod = latestFiscalPeriod
+      ? `Q${latestFiscalPeriod.quarter}`
+      : null;
+    if (
+      savedCall?.data?.available &&
+      (!latestFiscalPeriod || (
+        Number(savedCall.data.fiscalYear) === Number(latestFiscalPeriod.year) &&
+        savedCall.data.fiscalPeriod === expectedFiscalPeriod
+      ))
+    ) {
+      earningsCallCache.set(ticker, { data: savedCall.data, cachedAt: Date.now() });
+      return res.json(savedCall.data);
+    }
     let unavailableReason = getAlphaVantageApiKey()
       ? "provider_unavailable"
       : "alpha_key_missing";
     let requestedFiscalPeriod = null;
     if (getAlphaVantageApiKey()) {
       try {
-        data = await fetchAlphaVantageEarningsCall(ticker);
+        data = await fetchAlphaVantageEarningsCall(ticker, latestFiscalPeriod);
       } catch (err) {
         unavailableReason = err.providerCode || "alpha_request_failed";
         requestedFiscalPeriod = err.fiscalPeriod || null;
@@ -2788,6 +2809,19 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
       } catch (err) {
         console.log("Finnhub earnings call skipped:", ticker, err.response?.status || err.message);
       }
+    }
+    if (data?.available) {
+      try {
+        await EarningsCall.findOneAndUpdate(
+          { ticker },
+          { ticker, data, updatedAt: new Date() },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+      } catch (err) {
+        console.log("Earnings call save skipped:", ticker, err.message);
+      }
+    } else if (savedCall?.data?.available) {
+      data = { ...savedCall.data, previousQuarter: true };
     }
     const responseData = data || {
       available: false,
