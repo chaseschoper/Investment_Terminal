@@ -5,7 +5,7 @@ const axios = require("axios");
 const yahooFinance = require("yahoo-finance2").default;
 
 const Stock = require("./models/Stock");
-const FINANCIAL_HISTORY_VERSION = 20;
+const FINANCIAL_HISTORY_VERSION = 21;
 const REVENUE_KEY_PRIORITY = {
   annualTotalRevenue: 5,
   annualOperatingRevenue: 4,
@@ -144,7 +144,7 @@ const estimateForwardEpsFromHistory = (rows = []) => {
   const recent = values.slice(-3).sort((a, b) => a - b);
   const median = recent[Math.floor(recent.length / 2)];
 
-  if (latest < median * 0.5 || latest > median * 2) return median;
+  if (latest < median * 0.5) return median;
 
   const growthRates = values.slice(1).map((value, index) =>
     (value - values[index]) / values[index]
@@ -743,6 +743,17 @@ async function fetchYahooSupplementalData(ticker) {
       marketCap: firstYahooNumber(detail.marketCap, keyStats.marketCap, quoteData.marketCap),
       pe: firstYahooNumber(detail.trailingPE, keyStats.trailingPE, quoteData.trailingPE),
       forwardPE: firstYahooNumber(keyStats.forwardPE, financialData.forwardPE, quoteData.forwardPE),
+      trailingEps: firstYahooNumber(
+        keyStats.trailingEps,
+        quoteData.epsTrailingTwelveMonths,
+        quoteData.trailingEps
+      ),
+      forwardEps: firstYahooNumber(
+        keyStats.forwardEps,
+        financialData.forwardEps,
+        quoteData.epsForward,
+        quoteData.forwardEps
+      ),
       priceToSales: firstYahooNumber(
         detail.priceToSalesTrailing12Months,
         quoteData.priceToSalesTrailing12Months
@@ -1109,12 +1120,14 @@ async function updateStock(ticker) {
       fmpEstimateField(fmpCurrentEstimate, "epsAvg", "estimatedEpsAvg") ??
       epsEstimates[0]?.epsAvg ??
       metrics.epsEstimateCurrentYear ??
+      yahooSupplementalData.trailingEps ??
       metrics.epsInclExtraItemsAnnual ??
       currentEpsBase ??
       null;
 
     const historicalForwardEps = estimateForwardEpsFromHistory(revenueData);
     const nextEpsCandidate =
+      yahooSupplementalData.forwardEps ??
       fmpEstimateField(fmpNextEstimate, "epsAvg", "estimatedEpsAvg") ??
       epsEstimates[1]?.epsAvg ??
       metrics.epsEstimateNextYear ??
@@ -1279,12 +1292,12 @@ async function updateStock(ticker) {
       profitMargin: profitMargins
     });
     const pe = firstNumber(
-      currentEpsValue ? quote.c / currentEpsValue : null,
-      reportedPE
+      reportedPE,
+      currentEpsValue ? quote.c / currentEpsValue : null
     );
     const forwardPE = firstNumber(
-      nextEpsValue ? quote.c / nextEpsValue : null,
-      reportedForwardPE
+      reportedForwardPE,
+      nextEpsValue ? quote.c / nextEpsValue : null
     );
     const priceToSales = firstNumber(
       yahooSupplementalData.priceToSales,
@@ -1382,6 +1395,8 @@ async function updateStock(ticker) {
 
           pe,
           forwardPE,
+          trailingEps: yahooSupplementalData.trailingEps,
+          forwardEps: yahooSupplementalData.forwardEps,
 
           revenueGrowth,
           earningsGrowth,

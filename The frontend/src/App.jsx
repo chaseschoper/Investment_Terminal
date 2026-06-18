@@ -584,6 +584,29 @@ const earningsHistory =
 const epsHistory =
   buildChartRows(financialHistory, "eps");
 
+const estimateFromHistoryYear = (year, fallback = {}) => {
+  const row = financialHistory.find(
+    (item) => Number(item?.year) === year
+  );
+
+  if (!row) return fallback;
+
+  return {
+    revenue: isNumber(row.revenue) ? row.revenue * 1e9 : fallback.revenue,
+    earnings: isNumber(row.earnings) ? row.earnings * 1e9 : fallback.earnings,
+    eps: isNumber(row.eps) ? row.eps : fallback.eps
+  };
+};
+
+const previousYearEstimate = estimateFromHistoryYear(
+  2025,
+  stockData?.analystEstimates?.currentYear
+);
+const currentYearEstimate = estimateFromHistoryYear(
+  2026,
+  stockData?.analystEstimates?.nextYear
+);
+
 
  
 
@@ -1528,7 +1551,7 @@ return (
 
           <span>
             {formatEstimateMoney(
-              stockData?.analystEstimates?.currentYear?.revenue
+              previousYearEstimate?.revenue
             )}
           </span>
         </div>
@@ -1545,7 +1568,7 @@ return (
 
           <span>
             {formatEstimateMoney(
-              stockData?.analystEstimates?.currentYear?.earnings
+              previousYearEstimate?.earnings
             )}
           </span>
         </div>
@@ -1562,7 +1585,7 @@ return (
 
           <span>
             {formatEstimateEps(
-              stockData?.analystEstimates?.currentYear?.eps
+              previousYearEstimate?.eps
             )}
           </span>
         </div>
@@ -1599,7 +1622,7 @@ return (
 
           <span>
             {formatEstimateMoney(
-              stockData?.analystEstimates?.nextYear?.revenue
+              currentYearEstimate?.revenue
             )}
           </span>
         </div>
@@ -1616,7 +1639,7 @@ return (
 
           <span>
             {formatEstimateMoney(
-              stockData?.analystEstimates?.nextYear?.earnings
+              currentYearEstimate?.earnings
             )}
           </span>
         </div>
@@ -1633,7 +1656,7 @@ return (
 
           <span>
             {formatEstimateEps(
-              stockData?.analystEstimates?.nextYear?.eps
+              currentYearEstimate?.eps
             )}
           </span>
         </div>

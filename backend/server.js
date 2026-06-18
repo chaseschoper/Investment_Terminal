@@ -17,7 +17,7 @@ const User = require("./models/User");
 const app = express();
 const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
-const FINANCIAL_HISTORY_VERSION = 20;
+const FINANCIAL_HISTORY_VERSION = 21;
 const TICKER_ALIASES = {
   ZILLOW: "Z",
   SALESFORCE: "CRM",
@@ -185,7 +185,7 @@ const estimateForwardEpsFromHistory = (rows = []) => {
   const recent = values.slice(-3).sort((a, b) => a - b);
   const median = recent[Math.floor(recent.length / 2)];
 
-  if (latest < median * 0.5 || latest > median * 2) return median;
+  if (latest < median * 0.5) return median;
 
   const growthRates = values.slice(1).map((value, index) =>
     (value - values[index]) / values[index]
@@ -668,8 +668,16 @@ function withGuaranteedAnalystSection(data = {}) {
     nextRevenue,
     profitMargins
   );
-  const currentEps = estimateEpsFallback(currentYear.eps, provisionalCurrentEarnings, sharesOutstanding);
-  const nextEps = estimateEpsFallback(nextYear.eps, provisionalNextEarnings, sharesOutstanding);
+  const currentEps = estimateEpsFallback(
+    firstNumber(data.trailingEps, currentYear.eps),
+    provisionalCurrentEarnings,
+    sharesOutstanding
+  );
+  const nextEps = estimateEpsFallback(
+    firstNumber(data.forwardEps, nextYear.eps),
+    provisionalNextEarnings,
+    sharesOutstanding
+  );
   const currentEarnings = reconcileEarningsEstimate({
     earnings: provisionalCurrentEarnings,
     eps: currentEps,
@@ -685,12 +693,12 @@ function withGuaranteedAnalystSection(data = {}) {
     profitMargin: profitMargins
   });
   const pe = firstNumber(
-    price !== null && currentEps ? price / currentEps : null,
-    data.pe
+    data.pe,
+    price !== null && currentEps ? price / currentEps : null
   );
   const forwardPE = firstNumber(
-    price !== null && nextEps ? price / nextEps : null,
-    data.forwardPE
+    data.forwardPE,
+    price !== null && nextEps ? price / nextEps : null
   );
   const fiftyTwoWeekHigh = firstNumber(data.fiftyTwoWeekHigh, data.high, price);
   const fiftyTwoWeekLow = firstNumber(data.fiftyTwoWeekLow, data.low, price);
@@ -1037,6 +1045,17 @@ async function fetchYahooSupplementalData(ticker) {
       marketCap: firstYahooNumber(detail.marketCap, keyStats.marketCap, quoteData.marketCap),
       pe: firstYahooNumber(detail.trailingPE, keyStats.trailingPE, quoteData.trailingPE),
       forwardPE: firstYahooNumber(keyStats.forwardPE, financialData.forwardPE, quoteData.forwardPE),
+      trailingEps: firstYahooNumber(
+        keyStats.trailingEps,
+        quoteData.epsTrailingTwelveMonths,
+        quoteData.trailingEps
+      ),
+      forwardEps: firstYahooNumber(
+        keyStats.forwardEps,
+        financialData.forwardEps,
+        quoteData.epsForward,
+        quoteData.forwardEps
+      ),
       priceToSales: firstYahooNumber(
         detail.priceToSalesTrailing12Months,
         quoteData.priceToSalesTrailing12Months
@@ -1434,12 +1453,14 @@ async function fetchStockData(ticker) {
     fmpEstimateField(fmpCurrentEstimate, "epsAvg", "estimatedEpsAvg") ??
     epsEstimates[0]?.epsAvg ??
     metrics.epsEstimateCurrentYear ??
+    yahooSupplementalData.trailingEps ??
     metrics.epsInclExtraItemsAnnual ??
     currentEpsBase ??
     null;
 
   const historicalForwardEps = estimateForwardEpsFromHistory(revenueData);
   const nextEpsCandidate =
+    yahooSupplementalData.forwardEps ??
     fmpEstimateField(fmpNextEstimate, "epsAvg", "estimatedEpsAvg") ??
     epsEstimates[1]?.epsAvg ??
     metrics.epsEstimateNextYear ??
@@ -1594,12 +1615,12 @@ async function fetchStockData(ticker) {
     profitMargin: profitMargins
   });
   const pe = firstNumber(
-    currentEpsValue ? quote.c / currentEpsValue : null,
-    reportedPE
+    reportedPE,
+    currentEpsValue ? quote.c / currentEpsValue : null
   );
   const forwardPE = firstNumber(
-    nextEpsValue ? quote.c / nextEpsValue : null,
-    reportedForwardPE
+    reportedForwardPE,
+    nextEpsValue ? quote.c / nextEpsValue : null
   );
   const priceToSales = firstNumber(
     yahooSupplementalData.priceToSales,
@@ -1684,6 +1705,8 @@ async function fetchStockData(ticker) {
     sharesOutstanding: sharesOutstandingValue,
     pe,
     forwardPE,
+    trailingEps: yahooSupplementalData.trailingEps,
+    forwardEps: yahooSupplementalData.forwardEps,
     revenueGrowth,
     earningsGrowth,
     grossMargins,
