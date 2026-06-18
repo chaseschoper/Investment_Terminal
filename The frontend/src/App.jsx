@@ -88,6 +88,7 @@ import "./App.css";
 function App() {
   const latestStockRequest = useRef(0);
   const latestComparisonRequest = useRef(0);
+  const latestAiRequest = useRef(0);
   const [showAuth, setShowAuth] = useState(false);
 const [isLogin, setIsLogin] = useState(true);
 
@@ -192,6 +193,12 @@ const [user, setUser] =
   const [isStockLoading, setIsStockLoading] =
     useState(false);
 
+  const [aiAnalysis, setAiAnalysis] =
+    useState(null);
+
+  const [isAiLoading, setIsAiLoading] =
+    useState(false);
+
    const [watchlist, setWatchlist] =
   useState([]);
 
@@ -255,11 +262,33 @@ useEffect(() => {
 
   useEffect(() => {
     const requestId = ++latestStockRequest.current;
+    latestAiRequest.current += 1;
     setStockData(null);
+    setAiAnalysis(null);
     setIsStockLoading(true);
     loadStock(ticker, 0, requestId);
 
   }, [ticker]);
+
+  useEffect(() => {
+    if (!stockData?.price || stockData.symbol !== ticker) return;
+
+    const requestId = ++latestAiRequest.current;
+    setIsAiLoading(true);
+
+    axios.get(`${API_URL}/api/ai-analysis/${ticker}`)
+      .then((response) => {
+        if (requestId === latestAiRequest.current) {
+          setAiAnalysis(response.data);
+        }
+      })
+      .catch((error) => console.error("AI analysis failed", error))
+      .finally(() => {
+        if (requestId === latestAiRequest.current) {
+          setIsAiLoading(false);
+        }
+      });
+  }, [ticker, stockData?.price, stockData?.updatedAt]);
 
   useEffect(() => {
     const symbol =
@@ -810,62 +839,67 @@ return (
   </h2>
 
   <div className="ai-analysis-box">
+    {isAiLoading && !aiAnalysis ? (
+      <div className="ai-text">Building analysis...</div>
+    ) : aiAnalysis?.verdict && aiAnalysis?.stockAnalysis ? (
+      <>
+        <div className="ai-sentiment">
+          {aiAnalysis.verdict.stance} · {aiAnalysis.verdict.score}/100
+        </div>
 
-    <div className="ai-sentiment">
+        <p className="ai-text">{aiAnalysis.verdict.summary}</p>
 
-      {stockData.recommendationKey === "buy" && "🟢 Bullish"}
+        <div className="ai-analysis-grid">
+          <div className="ai-card">
+            <h3 className="ai-title">Valuation</h3>
+            <ul className="ai-list">
+              {aiAnalysis.stockAnalysis.valuation.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
 
-      {stockData.recommendationKey === "hold" && "🟡 Neutral"}
+          <div className="ai-card">
+            <h3 className="ai-title">Financial Quality</h3>
+            <ul className="ai-list">
+              {aiAnalysis.stockAnalysis.financialQuality.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
 
-      {stockData.recommendationKey === "sell" && "🔴 Bearish"}
+          <div className="ai-card bullish-card">
+            <h3 className="ai-title">Catalysts</h3>
+            <ul className="ai-list">
+              {aiAnalysis.stockAnalysis.catalysts.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
 
-    </div>
+          <div className="ai-card bearish-card">
+            <h3 className="ai-title">Risks</h3>
+            <ul className="ai-list">
+              {aiAnalysis.stockAnalysis.risks.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
 
-    <div className="ai-text">
-
-      <p>
-        <strong>{stockData.name}</strong>
-        {" "}currently trades at{" "}
-        <strong>
-          {formatPrice(stockData.price)}
-        </strong>
-        .
-      </p>
-
-      <p>
-        Revenue growth is{" "}
-        <strong>
-          {formatPercent(stockData.revenueGrowth)}
-        </strong>
-        {" "}with earnings growth at{" "}
-        <strong>
-  {formatPercent(stockData.earningsGrowth)}
-        </strong>
-        .
-      </p>
-
-      <p>
-        Analysts currently rate this stock as{" "}
-        <strong>
-          {stockData.recommendationKey}
-        </strong>
-        {" "}with an average price target of{" "}
-        <strong>
-          {formatPrice(stockData.targetMean)}
-        </strong>
-        .
-      </p>
-
-      <p>
-
-        {stockData.forwardPE < stockData.pe
-          ? "Forward valuation is improving compared to current earnings."
-          : "Forward valuation remains elevated compared to current earnings."
-        }
-
-      </p>
-
-    </div>
+        <div className="ai-analysis-grid">
+          {aiAnalysis.stockAnalysis.scenarios.map((scenario) => (
+            <div className="ai-card" key={scenario.label}>
+              <h3 className="ai-title">{scenario.label} Case</h3>
+              <div className="comparison-price">{formatPrice(scenario.price)}</div>
+              <p className="ai-text">{scenario.detail}</p>
+            </div>
+          ))}
+        </div>
+      </>
+    ) : (
+      <div className="ai-text">Analysis is temporarily unavailable.</div>
+    )}
 
   </div>
 
@@ -879,184 +913,82 @@ return (
   </h2>
 
   <div className="ai-analysis-grid">
-
-    {/* SUMMARY */}
-
-    <div className="ai-card">
-
-      <h3 className="ai-title">
-        AI Transcript Summary
-      </h3>
-
-      <p className="ai-text">
-
-        {stockData.name} management discussed
-        long-term growth opportunities,
-        operational efficiency,
-        and future demand trends.
-
-        The company remains focused on
-        expanding margins, improving
-        shareholder value, and scaling
-        future revenue streams.
-
-      </p>
-
-    </div>
-
-    {/* HIGHLIGHTS */}
-
-    <div className="ai-card">
-
-      <h3 className="ai-title">
-        Earnings Highlights
-      </h3>
-
-      <ul className="ai-list">
-
-        <li>
-          Revenue growth exceeded expectations
-        </li>
-
-        <li>
-          Margins remained stable
-        </li>
-
-        <li>
-          Strong free cash flow generation
-        </li>
-
-        <li>
-          Continued expansion into AI initiatives
-        </li>
-
-      </ul>
-
-    </div>
-
-    {/* BULLISH */}
-
-    <div className="ai-card bullish-card">
-
-      <h3 className="ai-title">
-        Bullish Takeaways
-      </h3>
-
-      <ul className="ai-list">
-
-        <li>
-          Strong guidance from management
-        </li>
-
-        <li>
-          Improving operating leverage
-        </li>
-
-        <li>
-          High analyst confidence
-        </li>
-
-        <li>
-          Long-term growth catalysts remain intact
-        </li>
-
-      </ul>
-
-    </div>
-
-    {/* BEARISH */}
-
-    <div className="ai-card bearish-card">
-
-      <h3 className="ai-title">
-        Bearish Risks
-      </h3>
-
-      <ul className="ai-list">
-
-        <li>
-          Macroeconomic uncertainty
-        </li>
-
-        <li>
-          Margin compression risks
-        </li>
-
-        <li>
-          Slowing consumer demand
-        </li>
-
-        <li>
-          Regulatory pressure remains possible
-        </li>
-
-      </ul>
-
-    </div>
-
-    {/* SENTIMENT */}
-
-    <div className="ai-card">
-
-      <h3 className="ai-title">
-        Management Sentiment
-      </h3>
-
-      <div className="sentiment-row">
-
-        <div className="sentiment-label">
-          Confidence
+    {isAiLoading && !aiAnalysis ? (
+      <div className="ai-card"><p className="ai-text">Reviewing earnings data...</p></div>
+    ) : aiAnalysis?.earningsAnalysis ? (
+      <>
+        <div className="ai-card">
+          <h3 className="ai-title">Latest Earnings Readout</h3>
+          <p className="ai-text">{aiAnalysis.earningsAnalysis.period}</p>
+          <p className="ai-text">{aiAnalysis.earningsAnalysis.summary}</p>
         </div>
 
-        <div className="sentiment-bar">
-
-          <div
-            className="sentiment-fill positive"
-            style={{ width: "78%" }}
-          />
-
+        <div className="ai-card">
+          <h3 className="ai-title">Reported Highlights</h3>
+          <ul className="ai-list">
+            {aiAnalysis.earningsAnalysis.highlights.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
         </div>
 
-      </div>
-
-      <div className="sentiment-row">
-
-        <div className="sentiment-label">
-          Caution
+        <div className="ai-card bullish-card">
+          <h3 className="ai-title">Positive Signals</h3>
+          <ul className="ai-list">
+            {aiAnalysis.earningsAnalysis.positives.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
         </div>
 
-        <div className="sentiment-bar">
-
-          <div
-            className="sentiment-fill negative"
-            style={{ width: "32%" }}
-          />
-
+        <div className="ai-card bearish-card">
+          <h3 className="ai-title">Pressure Points</h3>
+          <ul className="ai-list">
+            {aiAnalysis.earningsAnalysis.risks.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
         </div>
 
-      </div>
+        <div className="ai-card">
+          <h3 className="ai-title">Earnings Momentum</h3>
+          <div className="sentiment-row">
+            <div className="sentiment-label">Confidence</div>
+            <div className="sentiment-bar">
+              <div
+                className="sentiment-fill positive"
+                style={{ width: `${aiAnalysis.earningsAnalysis.confidence}%` }}
+              />
+            </div>
+          </div>
+          <div className="sentiment-row">
+            <div className="sentiment-label">Caution</div>
+            <div className="sentiment-bar">
+              <div
+                className="sentiment-fill negative"
+                style={{ width: `${aiAnalysis.earningsAnalysis.caution}%` }}
+              />
+            </div>
+          </div>
+        </div>
 
-    </div>
+        <div className="ai-card">
+          <h3 className="ai-title">Consensus Outlook</h3>
+          <p className="ai-text">{aiAnalysis.earningsAnalysis.outlook}</p>
+        </div>
 
-    {/* GUIDANCE */}
-
-    <div className="ai-card">
-
-      <h3 className="ai-title">
-        Guidance Outlook
-      </h3>
-
-      <p className="ai-text">
-
-        Management expects continued
-        revenue expansion over the next
-        several quarters with improving
-        profitability trends and ongoing
-        investment into future growth areas.
-
-      </p>
-
-    </div>
+        <div className="ai-card">
+          <h3 className="ai-title">Questions for Management</h3>
+          <ul className="ai-list">
+            {aiAnalysis.earningsAnalysis.questions.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      </>
+    ) : (
+      <div className="ai-card"><p className="ai-text">Earnings analysis is temporarily unavailable.</p></div>
+    )}
 
   </div>
 

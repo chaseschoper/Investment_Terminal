@@ -487,9 +487,8 @@ body {
   color: #9ca3af;
 }
 .ai-analysis-box {
-  background: #111827;
-  border-radius: 16px;
-  padding: 28px;
+  background: transparent;
+  padding: 0;
   margin-bottom: 30px;
 }
 
@@ -519,7 +518,7 @@ body {
 }
 .ai-analysis-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
   gap: 20px;
   margin-top: 20px;
 }
@@ -767,5 +766,4 @@ body {
   color: white;
   cursor: pointer;
 }
-
 

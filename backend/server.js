@@ -2186,6 +2186,154 @@ app.get("/api/stock/:ticker", async (req, res) => {
 // =========================
 // AI ANALYSIS (DB ONLY)
 // =========================
+const round = (value, digits = 1) => {
+  const number = toNumberOrNull(value);
+  return number === null ? null : Number(number.toFixed(digits));
+};
+
+const percentChange = (current, previous) => {
+  const currentNumber = toNumberOrNull(current);
+  const previousNumber = toNumberOrNull(previous);
+  if (currentNumber === null || previousNumber === null || previousNumber === 0) return null;
+  return ((currentNumber - previousNumber) / Math.abs(previousNumber)) * 100;
+};
+
+const analysisMoney = (value) => {
+  const number = toNumberOrNull(value);
+  if (number === null) return "N/A";
+  const absolute = Math.abs(number);
+  const sign = number < 0 ? "-" : "";
+  if (absolute >= 1e12) return `${sign}$${(absolute / 1e12).toFixed(1)}T`;
+  if (absolute >= 1e9) return `${sign}$${(absolute / 1e9).toFixed(1)}B`;
+  if (absolute >= 1e6) return `${sign}$${(absolute / 1e6).toFixed(0)}M`;
+  return `${sign}$${absolute.toFixed(0)}`;
+};
+
+function buildResearchAnalysis(stock) {
+  const data = withGuaranteedAnalystSection(stock.data || {});
+  const history = [...(data.revenueData || [])]
+    .filter((row) => row?.year)
+    .sort((a, b) => a.year - b.year);
+  const latest = history.at(-1) || {};
+  const previous = history.at(-2) || {};
+  const price = toNumberOrNull(data.price);
+  const target = toNumberOrNull(data.targetMean);
+  const marketCap = toNumberOrNull(data.marketCap);
+  const freeCashflow = toNumberOrNull(data.freeCashflow);
+  const pe = toNumberOrNull(data.pe);
+  const forwardPE = toNumberOrNull(data.forwardPE);
+  const priceToSales = toNumberOrNull(data.priceToSales);
+  const revenueGrowth = firstFiniteNumber(
+    percentChange(latest.revenue, previous.revenue),
+    data.revenueGrowth
+  );
+  const incomeGrowth = firstFiniteNumber(
+    percentChange(latest.earnings, previous.earnings),
+    data.earningsGrowth
+  );
+  const epsGrowth = percentChange(latest.eps, previous.eps);
+  const targetUpside = price && target ? ((target - price) / price) * 100 : null;
+  const fcfYield = marketCap && freeCashflow ? (freeCashflow / marketCap) * 100 : null;
+  const forecast = data.analystEstimates?.nextYear || {};
+  const forecastRevenueGrowth = percentChange(forecast.revenue, toDollarsFromBillions(latest.revenue));
+  const forecastEpsGrowth = percentChange(forecast.eps, latest.eps);
+
+  let score = 50;
+  score += clamp((revenueGrowth || 0) / 3, -12, 15);
+  score += clamp((incomeGrowth || 0) / 5, -12, 12);
+  score += clamp((data.profitMargins || 0) / 4, -8, 10);
+  score += clamp((fcfYield || 0) * 1.5, -8, 12);
+  score += clamp((targetUpside || 0) / 3, -10, 12);
+  if (pe && forwardPE) score += clamp(((pe - forwardPE) / pe) * 20, -8, 8);
+  if (forwardPE && forwardPE > 60) score -= 8;
+  if (priceToSales && priceToSales > 15) score -= 6;
+  score = Math.round(clamp(score, 10, 90));
+
+  const stance = score >= 68 ? "Bullish" : score <= 42 ? "Cautious" : "Balanced";
+  const catalysts = [];
+  const risks = [];
+  if (revenueGrowth !== null && revenueGrowth > 10) catalysts.push(`Revenue expanded ${round(revenueGrowth)}% in the latest reported year.`);
+  if (incomeGrowth !== null && incomeGrowth > revenueGrowth) catalysts.push(`Net income grew faster than revenue at ${round(incomeGrowth)}%, indicating operating leverage.`);
+  if (forwardPE && pe && forwardPE < pe * 0.9) catalysts.push(`Forward P/E of ${round(forwardPE)}x is below the current ${round(pe)}x multiple.`);
+  if (targetUpside !== null && targetUpside > 8) catalysts.push(`The consensus target implies ${round(targetUpside)}% upside from the current price.`);
+  if (fcfYield !== null && fcfYield > 2) catalysts.push(`Free cash flow yield is ${round(fcfYield)}%, supporting reinvestment or capital returns.`);
+  if (forecastRevenueGrowth !== null && forecastRevenueGrowth > 5) catalysts.push(`Consensus revenue implies approximately ${round(forecastRevenueGrowth)}% growth for the current forecast period.`);
+
+  if (revenueGrowth !== null && revenueGrowth < 3) risks.push(`Revenue growth slowed to ${round(revenueGrowth)}%, leaving less room for execution misses.`);
+  if (incomeGrowth !== null && incomeGrowth < 0) risks.push(`Net income declined ${round(Math.abs(incomeGrowth))}% in the latest reported year.`);
+  if (forwardPE && forwardPE > 45) risks.push(`A ${round(forwardPE)}x forward P/E embeds high expectations.`);
+  if (priceToSales && priceToSales > 10) risks.push(`Price-to-sales of ${round(priceToSales)}x leaves the valuation sensitive to slower growth.`);
+  if (targetUpside !== null && targetUpside < 0) risks.push(`The consensus target is ${round(Math.abs(targetUpside))}% below the current price.`);
+  if (fcfYield !== null && fcfYield < 1) risks.push(`Free cash flow yield is only ${round(fcfYield)}%, offering limited valuation support.`);
+  if (data.operatingMargins < 5) risks.push(`Operating margin is thin at ${round(data.operatingMargins)}%.`);
+
+  if (!catalysts.length) catalysts.push("Consensus estimates point to stable operations, but a stronger growth acceleration would improve the setup.");
+  if (!risks.length) risks.push("The main risk is execution falling short of the growth and margin assumptions reflected in the valuation.");
+
+  const baseTarget = target || price;
+  const growthRate = clamp((forecastRevenueGrowth || revenueGrowth || 5) / 100, -0.2, 0.35);
+  const bullPrice = price ? Math.max(baseTarget || price, price * (1 + Math.max(0.12, growthRate))) : null;
+  const bearPrice = price ? price * (1 - clamp(0.15 + Math.max(0, (forwardPE || 0) - 35) / 300, 0.15, 0.35)) : null;
+
+  const highlights = [];
+  if (latest.revenue !== null) highlights.push(`${latest.year} revenue was ${analysisMoney(toDollarsFromBillions(latest.revenue))}, ${revenueGrowth >= 0 ? "up" : "down"} ${round(Math.abs(revenueGrowth || 0))}% year over year.`);
+  if (latest.earnings !== null) highlights.push(`Net income was ${analysisMoney(toDollarsFromBillions(latest.earnings))}, with a ${round(data.profitMargins)}% profit margin.`);
+  if (latest.eps !== null) highlights.push(`Diluted EPS was $${round(latest.eps, 2)}${epsGrowth !== null ? `, a ${round(epsGrowth)}% year-over-year change` : ""}.`);
+  highlights.push(`Annual free cash flow was ${analysisMoney(freeCashflow)}${fcfYield !== null ? `, equal to a ${round(fcfYield)}% yield` : ""}.`);
+
+  const earningsPositives = catalysts.slice(0, 4);
+  const earningsRisks = risks.slice(0, 4);
+  const confidence = Math.round(clamp(50 + (revenueGrowth || 0) / 2 + (incomeGrowth || 0) / 4 + (forecastEpsGrowth || 0) / 4, 15, 90));
+  const caution = 100 - confidence;
+
+  return {
+    generatedAt: new Date().toISOString(),
+    symbol: data.symbol || stock.ticker,
+    verdict: {
+      stance,
+      score,
+      summary: `${data.name || stock.ticker} combines ${revenueGrowth >= 10 ? "strong" : revenueGrowth >= 3 ? "moderate" : "limited"} revenue momentum with a ${round(data.profitMargins)}% profit margin. The valuation is ${forwardPE && forwardPE > 40 ? "demanding" : forwardPE && forwardPE < 20 ? "relatively modest" : "middle-of-the-range"} at ${forwardPE ? `${round(forwardPE)}x forward earnings` : "an unavailable forward multiple"}.`
+    },
+    stockAnalysis: {
+      valuation: [
+        `Current P/E: ${pe ? `${round(pe)}x` : "N/A"}; forward P/E: ${forwardPE ? `${round(forwardPE)}x` : "N/A"}.`,
+        `Price-to-sales: ${priceToSales ? `${round(priceToSales)}x` : "N/A"}.`,
+        `Consensus target: ${analysisMoney(target)}${targetUpside !== null ? ` (${round(targetUpside)}% potential return)` : ""}.`,
+        `Free cash flow yield: ${fcfYield !== null ? `${round(fcfYield)}%` : "N/A"}.`
+      ],
+      financialQuality: [
+        `Gross margin ${round(data.grossMargins)}%, operating margin ${round(data.operatingMargins)}%, profit margin ${round(data.profitMargins)}%.`,
+        `Latest revenue growth ${round(revenueGrowth)}%; net income growth ${round(incomeGrowth)}%.`,
+        `Annual free cash flow ${analysisMoney(freeCashflow)} from ${data.freeCashflowSource || "available financial data"}.`,
+        `Current-year consensus revenue ${analysisMoney(forecast.revenue)} and EPS ${forecast.eps !== null && forecast.eps !== undefined ? `$${round(forecast.eps, 2)}` : "N/A"}.`
+      ],
+      catalysts: catalysts.slice(0, 5),
+      risks: risks.slice(0, 5),
+      scenarios: [
+        { label: "Bull", price: round(bullPrice, 2), detail: "Growth meets or exceeds consensus and the valuation multiple holds." },
+        { label: "Base", price: round(baseTarget, 2), detail: target ? "Uses the current consensus analyst target." : "Assumes the current valuation is maintained." },
+        { label: "Bear", price: round(bearPrice, 2), detail: "Models slower growth and valuation compression." }
+      ]
+    },
+    earningsAnalysis: {
+      period: latest.year ? `Latest reported fiscal year: ${latest.year}` : "Latest reported period",
+      summary: `${data.name || stock.ticker} reported ${analysisMoney(toDollarsFromBillions(latest.revenue))} of revenue and ${analysisMoney(toDollarsFromBillions(latest.earnings))} of net income. Consensus now points to ${analysisMoney(forecast.revenue)} of current-year revenue and $${round(forecast.eps, 2)} of EPS.`,
+      highlights,
+      positives: earningsPositives,
+      risks: earningsRisks,
+      confidence,
+      caution,
+      outlook: `Consensus implies ${forecastRevenueGrowth !== null ? `${round(forecastRevenueGrowth)}% revenue growth` : "an unavailable revenue growth rate"} and ${forecastEpsGrowth !== null ? `${round(forecastEpsGrowth)}% EPS growth` : "an unavailable EPS growth rate"}. Watch whether operating margin can hold near ${round(data.operatingMargins)}% while the company works toward those estimates.`,
+      questions: [
+        `What assumptions have changed most in the outlook for revenue and demand?`,
+        `Can operating margin remain near ${round(data.operatingMargins)}% while investment continues?`,
+        `What are the largest uses of the ${analysisMoney(freeCashflow)} in annual free cash flow?`,
+        `Which risk could cause results to miss the current consensus EPS estimate of $${round(forecast.eps, 2)}?`
+      ]
+    }
+  };
+}
+
 app.get("/api/ai-analysis/:ticker", async (req, res) => {
 try {
 const ticker = req.params.ticker.toUpperCase();
@@ -2197,26 +2345,7 @@ if (!stock) {
   return res.status(404).json({ error: "No stock data found" });
 }
 
-const analysis = `
-
-
-${stock.ticker}
-
-Price: $${stock.data?.price}
-
-Market Cap: ${stock.data?.marketCap}
-
-PE: ${stock.data?.pe}
-
-Forward PE: ${stock.data?.forwardPE}
-
-Revenue Growth: ${stock.data?.revenueGrowth}
-
-Earnings Growth: ${stock.data?.earningsGrowth}
-`;
-
-
-res.json({ analysis });
+res.json(buildResearchAnalysis(stock));
 
 
 } catch (err) {
