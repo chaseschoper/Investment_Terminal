@@ -17,8 +17,7 @@ const User = require("./models/User");
 const app = express();
 const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
-const FINANCIAL_HISTORY_VERSION = 18;
-const HISTORICAL_CHART_END_YEAR = 2025;
+const FINANCIAL_HISTORY_VERSION = 19;
 const TICKER_ALIASES = {
   ZILLOW: "Z",
   SALESFORCE: "CRM",
@@ -730,35 +729,6 @@ function withGuaranteedAnalystSection(data = {}) {
         revenue: row.revenue,
         source: row.source
       }));
-  const previousYearRow = [...guaranteedRevenueData]
-    .filter((row) => toNumberOrNull(row.year) <= HISTORICAL_CHART_END_YEAR)
-    .sort((a, b) => a.year - b.year)
-    .at(-1);
-  const currentYearRow = [...guaranteedRevenueData]
-    .filter((row) => toNumberOrNull(row.year) > HISTORICAL_CHART_END_YEAR)
-    .sort((a, b) => a.year - b.year)[0];
-  const estimateFromHistoryRow = (row, fallback) => ({
-    revenue: firstFiniteNumber(
-      toDollarsFromBillions(row?.revenue),
-      fallback.revenue
-    ),
-    earnings: firstFiniteNumber(
-      toDollarsFromBillions(row?.earnings),
-      fallback.earnings
-    ),
-    eps: firstFiniteNumber(row?.eps, fallback.eps)
-  });
-  const displayedPreviousYear = estimateFromHistoryRow(previousYearRow, {
-    revenue: currentRevenue,
-    earnings: currentEarnings,
-    eps: currentEps
-  });
-  const displayedCurrentYear = estimateFromHistoryRow(currentYearRow, {
-    revenue: currentRevenue,
-    earnings: currentEarnings,
-    eps: currentEps
-  });
-
   return {
     ...data,
     marketCap,
@@ -775,8 +745,16 @@ function withGuaranteedAnalystSection(data = {}) {
     targetMean,
     recommendationKey,
     analystEstimates: {
-      currentYear: displayedPreviousYear,
-      nextYear: displayedCurrentYear
+      currentYear: {
+        revenue: currentRevenue,
+        earnings: currentEarnings,
+        eps: currentEps
+      },
+      nextYear: {
+        revenue: nextRevenue,
+        earnings: nextEarnings,
+        eps: nextEps
+      }
     },
     revenueHistory: guaranteedRevenueHistory,
     revenueData: guaranteedRevenueData
