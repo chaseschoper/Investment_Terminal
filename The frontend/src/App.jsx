@@ -1146,9 +1146,7 @@ return (
 <div className="chart-section">
 
   <h2 className="section-title">
-    {earningsCall?.generatedBriefing
-      ? "Earnings Briefing Audio & Text"
-      : "Earnings Call Audio & Transcript"}
+    Earnings Call Audio & Transcript
   </h2>
 
   <div className="earnings-call-panel">
@@ -1183,9 +1181,7 @@ return (
         ) : earningsCall.computerReadAudio && earningsCall.transcript?.length ? (
           <div className="computer-audio-player">
             <div className="computer-audio-label">
-              {earningsCall.generatedBriefing
-                ? "Computer-read earnings briefing"
-                : "Computer-read transcript"}
+              Computer-read earnings call transcript
             </div>
             <div className="computer-audio-controls">
               <button type="button" onClick={playComputerRead}>
@@ -1221,7 +1217,7 @@ return (
               type="search"
               value={transcriptSearch}
               onChange={(event) => setTranscriptSearch(event.target.value)}
-              placeholder={earningsCall.generatedBriefing ? "Search briefing" : "Search transcript"}
+              placeholder="Search transcript"
             />
             <div className="transcript-content">
               {filteredTranscript.map((section) => (

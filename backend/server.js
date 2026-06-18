@@ -2524,7 +2524,7 @@ async function fetchAlphaVantageEarningsCall(ticker) {
     available: true,
     provider: "Alpha Vantage",
     title: `${ticker} earnings call transcript`,
-    date: fiscalPeriod?.date || null,
+    date: null,
     fiscalYear: year,
     fiscalPeriod: `Q${quarter}`,
     audioUrl: null,
@@ -2536,46 +2536,6 @@ async function fetchAlphaVantageEarningsCall(ticker) {
       session: section.title || null,
       text: String(section.content || "")
     })).filter((section) => section.text)
-  };
-}
-
-async function buildComputerReadEarningsBriefing(ticker) {
-  const stock = await Stock.findOne({ ticker });
-  if (!stock?.data) return null;
-  const analysis = buildResearchAnalysis(stock)?.earningsAnalysis;
-  if (!analysis) return null;
-  const sections = [
-    { speaker: "Overview", text: analysis.summary },
-    { speaker: "Key results", text: (analysis.highlights || []).join(" ") },
-    { speaker: "Positive signals", text: (analysis.positives || []).join(" ") },
-    { speaker: "Risks", text: (analysis.risks || []).join(" ") },
-    { speaker: "Outlook", text: analysis.outlook },
-    {
-      speaker: "Questions for investors",
-      text: (analysis.questions || []).map((question, index) =>
-        `Question ${index + 1}. ${question}`
-      ).join(" ")
-    }
-  ].filter((section) => section.text);
-  if (!sections.length) return null;
-
-  return {
-    available: true,
-    provider: "Generated earnings briefing",
-    title: `${stock.data.name || ticker} earnings briefing`,
-    date: stock.updatedAt || null,
-    fiscalYear: null,
-    fiscalPeriod: analysis.period || null,
-    audioUrl: null,
-    transcriptUrl: null,
-    computerReadAudio: true,
-    generatedBriefing: true,
-    transcript: sections.map((section, index) => ({
-      id: `${index}-${section.speaker}`,
-      speaker: section.speaker,
-      session: null,
-      text: section.text
-    }))
   };
 }
 
@@ -2745,10 +2705,7 @@ app.get("/api/earnings-call/:ticker/audio", async (req, res) => {
 app.get("/api/earnings-call/:ticker", async (req, res) => {
   const ticker = req.params.ticker.trim().toUpperCase();
   const cached = earningsCallCache.get(ticker);
-  const cacheLifetime = cached?.data?.generatedBriefing
-    ? 5 * 60 * 1000
-    : 60 * 60 * 1000;
-  if (cached && Date.now() - cached.cachedAt < cacheLifetime) {
+  if (cached && Date.now() - cached.cachedAt < 24 * 60 * 60 * 1000) {
     return res.json(cached.data);
   }
 
@@ -2777,10 +2734,7 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
     } catch (err) {
       console.log("Quartr earnings call skipped:", ticker, err.response?.status || err.message);
     }
-    if (!data) {
-      data = await buildComputerReadEarningsBriefing(ticker);
-    }
-    if (!data) {
+    if (!data && process.env.FINNHUB_TRANSCRIPTS_ENABLED === "true") {
       try {
         data = await fetchFinnhubEarningsCall(ticker);
       } catch (err) {
