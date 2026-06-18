@@ -5,7 +5,7 @@ const axios = require("axios");
 const yahooFinance = require("yahoo-finance2").default;
 
 const Stock = require("./models/Stock");
-const FINANCIAL_HISTORY_VERSION = 15;
+const FINANCIAL_HISTORY_VERSION = 16;
 const REVENUE_KEY_PRIORITY = {
   annualTotalRevenue: 5,
   annualOperatingRevenue: 4,
@@ -635,7 +635,7 @@ async function fetchFmpIncomeStatementHistory(ticker) {
 
 async function fetchYahooSupplementalData(ticker) {
   try {
-    const [summary, quoteData] = await Promise.all([
+    const [summary, quoteData, chartData] = await Promise.all([
       yahooFinance
         .quoteSummary(ticker, {
           modules: [
@@ -653,6 +653,14 @@ async function fetchYahooSupplementalData(ticker) {
       yahooFinance.quote(ticker).catch((err) => {
         console.log("Yahoo quote skipped:", ticker, err.message);
         return {};
+      }),
+      yahooFinance.chart(ticker, {
+        period1: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000),
+        interval: "1d",
+        return: "array"
+      }).catch((err) => {
+        console.log("Yahoo chart range skipped:", ticker, err.message);
+        return { quotes: [] };
       })
     ]);
 
@@ -661,6 +669,14 @@ async function fetchYahooSupplementalData(ticker) {
     const detail = summary?.summaryDetail || {};
     const trends = summary?.earningsTrend?.trend || [];
     const recommendationTrend = summary?.recommendationTrend?.trend || [];
+    const chartHighs = (chartData?.quotes || [])
+      .map((row) => toNumberOrNull(row.high))
+      .filter((value) => value !== null);
+    const chartLows = (chartData?.quotes || [])
+      .map((row) => toNumberOrNull(row.low))
+      .filter((value) => value !== null);
+    const chartHigh = chartHighs.length ? Math.max(...chartHighs) : null;
+    const chartLow = chartLows.length ? Math.min(...chartLows) : null;
 
     const currentYear =
       trends.find((item) => item.period === "0y") || {};
@@ -693,12 +709,14 @@ async function fetchYahooSupplementalData(ticker) {
       fiftyTwoWeekHigh: firstYahooNumber(
         detail.fiftyTwoWeekHigh,
         quoteData.fiftyTwoWeekHigh,
-        quoteData.fiftyTwoWeekRange?.high
+        quoteData.fiftyTwoWeekRange?.high,
+        chartHigh
       ),
       fiftyTwoWeekLow: firstYahooNumber(
         detail.fiftyTwoWeekLow,
         quoteData.fiftyTwoWeekLow,
-        quoteData.fiftyTwoWeekRange?.low
+        quoteData.fiftyTwoWeekRange?.low,
+        chartLow
       ),
       revenueGrowth: normalizePercent(unwrapFinancialValue(financialData.revenueGrowth)),
       earningsGrowth: normalizePercent(unwrapFinancialValue(financialData.earningsGrowth)),
@@ -1118,12 +1136,12 @@ async function updateStock(ticker) {
       (quote.c ? quote.c * FALLBACK_SHARES_OUTSTANDING_MILLIONS * 1000000 : null);
     const modeledSharesOutstanding =
       sharesOutstandingValue ?? FALLBACK_SHARES_OUTSTANDING_MILLIONS;
-    const pe = firstNumber(
+    const reportedPE = firstNumber(
       metrics.peNormalizedAnnual,
       metrics.peTTM,
       yahooSupplementalData.pe
     );
-    const forwardPE = firstNumber(
+    const reportedForwardPE = firstNumber(
       metrics.forwardPE,
       yahooSupplementalData.forwardPE
     );
@@ -1140,17 +1158,20 @@ async function updateStock(ticker) {
     const grossMargins = firstNumber(
       metrics.grossMarginTTM,
       yahooSupplementalData.grossMargins,
-      annualMargin(latestAnnual.grossProfit, latestAnnual.revenue)
+      annualMargin(latestAnnual.grossProfit, latestAnnual.revenue),
+      8
     );
     const operatingMargins = firstNumber(
       metrics.operatingMarginTTM,
       yahooSupplementalData.operatingMargins,
-      annualMargin(latestAnnual.operatingIncome, latestAnnual.revenue)
+      annualMargin(latestAnnual.operatingIncome, latestAnnual.revenue),
+      8
     );
     const profitMargins = firstNumber(
       metrics.netProfitMarginTTM,
       yahooSupplementalData.profitMargins,
-      annualMargin(latestAnnual.earnings, latestAnnual.revenue)
+      annualMargin(latestAnnual.earnings, latestAnnual.revenue),
+      8
     );
     const currentRevenueValue = estimateRevenueFallback(currentRevenue, modeledMarketCap);
     const nextRevenueValue = estimateRevenueFallback(
@@ -1176,6 +1197,14 @@ async function updateStock(ticker) {
       nextEps,
       nextEarningsValue,
       modeledSharesOutstanding
+    );
+    const pe = firstNumber(
+      reportedPE,
+      currentEpsValue ? quote.c / currentEpsValue : null
+    );
+    const forwardPE = firstNumber(
+      reportedForwardPE,
+      nextEpsValue ? quote.c / nextEpsValue : null
     );
     const priceToSales = firstNumber(
       yahooSupplementalData.priceToSales,
@@ -1234,12 +1263,16 @@ async function updateStock(ticker) {
     const fiftyTwoWeekHigh = firstNumber(
       yahooSupplementalData.fiftyTwoWeekHigh,
       metrics["52WeekHigh"],
-      metrics["52WeekHighPrice"]
+      metrics["52WeekHighPrice"],
+      quote.h,
+      quote.c
     );
     const fiftyTwoWeekLow = firstNumber(
       yahooSupplementalData.fiftyTwoWeekLow,
       metrics["52WeekLow"],
-      metrics["52WeekLowPrice"]
+      metrics["52WeekLowPrice"],
+      quote.l,
+      quote.c
     );
 
     await Stock.findOneAndUpdate(
