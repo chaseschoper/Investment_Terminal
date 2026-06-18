@@ -5,7 +5,7 @@ const axios = require("axios");
 const yahooFinance = require("yahoo-finance2").default;
 
 const Stock = require("./models/Stock");
-const FINANCIAL_HISTORY_VERSION = 16;
+const FINANCIAL_HISTORY_VERSION = 17;
 const REVENUE_KEY_PRIORITY = {
   annualTotalRevenue: 5,
   annualOperatingRevenue: 4,
@@ -129,6 +129,19 @@ const epsFromForwardPE = (price, forwardPE) => {
   const peNumber = toNumberOrNull(forwardPE);
   if (priceNumber === null || peNumber === null || peNumber <= 0) return null;
   return priceNumber / peNumber;
+};
+
+const medianPositiveHistoricalEps = (rows = []) => {
+  const values = [...rows]
+    .filter((row) => row?.year)
+    .sort((a, b) => a.year - b.year)
+    .slice(-3)
+    .map((row) => toNumberOrNull(row.eps))
+    .filter((value) => value !== null && value > 0)
+    .sort((a, b) => a - b);
+
+  if (!values.length) return null;
+  return values[Math.floor(values.length / 2)];
 };
 
 const normalizeStatementDollars = (value) => {
@@ -1068,6 +1081,7 @@ async function updateStock(ticker) {
       epsEstimates[1]?.epsAvg ??
       metrics.epsEstimateNextYear ??
       epsFromForwardPE(quote.c, metrics.forwardPE ?? yahooSupplementalData.forwardPE) ??
+      medianPositiveHistoricalEps(revenueData) ??
       estimateNextValue(currentEps, earningsGrowthRate) ??
       null;
 

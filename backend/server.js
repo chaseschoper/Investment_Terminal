@@ -17,7 +17,7 @@ const User = require("./models/User");
 const app = express();
 const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
-const FINANCIAL_HISTORY_VERSION = 16;
+const FINANCIAL_HISTORY_VERSION = 17;
 const TICKER_ALIASES = {
   ZILLOW: "Z",
   SALESFORCE: "CRM",
@@ -170,6 +170,19 @@ const epsFromForwardPE = (price, forwardPE) => {
   const peNumber = toNumberOrNull(forwardPE);
   if (priceNumber === null || peNumber === null || peNumber <= 0) return null;
   return priceNumber / peNumber;
+};
+
+const medianPositiveHistoricalEps = (rows = []) => {
+  const values = [...rows]
+    .filter((row) => row?.year)
+    .sort((a, b) => a.year - b.year)
+    .slice(-3)
+    .map((row) => toNumberOrNull(row.eps))
+    .filter((value) => value !== null && value > 0)
+    .sort((a, b) => a - b);
+
+  if (!values.length) return null;
+  return values[Math.floor(values.length / 2)];
 };
 
 const normalizeStatementDollars = (value) => {
@@ -544,9 +557,26 @@ function withGuaranteedAnalystSection(data = {}) {
     data.marketCap,
     price !== null ? price * FALLBACK_SHARES_OUTSTANDING_MILLIONS * 1000000 : null
   );
-  const sharesOutstanding = firstNumber(
+  const latestReportedEarnings = toNumberOrNull(latestRevenueRow.earnings);
+  const latestReportedEps = toNumberOrNull(latestRevenueRow.eps);
+  const impliedSharesMillions =
+    latestReportedEarnings !== null && latestReportedEps
+      ? (latestReportedEarnings * 1000) / latestReportedEps
+      : null;
+  const suppliedSharesMillions = firstNumber(
     data.sharesOutstanding,
-    marketCap !== null && price ? marketCap / price / 1000000 : null,
+    marketCap !== null && price ? marketCap / price / 1000000 : null
+  );
+  const suppliedToImpliedRatio =
+    suppliedSharesMillions && impliedSharesMillions
+      ? suppliedSharesMillions / impliedSharesMillions
+      : null;
+  const sharesOutstanding = firstNumber(
+    suppliedToImpliedRatio !== null &&
+      (suppliedToImpliedRatio > 1.5 || suppliedToImpliedRatio < 0.67)
+      ? impliedSharesMillions
+      : suppliedSharesMillions,
+    impliedSharesMillions,
     FALLBACK_SHARES_OUTSTANDING_MILLIONS
   );
   const revenueGrowth = firstNumber(
@@ -633,13 +663,6 @@ function withGuaranteedAnalystSection(data = {}) {
     targetMean,
     price
   );
-  const completeHistoryRows = revenueRows.filter(
-    (row) =>
-      toNumberOrNull(row.revenue) !== null &&
-      toNumberOrNull(row.earnings) !== null &&
-      toNumberOrNull(row.eps) !== null
-  );
-  const hasCompleteModeledHistory = completeHistoryRows.length >= 5;
   const latestYear =
     toNumberOrNull(latestRevenueRow.year) || new Date().getFullYear();
   const modeledGrowthRate = safeGrowthRate(revenueGrowth);
@@ -664,9 +687,10 @@ function withGuaranteedAnalystSection(data = {}) {
       source: "Modeled fallback"
     };
   });
-  const guaranteedRevenueData = hasCompleteModeledHistory
-    ? revenueRows
-    : modeledRevenueData;
+  const guaranteedRevenueData = mergeHistoricalFinancials(
+    revenueRows,
+    modeledRevenueData
+  );
   const guaranteedRevenueHistory = (data.revenueHistory || []).some(
     (row) => toNumberOrNull(row.revenue) !== null
   )
@@ -1369,6 +1393,7 @@ async function fetchStockData(ticker) {
     epsEstimates[1]?.epsAvg ??
     metrics.epsEstimateNextYear ??
     epsFromForwardPE(quote.c, metrics.forwardPE ?? yahooSupplementalData.forwardPE) ??
+    medianPositiveHistoricalEps(revenueData) ??
     estimateNextValue(currentEps, earningsGrowthRate) ??
     null;
 
