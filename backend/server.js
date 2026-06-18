@@ -17,7 +17,7 @@ const User = require("./models/User");
 const app = express();
 const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
-const FINANCIAL_HISTORY_VERSION = 19;
+const FINANCIAL_HISTORY_VERSION = 20;
 const TICKER_ALIASES = {
   ZILLOW: "Z",
   SALESFORCE: "CRM",
@@ -172,17 +172,39 @@ const epsFromForwardPE = (price, forwardPE) => {
   return priceNumber / peNumber;
 };
 
-const medianPositiveHistoricalEps = (rows = []) => {
+const estimateForwardEpsFromHistory = (rows = []) => {
   const values = [...rows]
     .filter((row) => row?.year)
     .sort((a, b) => a.year - b.year)
-    .slice(-3)
     .map((row) => toNumberOrNull(row.eps))
     .filter((value) => value !== null && value > 0)
-    .sort((a, b) => a - b);
+    .slice(-4);
 
   if (!values.length) return null;
-  return values[Math.floor(values.length / 2)];
+  const latest = values.at(-1);
+  const recent = values.slice(-3).sort((a, b) => a - b);
+  const median = recent[Math.floor(recent.length / 2)];
+
+  if (latest < median * 0.5 || latest > median * 2) return median;
+
+  const growthRates = values.slice(1).map((value, index) =>
+    (value - values[index]) / values[index]
+  ).sort((a, b) => a - b);
+  const medianGrowth = growthRates.length
+    ? growthRates[Math.floor(growthRates.length / 2)]
+    : 0.05;
+
+  return latest * (1 + clamp(medianGrowth, -0.3, 0.4));
+};
+
+const sanitizeForwardEps = (candidate, historicalFallback) => {
+  const estimate = toNumberOrNull(candidate);
+  const fallback = toNumberOrNull(historicalFallback);
+  if (estimate === null) return fallback;
+  if (fallback === null || fallback === 0) return estimate;
+
+  const ratio = Math.abs(estimate / fallback);
+  return ratio < 0.125 || ratio > 8 ? fallback : estimate;
 };
 
 const normalizeStatementDollars = (value) => {
@@ -286,8 +308,8 @@ const reconcileEarningsEstimate = ({ earnings, eps, shares, revenue, profitMargi
   if (epsImplied === null) return fallback;
   if (fallback === null) return epsImplied;
 
-  const ratio = Math.abs(fallback / epsImplied);
-  return ratio >= 0.5 && ratio <= 1.5 ? fallback : epsImplied;
+  const ratio = fallback / epsImplied;
+  return ratio >= 0.9 && ratio <= 1.1 ? fallback : epsImplied;
 };
 
 const estimateEpsFallback = (eps, earnings, sharesOutstandingMillions) => {
@@ -663,12 +685,12 @@ function withGuaranteedAnalystSection(data = {}) {
     profitMargin: profitMargins
   });
   const pe = firstNumber(
-    data.pe,
-    price !== null && currentEps ? price / currentEps : null
+    price !== null && currentEps ? price / currentEps : null,
+    data.pe
   );
   const forwardPE = firstNumber(
-    data.forwardPE,
-    price !== null && nextEps ? price / nextEps : null
+    price !== null && nextEps ? price / nextEps : null,
+    data.forwardPE
   );
   const fiftyTwoWeekHigh = firstNumber(data.fiftyTwoWeekHigh, data.high, price);
   const fiftyTwoWeekLow = firstNumber(data.fiftyTwoWeekLow, data.low, price);
@@ -1416,14 +1438,16 @@ async function fetchStockData(ticker) {
     currentEpsBase ??
     null;
 
-  const nextEps =
+  const historicalForwardEps = estimateForwardEpsFromHistory(revenueData);
+  const nextEpsCandidate =
     fmpEstimateField(fmpNextEstimate, "epsAvg", "estimatedEpsAvg") ??
     epsEstimates[1]?.epsAvg ??
     metrics.epsEstimateNextYear ??
     epsFromForwardPE(quote.c, metrics.forwardPE ?? yahooSupplementalData.forwardPE) ??
-    medianPositiveHistoricalEps(revenueData) ??
+    historicalForwardEps ??
     estimateNextValue(currentEps, earningsGrowthRate) ??
     null;
+  const nextEps = sanitizeForwardEps(nextEpsCandidate, historicalForwardEps);
 
   const currentRevenue =
     fmpEstimateField(
@@ -1570,12 +1594,12 @@ async function fetchStockData(ticker) {
     profitMargin: profitMargins
   });
   const pe = firstNumber(
-    reportedPE,
-    currentEpsValue ? quote.c / currentEpsValue : null
+    currentEpsValue ? quote.c / currentEpsValue : null,
+    reportedPE
   );
   const forwardPE = firstNumber(
-    reportedForwardPE,
-    nextEpsValue ? quote.c / nextEpsValue : null
+    nextEpsValue ? quote.c / nextEpsValue : null,
+    reportedForwardPE
   );
   const priceToSales = firstNumber(
     yahooSupplementalData.priceToSales,
