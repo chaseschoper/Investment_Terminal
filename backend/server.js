@@ -2517,7 +2517,16 @@ async function fetchAlphaVantageEarningsCall(ticker) {
   if (!sections.length) {
     const message = response.data?.Information || response.data?.Note || response.data?.["Error Message"];
     if (message) console.log("Alpha Vantage transcript unavailable:", ticker, message);
-    return null;
+    const providerError = new Error("Alpha Vantage transcript unavailable");
+    if (/api key|apikey|invalid/i.test(message || "")) {
+      providerError.providerCode = "alpha_key_invalid";
+    } else if (/frequency|limit|requests per day|rate/i.test(message || "")) {
+      providerError.providerCode = "alpha_daily_limit";
+    } else {
+      providerError.providerCode = "alpha_quarter_unavailable";
+    }
+    providerError.fiscalPeriod = `${year}Q${quarter}`;
+    throw providerError;
   }
 
   return {
@@ -2711,10 +2720,16 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
 
   try {
     let data = null;
+    let unavailableReason = process.env.ALPHA_VANTAGE_API_KEY
+      ? "provider_unavailable"
+      : "alpha_key_missing";
+    let requestedFiscalPeriod = null;
     if (process.env.ALPHA_VANTAGE_API_KEY) {
       try {
         data = await fetchAlphaVantageEarningsCall(ticker);
       } catch (err) {
+        unavailableReason = err.providerCode || "alpha_request_failed";
+        requestedFiscalPeriod = err.fiscalPeriod || null;
         console.log("Alpha Vantage earnings call skipped:", ticker, err.response?.status || err.message);
       }
     }
@@ -2741,7 +2756,12 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
         console.log("Finnhub earnings call skipped:", ticker, err.response?.status || err.message);
       }
     }
-    const responseData = data || { available: false, symbol: ticker };
+    const responseData = data || {
+      available: false,
+      symbol: ticker,
+      reason: unavailableReason,
+      requestedFiscalPeriod
+    };
     earningsCallCache.set(ticker, { data: responseData, cachedAt: Date.now() });
     return res.json(responseData);
   } catch (err) {

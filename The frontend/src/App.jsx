@@ -1246,7 +1246,15 @@ return (
       </>
     ) : (
       <div className="earnings-call-empty">
-        An earnings call transcript is unavailable for this ticker.
+        {earningsCall?.reason === "alpha_key_missing"
+          ? "The transcript source is not connected on the backend."
+          : earningsCall?.reason === "alpha_key_invalid"
+            ? "The transcript API key was rejected."
+            : earningsCall?.reason === "alpha_daily_limit"
+              ? "The free transcript source reached its daily request limit."
+              : earningsCall?.reason === "alpha_quarter_unavailable"
+                ? `No transcript was found for ${earningsCall.requestedFiscalPeriod || "the latest quarter"}.`
+                : "The earnings call transcript source is temporarily unavailable."}
       </div>
     )}
   </div>
