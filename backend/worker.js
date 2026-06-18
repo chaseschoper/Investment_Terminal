@@ -6,7 +6,7 @@ const cheerio = require("cheerio");
 const yahooFinance = require("yahoo-finance2").default;
 
 const Stock = require("./models/Stock");
-const FINANCIAL_HISTORY_VERSION = 23;
+const FINANCIAL_HISTORY_VERSION = 24;
 const secMarginCache = new Map();
 let secTickerMapPromise;
 const REVENUE_KEY_PRIORITY = {
@@ -246,6 +246,16 @@ async function fetchSecAnnualMargins(ticker) {
       "ProfitLoss",
       "NetIncomeLossAvailableToCommonStockholdersBasic"
     ], endDate);
+    const operatingCashFlow = latestSecAnnualFact(facts, [
+      "NetCashProvidedByUsedInOperatingActivities",
+      "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"
+    ], endDate);
+    const capitalExpenditures = latestSecAnnualFact(facts, [
+      "PaymentsToAcquirePropertyPlantAndEquipment",
+      "PaymentsToAcquireProductiveAssets",
+      "PaymentsForAdditionsToPropertyPlantAndEquipment",
+      "PaymentsToAcquirePropertyPlantAndEquipmentAndIntangibleAssets"
+    ], endDate);
     const grossProfitValue = grossProfit?.val ?? (
       costOfRevenue?.val !== undefined ? revenue.val - costOfRevenue.val : null
     );
@@ -259,7 +269,11 @@ async function fetchSecAnnualMargins(ticker) {
         : null,
       profitMargins: netIncome?.val !== undefined
         ? (netIncome.val / revenue.val) * 100
-        : null
+        : null,
+      freeCashflow:
+        operatingCashFlow?.val !== undefined && capitalExpenditures?.val !== undefined
+          ? operatingCashFlow.val - Math.abs(capitalExpenditures.val)
+          : null
     };
     secMarginCache.set(ticker, { data, fetchedAt: Date.now() });
     return data;
@@ -1539,6 +1553,7 @@ async function updateStock(ticker) {
     );
     const freeCashflow = estimateFreeCashFlowFallback({
       freeCashflow: firstNumber(
+        secAnnualMargins.freeCashflow,
         fmpCashFlow[0]?.freeCashFlow,
         fmpCashFlow[0]?.freeCashflow,
         yahooSupplementalData.freeCashflow,
@@ -1641,6 +1656,10 @@ async function updateStock(ticker) {
               : "Modeled fallback",
           marginSource: secAnnualMargins.operatingMargins !== null &&
             secAnnualMargins.operatingMargins !== undefined
+            ? `SEC annual filing ${secAnnualMargins.fiscalYear}`
+            : "Market data fallback",
+          freeCashflowSource: secAnnualMargins.freeCashflow !== null &&
+            secAnnualMargins.freeCashflow !== undefined
             ? `SEC annual filing ${secAnnualMargins.fiscalYear}`
             : "Market data fallback",
 
