@@ -440,7 +440,9 @@ if (!stockData) {
 
 
 
- 
+const historicalRevenueData = (stockData?.revenueData || []).filter(
+  (row) => Number(row?.year) <= 2025
+);
 
 return (
 
@@ -965,7 +967,7 @@ return (
     >
 
       <BarChart
-        data={stockData?.revenueData || []}
+        data={historicalRevenueData}
       >
 
         <CartesianGrid
@@ -1017,7 +1019,7 @@ return (
     >
 
       <LineChart
-        data={stockData?.revenueData || []}
+        data={historicalRevenueData}
       >
 
         <CartesianGrid
@@ -1070,7 +1072,7 @@ return (
     >
 
       <LineChart
-       data={stockData?.revenueData || []}
+       data={historicalRevenueData}
       >
 
         <CartesianGrid

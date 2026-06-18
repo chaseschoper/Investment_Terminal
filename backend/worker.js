@@ -5,7 +5,7 @@ const axios = require("axios");
 const yahooFinance = require("yahoo-finance2").default;
 
 const Stock = require("./models/Stock");
-const FINANCIAL_HISTORY_VERSION = 17;
+const FINANCIAL_HISTORY_VERSION = 18;
 const REVENUE_KEY_PRIORITY = {
   annualTotalRevenue: 5,
   annualOperatingRevenue: 4,
@@ -232,6 +232,21 @@ const estimateEarningsFallback = (earnings, revenue, profitMargin) => {
     : 0.08;
 
   return revenueNumber * marginRate;
+};
+
+const reconcileEarningsEstimate = ({ earnings, eps, shares, revenue, profitMargin }) => {
+  const fallback = estimateEarningsFallback(earnings, revenue, profitMargin);
+  const epsNumber = toNumberOrNull(eps);
+  const sharesNumber = toNumberOrNull(shares);
+  const epsImplied = epsNumber !== null && sharesNumber
+    ? epsNumber * sharesNumber * 1000000
+    : null;
+
+  if (epsImplied === null) return fallback;
+  if (fallback === null) return epsImplied;
+
+  const ratio = Math.abs(fallback / epsImplied);
+  return ratio >= 0.5 && ratio <= 1.5 ? fallback : epsImplied;
 };
 
 const estimateEpsFallback = (eps, earnings, sharesOutstandingMillions) => {
@@ -1148,8 +1163,21 @@ async function updateStock(ticker) {
     const modeledMarketCap =
       marketCap ??
       (quote.c ? quote.c * FALLBACK_SHARES_OUTSTANDING_MILLIONS * 1000000 : null);
-    const modeledSharesOutstanding =
-      sharesOutstandingValue ?? FALLBACK_SHARES_OUTSTANDING_MILLIONS;
+    const latestAnnualEarnings = toNumberOrNull(latestAnnual.earnings);
+    const latestAnnualEps = toNumberOrNull(latestAnnual.eps);
+    const impliedAnnualShares = latestAnnualEarnings !== null && latestAnnualEps
+      ? (latestAnnualEarnings * 1000) / latestAnnualEps
+      : null;
+    const shareRatio = sharesOutstandingValue && impliedAnnualShares
+      ? sharesOutstandingValue / impliedAnnualShares
+      : null;
+    const modeledSharesOutstanding = firstNumber(
+      shareRatio !== null && (shareRatio > 1.5 || shareRatio < 0.67)
+        ? impliedAnnualShares
+        : sharesOutstandingValue,
+      impliedAnnualShares,
+      FALLBACK_SHARES_OUTSTANDING_MILLIONS
+    );
     const reportedPE = firstNumber(
       metrics.peNormalizedAnnual,
       metrics.peTTM,
@@ -1192,26 +1220,40 @@ async function updateStock(ticker) {
       nextRevenue,
       modeledMarketCap ? modeledMarketCap * (1 + revenueGrowthRate) : null
     );
-    const currentEarningsValue = estimateEarningsFallback(
+    const provisionalCurrentEarningsValue = estimateEarningsFallback(
       currentEarnings,
       currentRevenueValue,
       profitMargins
     );
-    const nextEarningsValue = estimateEarningsFallback(
+    const provisionalNextEarningsValue = estimateEarningsFallback(
       nextEarnings,
       nextRevenueValue,
       profitMargins
     );
     const currentEpsValue = estimateEpsFallback(
       currentEps,
-      currentEarningsValue,
+      provisionalCurrentEarningsValue,
       modeledSharesOutstanding
     );
     const nextEpsValue = estimateEpsFallback(
       nextEps,
-      nextEarningsValue,
+      provisionalNextEarningsValue,
       modeledSharesOutstanding
     );
+    const currentEarningsValue = reconcileEarningsEstimate({
+      earnings: provisionalCurrentEarningsValue,
+      eps: currentEpsValue,
+      shares: modeledSharesOutstanding,
+      revenue: currentRevenueValue,
+      profitMargin: profitMargins
+    });
+    const nextEarningsValue = reconcileEarningsEstimate({
+      earnings: provisionalNextEarningsValue,
+      eps: nextEpsValue,
+      shares: modeledSharesOutstanding,
+      revenue: nextRevenueValue,
+      profitMargin: profitMargins
+    });
     const pe = firstNumber(
       reportedPE,
       currentEpsValue ? quote.c / currentEpsValue : null

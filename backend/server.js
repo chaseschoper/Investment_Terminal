@@ -17,7 +17,8 @@ const User = require("./models/User");
 const app = express();
 const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
-const FINANCIAL_HISTORY_VERSION = 17;
+const FINANCIAL_HISTORY_VERSION = 18;
+const HISTORICAL_CHART_END_YEAR = 2025;
 const TICKER_ALIASES = {
   ZILLOW: "Z",
   SALESFORCE: "CRM",
@@ -273,6 +274,21 @@ const estimateEarningsFallback = (earnings, revenue, profitMargin) => {
     : 0.08;
 
   return revenueNumber * marginRate;
+};
+
+const reconcileEarningsEstimate = ({ earnings, eps, shares, revenue, profitMargin }) => {
+  const fallback = estimateEarningsFallback(earnings, revenue, profitMargin);
+  const epsNumber = toNumberOrNull(eps);
+  const sharesNumber = toNumberOrNull(shares);
+  const epsImplied = epsNumber !== null && sharesNumber
+    ? epsNumber * sharesNumber * 1000000
+    : null;
+
+  if (epsImplied === null) return fallback;
+  if (fallback === null) return epsImplied;
+
+  const ratio = Math.abs(fallback / epsImplied);
+  return ratio >= 0.5 && ratio <= 1.5 ? fallback : epsImplied;
 };
 
 const estimateEpsFallback = (eps, earnings, sharesOutstandingMillions) => {
@@ -621,18 +637,32 @@ function withGuaranteedAnalystSection(data = {}) {
     firstNumber(nextYear.revenue, estimateNextValue(currentRevenue, safeGrowthRate(revenueGrowth))),
     marketCap !== null ? marketCap * (1 + safeGrowthRate(revenueGrowth)) : null
   );
-  const currentEarnings = estimateEarningsFallback(
+  const provisionalCurrentEarnings = estimateEarningsFallback(
     firstNumber(currentYear.earnings, toDollarsFromBillions(latestRevenueRow.earnings)),
     currentRevenue,
     profitMargins
   );
-  const nextEarnings = estimateEarningsFallback(
-    firstNumber(nextYear.earnings, estimateNextValue(currentEarnings, safeGrowthRate(earningsGrowth))),
+  const provisionalNextEarnings = estimateEarningsFallback(
+    firstNumber(nextYear.earnings, estimateNextValue(provisionalCurrentEarnings, safeGrowthRate(earningsGrowth))),
     nextRevenue,
     profitMargins
   );
-  const currentEps = estimateEpsFallback(currentYear.eps, currentEarnings, sharesOutstanding);
-  const nextEps = estimateEpsFallback(nextYear.eps, nextEarnings, sharesOutstanding);
+  const currentEps = estimateEpsFallback(currentYear.eps, provisionalCurrentEarnings, sharesOutstanding);
+  const nextEps = estimateEpsFallback(nextYear.eps, provisionalNextEarnings, sharesOutstanding);
+  const currentEarnings = reconcileEarningsEstimate({
+    earnings: provisionalCurrentEarnings,
+    eps: currentEps,
+    shares: sharesOutstanding,
+    revenue: currentRevenue,
+    profitMargin: profitMargins
+  });
+  const nextEarnings = reconcileEarningsEstimate({
+    earnings: provisionalNextEarnings,
+    eps: nextEps,
+    shares: sharesOutstanding,
+    revenue: nextRevenue,
+    profitMargin: profitMargins
+  });
   const pe = firstNumber(
     data.pe,
     price !== null && currentEps ? price / currentEps : null
@@ -700,6 +730,34 @@ function withGuaranteedAnalystSection(data = {}) {
         revenue: row.revenue,
         source: row.source
       }));
+  const previousYearRow = [...guaranteedRevenueData]
+    .filter((row) => toNumberOrNull(row.year) <= HISTORICAL_CHART_END_YEAR)
+    .sort((a, b) => a.year - b.year)
+    .at(-1);
+  const currentYearRow = [...guaranteedRevenueData]
+    .filter((row) => toNumberOrNull(row.year) > HISTORICAL_CHART_END_YEAR)
+    .sort((a, b) => a.year - b.year)[0];
+  const estimateFromHistoryRow = (row, fallback) => ({
+    revenue: firstFiniteNumber(
+      toDollarsFromBillions(row?.revenue),
+      fallback.revenue
+    ),
+    earnings: firstFiniteNumber(
+      toDollarsFromBillions(row?.earnings),
+      fallback.earnings
+    ),
+    eps: firstFiniteNumber(row?.eps, fallback.eps)
+  });
+  const displayedPreviousYear = estimateFromHistoryRow(previousYearRow, {
+    revenue: currentRevenue,
+    earnings: currentEarnings,
+    eps: currentEps
+  });
+  const displayedCurrentYear = estimateFromHistoryRow(currentYearRow, {
+    revenue: currentRevenue,
+    earnings: currentEarnings,
+    eps: currentEps
+  });
 
   return {
     ...data,
@@ -717,16 +775,8 @@ function withGuaranteedAnalystSection(data = {}) {
     targetMean,
     recommendationKey,
     analystEstimates: {
-      currentYear: {
-        revenue: currentRevenue,
-        earnings: currentEarnings,
-        eps: currentEps
-      },
-      nextYear: {
-        revenue: nextRevenue,
-        earnings: nextEarnings,
-        eps: nextEps
-      }
+      currentYear: displayedPreviousYear,
+      nextYear: displayedCurrentYear
     },
     revenueHistory: guaranteedRevenueHistory,
     revenueData: guaranteedRevenueData
@@ -1460,8 +1510,21 @@ async function fetchStockData(ticker) {
   const modeledMarketCap =
     marketCap ??
     (quote.c ? quote.c * FALLBACK_SHARES_OUTSTANDING_MILLIONS * 1000000 : null);
-  const modeledSharesOutstanding =
-    sharesOutstandingValue ?? FALLBACK_SHARES_OUTSTANDING_MILLIONS;
+  const latestAnnualEarnings = toNumberOrNull(latestAnnual.earnings);
+  const latestAnnualEps = toNumberOrNull(latestAnnual.eps);
+  const impliedAnnualShares = latestAnnualEarnings !== null && latestAnnualEps
+    ? (latestAnnualEarnings * 1000) / latestAnnualEps
+    : null;
+  const shareRatio = sharesOutstandingValue && impliedAnnualShares
+    ? sharesOutstandingValue / impliedAnnualShares
+    : null;
+  const modeledSharesOutstanding = firstNumber(
+    shareRatio !== null && (shareRatio > 1.5 || shareRatio < 0.67)
+      ? impliedAnnualShares
+      : sharesOutstandingValue,
+    impliedAnnualShares,
+    FALLBACK_SHARES_OUTSTANDING_MILLIONS
+  );
   const reportedPE = firstNumber(metrics.peNormalizedAnnual, metrics.peTTM, yahooSupplementalData.pe);
   const reportedForwardPE = firstNumber(metrics.forwardPE, yahooSupplementalData.forwardPE);
   const revenueGrowth = firstNumber(
@@ -1494,26 +1557,40 @@ async function fetchStockData(ticker) {
     nextRevenue,
     modeledMarketCap ? modeledMarketCap * (1 + revenueGrowthRate) : null
   );
-  const currentEarningsValue = estimateEarningsFallback(
+  const provisionalCurrentEarningsValue = estimateEarningsFallback(
     currentEarnings,
     currentRevenueValue,
     profitMargins
   );
-  const nextEarningsValue = estimateEarningsFallback(
+  const provisionalNextEarningsValue = estimateEarningsFallback(
     nextEarnings,
     nextRevenueValue,
     profitMargins
   );
   const currentEpsValue = estimateEpsFallback(
     currentEps,
-    currentEarningsValue,
+    provisionalCurrentEarningsValue,
     modeledSharesOutstanding
   );
   const nextEpsValue = estimateEpsFallback(
     nextEps,
-    nextEarningsValue,
+    provisionalNextEarningsValue,
     modeledSharesOutstanding
   );
+  const currentEarningsValue = reconcileEarningsEstimate({
+    earnings: provisionalCurrentEarningsValue,
+    eps: currentEpsValue,
+    shares: modeledSharesOutstanding,
+    revenue: currentRevenueValue,
+    profitMargin: profitMargins
+  });
+  const nextEarningsValue = reconcileEarningsEstimate({
+    earnings: provisionalNextEarningsValue,
+    eps: nextEpsValue,
+    shares: modeledSharesOutstanding,
+    revenue: nextRevenueValue,
+    profitMargin: profitMargins
+  });
   const pe = firstNumber(
     reportedPE,
     currentEpsValue ? quote.c / currentEpsValue : null

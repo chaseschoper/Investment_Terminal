@@ -77,7 +77,7 @@ const buildChartRows = (rows, key) =>
         : null,
     }))
     .filter((item) =>
-      item.year && item[key] !== null
+      item.year && item.year <= 2025 && item[key] !== null
     );
 import axios from "axios";
 const API_URL =
