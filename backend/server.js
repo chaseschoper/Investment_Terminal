@@ -17,7 +17,7 @@ const User = require("./models/User");
 const app = express();
 const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
-const FINANCIAL_HISTORY_VERSION = 14;
+const FINANCIAL_HISTORY_VERSION = 15;
 const TICKER_ALIASES = {
   ZILLOW: "Z",
   SALESFORCE: "CRM",
@@ -505,6 +505,7 @@ function hasCompleteSupplementalData(stock) {
   return (
     toNumberOrNull(data.freeCashflow) !== null &&
     toNumberOrNull(data.targetMean) !== null &&
+    toNumberOrNull(data.priceToSales) !== null &&
     toNumberOrNull(data.fiftyTwoWeekHigh) !== null &&
     toNumberOrNull(data.fiftyTwoWeekLow) !== null &&
     ["buy", "hold", "sell"].includes(data.recommendationKey) &&
@@ -560,6 +561,10 @@ function withGuaranteedAnalystSection(data = {}) {
   const currentRevenue = estimateRevenueFallback(
     firstNumber(currentYear.revenue, toDollarsFromBillions(latestRevenueRow.revenue)),
     marketCap
+  );
+  const priceToSales = firstNumber(
+    data.priceToSales,
+    marketCap !== null && currentRevenue > 0 ? marketCap / currentRevenue : null
   );
   const nextRevenue = estimateRevenueFallback(
     firstNumber(nextYear.revenue, estimateNextValue(currentRevenue, safeGrowthRate(revenueGrowth))),
@@ -649,6 +654,7 @@ function withGuaranteedAnalystSection(data = {}) {
     ...data,
     marketCap,
     sharesOutstanding,
+    priceToSales,
     forwardPE,
     freeCashflow,
     targetMean,
@@ -908,6 +914,10 @@ async function fetchYahooSupplementalData(ticker) {
       marketCap: firstYahooNumber(detail.marketCap, keyStats.marketCap, quoteData.marketCap),
       pe: firstYahooNumber(detail.trailingPE, keyStats.trailingPE, quoteData.trailingPE),
       forwardPE: firstYahooNumber(keyStats.forwardPE, financialData.forwardPE, quoteData.forwardPE),
+      priceToSales: firstYahooNumber(
+        detail.priceToSalesTrailing12Months,
+        quoteData.priceToSalesTrailing12Months
+      ),
       sharesOutstanding: firstYahooNumber(keyStats.sharesOutstanding, quoteData.sharesOutstanding),
       dividendYield: normalizeDividendYield(
         firstFiniteNumber(
@@ -1428,6 +1438,14 @@ async function fetchStockData(ticker) {
     nextEarningsValue,
     modeledSharesOutstanding
   );
+  const priceToSales = firstNumber(
+    yahooSupplementalData.priceToSales,
+    metrics.psTTM,
+    metrics.psAnnual,
+    modeledMarketCap && currentRevenueValue > 0
+      ? modeledMarketCap / currentRevenueValue
+      : null
+  );
   const freeCashflow = estimateFreeCashFlowFallback({
     freeCashflow: firstNumber(
       fmpCashFlow[0]?.freeCashFlow,
@@ -1475,14 +1493,14 @@ async function fetchStockData(ticker) {
       : yahooSupplementalData.dividendYield
   );
   const fiftyTwoWeekHigh = firstNumber(
+    yahooSupplementalData.fiftyTwoWeekHigh,
     metrics["52WeekHigh"],
-    metrics["52WeekHighPrice"],
-    yahooSupplementalData.fiftyTwoWeekHigh
+    metrics["52WeekHighPrice"]
   );
   const fiftyTwoWeekLow = firstNumber(
+    yahooSupplementalData.fiftyTwoWeekLow,
     metrics["52WeekLow"],
-    metrics["52WeekLowPrice"],
-    yahooSupplementalData.fiftyTwoWeekLow
+    metrics["52WeekLowPrice"]
   );
 
   const data = withGuaranteedAnalystSection({
@@ -1499,6 +1517,7 @@ async function fetchStockData(ticker) {
     fiftyTwoWeekHigh,
     fiftyTwoWeekLow,
     marketCap,
+    priceToSales,
     sharesOutstanding: sharesOutstandingValue,
     pe,
     forwardPE,

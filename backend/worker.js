@@ -5,7 +5,7 @@ const axios = require("axios");
 const yahooFinance = require("yahoo-finance2").default;
 
 const Stock = require("./models/Stock");
-const FINANCIAL_HISTORY_VERSION = 14;
+const FINANCIAL_HISTORY_VERSION = 15;
 const REVENUE_KEY_PRIORITY = {
   annualTotalRevenue: 5,
   annualOperatingRevenue: 4,
@@ -677,6 +677,10 @@ async function fetchYahooSupplementalData(ticker) {
       marketCap: firstYahooNumber(detail.marketCap, keyStats.marketCap, quoteData.marketCap),
       pe: firstYahooNumber(detail.trailingPE, keyStats.trailingPE, quoteData.trailingPE),
       forwardPE: firstYahooNumber(keyStats.forwardPE, financialData.forwardPE, quoteData.forwardPE),
+      priceToSales: firstYahooNumber(
+        detail.priceToSalesTrailing12Months,
+        quoteData.priceToSalesTrailing12Months
+      ),
       sharesOutstanding: firstYahooNumber(keyStats.sharesOutstanding, quoteData.sharesOutstanding),
       dividendYield: normalizeDividendYield(
         firstFiniteNumber(
@@ -1173,6 +1177,14 @@ async function updateStock(ticker) {
       nextEarningsValue,
       modeledSharesOutstanding
     );
+    const priceToSales = firstNumber(
+      yahooSupplementalData.priceToSales,
+      metrics.psTTM,
+      metrics.psAnnual,
+      modeledMarketCap && currentRevenueValue > 0
+        ? modeledMarketCap / currentRevenueValue
+        : null
+    );
     const freeCashflow = estimateFreeCashFlowFallback({
       freeCashflow: firstNumber(
         fmpCashFlow[0]?.freeCashFlow,
@@ -1220,14 +1232,14 @@ async function updateStock(ticker) {
         : yahooSupplementalData.dividendYield
     );
     const fiftyTwoWeekHigh = firstNumber(
+      yahooSupplementalData.fiftyTwoWeekHigh,
       metrics["52WeekHigh"],
-      metrics["52WeekHighPrice"],
-      yahooSupplementalData.fiftyTwoWeekHigh
+      metrics["52WeekHighPrice"]
     );
     const fiftyTwoWeekLow = firstNumber(
+      yahooSupplementalData.fiftyTwoWeekLow,
       metrics["52WeekLow"],
-      metrics["52WeekLowPrice"],
-      yahooSupplementalData.fiftyTwoWeekLow
+      metrics["52WeekLowPrice"]
     );
 
     await Stock.findOneAndUpdate(
@@ -1251,6 +1263,7 @@ async function updateStock(ticker) {
           fiftyTwoWeekLow,
 
           marketCap,
+          priceToSales,
 
           sharesOutstanding: sharesOutstandingValue,
 

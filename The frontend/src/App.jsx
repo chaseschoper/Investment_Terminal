@@ -539,6 +539,7 @@ const loadUserData = async () => {
         stock.status === "pending" ||
         stock.refreshing ||
         !isNumber(stock.forwardPE) ||
+        !isNumber(stock.priceToSales) ||
         !isNumber(stock.fiftyTwoWeekHigh) ||
         !isNumber(stock.fiftyTwoWeekLow)
       );
@@ -1982,6 +1983,13 @@ return (
       <span>Forward P/E</span>
 <strong>
   {formatPlain(stock.forwardPE)}
+</strong>
+    </div>
+
+    <div className="comparison-stat">
+      <span>Price-to-Sales</span>
+<strong>
+  {formatPlain(stock.priceToSales)}
 </strong>
     </div>
 

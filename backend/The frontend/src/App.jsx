@@ -1723,6 +1723,13 @@ return (
     </div>
 
     <div className="comparison-stat">
+      <span>Price-to-Sales</span>
+      <strong>
+        {stock.priceToSales?.toFixed(2) || "N/A"}
+      </strong>
+    </div>
+
+    <div className="comparison-stat">
       <span>Revenue Growth</span>
       <strong>
         {(stock.revenueGrowth * 100).toFixed(1)}%
