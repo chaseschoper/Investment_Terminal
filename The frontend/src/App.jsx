@@ -89,6 +89,7 @@ function App() {
   const latestStockRequest = useRef(0);
   const latestComparisonRequest = useRef(0);
   const latestAiRequest = useRef(0);
+  const latestEarningsCallRequest = useRef(0);
   const [showAuth, setShowAuth] = useState(false);
 const [isLogin, setIsLogin] = useState(true);
 
@@ -199,6 +200,15 @@ const [user, setUser] =
   const [isAiLoading, setIsAiLoading] =
     useState(false);
 
+  const [earningsCall, setEarningsCall] =
+    useState(null);
+
+  const [isEarningsCallLoading, setIsEarningsCallLoading] =
+    useState(false);
+
+  const [transcriptSearch, setTranscriptSearch] =
+    useState("");
+
    const [watchlist, setWatchlist] =
   useState([]);
 
@@ -263,11 +273,37 @@ useEffect(() => {
   useEffect(() => {
     const requestId = ++latestStockRequest.current;
     latestAiRequest.current += 1;
+    latestEarningsCallRequest.current += 1;
     setStockData(null);
     setAiAnalysis(null);
+    setEarningsCall(null);
+    setTranscriptSearch("");
     setIsStockLoading(true);
     loadStock(ticker, 0, requestId);
 
+  }, [ticker]);
+
+  useEffect(() => {
+    const requestId = ++latestEarningsCallRequest.current;
+    setIsEarningsCallLoading(true);
+
+    axios.get(`${API_URL}/api/earnings-call/${ticker}`)
+      .then((response) => {
+        if (requestId === latestEarningsCallRequest.current) {
+          setEarningsCall(response.data);
+        }
+      })
+      .catch((error) => {
+        console.error("Earnings call failed", error);
+        if (requestId === latestEarningsCallRequest.current) {
+          setEarningsCall({ available: false });
+        }
+      })
+      .finally(() => {
+        if (requestId === latestEarningsCallRequest.current) {
+          setIsEarningsCallLoading(false);
+        }
+      });
   }, [ticker]);
 
   useEffect(() => {
@@ -633,6 +669,12 @@ const previousYearEstimate = estimateFromHistoryYear(
 );
 const currentYearEstimate =
   stockData?.analystEstimates?.nextYear || {};
+const normalizedTranscriptSearch = transcriptSearch.trim().toLowerCase();
+const filteredTranscript = (earningsCall?.transcript || []).filter((section) =>
+  !normalizedTranscriptSearch ||
+  section.speaker?.toLowerCase().includes(normalizedTranscriptSearch) ||
+  section.text?.toLowerCase().includes(normalizedTranscriptSearch)
+);
 
 
  
@@ -998,76 +1040,77 @@ return (
 <div className="chart-section">
 
   <h2 className="section-title">
-    Earnings Call Transcripts
+    Earnings Call Recording & Transcript
   </h2>
 
-  <div
-    style={{
-      background: "#111827",
-      borderRadius: "16px",
-      padding: "24px",
-      border: "1px solid #1f2937",
-    }}
-  >
+  <div className="earnings-call-panel">
+    {isEarningsCallLoading ? (
+      <div className="earnings-call-empty">Loading latest recording...</div>
+    ) : earningsCall?.available ? (
+      <>
+        <div className="earnings-call-header">
+          <div>
+            <div className="earnings-call-title">{earningsCall.title}</div>
+            <div className="earnings-call-meta">
+              {[earningsCall.fiscalPeriod, earningsCall.fiscalYear]
+                .filter(Boolean)
+                .join(" ")}
+              {earningsCall.date
+                ? ` · ${new Date(earningsCall.date).toLocaleDateString()}`
+                : ""}
+            </div>
+          </div>
+          <div className="earnings-call-provider">{earningsCall.provider}</div>
+        </div>
 
-    <div
-      style={{
-        fontSize: "20px",
-        fontWeight: "700",
-        marginBottom: "10px",
-      }}
-    >
-      {ticker} Investor Relations
-    </div>
+        <audio
+          className="earnings-audio-player"
+          controls
+          preload="metadata"
+          src={earningsCall.audioUrl}
+        >
+          Your browser does not support audio playback.
+        </audio>
 
-    <div
-      style={{
-        color: "#9ca3af",
-        marginBottom: "20px",
-        lineHeight: "1.7",
-      }}
-    >
-      Read official earnings call transcripts,
-      quarterly reports, shareholder letters,
-      and investor presentations directly from
-      the company investor relations website.
-    </div>
-
-    <div
-      style={{
-        display: "flex",
-        gap: "12px",
-        flexWrap: "wrap",
-      }}
-    >
-
-      <a
-  href={`https://www.alphaspread.com/security/nasdaq/${ticker}/earnings-calls`}
-  target="_blank"
-  rel="noreferrer"
-  className="portfolio-btn"
-  style={{
-    textDecoration: "none",
-  }}
->
-  Open Transcript Site
-</a>
-
-      <a
-        href={`https://www.youtube.com/results?search_query=${ticker}+earnings+call`}
-        target="_blank"
-        rel="noreferrer"
-        className="portfolio-btn"
-        style={{
-          textDecoration: "none",
-          background: "#dc2626",
-        }}
-      >
-        Watch Earnings Call
-      </a>
-
-    </div>
-
+        {earningsCall.transcript?.length ? (
+          <div className="transcript-reader">
+            <input
+              className="transcript-search"
+              type="search"
+              value={transcriptSearch}
+              onChange={(event) => setTranscriptSearch(event.target.value)}
+              placeholder="Search transcript"
+            />
+            <div className="transcript-content">
+              {filteredTranscript.map((section) => (
+                <div className="transcript-section" key={section.id}>
+                  <div className="transcript-speaker">
+                    {section.speaker}
+                    {section.session ? ` · ${section.session}` : ""}
+                  </div>
+                  <p>{section.text}</p>
+                </div>
+              ))}
+              {!filteredTranscript.length && (
+                <div className="earnings-call-empty">No transcript matches found.</div>
+              )}
+            </div>
+          </div>
+        ) : earningsCall.transcriptUrl ? (
+          <iframe
+            className="transcript-frame"
+            title={`${ticker} earnings call transcript`}
+            src={earningsCall.transcriptUrl}
+          />
+        ) : (
+          <div className="earnings-call-empty">Transcript unavailable for this recording.</div>
+        )}
+      </>
+    ) : (
+      <div className="earnings-call-empty">
+        Original recording and transcript are unavailable for this ticker.
+      </div>
+    )}
   </div>
 
 </div>

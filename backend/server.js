@@ -17,6 +17,7 @@ const User = require("./models/User");
 const app = express();
 const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
+const earningsCallCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 24;
 const secMarginCache = new Map();
 let secTickerMapPromise;
@@ -2352,6 +2353,130 @@ res.json(buildResearchAnalysis(stock));
 console.error(err);
 res.status(500).json({ error: "AI analysis failed" });
 }
+});
+
+async function fetchQuartrEarningsCall(ticker) {
+  if (!process.env.QUARTR_API_KEY) return null;
+  const config = {
+    headers: { "x-api-key": process.env.QUARTR_API_KEY },
+    timeout: 15000
+  };
+  const audioResponse = await axios.get(
+    "https://api.quartr.com/public/v3/audio",
+    {
+      ...config,
+      params: { tickers: ticker, expand: "event", direction: "desc", limit: 20 }
+    }
+  );
+  const audioItems = audioResponse.data?.data || [];
+  const earningsAudio = audioItems
+    .filter((item) => item.fileUrl || item.streamUrl)
+    .sort((a, b) => new Date(b.event?.date || b.createdAt) - new Date(a.event?.date || a.createdAt))
+    .find((item) =>
+      item.event?.typeId === 26 || /earnings|results/i.test(item.event?.title || "")
+    );
+  if (!earningsAudio) return null;
+
+  const transcriptResponse = await axios.get(
+    "https://api.quartr.com/public/v3/documents/transcripts",
+    {
+      ...config,
+      params: {
+        eventIds: String(earningsAudio.eventId),
+        expand: "event",
+        direction: "desc",
+        limit: 10
+      }
+    }
+  );
+  const transcript = (transcriptResponse.data?.data || [])[0] || {};
+
+  return {
+    available: true,
+    provider: "Quartr",
+    title: earningsAudio.event?.title || `${ticker} earnings call`,
+    date: earningsAudio.event?.date || earningsAudio.createdAt,
+    fiscalYear: earningsAudio.event?.fiscalYear,
+    fiscalPeriod: earningsAudio.event?.fiscalPeriod,
+    audioUrl: earningsAudio.fileUrl || earningsAudio.streamUrl,
+    transcriptUrl: transcript.fileUrl || null,
+    transcript: []
+  };
+}
+
+async function fetchFinnhubEarningsCall(ticker) {
+  if (!process.env.FINNHUB_API_KEY) return null;
+  const listResponse = await axios.get(
+    "https://finnhub.io/api/v1/stock/transcripts/list",
+    {
+      params: { symbol: ticker, token: process.env.FINNHUB_API_KEY },
+      timeout: 15000
+    }
+  );
+  const items = listResponse.data?.transcripts || listResponse.data || [];
+  if (!Array.isArray(items) || !items.length) return null;
+  const latest = [...items].sort((a, b) =>
+    new Date(b.time || `${b.year}-${b.quarter || 1}`) -
+    new Date(a.time || `${a.year}-${a.quarter || 1}`)
+  )[0];
+  const detailResponse = await axios.get(
+    "https://finnhub.io/api/v1/stock/transcripts",
+    {
+      params: { id: latest.id, token: process.env.FINNHUB_API_KEY },
+      timeout: 20000
+    }
+  );
+  const detail = detailResponse.data || {};
+  if (!detail.audio) return null;
+
+  return {
+    available: true,
+    provider: "Finnhub",
+    title: detail.title || latest.title || `${ticker} earnings call`,
+    date: detail.time || latest.time,
+    fiscalYear: detail.year || latest.year,
+    fiscalPeriod: detail.quarter ? `Q${detail.quarter}` : null,
+    audioUrl: detail.audio,
+    transcriptUrl: null,
+    transcript: (detail.transcript || []).map((section, index) => ({
+      id: `${index}-${section.name || "speaker"}`,
+      speaker: section.name || "Speaker",
+      session: section.session || null,
+      text: Array.isArray(section.speech)
+        ? section.speech.join(" ")
+        : String(section.speech || "")
+    })).filter((section) => section.text)
+  };
+}
+
+app.get("/api/earnings-call/:ticker", async (req, res) => {
+  const ticker = req.params.ticker.trim().toUpperCase();
+  const cached = earningsCallCache.get(ticker);
+  if (cached && Date.now() - cached.cachedAt < 60 * 60 * 1000) {
+    return res.json(cached.data);
+  }
+
+  try {
+    let data = null;
+    try {
+      data = await fetchQuartrEarningsCall(ticker);
+    } catch (err) {
+      console.log("Quartr earnings call skipped:", ticker, err.response?.status || err.message);
+    }
+    if (!data) {
+      try {
+        data = await fetchFinnhubEarningsCall(ticker);
+      } catch (err) {
+        console.log("Finnhub earnings call skipped:", ticker, err.response?.status || err.message);
+      }
+    }
+    const responseData = data || { available: false, symbol: ticker };
+    earningsCallCache.set(ticker, { data: responseData, cachedAt: Date.now() });
+    return res.json(responseData);
+  } catch (err) {
+    console.error("Earnings call fetch failed:", ticker, err.message);
+    return res.status(500).json({ available: false, error: "Earnings call unavailable" });
+  }
 });
 
 // =========================
