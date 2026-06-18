@@ -6,7 +6,9 @@ const cheerio = require("cheerio");
 const yahooFinance = require("yahoo-finance2").default;
 
 const Stock = require("./models/Stock");
-const FINANCIAL_HISTORY_VERSION = 22;
+const FINANCIAL_HISTORY_VERSION = 23;
+const secMarginCache = new Map();
+let secTickerMapPromise;
 const REVENUE_KEY_PRIORITY = {
   annualTotalRevenue: 5,
   annualOperatingRevenue: 4,
@@ -156,6 +158,113 @@ async function fetchStockAnalysisForecast(ticker) {
     };
   } catch (err) {
     console.log("StockAnalysis forecast skipped:", ticker, err.message);
+    return {};
+  }
+}
+
+async function getSecTickerMap() {
+  if (!secTickerMapPromise) {
+    secTickerMapPromise = axios.get(
+      "https://www.sec.gov/files/company_tickers.json",
+      {
+        headers: { "User-Agent": "InvestmentTerminal/1.0 contact@investmentterminal.app" },
+        timeout: 10000
+      }
+    ).then((response) => new Map(
+      Object.values(response.data).map((company) => [
+        company.ticker.toUpperCase(),
+        String(company.cik_str).padStart(10, "0")
+      ])
+    )).catch((err) => {
+      secTickerMapPromise = null;
+      throw err;
+    });
+  }
+  return secTickerMapPromise;
+}
+
+function latestSecAnnualFact(companyFacts, concepts, endDate) {
+  let latestFact = null;
+  for (const concept of concepts) {
+    const entries = companyFacts?.facts?.["us-gaap"]?.[concept]?.units?.USD || [];
+    const annualEntries = entries.filter((entry) => {
+      if (!["10-K", "10-K/A"].includes(entry.form) || entry.fp !== "FY") return false;
+      if (endDate && entry.end !== endDate) return false;
+      if (!entry.start) return true;
+      const duration = new Date(entry.end) - new Date(entry.start);
+      return duration >= 300 * 24 * 60 * 60 * 1000;
+    }).sort((a, b) =>
+      String(a.end).localeCompare(String(b.end)) ||
+      String(a.filed).localeCompare(String(b.filed))
+    );
+    if (annualEntries.length) {
+      const candidate = annualEntries.at(-1);
+      if (endDate) return candidate;
+      if (!latestFact || String(candidate.end) > String(latestFact.end)) {
+        latestFact = candidate;
+      }
+    }
+  }
+  return latestFact;
+}
+
+async function fetchSecAnnualMargins(ticker) {
+  const cached = secMarginCache.get(ticker);
+  if (cached && Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1000) {
+    return cached.data;
+  }
+
+  try {
+    const tickerMap = await getSecTickerMap();
+    const cik = tickerMap.get(ticker);
+    if (!cik) return {};
+    const response = await axios.get(
+      `https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`,
+      {
+        headers: { "User-Agent": "InvestmentTerminal/1.0 contact@investmentterminal.app" },
+        timeout: 12000
+      }
+    );
+    const facts = response.data;
+    const revenue = latestSecAnnualFact(facts, [
+      "RevenueFromContractWithCustomerExcludingAssessedTax",
+      "OperatingRevenues",
+      "Revenues",
+      "SalesRevenueNet",
+      "RevenuesNetOfInterestExpense"
+    ]);
+    if (!revenue?.val) return {};
+    const endDate = revenue.end;
+    const grossProfit = latestSecAnnualFact(facts, ["GrossProfit"], endDate);
+    const costOfRevenue = latestSecAnnualFact(facts, [
+      "CostOfGoodsAndServicesSold",
+      "CostOfRevenue"
+    ], endDate);
+    const operatingIncome = latestSecAnnualFact(facts, ["OperatingIncomeLoss"], endDate);
+    const netIncome = latestSecAnnualFact(facts, [
+      "NetIncomeLoss",
+      "ProfitLoss",
+      "NetIncomeLossAvailableToCommonStockholdersBasic"
+    ], endDate);
+    const grossProfitValue = grossProfit?.val ?? (
+      costOfRevenue?.val !== undefined ? revenue.val - costOfRevenue.val : null
+    );
+    const data = {
+      fiscalYear: Number(endDate.slice(0, 4)),
+      grossMargins: grossProfitValue !== null
+        ? (grossProfitValue / revenue.val) * 100
+        : null,
+      operatingMargins: operatingIncome?.val !== undefined
+        ? (operatingIncome.val / revenue.val) * 100
+        : null,
+      profitMargins: netIncome?.val !== undefined
+        ? (netIncome.val / revenue.val) * 100
+        : null
+    };
+    secMarginCache.set(ticker, { data, fetchedAt: Date.now() });
+    return data;
+  } catch (err) {
+    console.log("SEC annual margins skipped:", ticker, err.message);
     return {};
   }
 }
@@ -1041,13 +1150,15 @@ async function updateStock(ticker) {
       fmpIncomeStatementData,
       yahooSupplementalData,
       nasdaqData,
-      stockAnalysisForecast
+      stockAnalysisForecast,
+      secAnnualMargins
     ] = await Promise.all([
       fetchYahooFinancialHistory(ticker),
       fetchFmpIncomeStatementHistory(ticker),
       fetchYahooSupplementalData(ticker),
       fetchNasdaqData(ticker),
-      fetchStockAnalysisForecast(ticker)
+      fetchStockAnalysisForecast(ticker),
+      fetchSecAnnualMargins(ticker)
     ]);
 
     const fmpCashFlowData = await getFmpData(ticker, "cash flow", [
@@ -1347,18 +1458,21 @@ async function updateStock(ticker) {
       annualGrowth(latestAnnual.earnings, previousAnnual.earnings)
     );
     const grossMargins = firstNumber(
+      secAnnualMargins.grossMargins,
       metrics.grossMarginTTM,
       yahooSupplementalData.grossMargins,
       annualMargin(latestAnnual.grossProfit, latestAnnual.revenue),
       8
     );
     const operatingMargins = firstNumber(
+      secAnnualMargins.operatingMargins,
       metrics.operatingMarginTTM,
       yahooSupplementalData.operatingMargins,
       annualMargin(latestAnnual.operatingIncome, latestAnnual.revenue),
       8
     );
     const profitMargins = firstNumber(
+      secAnnualMargins.profitMargins,
       metrics.netProfitMarginTTM,
       yahooSupplementalData.profitMargins,
       annualMargin(latestAnnual.earnings, latestAnnual.revenue),
@@ -1525,6 +1639,10 @@ async function updateStock(ticker) {
             : nasdaqData.currentYearEps
               ? "Nasdaq consensus"
               : "Modeled fallback",
+          marginSource: secAnnualMargins.operatingMargins !== null &&
+            secAnnualMargins.operatingMargins !== undefined
+            ? `SEC annual filing ${secAnnualMargins.fiscalYear}`
+            : "Market data fallback",
 
           revenueGrowth,
           earningsGrowth,
