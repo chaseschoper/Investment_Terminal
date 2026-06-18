@@ -16,6 +16,7 @@ const User = require("./models/User");
 
 const app = express();
 const activeStockFetches = new Set();
+const yahooSupplementalFetches = new Map();
 const FINANCIAL_HISTORY_VERSION = 14;
 const TICKER_ALIASES = {
   ZILLOW: "Z",
@@ -576,6 +577,10 @@ function withGuaranteedAnalystSection(data = {}) {
   );
   const currentEps = estimateEpsFallback(currentYear.eps, currentEarnings, sharesOutstanding);
   const nextEps = estimateEpsFallback(nextYear.eps, nextEarnings, sharesOutstanding);
+  const forwardPE = firstNumber(
+    data.forwardPE,
+    price !== null && nextEps > 0 ? price / nextEps : null
+  );
   const freeCashflow = estimateFreeCashFlowFallback({
     freeCashflow: data.freeCashflow,
     revenue: currentRevenue,
@@ -588,7 +593,7 @@ function withGuaranteedAnalystSection(data = {}) {
     price,
     revenueGrowth,
     earningsGrowth,
-    forwardPE: data.forwardPE,
+    forwardPE,
     pe: data.pe
   });
   const recommendationKey = estimateRatingFallback(
@@ -644,6 +649,7 @@ function withGuaranteedAnalystSection(data = {}) {
     ...data,
     marketCap,
     sharesOutstanding,
+    forwardPE,
     freeCashflow,
     targetMean,
     recommendationKey,
@@ -890,6 +896,15 @@ async function fetchYahooSupplementalData(ticker) {
     });
 
     return {
+      name: quoteData.longName || quoteData.shortName || ticker,
+      symbol: quoteData.symbol || ticker,
+      price: firstYahooNumber(quoteData.regularMarketPrice),
+      change: firstFiniteNumber(quoteData.regularMarketChange),
+      percentChange: firstFiniteNumber(quoteData.regularMarketChangePercent),
+      previousClose: firstYahooNumber(quoteData.regularMarketPreviousClose),
+      high: firstYahooNumber(quoteData.regularMarketDayHigh),
+      low: firstYahooNumber(quoteData.regularMarketDayLow),
+      open: firstYahooNumber(quoteData.regularMarketOpen),
       marketCap: firstYahooNumber(detail.marketCap, keyStats.marketCap, quoteData.marketCap),
       pe: firstYahooNumber(detail.trailingPE, keyStats.trailingPE, quoteData.trailingPE),
       forwardPE: firstYahooNumber(keyStats.forwardPE, financialData.forwardPE, quoteData.forwardPE),
@@ -932,6 +947,61 @@ async function fetchYahooSupplementalData(ticker) {
     console.log("Yahoo supplemental data skipped:", ticker, err.message);
     return {};
   }
+}
+
+function getYahooSupplementalData(ticker) {
+  if (yahooSupplementalFetches.has(ticker)) {
+    return yahooSupplementalFetches.get(ticker);
+  }
+
+  const request = fetchYahooSupplementalData(ticker);
+  yahooSupplementalFetches.set(ticker, request);
+  request.finally(() => {
+    setTimeout(() => yahooSupplementalFetches.delete(ticker), 15000);
+  });
+  return request;
+}
+
+async function publishFastStockSnapshot(ticker) {
+  const yahooData = await getYahooSupplementalData(ticker);
+  if (!yahooData?.price) return;
+
+  const stock = await Stock.findOne({ ticker }).lean();
+  const previousData = stock?.data || {};
+  const definedValues = (data = {}) => Object.fromEntries(
+    Object.entries(data).filter(([, value]) => value !== null && value !== undefined)
+  );
+  const analystEstimates = {
+    currentYear: {
+      ...(previousData.analystEstimates?.currentYear || {}),
+      ...definedValues(yahooData.analystEstimates?.currentYear)
+    },
+    nextYear: {
+      ...(previousData.analystEstimates?.nextYear || {}),
+      ...definedValues(yahooData.analystEstimates?.nextYear)
+    }
+  };
+  const nextEps = toNumberOrNull(analystEstimates.nextYear.eps);
+  const quickData = withGuaranteedAnalystSection({
+    ...previousData,
+    ...definedValues(yahooData),
+    forwardPE: firstNumber(
+      yahooData.forwardPE,
+      nextEps > 0 ? yahooData.price / nextEps : null,
+      previousData.forwardPE
+    ),
+    analystEstimates
+  });
+
+  await Stock.findOneAndUpdate(
+    { ticker, updatedAt: stock.updatedAt },
+    {
+      ticker,
+      status: "pending",
+      data: quickData,
+      updatedAt: new Date()
+    }
+  );
 }
 
 async function fetchStockData(ticker) {
@@ -1068,7 +1138,7 @@ async function fetchStockData(ticker) {
   let fmpRating = {};
   const yahooFinancialData = await fetchYahooFinancialHistory(ticker);
   const fmpIncomeStatementData = await fetchFmpIncomeStatementHistory(ticker);
-  const yahooSupplementalData = await fetchYahooSupplementalData(ticker);
+  const yahooSupplementalData = await getYahooSupplementalData(ticker);
 
   const fmpCashFlowData = await getFmpData(ticker, "cash flow", [
     "/stable/cash-flow-statement?symbol={ticker}&limit=1",
@@ -1489,6 +1559,10 @@ function startStockFetch(ticker) {
 
   activeStockFetches.add(ticker);
 
+  publishFastStockSnapshot(ticker).catch((err) => {
+    console.log("Fast stock snapshot skipped:", ticker, err.message);
+  });
+
   fetchStockData(ticker)
     .catch(async (err) => {
       console.error(`Stock fetch failed for ${ticker}:`, err.message);
@@ -1578,7 +1652,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       });
     }
 
-    if (stock.status === "ready" && needsFinancialHistoryRefresh(stock)) {
+    if (stock.status === "ready") {
       const updatedAt = stock.updatedAt ? new Date(stock.updatedAt) : null;
       const isOutdated =
         stock.data?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION;
@@ -1588,7 +1662,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
         isOutdated ||
         isIncomplete ||
         !updatedAt ||
-        Date.now() - updatedAt.getTime() > 10 * 60 * 1000;
+        Date.now() - updatedAt.getTime() > 5 * 60 * 1000;
 
       if (isStale) {
         startStockFetch(ticker);

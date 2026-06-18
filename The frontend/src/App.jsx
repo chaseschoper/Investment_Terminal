@@ -87,6 +87,7 @@ const API_URL =
 import "./App.css";
 function App() {
   const latestStockRequest = useRef(0);
+  const latestComparisonRequest = useRef(0);
   const [showAuth, setShowAuth] = useState(false);
 const [isLogin, setIsLogin] = useState(true);
 
@@ -253,8 +254,10 @@ useEffect(() => {
   */
 
   useEffect(() => {
-
-    loadStock();
+    const requestId = ++latestStockRequest.current;
+    setStockData(null);
+    setIsStockLoading(true);
+    loadStock(ticker, 0, requestId);
 
   }, [ticker]);
 
@@ -296,8 +299,8 @@ useEffect(() => {
   */
 
   useEffect(() => {
-
-    loadComparisonStocks();
+    const requestId = ++latestComparisonRequest.current;
+    loadComparisonStocks(0, requestId);
 
   }, [compareTickers]);
 
@@ -312,11 +315,6 @@ useEffect(() => {
   ) => {
 
     try {
-      if (attempt === 0) {
-        latestStockRequest.current = requestId;
-        setIsStockLoading(true);
-      }
-
       const response =
         await axios.get(
           `${API_URL}/api/stock/${symbol}`
@@ -341,7 +339,7 @@ console.log(response.data);
               attempt + 1,
               requestId
             ),
-          2000
+          750
         );
 
         return;
@@ -349,6 +347,13 @@ console.log(response.data);
 
       setStockData(response.data);
       setIsStockLoading(false);
+
+      if (response.data.refreshing && attempt < 30) {
+        setTimeout(
+          () => loadStock(symbol, attempt + 1, requestId),
+          1000
+        );
+      }
 
       setPortfolioPrices((prev) => ({
         ...prev,
@@ -358,7 +363,16 @@ console.log(response.data);
     } catch (error) {
 
       console.error(error);
-      setIsStockLoading(false);
+      if (requestId !== latestStockRequest.current) return;
+
+      if (attempt < 6) {
+        setTimeout(
+          () => loadStock(symbol, attempt + 1, requestId),
+          1000
+        );
+      } else {
+        setIsStockLoading(false);
+      }
 
     }
   };
@@ -484,26 +498,57 @@ const loadUserData = async () => {
     LOAD COMPARISON STOCKS
   */
 
-  const loadComparisonStocks = async () => {
+  const loadComparisonStocks = async (
+    attempt = 0,
+    requestId = latestComparisonRequest.current
+  ) => {
 
     try {
+
+      if (!compareTickers.length) {
+        setCompareData([]);
+        return;
+      }
 
       const results =
         await Promise.all(
 
           compareTickers.map(async (symbol) => {
 
-            const res =
-              await axios.get(
+            try {
+              const res = await axios.get(
                 `${API_URL}/api/stock/${symbol}`
               );
 
-            return res.data;
+              return res.data.status === "pending"
+                ? { symbol, name: `Loading ${symbol}...`, status: "pending" }
+                : res.data;
+            } catch (error) {
+              console.error(error);
+              return { symbol, name: `Loading ${symbol}...`, status: "pending" };
+            }
 
           })
         );
 
+      if (requestId !== latestComparisonRequest.current) return;
+
       setCompareData(results);
+
+      const needsRefresh = results.some((stock) =>
+        stock.status === "pending" ||
+        stock.refreshing ||
+        !isNumber(stock.forwardPE) ||
+        !isNumber(stock.fiftyTwoWeekHigh) ||
+        !isNumber(stock.fiftyTwoWeekLow)
+      );
+
+      if (needsRefresh && attempt < 30) {
+        setTimeout(
+          () => loadComparisonStocks(attempt + 1, requestId),
+          1000
+        );
+      }
 
     } catch (err) {
 
