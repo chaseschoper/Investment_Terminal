@@ -2449,19 +2449,336 @@ async function fetchFinnhubEarningsCall(ticker) {
   };
 }
 
+async function getLatestSecFiscalPeriod(ticker) {
+  try {
+    const tickerMap = await getSecTickerMap();
+    const cik = tickerMap.get(ticker);
+    if (!cik) return null;
+    const response = await axios.get(
+      `https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`,
+      {
+        headers: { "User-Agent": "InvestmentTerminal/1.0 contact@investmentterminal.app" },
+        timeout: 12000
+      }
+    );
+    const concepts = [
+      "RevenueFromContractWithCustomerExcludingAssessedTax",
+      "OperatingRevenues",
+      "Revenues",
+      "SalesRevenueNet",
+      "NetIncomeLoss"
+    ];
+    const filings = concepts.flatMap((concept) =>
+      Object.values(response.data?.facts?.["us-gaap"]?.[concept]?.units || {}).flat()
+    ).filter((entry) =>
+      ["10-Q", "10-Q/A", "10-K", "10-K/A"].includes(entry.form) &&
+      entry.end &&
+      entry.fy &&
+      entry.fp
+    ).sort((a, b) =>
+      String(b.end).localeCompare(String(a.end)) ||
+      String(b.filed).localeCompare(String(a.filed))
+    );
+    const latest = filings[0];
+    if (!latest) return null;
+    const quarter = latest.fp === "FY"
+      ? 4
+      : Number(String(latest.fp).replace("Q", ""));
+    return [1, 2, 3, 4].includes(quarter)
+      ? { year: Number(latest.fy), quarter, date: latest.end }
+      : null;
+  } catch (err) {
+    console.log("SEC fiscal period skipped:", ticker, err.response?.status || err.message);
+    return null;
+  }
+}
+
+async function fetchAlphaVantageEarningsCall(ticker) {
+  if (!process.env.ALPHA_VANTAGE_API_KEY) return null;
+  const fiscalPeriod = await getLatestSecFiscalPeriod(ticker);
+  const now = new Date();
+  const currentQuarter = Math.floor(now.getUTCMonth() / 3) + 1;
+  const fallbackQuarter = currentQuarter === 1 ? 4 : currentQuarter - 1;
+  const fallbackYear = currentQuarter === 1 ? now.getUTCFullYear() - 1 : now.getUTCFullYear();
+  const year = fiscalPeriod?.year || fallbackYear;
+  const quarter = fiscalPeriod?.quarter || fallbackQuarter;
+  const response = await axios.get("https://www.alphavantage.co/query", {
+    params: {
+      function: "EARNINGS_CALL_TRANSCRIPT",
+      symbol: ticker,
+      quarter: `${year}Q${quarter}`,
+      apikey: process.env.ALPHA_VANTAGE_API_KEY
+    },
+    timeout: 25000
+  });
+  const sections = Array.isArray(response.data?.transcript)
+    ? response.data.transcript
+    : [];
+  if (!sections.length) {
+    const message = response.data?.Information || response.data?.Note || response.data?.["Error Message"];
+    if (message) console.log("Alpha Vantage transcript unavailable:", ticker, message);
+    return null;
+  }
+
+  return {
+    available: true,
+    provider: "Alpha Vantage",
+    title: `${ticker} earnings call transcript`,
+    date: fiscalPeriod?.date || null,
+    fiscalYear: year,
+    fiscalPeriod: `Q${quarter}`,
+    audioUrl: null,
+    transcriptUrl: null,
+    computerReadAudio: true,
+    transcript: sections.map((section, index) => ({
+      id: `${index}-${section.speaker || "speaker"}`,
+      speaker: section.speaker || "Speaker",
+      session: section.title || null,
+      text: String(section.content || "")
+    })).filter((section) => section.text)
+  };
+}
+
+async function buildComputerReadEarningsBriefing(ticker) {
+  const stock = await Stock.findOne({ ticker });
+  if (!stock?.data) return null;
+  const analysis = buildResearchAnalysis(stock)?.earningsAnalysis;
+  if (!analysis) return null;
+  const sections = [
+    { speaker: "Overview", text: analysis.summary },
+    { speaker: "Key results", text: (analysis.highlights || []).join(" ") },
+    { speaker: "Positive signals", text: (analysis.positives || []).join(" ") },
+    { speaker: "Risks", text: (analysis.risks || []).join(" ") },
+    { speaker: "Outlook", text: analysis.outlook },
+    {
+      speaker: "Questions for investors",
+      text: (analysis.questions || []).map((question, index) =>
+        `Question ${index + 1}. ${question}`
+      ).join(" ")
+    }
+  ].filter((section) => section.text);
+  if (!sections.length) return null;
+
+  return {
+    available: true,
+    provider: "Generated earnings briefing",
+    title: `${stock.data.name || ticker} earnings briefing`,
+    date: stock.updatedAt || null,
+    fiscalYear: null,
+    fiscalPeriod: analysis.period || null,
+    audioUrl: null,
+    transcriptUrl: null,
+    computerReadAudio: true,
+    generatedBriefing: true,
+    transcript: sections.map((section, index) => ({
+      id: `${index}-${section.speaker}`,
+      speaker: section.speaker,
+      session: null,
+      text: section.text
+    }))
+  };
+}
+
+const EARNINGS_CALL_EXCHANGES = [
+  "NASDAQ", "NYSE", "AMEX", "TSX", "TSXV", "OTC", "LSE", "CBOE", "STO", "ASX"
+];
+
+function normalizeEarningsCallExchange(exchange) {
+  const exchangeMap = {
+    NMS: "NASDAQ",
+    NGM: "NASDAQ",
+    NCM: "NASDAQ",
+    NASDAQ: "NASDAQ",
+    NYQ: "NYSE",
+    NYSE: "NYSE",
+    ASE: "AMEX",
+    AMEX: "AMEX",
+    TOR: "TSX",
+    TSX: "TSX",
+    VAN: "TSXV",
+    TSXV: "TSXV",
+    PNK: "OTC",
+    OTC: "OTC",
+    LSE: "LSE",
+    BTS: "CBOE",
+    CBOE: "CBOE",
+    STO: "STO",
+    ASX: "ASX"
+  };
+  return exchangeMap[String(exchange || "").toUpperCase()] || null;
+}
+
+async function fetchEarningsCallBiz(ticker, apiBaseUrl) {
+  if (!process.env.EARNINGSCALL_API_KEY) return null;
+
+  const quote = await yahooFinance.quote(ticker).catch(() => ({}));
+  const preferredExchange = normalizeEarningsCallExchange(quote.exchange);
+  const exchanges = preferredExchange
+    ? [preferredExchange, ...EARNINGS_CALL_EXCHANGES.filter((item) => item !== preferredExchange)]
+    : EARNINGS_CALL_EXCHANGES;
+  let eventData = null;
+  let exchange = null;
+
+  for (const candidate of exchanges) {
+    try {
+      const response = await axios.get("https://v2.api.earningscall.biz/events", {
+        params: {
+          apikey: process.env.EARNINGSCALL_API_KEY,
+          exchange: candidate.toLowerCase(),
+          symbol: ticker.toLowerCase()
+        },
+        timeout: 15000
+      });
+      const events = Array.isArray(response.data?.events) ? response.data.events : [];
+      const latest = events
+        .filter((event) => event.is_published !== false)
+        .sort((a, b) =>
+          new Date(b.conference_date || `${b.year}-${b.quarter}`) -
+          new Date(a.conference_date || `${a.year}-${a.quarter}`)
+        )[0];
+      if (latest) {
+        eventData = { ...latest, companyName: response.data?.company_name };
+        exchange = candidate;
+        break;
+      }
+    } catch (err) {
+      if (![401, 403, 404].includes(err.response?.status)) throw err;
+      if ([401, 403].includes(err.response?.status)) throw err;
+    }
+  }
+
+  if (!eventData || !exchange) return null;
+
+  const transcriptResponse = await axios.get(
+    "https://v2.api.earningscall.biz/transcript",
+    {
+      params: {
+        apikey: process.env.EARNINGSCALL_API_KEY,
+        exchange: exchange.toLowerCase(),
+        symbol: ticker.toLowerCase(),
+        year: eventData.year,
+        quarter: eventData.quarter,
+        level: 2
+      },
+      timeout: 25000
+    }
+  );
+  const speakers = Array.isArray(transcriptResponse.data?.speakers)
+    ? transcriptResponse.data.speakers
+    : [];
+  const speakerNames = transcriptResponse.data?.speaker_name_map_v2 || {};
+  const audioParams = new URLSearchParams({
+    exchange,
+    year: String(eventData.year),
+    quarter: String(eventData.quarter)
+  });
+
+  return {
+    available: true,
+    provider: "EarningsCall",
+    title: `${eventData.companyName || ticker} earnings call`,
+    date: eventData.conference_date,
+    fiscalYear: eventData.year,
+    fiscalPeriod: `Q${eventData.quarter}`,
+    audioUrl: `${apiBaseUrl}/api/earnings-call/${encodeURIComponent(ticker)}/audio?${audioParams}`,
+    transcriptUrl: null,
+    transcript: speakers.map((section, index) => {
+      const speakerDetails = speakerNames[section.speaker] || {};
+      return {
+        id: `${index}-${section.speaker || "speaker"}`,
+        speaker:
+          speakerDetails.name ||
+          section.speaker_name ||
+          section.name ||
+          section.speaker ||
+          "Speaker",
+        session: speakerDetails.title || section.session || null,
+        text: String(section.text || "")
+      };
+    }).filter((section) => section.text)
+  };
+}
+
+app.get("/api/earnings-call/:ticker/audio", async (req, res) => {
+  const ticker = req.params.ticker.trim().toUpperCase();
+  const exchange = String(req.query.exchange || "").toUpperCase();
+  const year = Number(req.query.year);
+  const quarter = Number(req.query.quarter);
+  if (
+    !process.env.EARNINGSCALL_API_KEY ||
+    !/^[A-Z0-9.-]{1,15}$/.test(ticker) ||
+    !EARNINGS_CALL_EXCHANGES.includes(exchange) ||
+    !Number.isInteger(year) ||
+    year < 1990 ||
+    year > new Date().getFullYear() + 1 ||
+    ![1, 2, 3, 4].includes(quarter)
+  ) {
+    return res.status(400).json({ error: "Invalid earnings call audio request" });
+  }
+
+  try {
+    const upstream = await axios.get("https://v2.api.earningscall.biz/audio", {
+      params: {
+        apikey: process.env.EARNINGSCALL_API_KEY,
+        exchange: exchange.toLowerCase(),
+        symbol: ticker.toLowerCase(),
+        year,
+        quarter
+      },
+      headers: req.headers.range ? { Range: req.headers.range } : {},
+      responseType: "stream",
+      timeout: 30000,
+      validateStatus: (status) => status === 200 || status === 206
+    });
+    res.status(upstream.status);
+    for (const header of ["content-type", "content-length", "content-range", "accept-ranges"]) {
+      if (upstream.headers[header]) res.setHeader(header, upstream.headers[header]);
+    }
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    return upstream.data.pipe(res);
+  } catch (err) {
+    console.error("EarningsCall audio failed:", ticker, err.response?.status || err.message);
+    return res.status(502).json({ error: "Earnings call audio unavailable" });
+  }
+});
+
 app.get("/api/earnings-call/:ticker", async (req, res) => {
   const ticker = req.params.ticker.trim().toUpperCase();
   const cached = earningsCallCache.get(ticker);
-  if (cached && Date.now() - cached.cachedAt < 60 * 60 * 1000) {
+  const cacheLifetime = cached?.data?.generatedBriefing
+    ? 5 * 60 * 1000
+    : 60 * 60 * 1000;
+  if (cached && Date.now() - cached.cachedAt < cacheLifetime) {
     return res.json(cached.data);
   }
 
   try {
     let data = null;
+    if (process.env.ALPHA_VANTAGE_API_KEY) {
+      try {
+        data = await fetchAlphaVantageEarningsCall(ticker);
+      } catch (err) {
+        console.log("Alpha Vantage earnings call skipped:", ticker, err.response?.status || err.message);
+      }
+    }
+    if (process.env.EARNINGSCALL_API_KEY) {
+      try {
+        const forwardedProtocol = String(req.headers["x-forwarded-proto"] || "")
+          .split(",")[0]
+          .trim();
+        const apiBaseUrl = `${forwardedProtocol || req.protocol}://${req.get("host")}`;
+        if (!data) data = await fetchEarningsCallBiz(ticker, apiBaseUrl);
+      } catch (err) {
+        console.log("EarningsCall provider skipped:", ticker, err.response?.status || err.message);
+      }
+    }
     try {
-      data = await fetchQuartrEarningsCall(ticker);
+      if (!data) data = await fetchQuartrEarningsCall(ticker);
     } catch (err) {
       console.log("Quartr earnings call skipped:", ticker, err.response?.status || err.message);
+    }
+    if (!data) {
+      data = await buildComputerReadEarningsBriefing(ticker);
     }
     if (!data) {
       try {

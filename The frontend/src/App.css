@@ -807,6 +807,68 @@ body {
   margin-bottom: 22px;
 }
 
+.computer-audio-player {
+  border-top: 1px solid #273244;
+  border-bottom: 1px solid #273244;
+  padding: 16px 0;
+  margin-bottom: 22px;
+}
+
+.computer-audio-label {
+  color: #d1d5db;
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
+.computer-audio-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.computer-audio-controls button {
+  min-width: 72px;
+  height: 38px;
+  border: 1px solid #374151;
+  border-radius: 6px;
+  background: #0b1117;
+  color: #f9fafb;
+  cursor: pointer;
+}
+
+.computer-audio-controls button:disabled {
+  color: #6b7280;
+  cursor: default;
+}
+
+.speech-rate-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  margin-left: 8px;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.speech-rate-control input {
+  width: 110px;
+  accent-color: #60a5fa;
+}
+
+.speech-rate-control span {
+  width: 38px;
+  color: #d1d5db;
+}
+
+.computer-audio-error {
+  color: #fca5a5;
+  font-size: 13px;
+  margin-top: 10px;
+}
+
 .transcript-reader {
   border-top: 1px solid #273244;
   padding-top: 20px;
@@ -879,6 +941,11 @@ body {
 
   .earnings-call-provider {
     margin-top: 8px;
+  }
+
+  .speech-rate-control {
+    width: 100%;
+    margin: 4px 0 0;
   }
 
   .transcript-frame {

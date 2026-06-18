@@ -79,6 +79,22 @@ const buildChartRows = (rows, key) =>
     .filter((item) =>
       item.year && item.year <= 2025 && item[key] !== null
     );
+
+const splitForSpeech = (text, maxLength = 1200) => {
+  const sentences = String(text || "").match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [];
+  const chunks = [];
+  let chunk = "";
+
+  for (const sentence of sentences) {
+    if (chunk && chunk.length + sentence.length > maxLength) {
+      chunks.push(chunk.trim());
+      chunk = "";
+    }
+    chunk += sentence;
+  }
+  if (chunk.trim()) chunks.push(chunk.trim());
+  return chunks;
+};
 import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
@@ -90,6 +106,9 @@ function App() {
   const latestComparisonRequest = useRef(0);
   const latestAiRequest = useRef(0);
   const latestEarningsCallRequest = useRef(0);
+  const speechQueueRef = useRef([]);
+  const speechIndexRef = useRef(0);
+  const speechUtteranceRef = useRef(null);
   const [showAuth, setShowAuth] = useState(false);
 const [isLogin, setIsLogin] = useState(true);
 
@@ -190,6 +209,7 @@ const [user, setUser] =
 
   let [stockData, setStockData] =
     useState(null);
+  const loadedStockSymbol = stockData?.symbol || null;
 
   const [isStockLoading, setIsStockLoading] =
     useState(false);
@@ -207,6 +227,18 @@ const [user, setUser] =
     useState(false);
 
   const [transcriptSearch, setTranscriptSearch] =
+    useState("");
+
+  const [isSpeechPlaying, setIsSpeechPlaying] =
+    useState(false);
+
+  const [isSpeechPaused, setIsSpeechPaused] =
+    useState(false);
+
+  const [speechRate, setSpeechRate] =
+    useState(1);
+
+  const [speechError, setSpeechError] =
     useState("");
 
    const [watchlist, setWatchlist] =
@@ -278,12 +310,21 @@ useEffect(() => {
     setAiAnalysis(null);
     setEarningsCall(null);
     setTranscriptSearch("");
+    window.speechSynthesis?.cancel();
+    setIsSpeechPlaying(false);
+    setIsSpeechPaused(false);
+    setSpeechError("");
     setIsStockLoading(true);
     loadStock(ticker, 0, requestId);
 
   }, [ticker]);
 
+  useEffect(() => () => {
+    window.speechSynthesis?.cancel();
+  }, []);
+
   useEffect(() => {
+    if (!loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
     const requestId = ++latestEarningsCallRequest.current;
     setIsEarningsCallLoading(true);
 
@@ -304,7 +345,7 @@ useEffect(() => {
           setIsEarningsCallLoading(false);
         }
       });
-  }, [ticker]);
+  }, [ticker, loadedStockSymbol, isStockLoading]);
 
   useEffect(() => {
     if (!stockData?.price || stockData.symbol !== ticker) return;
@@ -676,6 +717,71 @@ const filteredTranscript = (earningsCall?.transcript || []).filter((section) =>
   section.text?.toLowerCase().includes(normalizedTranscriptSearch)
 );
 
+const stopComputerRead = () => {
+  window.speechSynthesis?.cancel();
+  speechQueueRef.current = [];
+  speechIndexRef.current = 0;
+  speechUtteranceRef.current = null;
+  setIsSpeechPlaying(false);
+  setIsSpeechPaused(false);
+};
+
+const playComputerRead = () => {
+  if (!("speechSynthesis" in window)) {
+    setSpeechError("Computer-read audio is not supported by this browser.");
+    return;
+  }
+  setSpeechError("");
+  if (isSpeechPlaying && isSpeechPaused) {
+    window.speechSynthesis.resume();
+    setIsSpeechPaused(false);
+    return;
+  }
+  if (isSpeechPlaying) return;
+
+  const queue = (earningsCall?.transcript || []).flatMap((section) =>
+    splitForSpeech(`${section.speaker}. ${section.text}`)
+  );
+  if (!queue.length) return;
+
+  window.speechSynthesis.cancel();
+  speechQueueRef.current = queue;
+  speechIndexRef.current = 0;
+  setIsSpeechPlaying(true);
+  setIsSpeechPaused(false);
+
+  const speakNext = () => {
+    const nextText = speechQueueRef.current[speechIndexRef.current];
+    if (!nextText) {
+      stopComputerRead();
+      return;
+    }
+    speechIndexRef.current += 1;
+    const utterance = new SpeechSynthesisUtterance(nextText);
+    utterance.rate = speechRate;
+    utterance.onend = speakNext;
+    utterance.onerror = (event) => {
+      if (event.error !== "canceled" && event.error !== "interrupted") {
+        stopComputerRead();
+      }
+    };
+    speechUtteranceRef.current = utterance;
+    window.speechSynthesis.speak(utterance);
+  };
+  speakNext();
+};
+
+const pauseComputerRead = () => {
+  if (!isSpeechPlaying) return;
+  if (isSpeechPaused) {
+    window.speechSynthesis.resume();
+    setIsSpeechPaused(false);
+  } else {
+    window.speechSynthesis.pause();
+    setIsSpeechPaused(true);
+  }
+};
+
 
  
 
@@ -1040,7 +1146,9 @@ return (
 <div className="chart-section">
 
   <h2 className="section-title">
-    Earnings Call Recording & Transcript
+    {earningsCall?.generatedBriefing
+      ? "Earnings Briefing Audio & Text"
+      : "Earnings Call Audio & Transcript"}
   </h2>
 
   <div className="earnings-call-panel">
@@ -1063,14 +1171,48 @@ return (
           <div className="earnings-call-provider">{earningsCall.provider}</div>
         </div>
 
-        <audio
-          className="earnings-audio-player"
-          controls
-          preload="metadata"
-          src={earningsCall.audioUrl}
-        >
-          Your browser does not support audio playback.
-        </audio>
+        {earningsCall.audioUrl ? (
+          <audio
+            className="earnings-audio-player"
+            controls
+            preload="metadata"
+            src={earningsCall.audioUrl}
+          >
+            Your browser does not support audio playback.
+          </audio>
+        ) : earningsCall.computerReadAudio && earningsCall.transcript?.length ? (
+          <div className="computer-audio-player">
+            <div className="computer-audio-label">
+              {earningsCall.generatedBriefing
+                ? "Computer-read earnings briefing"
+                : "Computer-read transcript"}
+            </div>
+            <div className="computer-audio-controls">
+              <button type="button" onClick={playComputerRead}>
+                {isSpeechPlaying && !isSpeechPaused ? "Playing" : "Play"}
+              </button>
+              <button type="button" onClick={pauseComputerRead} disabled={!isSpeechPlaying}>
+                {isSpeechPaused ? "Resume" : "Pause"}
+              </button>
+              <button type="button" onClick={stopComputerRead} disabled={!isSpeechPlaying}>
+                Stop
+              </button>
+              <label className="speech-rate-control">
+                Speed
+                <input
+                  type="range"
+                  min="0.75"
+                  max="1.5"
+                  step="0.25"
+                  value={speechRate}
+                  onChange={(event) => setSpeechRate(Number(event.target.value))}
+                />
+                <span>{speechRate.toFixed(2)}x</span>
+              </label>
+            </div>
+            {speechError && <div className="computer-audio-error">{speechError}</div>}
+          </div>
+        ) : null}
 
         {earningsCall.transcript?.length ? (
           <div className="transcript-reader">
@@ -1079,7 +1221,7 @@ return (
               type="search"
               value={transcriptSearch}
               onChange={(event) => setTranscriptSearch(event.target.value)}
-              placeholder="Search transcript"
+              placeholder={earningsCall.generatedBriefing ? "Search briefing" : "Search transcript"}
             />
             <div className="transcript-content">
               {filteredTranscript.map((section) => (
@@ -1108,7 +1250,7 @@ return (
       </>
     ) : (
       <div className="earnings-call-empty">
-        Original recording and transcript are unavailable for this ticker.
+        An earnings call transcript is unavailable for this ticker.
       </div>
     )}
   </div>
