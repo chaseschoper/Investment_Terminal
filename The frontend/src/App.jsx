@@ -602,10 +602,8 @@ const previousYearEstimate = estimateFromHistoryYear(
   2025,
   stockData?.analystEstimates?.currentYear
 );
-const currentYearEstimate = estimateFromHistoryYear(
-  2026,
-  stockData?.analystEstimates?.nextYear
-);
+const currentYearEstimate =
+  stockData?.analystEstimates?.nextYear || {};
 
 
  

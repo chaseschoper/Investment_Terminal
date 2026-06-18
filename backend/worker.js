@@ -2,10 +2,11 @@ require("dotenv").config();
 
 const mongoose = require("mongoose");
 const axios = require("axios");
+const cheerio = require("cheerio");
 const yahooFinance = require("yahoo-finance2").default;
 
 const Stock = require("./models/Stock");
-const FINANCIAL_HISTORY_VERSION = 21;
+const FINANCIAL_HISTORY_VERSION = 22;
 const REVENUE_KEY_PRIORITY = {
   annualTotalRevenue: 5,
   annualOperatingRevenue: 4,
@@ -60,6 +61,103 @@ async function getFmpData(ticker, label, endpoints) {
   }
 
   return null;
+}
+
+const parseNasdaqNumber = (value) => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (!value || value === "N/A") return null;
+  const number = Number(String(value).replace(/[$,%\s,]/g, ""));
+  return Number.isFinite(number) ? number : null;
+};
+
+async function fetchNasdaqData(ticker) {
+  const headers = {
+    "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
+    Accept: "application/json, text/plain, */*",
+    Origin: "https://www.nasdaq.com",
+    Referer: `https://www.nasdaq.com/market-activity/stocks/${ticker.toLowerCase()}`
+  };
+
+  try {
+    const [forecastResponse, summaryResponse] = await Promise.all([
+      axios.get(`https://api.nasdaq.com/api/analyst/${ticker}/earnings-forecast`, {
+        headers,
+        timeout: 10000
+      }).catch(() => ({ data: {} })),
+      axios.get(`https://api.nasdaq.com/api/quote/${ticker}/summary?assetclass=stocks`, {
+        headers,
+        timeout: 10000
+      }).catch(() => ({ data: {} }))
+    ]);
+    const forecasts = forecastResponse.data?.data?.yearlyForecast?.rows || [];
+    const summary = summaryResponse.data?.data?.summaryData || {};
+    const rangeValues = String(summary.FiftTwoWeekHighLow?.value || "")
+      .split("/")
+      .map(parseNasdaqNumber);
+
+    return {
+      currentYearEps: parseNasdaqNumber(forecasts[0]?.consensusEPSForecast),
+      nextYearEps: parseNasdaqNumber(forecasts[1]?.consensusEPSForecast),
+      marketCap: parseNasdaqNumber(summary.MarketCap?.value),
+      targetMean: parseNasdaqNumber(summary.OneYrTarget?.value),
+      fiftyTwoWeekHigh: rangeValues[0] || null,
+      fiftyTwoWeekLow: rangeValues[1] || null,
+      dividendYield: summary.Yield?.value
+        ? parseNasdaqNumber(summary.Yield.value) / 100
+        : null
+    };
+  } catch (err) {
+    console.log("Nasdaq data skipped:", ticker, err.message);
+    return {};
+  }
+}
+
+const parseAbbreviatedNumber = (value) => {
+  if (!value) return null;
+  const match = String(value).trim().match(/^([\d.]+)\s*([KMBT])?$/i);
+  if (!match) return parseNasdaqNumber(value);
+  const multipliers = { K: 1e3, M: 1e6, B: 1e9, T: 1e12 };
+  return Number(match[1]) * (multipliers[match[2]?.toUpperCase()] || 1);
+};
+
+async function fetchStockAnalysisForecast(ticker) {
+  try {
+    const response = await axios.get(
+      `https://stockanalysis.com/stocks/${ticker.toLowerCase()}/forecast/`,
+      {
+        headers: { "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36" },
+        timeout: 10000
+      }
+    );
+    const $ = cheerio.load(response.data);
+    const readForecast = (heading) => {
+      const section = $("h2")
+        .filter((_, element) => $(element).text().trim() === heading)
+        .first()
+        .next();
+      const headers = section.find("tr").first().find("th,td")
+        .map((_, element) => $(element).text().trim()).get();
+      const average = section.find("tr").filter((_, row) =>
+        $(row).find("th,td").first().text().trim() === "Avg"
+      ).first().find("th,td")
+        .map((_, element) => $(element).text().trim()).get();
+      return {
+        year: Number(headers[1]) || null,
+        value: parseAbbreviatedNumber(average[1])
+      };
+    };
+    const revenue = readForecast("Revenue Forecast");
+    const eps = readForecast("EPS Forecast");
+
+    return {
+      fiscalYear: eps.year || revenue.year,
+      currentYearRevenue: revenue.value,
+      currentYearEps: eps.value
+    };
+  } catch (err) {
+    console.log("StockAnalysis forecast skipped:", ticker, err.message);
+    return {};
+  }
 }
 
 function findFinancialValue(items, concepts) {
@@ -938,9 +1036,19 @@ async function updateStock(ticker) {
     let fmpPriceTarget = {};
     let fmpAnalystEstimates = [];
     let fmpRating = {};
-    const yahooFinancialData = await fetchYahooFinancialHistory(ticker);
-    const fmpIncomeStatementData = await fetchFmpIncomeStatementHistory(ticker);
-    const yahooSupplementalData = await fetchYahooSupplementalData(ticker);
+    const [
+      yahooFinancialData,
+      fmpIncomeStatementData,
+      yahooSupplementalData,
+      nasdaqData,
+      stockAnalysisForecast
+    ] = await Promise.all([
+      fetchYahooFinancialHistory(ticker),
+      fetchFmpIncomeStatementHistory(ticker),
+      fetchYahooSupplementalData(ticker),
+      fetchNasdaqData(ticker),
+      fetchStockAnalysisForecast(ticker)
+    ]);
 
     const fmpCashFlowData = await getFmpData(ticker, "cash flow", [
       "/stable/cash-flow-statement?symbol={ticker}&limit=1",
@@ -1127,6 +1235,8 @@ async function updateStock(ticker) {
 
     const historicalForwardEps = estimateForwardEpsFromHistory(revenueData);
     const nextEpsCandidate =
+      stockAnalysisForecast.currentYearEps ??
+      nasdaqData.currentYearEps ??
       yahooSupplementalData.forwardEps ??
       fmpEstimateField(fmpNextEstimate, "epsAvg", "estimatedEpsAvg") ??
       epsEstimates[1]?.epsAvg ??
@@ -1148,6 +1258,7 @@ async function updateStock(ticker) {
       currentRevenueBase;
 
     const nextRevenue =
+      stockAnalysisForecast.currentYearRevenue ??
       fmpEstimateField(
         fmpNextEstimate,
         "revenueAvg",
@@ -1184,6 +1295,7 @@ async function updateStock(ticker) {
       );
 
     const marketCap =
+      nasdaqData.marketCap ??
       yahooSupplementalData.marketCap ??
       (profile.marketCapitalization
         ? profile.marketCapitalization * 1000000
@@ -1296,6 +1408,10 @@ async function updateStock(ticker) {
       currentEpsValue ? quote.c / currentEpsValue : null
     );
     const forwardPE = firstNumber(
+      stockAnalysisForecast.currentYearEps
+        ? quote.c / stockAnalysisForecast.currentYearEps
+        : null,
+      nasdaqData.currentYearEps ? quote.c / nasdaqData.currentYearEps : null,
       reportedForwardPE,
       nextEpsValue ? quote.c / nextEpsValue : null
     );
@@ -1325,6 +1441,7 @@ async function updateStock(ticker) {
     });
     const targetMean = estimateTargetFallback({
       targetMean: firstNumber(
+        nasdaqData.targetMean,
         priceTarget?.targetMean,
         priceTarget?.targetMedian,
         metrics.ptMean,
@@ -1349,11 +1466,12 @@ async function updateStock(ticker) {
       metrics.dividendYieldTTM
     );
     const dividendYield = normalizeDividendYield(
-      finnhubDividendYield !== null
+      nasdaqData.dividendYield ?? (finnhubDividendYield !== null
         ? finnhubDividendYield / 100
-        : yahooSupplementalData.dividendYield
+        : yahooSupplementalData.dividendYield)
     );
     const fiftyTwoWeekHigh = firstNumber(
+      nasdaqData.fiftyTwoWeekHigh,
       yahooSupplementalData.fiftyTwoWeekHigh,
       metrics["52WeekHigh"],
       metrics["52WeekHighPrice"],
@@ -1361,6 +1479,7 @@ async function updateStock(ticker) {
       quote.c
     );
     const fiftyTwoWeekLow = firstNumber(
+      nasdaqData.fiftyTwoWeekLow,
       yahooSupplementalData.fiftyTwoWeekLow,
       metrics["52WeekLow"],
       metrics["52WeekLowPrice"],
@@ -1397,6 +1516,15 @@ async function updateStock(ticker) {
           forwardPE,
           trailingEps: yahooSupplementalData.trailingEps,
           forwardEps: yahooSupplementalData.forwardEps,
+          consensusCurrentYearEps:
+            stockAnalysisForecast.currentYearEps ?? nasdaqData.currentYearEps,
+          consensusNextYearEps: nasdaqData.nextYearEps,
+          consensusCurrentYearRevenue: stockAnalysisForecast.currentYearRevenue,
+          analystEstimateSource: stockAnalysisForecast.currentYearEps
+            ? "S&P Global consensus via StockAnalysis"
+            : nasdaqData.currentYearEps
+              ? "Nasdaq consensus"
+              : "Modeled fallback",
 
           revenueGrowth,
           earningsGrowth,
