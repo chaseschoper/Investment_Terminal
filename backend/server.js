@@ -2509,52 +2509,73 @@ async function fetchAlphaVantageEarningsCall(ticker) {
   const currentQuarter = Math.floor(now.getUTCMonth() / 3) + 1;
   const fallbackQuarter = currentQuarter === 1 ? 4 : currentQuarter - 1;
   const fallbackYear = currentQuarter === 1 ? now.getUTCFullYear() - 1 : now.getUTCFullYear();
-  const year = fiscalPeriod?.year || fallbackYear;
-  const quarter = fiscalPeriod?.quarter || fallbackQuarter;
-  const response = await axios.get("https://www.alphavantage.co/query", {
-    params: {
-      function: "EARNINGS_CALL_TRANSCRIPT",
-      symbol: ticker,
-      quarter: `${year}Q${quarter}`,
-      apikey: apiKey
-    },
-    timeout: 25000
+  const startingYear = fiscalPeriod?.year || fallbackYear;
+  const startingQuarter = fiscalPeriod?.quarter || fallbackQuarter;
+  const periods = Array.from({ length: 3 }, (_, index) => {
+    const zeroBasedQuarter = startingQuarter - 1 - index;
+    return {
+      year: startingYear + Math.floor(zeroBasedQuarter / 4),
+      quarter: ((zeroBasedQuarter % 4) + 4) % 4 + 1
+    };
   });
-  const sections = Array.isArray(response.data?.transcript)
-    ? response.data.transcript
-    : [];
-  if (!sections.length) {
-    const message = response.data?.Information || response.data?.Note || response.data?.["Error Message"];
-    if (message) console.log("Alpha Vantage transcript unavailable:", ticker, message);
-    const providerError = new Error("Alpha Vantage transcript unavailable");
-    if (/api key|apikey|invalid/i.test(message || "")) {
-      providerError.providerCode = "alpha_key_invalid";
-    } else if (/frequency|limit|requests per day|rate/i.test(message || "")) {
-      providerError.providerCode = "alpha_daily_limit";
-    } else {
-      providerError.providerCode = "alpha_quarter_unavailable";
+
+  for (const { year, quarter } of periods) {
+    const period = `${year}Q${quarter}`;
+    const response = await axios.get("https://www.alphavantage.co/query", {
+      params: {
+        function: "EARNINGS_CALL_TRANSCRIPT",
+        symbol: ticker,
+        quarter: period,
+        apikey: apiKey
+      },
+      timeout: 25000
+    });
+    const sections = Array.isArray(response.data?.transcript)
+      ? response.data.transcript
+      : [];
+    if (sections.length) {
+      return {
+        available: true,
+        provider: "Alpha Vantage",
+        title: `${ticker} earnings call transcript`,
+        date: null,
+        fiscalYear: year,
+        fiscalPeriod: `Q${quarter}`,
+        audioUrl: null,
+        transcriptUrl: null,
+        computerReadAudio: true,
+        transcript: sections.map((section, index) => ({
+          id: `${index}-${section.speaker || "speaker"}`,
+          speaker: section.speaker || "Speaker",
+          session: section.title || null,
+          text: String(section.content || "")
+        })).filter((section) => section.text)
+      };
     }
-    providerError.fiscalPeriod = `${year}Q${quarter}`;
-    throw providerError;
+
+    const message = response.data?.Information || response.data?.Note || response.data?.["Error Message"];
+    if (message) console.log("Alpha Vantage transcript unavailable:", ticker, period, message);
+    if (/frequency|limit|requests per day|rate/i.test(message || "")) {
+      const providerError = new Error("Alpha Vantage daily limit reached");
+      providerError.providerCode = "alpha_daily_limit";
+      throw providerError;
+    }
+    if (/invalid or missing.*api\s*key|api\s*key.*invalid|parameter apikey/i.test(message || "")) {
+      const providerError = new Error("Alpha Vantage API key rejected");
+      providerError.providerCode = "alpha_key_invalid";
+      throw providerError;
+    }
+    if (/premium endpoint|premium membership/i.test(message || "")) {
+      const providerError = new Error("Alpha Vantage plan does not include transcripts");
+      providerError.providerCode = "alpha_plan_restricted";
+      throw providerError;
+    }
   }
 
-  return {
-    available: true,
-    provider: "Alpha Vantage",
-    title: `${ticker} earnings call transcript`,
-    date: null,
-    fiscalYear: year,
-    fiscalPeriod: `Q${quarter}`,
-    audioUrl: null,
-    transcriptUrl: null,
-    computerReadAudio: true,
-    transcript: sections.map((section, index) => ({
-      id: `${index}-${section.speaker || "speaker"}`,
-      speaker: section.speaker || "Speaker",
-      session: section.title || null,
-      text: String(section.content || "")
-    })).filter((section) => section.text)
-  };
+  const providerError = new Error("Alpha Vantage transcript unavailable");
+  providerError.providerCode = "alpha_quarter_unavailable";
+  providerError.fiscalPeriod = periods.map(({ year, quarter }) => `${year}Q${quarter}`).join(" through ");
+  throw providerError;
 }
 
 const EARNINGS_CALL_EXCHANGES = [
@@ -2723,7 +2744,10 @@ app.get("/api/earnings-call/:ticker/audio", async (req, res) => {
 app.get("/api/earnings-call/:ticker", async (req, res) => {
   const ticker = req.params.ticker.trim().toUpperCase();
   const cached = earningsCallCache.get(ticker);
-  if (cached && Date.now() - cached.cachedAt < 24 * 60 * 60 * 1000) {
+  const cacheLifetime = cached?.data?.available
+    ? 24 * 60 * 60 * 1000
+    : 10 * 60 * 1000;
+  if (cached && Date.now() - cached.cachedAt < cacheLifetime) {
     return res.json(cached.data);
   }
 

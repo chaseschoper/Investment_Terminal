@@ -1252,6 +1252,8 @@ return (
             ? "The transcript API key was rejected."
             : earningsCall?.reason === "alpha_daily_limit"
               ? "The free transcript source reached its daily request limit."
+              : earningsCall?.reason === "alpha_plan_restricted"
+                ? "The transcript endpoint is not included with this API plan."
               : earningsCall?.reason === "alpha_quarter_unavailable"
                 ? `No transcript was found for ${earningsCall.requestedFiscalPeriod || "the latest quarter"}.`
                 : "The earnings call transcript source is temporarily unavailable."}
