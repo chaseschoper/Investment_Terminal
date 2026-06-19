@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 30;
+const FINANCIAL_HISTORY_VERSION = 32;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 let secTickerMapPromise;
@@ -275,6 +275,66 @@ function secAnnualFactEntries(companyFacts, concept) {
   );
 }
 
+function calculateSecTrailingEps(companyFacts) {
+  const concepts = ["EarningsPerShareDiluted", "EarningsPerShareBasicAndDiluted"];
+
+  for (const concept of concepts) {
+    const entries = companyFacts?.facts?.["us-gaap"]?.[concept]?.units?.["USD/shares"] || [];
+    const latestByPeriod = new Map();
+
+    entries.forEach((entry) => {
+      if (!entry.start || !entry.end || !["10-K", "10-K/A", "10-Q", "10-Q/A"].includes(entry.form)) {
+        return;
+      }
+      const durationDays = (new Date(entry.end) - new Date(entry.start)) / 86400000;
+      if (durationDays < 60 || durationDays > 400) return;
+      const key = `${entry.start}:${entry.end}`;
+      const existing = latestByPeriod.get(key);
+      if (!existing || String(entry.filed) > String(existing.filed)) {
+        latestByPeriod.set(key, { ...entry, durationDays });
+      }
+    });
+
+    const deduplicated = [...latestByPeriod.values()];
+    const annual = deduplicated
+      .filter((entry) => ["10-K", "10-K/A"].includes(entry.form) && entry.durationDays >= 300)
+      .sort((a, b) => String(a.end).localeCompare(String(b.end)))
+      .at(-1);
+    if (!annual) continue;
+
+    const laterInterims = deduplicated
+      .filter((entry) =>
+        ["10-Q", "10-Q/A"].includes(entry.form) && String(entry.end) > String(annual.end)
+      )
+      .sort((a, b) =>
+        String(a.end).localeCompare(String(b.end)) || a.durationDays - b.durationDays
+      );
+    const latestInterim = laterInterims.at(-1);
+    if (!latestInterim) return toNumberOrNull(annual.val);
+
+    const priorInterim = deduplicated
+      .filter((entry) =>
+        ["10-Q", "10-Q/A"].includes(entry.form) &&
+        String(entry.end) < String(annual.end) &&
+        Math.abs(entry.durationDays - latestInterim.durationDays) <= 20
+      )
+      .sort((a, b) => String(a.end).localeCompare(String(b.end)))
+      .at(-1);
+    if (!priorInterim) continue;
+
+    const annualEps = toNumberOrNull(annual.val);
+    const priorInterimEps = toNumberOrNull(priorInterim.val);
+    const latestInterimEps = toNumberOrNull(latestInterim.val);
+    if (annualEps === null || priorInterimEps === null || latestInterimEps === null) {
+      continue;
+    }
+    const trailingEps = annualEps - priorInterimEps + latestInterimEps;
+    if (Number.isFinite(trailingEps)) return trailingEps;
+  }
+
+  return null;
+}
+
 async function fetchSecAnnualMargins(ticker) {
   const cached = secMarginCache.get(ticker);
   if (cached && Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1000) {
@@ -293,6 +353,7 @@ async function fetchSecAnnualMargins(ticker) {
       }
     );
     const facts = response.data;
+    const trailingEps = calculateSecTrailingEps(facts);
     const isFinancialCompany =
       secAnnualFactEntries(facts, "RevenuesNetOfInterestExpense").length > 0 &&
       (secAnnualFactEntries(facts, "InterestIncomeExpenseNet").length > 0 ||
@@ -427,6 +488,7 @@ async function fetchSecAnnualMargins(ticker) {
       revenueConcept,
       revenueGrowth: annualGrowth(revenue, previousRevenue),
       earningsGrowth: annualGrowth(netIncome, previousNetIncome),
+      trailingEps,
       marginHistory,
       bankMetrics: isFinancialCompany
         ? {
@@ -1090,13 +1152,19 @@ function withGuaranteedAnalystSection(data = {}) {
     revenue: nextRevenue,
     profitMargin: profitMargins
   });
+  const trailingEps = toNumberOrNull(data.trailingEps);
+  const consensusNextYearEps = toNumberOrNull(data.consensusNextYearEps);
+  const suppliedForwardEps = toNumberOrNull(data.forwardEps);
   const pe = firstNumber(
+    price !== null && trailingEps > 0 ? price / trailingEps : null,
     data.pe,
-    price !== null && currentEps ? price / currentEps : null
+    price !== null && currentEps > 0 ? price / currentEps : null
   );
   const forwardPE = firstNumber(
+    price !== null && consensusNextYearEps > 0 ? price / consensusNextYearEps : null,
     data.forwardPE,
-    price !== null && nextEps ? price / nextEps : null
+    price !== null && suppliedForwardEps > 0 ? price / suppliedForwardEps : null,
+    price !== null && nextEps > 0 ? price / nextEps : null
   );
   const fiftyTwoWeekHigh = firstNumber(data.fiftyTwoWeekHigh, data.high, price);
   const fiftyTwoWeekLow = firstNumber(data.fiftyTwoWeekLow, data.low, price);
@@ -2117,8 +2185,29 @@ async function fetchStockData(ticker) {
     impliedAnnualShares,
     FALLBACK_SHARES_OUTSTANDING_MILLIONS
   );
-  const reportedPE = firstNumber(metrics.peNormalizedAnnual, metrics.peTTM, yahooSupplementalData.pe);
-  const reportedForwardPE = firstNumber(metrics.forwardPE, yahooSupplementalData.forwardPE);
+  const trailingEpsValue = firstNumber(
+    yahooSupplementalData.trailingEps,
+    secAnnualMargins.trailingEps,
+    metrics.epsTTM,
+    metrics.epsInclExtraItemsTTM
+  );
+  const forwardConsensusEps = firstNumber(
+    nasdaqData.nextYearEps,
+    metrics.epsEstimateNextYear,
+    yahooSupplementalData.analystEstimates?.nextYear?.eps,
+    yahooSupplementalData.forwardEps
+  );
+  const reportedPE = firstNumber(
+    trailingEpsValue > 0 ? quote.c / trailingEpsValue : null,
+    metrics.peTTM,
+    yahooSupplementalData.pe,
+    metrics.peNormalizedAnnual
+  );
+  const reportedForwardPE = firstNumber(
+    forwardConsensusEps > 0 ? quote.c / forwardConsensusEps : null,
+    metrics.forwardPE,
+    yahooSupplementalData.forwardPE
+  );
   const revenueGrowth = firstFiniteNumber(
     chartRevenueGrowth,
     secAnnualMargins.revenueGrowth,
@@ -2199,10 +2288,6 @@ async function fetchStockData(ticker) {
     currentEpsValue ? quote.c / currentEpsValue : null
   );
   const forwardPE = firstNumber(
-    stockAnalysisForecast.currentYearEps
-      ? quote.c / stockAnalysisForecast.currentYearEps
-      : null,
-    nasdaqData.currentYearEps ? quote.c / nasdaqData.currentYearEps : null,
     reportedForwardPE,
     nextEpsValue ? quote.c / nextEpsValue : null
   );
@@ -2299,8 +2384,8 @@ async function fetchStockData(ticker) {
     sharesOutstanding: sharesOutstandingValue,
     pe,
     forwardPE,
-    trailingEps: yahooSupplementalData.trailingEps,
-    forwardEps: yahooSupplementalData.forwardEps,
+    trailingEps: trailingEpsValue,
+    forwardEps: forwardConsensusEps,
     consensusCurrentYearEps:
       stockAnalysisForecast.currentYearEps ?? nasdaqData.currentYearEps,
     consensusNextYearEps: nasdaqData.nextYearEps,
