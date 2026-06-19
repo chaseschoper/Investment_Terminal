@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 32;
+const FINANCIAL_HISTORY_VERSION = 34;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 let secTickerMapPromise;
@@ -168,14 +168,27 @@ const parseAbbreviatedNumber = (value) => {
 
 async function fetchStockAnalysisForecast(ticker) {
   try {
-    const response = await axios.get(
-      `https://stockanalysis.com/stocks/${ticker.toLowerCase()}/forecast/`,
-      {
-        headers: { "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36" },
+    const headers = {
+      "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36"
+    };
+    const [forecastResponse, statisticsResponse] = await Promise.all([
+      axios.get(`https://stockanalysis.com/stocks/${ticker.toLowerCase()}/forecast/`, {
+        headers,
         timeout: 10000
-      }
-    );
-    const $ = cheerio.load(response.data);
+      }),
+      axios.get(`https://stockanalysis.com/stocks/${ticker.toLowerCase()}/statistics/`, {
+        headers,
+        timeout: 10000
+      }).catch(() => ({ data: "" }))
+    ]);
+    const $ = cheerio.load(forecastResponse.data);
+    const statistics = cheerio.load(statisticsResponse.data);
+    const readStatistic = (label) => {
+      const cells = statistics("tr").filter((_, row) =>
+        statistics(row).find("th,td").first().text().trim() === label
+      ).first().find("th,td");
+      return parseNasdaqNumber(cells.eq(1).text());
+    };
     const readForecast = (heading) => {
       const section = $("h2")
         .filter((_, element) => $(element).text().trim() === heading)
@@ -198,7 +211,9 @@ async function fetchStockAnalysisForecast(ticker) {
     return {
       fiscalYear: eps.year || revenue.year,
       currentYearRevenue: revenue.value,
-      currentYearEps: eps.value
+      currentYearEps: eps.value,
+      pe: readStatistic("PE Ratio"),
+      forwardPE: readStatistic("Forward PE")
     };
   } catch (err) {
     console.log("StockAnalysis forecast skipped:", ticker, err.message);
@@ -316,6 +331,7 @@ function calculateSecTrailingEps(companyFacts) {
       .filter((entry) =>
         ["10-Q", "10-Q/A"].includes(entry.form) &&
         String(entry.end) < String(annual.end) &&
+        entry.fp === latestInterim.fp &&
         Math.abs(entry.durationDays - latestInterim.durationDays) <= 20
       )
       .sort((a, b) => String(a.end).localeCompare(String(b.end)))
@@ -1161,9 +1177,9 @@ function withGuaranteedAnalystSection(data = {}) {
     price !== null && currentEps > 0 ? price / currentEps : null
   );
   const forwardPE = firstNumber(
-    price !== null && consensusNextYearEps > 0 ? price / consensusNextYearEps : null,
     data.forwardPE,
     price !== null && suppliedForwardEps > 0 ? price / suppliedForwardEps : null,
+    price !== null && consensusNextYearEps > 0 ? price / consensusNextYearEps : null,
     price !== null && nextEps > 0 ? price / nextEps : null
   );
   const fiftyTwoWeekHigh = firstNumber(data.fiftyTwoWeekHigh, data.high, price);
@@ -2187,26 +2203,33 @@ async function fetchStockData(ticker) {
   );
   const trailingEpsValue = firstNumber(
     yahooSupplementalData.trailingEps,
-    secAnnualMargins.trailingEps,
     metrics.epsTTM,
-    metrics.epsInclExtraItemsTTM
+    metrics.epsInclExtraItemsTTM,
+    secAnnualMargins.trailingEps
   );
-  const forwardConsensusEps = firstNumber(
+  const forwardEpsValue = firstNumber(
+    stockAnalysisForecast.forwardPE > 0
+      ? quote.c / stockAnalysisForecast.forwardPE
+      : null,
+    metrics.forwardPE > 0 ? quote.c / metrics.forwardPE : null,
+    yahooSupplementalData.forwardEps,
+    nasdaqData.currentYearEps,
+    metrics.epsEstimateCurrentYear,
     nasdaqData.nextYearEps,
-    metrics.epsEstimateNextYear,
-    yahooSupplementalData.analystEstimates?.nextYear?.eps,
-    yahooSupplementalData.forwardEps
+    metrics.epsEstimateNextYear
   );
   const reportedPE = firstNumber(
     trailingEpsValue > 0 ? quote.c / trailingEpsValue : null,
     metrics.peTTM,
+    stockAnalysisForecast.pe,
     yahooSupplementalData.pe,
     metrics.peNormalizedAnnual
   );
   const reportedForwardPE = firstNumber(
-    forwardConsensusEps > 0 ? quote.c / forwardConsensusEps : null,
+    stockAnalysisForecast.forwardPE,
     metrics.forwardPE,
-    yahooSupplementalData.forwardPE
+    yahooSupplementalData.forwardPE,
+    forwardEpsValue > 0 ? quote.c / forwardEpsValue : null
   );
   const revenueGrowth = firstFiniteNumber(
     chartRevenueGrowth,
@@ -2385,7 +2408,7 @@ async function fetchStockData(ticker) {
     pe,
     forwardPE,
     trailingEps: trailingEpsValue,
-    forwardEps: forwardConsensusEps,
+    forwardEps: forwardEpsValue,
     consensusCurrentYearEps:
       stockAnalysisForecast.currentYearEps ?? nasdaqData.currentYearEps,
     consensusNextYearEps: nasdaqData.nextYearEps,
