@@ -3129,7 +3129,37 @@ function normalizeEarningsCallExchange(exchange) {
     STO: "STO",
     ASX: "ASX"
   };
-  return exchangeMap[String(exchange || "").toUpperCase()] || null;
+  const normalized = String(exchange || "").toUpperCase();
+  if (exchangeMap[normalized]) return exchangeMap[normalized];
+  if (normalized.includes("NASDAQ")) return "NASDAQ";
+  if (normalized.includes("NEW YORK") || normalized.includes("NYSE")) return "NYSE";
+  if (normalized.includes("TORONTO") || normalized.includes("TSX")) return "TSX";
+  return null;
+}
+
+async function getEarningsCallEmbedUrl(ticker) {
+  let exchange = null;
+  try {
+    const quote = await yahooFinance.quote(ticker);
+    exchange = normalizeEarningsCallExchange(quote.exchange);
+  } catch (err) {
+    console.log("EarningsCall embed exchange lookup skipped:", ticker, err.message);
+  }
+
+  if (!exchange) {
+    try {
+      const profile = await getFinnhub(
+        `https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}`
+      );
+      exchange = normalizeEarningsCallExchange(profile.exchange);
+    } catch (err) {
+      console.log("EarningsCall embed profile skipped:", ticker, err.message);
+    }
+  }
+
+  return exchange
+    ? `https://earningscall.biz/e/${exchange.toLowerCase()}/s/${ticker.toLowerCase()}`
+    : "https://earningscall.biz/";
 }
 
 async function fetchEarningsCallBiz(ticker, apiBaseUrl) {
@@ -3278,7 +3308,10 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
 
   try {
     let data = null;
-    const latestFiscalPeriod = await getLatestSecFiscalPeriod(ticker);
+    const [latestFiscalPeriod, embedUrl] = await Promise.all([
+      getLatestSecFiscalPeriod(ticker),
+      getEarningsCallEmbedUrl(ticker)
+    ]);
     let savedCall = null;
     try {
       savedCall = await EarningsCall.findOne({ ticker }).lean();
@@ -3295,8 +3328,9 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
         savedCall.data.fiscalPeriod === expectedFiscalPeriod
       ))
     ) {
-      earningsCallCache.set(ticker, { data: savedCall.data, cachedAt: Date.now() });
-      return res.json(savedCall.data);
+      const savedResponse = { ...savedCall.data, embedUrl };
+      earningsCallCache.set(ticker, { data: savedResponse, cachedAt: Date.now() });
+      return res.json(savedResponse);
     }
     let unavailableReason = getAlphaVantageApiKey()
       ? "provider_unavailable"
@@ -3347,11 +3381,14 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
     } else if (savedCall?.data?.available) {
       data = { ...savedCall.data, previousQuarter: true };
     }
-    const responseData = data || {
-      available: false,
-      symbol: ticker,
-      reason: unavailableReason,
-      requestedFiscalPeriod
+    const responseData = {
+      ...(data || {
+        available: false,
+        symbol: ticker,
+        reason: unavailableReason,
+        requestedFiscalPeriod
+      }),
+      embedUrl
     };
     earningsCallCache.set(ticker, { data: responseData, cachedAt: Date.now() });
     return res.json(responseData);

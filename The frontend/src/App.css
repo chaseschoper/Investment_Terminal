@@ -24,6 +24,10 @@ body {
   order: 10;
 }
 
+.calendar-bottom-section {
+  order: 20;
+}
+
 .app {
   min-height: 100vh;
   background: #0b0f14;
@@ -1406,6 +1410,16 @@ body {
   background: white;
 }
 
+.earnings-site-frame {
+  display: block;
+  width: 100%;
+  height: 760px;
+  margin-bottom: 22px;
+  border: 1px solid #273244;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
 .earnings-call-empty {
   color: #9ca3af;
   line-height: 1.6;
@@ -1440,5 +1454,9 @@ body {
 
   .transcript-frame {
     height: 520px;
+  }
+
+  .earnings-site-frame {
+    height: 620px;
   }
 }

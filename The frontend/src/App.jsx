@@ -1334,6 +1334,15 @@ return (
   </h2>
 
   <div className="earnings-call-panel">
+    {earningsCall?.embedUrl && (
+      <iframe
+        className="earnings-site-frame"
+        title={`${ticker} earnings calls`}
+        src={earningsCall.embedUrl}
+        loading="lazy"
+        allow="autoplay; encrypted-media"
+      />
+    )}
     {isEarningsCallLoading ? (
       <div className="earnings-call-empty">Loading latest recording...</div>
     ) : earningsCall?.available ? (
@@ -1428,7 +1437,7 @@ return (
           <div className="earnings-call-empty">Transcript unavailable for this recording.</div>
         )}
       </>
-    ) : (
+    ) : earningsCall?.embedUrl ? null : (
       <div className="earnings-call-empty">
         {earningsCall?.reason === "alpha_key_missing"
           ? "The transcript source is not connected on the backend."
@@ -2507,7 +2516,7 @@ return (
 
 {/* LIVE EARNINGS CALENDAR */}
 
-<div className="chart-section" id="earnings-calendar">
+<div className="chart-section calendar-bottom-section" id="earnings-calendar">
 
   <div className="calendar-heading-row">
     <h2 className="section-title">
