@@ -1074,6 +1074,7 @@ return (
       <a href="#metrics">Metrics</a>
       <a href="#comparison">Compare</a>
       <a href="#ai-analysis">AI Analysis</a>
+      <a href="#earnings-calls">Earnings Calls</a>
       <a href="#portfolio">Portfolio</a>
       <a href="#watchlists">Watchlists</a>
       <a href="#earnings-calendar">Calendar</a>
@@ -1340,7 +1341,7 @@ return (
 </div>
 {/* EARNINGS CALL TRANSCRIPTS */}
 
-<div className="chart-section research-section earnings-call-section">
+<div className="chart-section research-section earnings-call-section" id="earnings-calls">
 
   <h2 className="section-title">
     Earnings Call Audio & Transcript
