@@ -3622,10 +3622,21 @@ res.status(500).json({ error: "Login failed" });
 // SAVE USER DATA
 app.post("/api/save-data", authMiddleware, async (req, res) => {
 try {
-const { watchlist, portfolio } = req.body;
+const { watchlist, portfolio, namedWatchlists } = req.body;
+const cleanNamedWatchlists = Array.isArray(namedWatchlists)
+  ? namedWatchlists.slice(0, 20).map((list, index) => ({
+      id: String(list?.id || `watchlist-${index}`).slice(0, 80),
+      name: String(list?.name || `Watchlist ${index + 1}`).trim().slice(0, 60),
+      symbols: [...new Set((Array.isArray(list?.symbols) ? list.symbols : [])
+        .map((symbol) => String(symbol).trim().toUpperCase())
+        .filter((symbol) => /^[A-Z0-9.-]{1,10}$/.test(symbol)))]
+        .slice(0, 100)
+    }))
+  : [];
 
 req.user.watchlist = watchlist;
 req.user.portfolio = portfolio;
+req.user.namedWatchlists = cleanNamedWatchlists;
 
 await req.user.save();
 
@@ -3641,7 +3652,8 @@ res.status(500).json({ error: "Save failed" });
 app.get("/api/user-data", authMiddleware, async (req, res) => {
 res.json({
 watchlist: req.user.watchlist || [],
-portfolio: req.user.portfolio || []
+portfolio: req.user.portfolio || [],
+namedWatchlists: req.user.namedWatchlists || []
 });
 });
 

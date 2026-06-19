@@ -22,6 +22,11 @@ const UserSchema = new mongoose.Schema({
     default: [],
   },
 
+  namedWatchlists: {
+    type: Array,
+    default: [],
+  },
+
   portfolio: {
     type: Array,
     default: [],
@@ -32,4 +37,3 @@ module.exports = mongoose.model(
   "User",
   UserSchema
 );
-

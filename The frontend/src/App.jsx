@@ -337,7 +337,16 @@ const [user, setUser] =
   useState([]);
 
   const [newTicker, setNewTicker] =
-    useState("");
+  useState("");
+
+  const [namedWatchlists, setNamedWatchlists] =
+  useState([]);
+
+  const [newWatchlistName, setNewWatchlistName] =
+  useState("");
+
+  const [namedTickerInputs, setNamedTickerInputs] =
+  useState({});
 
   const [portfolio, setPortfolio] =
   useState([]);
@@ -383,7 +392,8 @@ const [user, setUser] =
 useEffect(() => {
   const symbols = [...new Set([
     ...watchlist,
-    ...portfolio.map((position) => position.symbol)
+    ...portfolio.map((position) => position.symbol),
+    ...namedWatchlists.flatMap((list) => list.symbols || [])
   ].map((symbol) => String(symbol || "").trim().toUpperCase()).filter(Boolean))];
 
   const refreshPrices = () => {
@@ -393,7 +403,7 @@ useEffect(() => {
   refreshPrices();
   const refreshTimer = window.setInterval(refreshPrices, 60 * 1000);
   return () => window.clearInterval(refreshTimer);
-}, [watchlist, portfolio]);
+}, [watchlist, portfolio, namedWatchlists]);
 
   /*
     LOAD STOCK WHEN TICKER CHANGES
@@ -595,6 +605,7 @@ useEffect(() => {
         {
           watchlist,
           portfolio,
+          namedWatchlists,
         },
         {
           headers: {
@@ -622,7 +633,7 @@ useEffect(() => {
   return () =>
     clearTimeout(timeout);
 
-}, [watchlist, portfolio, user]);
+}, [watchlist, portfolio, namedWatchlists, user]);
        
   
 const loadUserData = async () => {
@@ -640,6 +651,7 @@ const loadUserData = async () => {
 
     setWatchlist(response.data.watchlist || []);
     setPortfolio(response.data.portfolio || []);
+    setNamedWatchlists(response.data.namedWatchlists || []);
 
     console.log("Loaded user data");
   } catch (err) {
@@ -1063,6 +1075,7 @@ return (
       <a href="#comparison">Compare</a>
       <a href="#ai-analysis">AI Analysis</a>
       <a href="#portfolio">Portfolio</a>
+      <a href="#watchlists">Watchlists</a>
       <a href="#earnings-calendar">Calendar</a>
     </nav>
 
@@ -2513,6 +2526,131 @@ return (
   </div>
 
 </div>
+
+{/* NAMED WATCHLISTS */}
+
+<section className="chart-section named-watchlists-section" id="watchlists">
+  <div className="named-watchlists-heading">
+    <h2 className="section-title">Watchlists</h2>
+    <form
+      className="named-watchlist-create"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const name = newWatchlistName.trim();
+        if (!name) return;
+        const id = globalThis.crypto?.randomUUID?.() || `watchlist-${Date.now()}`;
+        setNamedWatchlists((lists) => [...lists, { id, name, symbols: [] }]);
+        setNewWatchlistName("");
+      }}
+    >
+      <input
+        value={newWatchlistName}
+        onChange={(event) => setNewWatchlistName(event.target.value)}
+        placeholder="New watchlist name"
+        maxLength={60}
+      />
+      <button type="submit" aria-label="Create watchlist" title="Create watchlist">+</button>
+    </form>
+  </div>
+
+  {namedWatchlists.length ? (
+    <div className="named-watchlists-grid">
+      {namedWatchlists.map((list) => (
+        <article className="named-watchlist-card" key={list.id}>
+          <div className="named-watchlist-card-header">
+            <input
+              className="named-watchlist-name"
+              value={list.name}
+              maxLength={60}
+              aria-label="Watchlist name"
+              onChange={(event) => setNamedWatchlists((lists) =>
+                lists.map((item) => item.id === list.id
+                  ? { ...item, name: event.target.value }
+                  : item
+                )
+              )}
+            />
+            <button
+              className="named-watchlist-delete"
+              type="button"
+              aria-label={`Delete ${list.name}`}
+              title="Delete watchlist"
+              onClick={() => setNamedWatchlists((lists) =>
+                lists.filter((item) => item.id !== list.id)
+              )}
+            >
+              ×
+            </button>
+          </div>
+
+          <div className="named-watchlist-symbols">
+            {(list.symbols || []).map((symbol) => (
+              <div className="named-watchlist-row" key={symbol}>
+                <button
+                  className="named-watchlist-open"
+                  type="button"
+                  onClick={() => {
+                    setSearchInput(symbol);
+                    setTicker(symbol);
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                >
+                  <strong>{symbol}</strong>
+                  <span>{formatPrice(portfolioPrices[symbol])}</span>
+                </button>
+                <button
+                  className="named-watchlist-remove"
+                  type="button"
+                  aria-label={`Remove ${symbol} from ${list.name}`}
+                  title="Remove ticker"
+                  onClick={() => setNamedWatchlists((lists) =>
+                    lists.map((item) => item.id === list.id
+                      ? { ...item, symbols: item.symbols.filter((itemSymbol) => itemSymbol !== symbol) }
+                      : item
+                    )
+                  )}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            {!list.symbols?.length && (
+              <div className="named-watchlist-empty">No tickers added.</div>
+            )}
+          </div>
+
+          <form
+            className="named-watchlist-add"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const symbol = String(namedTickerInputs[list.id] || "").trim().toUpperCase();
+              if (!symbol || !/^[A-Z0-9.-]{1,10}$/.test(symbol)) return;
+              setNamedWatchlists((lists) => lists.map((item) =>
+                item.id === list.id && !item.symbols.includes(symbol)
+                  ? { ...item, symbols: [...item.symbols, symbol] }
+                  : item
+              ));
+              setNamedTickerInputs((inputs) => ({ ...inputs, [list.id]: "" }));
+            }}
+          >
+            <input
+              value={namedTickerInputs[list.id] || ""}
+              onChange={(event) => setNamedTickerInputs((inputs) => ({
+                ...inputs,
+                [list.id]: event.target.value.toUpperCase()
+              }))}
+              placeholder="Add ticker"
+              maxLength={10}
+            />
+            <button type="submit" aria-label={`Add ticker to ${list.name}`} title="Add ticker">+</button>
+          </form>
+        </article>
+      ))}
+    </div>
+  ) : (
+    <div className="named-watchlists-empty">Create a watchlist to organize stocks.</div>
+  )}
+</section>
 
 {/* LIVE EARNINGS CALENDAR */}
 
