@@ -70,6 +70,11 @@ const formatEstimateMoney = (value) =>
 const formatEstimateEps = (value) =>
   isNumber(value) ? `$${value.toFixed(2)}` : "N/A";
 
+const calculateEstimateGrowth = (estimate, actual) => {
+  if (!isNumber(estimate) || !isNumber(actual) || actual === 0) return null;
+  return ((estimate - actual) / actual) * 100;
+};
+
 const buildChartRows = (rows, key) =>
   (rows || [])
     .map((item) => ({
@@ -786,6 +791,14 @@ const previousYearEstimate = estimateFromHistoryYear(
 );
 const currentYearEstimate =
   stockData?.analystEstimates?.nextYear || {};
+const nextYearRevenueGrowth = calculateEstimateGrowth(
+  currentYearEstimate?.revenue,
+  previousYearEstimate?.revenue
+);
+const nextYearEarningsGrowth = calculateEstimateGrowth(
+  currentYearEstimate?.earnings,
+  previousYearEstimate?.earnings
+);
 const normalizedTranscriptSearch = transcriptSearch.trim().toLowerCase();
 const filteredTranscript = (earningsCall?.transcript || []).filter((section) =>
   !normalizedTranscriptSearch ||
@@ -1914,6 +1927,24 @@ return (
 
     </div>
 
+  </div>
+
+  <div className="estimate-growth-grid">
+    <div className="estimate-growth-card">
+      <span className="estimate-growth-label">Next Year Revenue Growth</span>
+      <strong className={!isNumber(nextYearRevenueGrowth) ? "estimate-growth-unavailable" : nextYearRevenueGrowth >= 0 ? "estimate-growth-positive" : "estimate-growth-negative"}>
+        {formatPercent(nextYearRevenueGrowth)}
+      </strong>
+      <span className="estimate-growth-period">Estimate vs. 2025 actual</span>
+    </div>
+
+    <div className="estimate-growth-card">
+      <span className="estimate-growth-label">Next Year Earnings Growth</span>
+      <strong className={!isNumber(nextYearEarningsGrowth) ? "estimate-growth-unavailable" : nextYearEarningsGrowth >= 0 ? "estimate-growth-positive" : "estimate-growth-negative"}>
+        {formatPercent(nextYearEarningsGrowth)}
+      </strong>
+      <span className="estimate-growth-period">Estimate vs. 2025 actual</span>
+    </div>
   </div>
 
 </div>

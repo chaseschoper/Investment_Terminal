@@ -1238,6 +1238,54 @@ body {
   margin-bottom: 18px;
 }
 
+.estimate-growth-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  max-width: 900px;
+  margin: 20px auto 0;
+}
+
+.estimate-growth-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 18px 20px;
+  border: 1px solid #273244;
+  border-radius: 8px;
+  background: #111827;
+}
+
+.estimate-growth-label {
+  color: #d1d5db;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.estimate-growth-positive,
+.estimate-growth-negative,
+.estimate-growth-unavailable {
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.estimate-growth-positive {
+  color: #34d399;
+}
+
+.estimate-growth-negative {
+  color: #f87171;
+}
+
+.estimate-growth-unavailable {
+  color: #9ca3af;
+}
+
+.estimate-growth-period {
+  color: #9ca3af;
+  font-size: 12px;
+}
+
 .transcript-content {
   max-height: 620px;
   overflow-y: auto;
@@ -1283,6 +1331,10 @@ body {
 }
 
 @media (max-width: 640px) {
+  .estimate-growth-grid {
+    grid-template-columns: 1fr;
+  }
+
   .earnings-call-panel {
     padding: 18px;
   }
