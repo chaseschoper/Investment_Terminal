@@ -3298,103 +3298,22 @@ app.get("/api/earnings-call/:ticker/audio", async (req, res) => {
 
 app.get("/api/earnings-call/:ticker", async (req, res) => {
   const ticker = req.params.ticker.trim().toUpperCase();
-  const cached = earningsCallCache.get(ticker);
-  const cacheLifetime = cached?.data?.available
-    ? 24 * 60 * 60 * 1000
-    : 10 * 60 * 1000;
-  if (cached && Date.now() - cached.cachedAt < cacheLifetime) {
-    return res.json(cached.data);
-  }
 
   try {
-    let data = null;
-    const [latestFiscalPeriod, embedUrl] = await Promise.all([
-      getLatestSecFiscalPeriod(ticker),
-      getEarningsCallEmbedUrl(ticker)
-    ]);
-    let savedCall = null;
-    try {
-      savedCall = await EarningsCall.findOne({ ticker }).lean();
-    } catch (err) {
-      console.log("Saved earnings call lookup skipped:", ticker, err.message);
-    }
-    const expectedFiscalPeriod = latestFiscalPeriod
-      ? `Q${latestFiscalPeriod.quarter}`
-      : null;
-    if (
-      savedCall?.data?.available &&
-      (!latestFiscalPeriod || (
-        Number(savedCall.data.fiscalYear) === Number(latestFiscalPeriod.year) &&
-        savedCall.data.fiscalPeriod === expectedFiscalPeriod
-      ))
-    ) {
-      const savedResponse = { ...savedCall.data, embedUrl };
-      earningsCallCache.set(ticker, { data: savedResponse, cachedAt: Date.now() });
-      return res.json(savedResponse);
-    }
-    let unavailableReason = getAlphaVantageApiKey()
-      ? "provider_unavailable"
-      : "alpha_key_missing";
-    let requestedFiscalPeriod = null;
-    if (getAlphaVantageApiKey()) {
-      try {
-        data = await fetchAlphaVantageEarningsCall(ticker, latestFiscalPeriod);
-      } catch (err) {
-        unavailableReason = err.providerCode || "alpha_request_failed";
-        requestedFiscalPeriod = err.fiscalPeriod || null;
-        console.log("Alpha Vantage earnings call skipped:", ticker, err.response?.status || err.message);
-      }
-    }
-    if (process.env.EARNINGSCALL_API_KEY) {
-      try {
-        const forwardedProtocol = String(req.headers["x-forwarded-proto"] || "")
-          .split(",")[0]
-          .trim();
-        const apiBaseUrl = `${forwardedProtocol || req.protocol}://${req.get("host")}`;
-        if (!data) data = await fetchEarningsCallBiz(ticker, apiBaseUrl);
-      } catch (err) {
-        console.log("EarningsCall provider skipped:", ticker, err.response?.status || err.message);
-      }
-    }
-    try {
-      if (!data) data = await fetchQuartrEarningsCall(ticker);
-    } catch (err) {
-      console.log("Quartr earnings call skipped:", ticker, err.response?.status || err.message);
-    }
-    if (!data && process.env.FINNHUB_TRANSCRIPTS_ENABLED === "true") {
-      try {
-        data = await fetchFinnhubEarningsCall(ticker);
-      } catch (err) {
-        console.log("Finnhub earnings call skipped:", ticker, err.response?.status || err.message);
-      }
-    }
-    if (data?.available) {
-      try {
-        await EarningsCall.findOneAndUpdate(
-          { ticker },
-          { ticker, data, updatedAt: new Date() },
-          { upsert: true, new: true, setDefaultsOnInsert: true }
-        );
-      } catch (err) {
-        console.log("Earnings call save skipped:", ticker, err.message);
-      }
-    } else if (savedCall?.data?.available) {
-      data = { ...savedCall.data, previousQuarter: true };
-    }
-    const responseData = {
-      ...(data || {
-        available: false,
-        symbol: ticker,
-        reason: unavailableReason,
-        requestedFiscalPeriod
-      }),
+    const embedUrl = await getEarningsCallEmbedUrl(ticker);
+    return res.json({
+      available: false,
+      symbol: ticker,
+      provider: "EarningsCall",
       embedUrl
-    };
-    earningsCallCache.set(ticker, { data: responseData, cachedAt: Date.now() });
-    return res.json(responseData);
+    });
   } catch (err) {
-    console.error("Earnings call fetch failed:", ticker, err.message);
-    return res.status(500).json({ available: false, error: "Earnings call unavailable" });
+    console.error("EarningsCall embed failed:", ticker, err.message);
+    return res.status(500).json({
+      available: false,
+      symbol: ticker,
+      error: "Earnings call embed unavailable"
+    });
   }
 });
 

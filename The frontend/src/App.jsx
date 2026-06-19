@@ -1347,7 +1347,9 @@ return (
   </h2>
 
   <div className="earnings-call-panel">
-    {earningsCall?.embedUrl && (
+    {isEarningsCallLoading ? (
+      <div className="earnings-call-empty">Loading earnings calls...</div>
+    ) : earningsCall?.embedUrl ? (
       <iframe
         className="earnings-site-frame"
         title={`${ticker} earnings calls`}
@@ -1355,114 +1357,9 @@ return (
         loading="lazy"
         allow="autoplay; encrypted-media"
       />
-    )}
-    {isEarningsCallLoading ? (
-      <div className="earnings-call-empty">Loading latest recording...</div>
-    ) : earningsCall?.available ? (
-      <>
-        <div className="earnings-call-header">
-          <div>
-            <div className="earnings-call-title">{earningsCall.title}</div>
-            <div className="earnings-call-meta">
-              {[earningsCall.fiscalPeriod, earningsCall.fiscalYear]
-                .filter(Boolean)
-                .join(" ")}
-              {earningsCall.date
-                ? ` · ${new Date(earningsCall.date).toLocaleDateString()}`
-                : ""}
-            </div>
-          </div>
-          <div className="earnings-call-provider">{earningsCall.provider}</div>
-        </div>
-
-        {earningsCall.audioUrl ? (
-          <audio
-            className="earnings-audio-player"
-            controls
-            preload="metadata"
-            src={earningsCall.audioUrl}
-          >
-            Your browser does not support audio playback.
-          </audio>
-        ) : earningsCall.computerReadAudio && earningsCall.transcript?.length ? (
-          <div className="computer-audio-player">
-            <div className="computer-audio-label">
-              Computer-read earnings call transcript
-            </div>
-            <div className="computer-audio-controls">
-              <button type="button" onClick={playComputerRead}>
-                {isSpeechPlaying && !isSpeechPaused ? "Playing" : "Play"}
-              </button>
-              <button type="button" onClick={pauseComputerRead} disabled={!isSpeechPlaying}>
-                {isSpeechPaused ? "Resume" : "Pause"}
-              </button>
-              <button type="button" onClick={stopComputerRead} disabled={!isSpeechPlaying}>
-                Stop
-              </button>
-              <label className="speech-rate-control">
-                Speed
-                <input
-                  type="range"
-                  min="0.75"
-                  max="1.5"
-                  step="0.25"
-                  value={speechRate}
-                  onChange={(event) => setSpeechRate(Number(event.target.value))}
-                />
-                <span>{speechRate.toFixed(2)}x</span>
-              </label>
-            </div>
-            {speechError && <div className="computer-audio-error">{speechError}</div>}
-          </div>
-        ) : null}
-
-        {earningsCall.transcript?.length ? (
-          <div className="transcript-reader">
-            <input
-              className="transcript-search"
-              type="search"
-              value={transcriptSearch}
-              onChange={(event) => setTranscriptSearch(event.target.value)}
-              placeholder="Search transcript"
-            />
-            <div className="transcript-content">
-              {filteredTranscript.map((section) => (
-                <div className="transcript-section" key={section.id}>
-                  <div className="transcript-speaker">
-                    {section.speaker}
-                    {section.session ? ` · ${section.session}` : ""}
-                  </div>
-                  <p>{section.text}</p>
-                </div>
-              ))}
-              {!filteredTranscript.length && (
-                <div className="earnings-call-empty">No transcript matches found.</div>
-              )}
-            </div>
-          </div>
-        ) : earningsCall.transcriptUrl ? (
-          <iframe
-            className="transcript-frame"
-            title={`${ticker} earnings call transcript`}
-            src={earningsCall.transcriptUrl}
-          />
-        ) : (
-          <div className="earnings-call-empty">Transcript unavailable for this recording.</div>
-        )}
-      </>
-    ) : earningsCall?.embedUrl ? null : (
+    ) : (
       <div className="earnings-call-empty">
-        {earningsCall?.reason === "alpha_key_missing"
-          ? "The transcript source is not connected on the backend."
-          : earningsCall?.reason === "alpha_key_invalid"
-            ? "The transcript API key was rejected."
-            : earningsCall?.reason === "alpha_daily_limit"
-              ? "The free transcript source reached its daily request limit."
-              : earningsCall?.reason === "alpha_plan_restricted"
-                ? "The transcript endpoint is not included with this API plan."
-              : earningsCall?.reason === "alpha_quarter_unavailable"
-                ? `No transcript was found for ${earningsCall.requestedFiscalPeriod || "the latest quarter"}.`
-                : "The earnings call transcript source is temporarily unavailable."}
+        The embedded earnings-call site is temporarily unavailable.
       </div>
     )}
   </div>
