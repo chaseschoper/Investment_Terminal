@@ -95,6 +95,38 @@ const splitForSpeech = (text, maxLength = 1200) => {
   if (chunk.trim()) chunks.push(chunk.trim());
   return chunks;
 };
+
+const toLocalIsoDate = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const getWeekStartIso = (date = new Date()) => {
+  const copy = new Date(date);
+  copy.setHours(12, 0, 0, 0);
+  copy.setDate(copy.getDate() - ((copy.getDay() + 6) % 7));
+  return toLocalIsoDate(copy);
+};
+
+const shiftIsoDate = (isoDate, days) => {
+  const date = new Date(`${isoDate}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  return toLocalIsoDate(date);
+};
+
+const formatCalendarMoney = (value) => {
+  if (!isNumber(value)) return "N/A";
+  const absolute = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  if (absolute >= 1e9) return `${sign}$${(absolute / 1e9).toFixed(1)}B`;
+  if (absolute >= 1e6) return `${sign}$${(absolute / 1e6).toFixed(1)}M`;
+  return `${sign}$${absolute.toLocaleString()}`;
+};
+
+const formatCalendarEps = (value) =>
+  isNumber(value) ? `${value < 0 ? "-" : ""}$${Math.abs(value).toFixed(2)}` : "N/A";
 import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
@@ -263,7 +295,16 @@ const [user, setUser] =
     useState("");
 
   const [earnings, setEarnings] =
-    useState([]);
+  useState({ days: [] });
+
+  const [isEarningsLoading, setIsEarningsLoading] =
+  useState(false);
+
+  const [earningsWeekStart, setEarningsWeekStart] =
+  useState(() => getWeekStartIso());
+
+  const [selectedEarningsDate, setSelectedEarningsDate] =
+  useState(() => toLocalIsoDate(new Date()));
 
     const [compareTickers, setCompareTickers] =
   useState([]);
@@ -390,9 +431,9 @@ useEffect(() => {
 
   useEffect(() => {
 
-    loadEarnings();
+    loadEarnings(earningsWeekStart);
 
-  }, []);
+  }, [earningsWeekStart]);
 
   /*
     LOAD PORTFOLIO PRICES
@@ -554,23 +595,37 @@ const loadUserData = async () => {
     LOAD EARNINGS
   */
 
-  const loadEarnings = async () => {
+  const loadEarnings = async (weekStart) => {
 
     try {
+      setIsEarningsLoading(true);
 
       const earningsRes =
         await axios.get(
 
-    `${API_URL}/api/earnings`
+    `${API_URL}/api/earnings`,
+          { params: { start: weekStart } }
         );
 
-      setEarnings(
-        earningsRes.data
-      );
+      const calendar = earningsRes.data || { days: [] };
+      setEarnings(calendar);
+      const availableDates = (calendar.days || []).map((day) => day.date);
+      setSelectedEarningsDate((current) => {
+        const today = toLocalIsoDate(new Date());
+        if (availableDates.includes(current)) return current;
+        if (availableDates.includes(today)) return today;
+        return availableDates.find((date) =>
+          calendar.days.find((day) => day.date === date)?.events?.length
+        ) || availableDates[0] || weekStart;
+      });
 
     } catch (err) {
 
       console.error(err);
+
+    } finally {
+
+      setIsEarningsLoading(false);
 
     }
   };
@@ -716,6 +771,19 @@ const filteredTranscript = (earningsCall?.transcript || []).filter((section) =>
   section.speaker?.toLowerCase().includes(normalizedTranscriptSearch) ||
   section.text?.toLowerCase().includes(normalizedTranscriptSearch)
 );
+const selectedEarningsDay = (earnings?.days || []).find(
+  (day) => day.date === selectedEarningsDate
+) || { date: selectedEarningsDate, events: [] };
+const earningsWeekLabel = earnings?.weekStart && earnings?.weekEnd
+  ? `${new Date(`${earnings.weekStart}T12:00:00`).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric"
+    })} - ${new Date(`${earnings.weekEnd}T12:00:00`).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric"
+    })}`
+  : "This week";
 
 const stopComputerRead = () => {
   window.speechSynthesis?.cancel();
@@ -2226,29 +2294,98 @@ return (
 
 <div className="chart-section">
 
-  <h2 className="section-title">
-    Live Earnings Calendar
-  </h2>
+  <div className="calendar-heading-row">
+    <h2 className="section-title">
+      Earnings Calendar
+    </h2>
+    <div className="calendar-week-controls">
+      <button
+        type="button"
+        aria-label="Previous week"
+        title="Previous week"
+        onClick={() => setEarningsWeekStart(shiftIsoDate(earningsWeekStart, -7))}
+      >
+        &lt;
+      </button>
+      <button
+        className="calendar-today-button"
+        type="button"
+        onClick={() => setEarningsWeekStart(getWeekStartIso())}
+      >
+        This week
+      </button>
+      <button
+        type="button"
+        aria-label="Next week"
+        title="Next week"
+        onClick={() => setEarningsWeekStart(shiftIsoDate(earningsWeekStart, 7))}
+      >
+        &gt;
+      </button>
+    </div>
+  </div>
 
-  <div
-    style={{
-      background: "#111827",
-      borderRadius: "16px",
-      overflow: "hidden",
-      height: "800px",
-    }}
-  >
+  <div className="earnings-calendar">
+    <div className="calendar-week-label">{earningsWeekLabel}</div>
 
-    <iframe
-      src="https://www.marketbeat.com/earnings/calendar/"
-      width="100%"
-      height="800"
-      style={{
-        border: "none",
-      }}
-      title="Earnings Calendar"
-    />
+    <div className="calendar-date-strip">
+      {(earnings?.days || []).map((day) => {
+        const date = new Date(`${day.date}T12:00:00`);
+        const isToday = day.date === toLocalIsoDate(new Date());
+        return (
+          <button
+            className={`calendar-date-button${day.date === selectedEarningsDate ? " selected" : ""}${isToday ? " today" : ""}`}
+            key={day.date}
+            type="button"
+            onClick={() => setSelectedEarningsDate(day.date)}
+          >
+            <span>{date.toLocaleDateString(undefined, { weekday: "short" })}</span>
+            <strong>{date.getDate()}</strong>
+            <small>{day.events?.length || 0} reports</small>
+          </button>
+        );
+      })}
+    </div>
 
+    {isEarningsLoading ? (
+      <div className="calendar-empty">Loading earnings calendar...</div>
+    ) : selectedEarningsDay.events?.length ? (
+      <div className="calendar-company-list">
+        <div className="calendar-company-header">
+          <span>Company</span>
+          <span>Report time</span>
+          <span>Revenue estimate</span>
+          <span>EPS estimate</span>
+          <span>Market cap</span>
+        </div>
+        {selectedEarningsDay.events.map((event) => (
+          <button
+            className="calendar-company-row"
+            key={`${event.date}-${event.symbol}`}
+            type="button"
+            onClick={() => {
+              setSearchInput(event.symbol);
+              setTicker(event.symbol);
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
+          >
+            <span className="calendar-company-name">
+              <strong>{event.symbol}</strong>
+              <small>{event.company}</small>
+            </span>
+            <span className="calendar-report-time">
+              {event.reportTime}
+              {event.fiscalQuarter && <small>{event.fiscalQuarter}</small>}
+            </span>
+            <strong data-label="Revenue est.">{formatCalendarMoney(event.revenueEstimate)}</strong>
+            <strong data-label="EPS est.">{formatCalendarEps(event.epsEstimate)}</strong>
+            <span data-label="Market cap">{formatCalendarMoney(event.marketCap)}</span>
+          </button>
+        ))}
+      </div>
+    ) : (
+      <div className="calendar-empty">No major companies are scheduled for this date.</div>
+    )}
   </div>
 
 

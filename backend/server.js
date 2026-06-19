@@ -19,6 +19,7 @@ const app = express();
 const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
+const earningsCalendarCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 24;
 const secMarginCache = new Map();
 let secTickerMapPromise;
@@ -2841,49 +2842,124 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
 // EARNINGS CALENDAR
 // =========================
 app.get("/api/earnings", async (req, res) => {
-try {
-const response = await axios.get(
-"https://www.investing.com/earnings-calendar/",
-{
-timeout: 10000,
-headers: {
-"User-Agent":
-"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-"Accept-Language": "en-US,en;q=0.9"
-}
-}
-);
-
-
-const $ = cheerio.load(response.data);
-const earnings = [];
-
-$("tr").each((_, el) => {
-  const tds = $(el).find("td");
-  if (tds.length < 8) return;
-
-  const date = $(tds[0]).text().trim();
-  const symbol = $(tds[1]).text().trim();
-  const company = $(tds[2]).text().trim();
-  const estimate = $(tds[7]).text().trim();
-
-  if (symbol && company && date) {
-    earnings.push({
-      symbol,
-      company,
-      earningsDate: date,
-      estimate: estimate || "N/A"
-    });
+  const parseIsoDate = (value) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))) return null;
+    const date = new Date(`${value}T12:00:00Z`);
+    return Number.isNaN(date.getTime()) ? null : date;
+  };
+  const toIsoDate = (date) => date.toISOString().slice(0, 10);
+  const requestedStart = parseIsoDate(req.query.start);
+  const weekStart = requestedStart || (() => {
+    const date = new Date();
+    date.setUTCHours(12, 0, 0, 0);
+    const daysFromMonday = (date.getUTCDay() + 6) % 7;
+    date.setUTCDate(date.getUTCDate() - daysFromMonday);
+    return date;
+  })();
+  const dates = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(weekStart);
+    date.setUTCDate(date.getUTCDate() + index);
+    return toIsoDate(date);
+  });
+  const cacheKey = dates[0];
+  const cached = earningsCalendarCache.get(cacheKey);
+  if (cached && Date.now() - cached.cachedAt < 15 * 60 * 1000) {
+    return res.json(cached.data);
   }
-});
 
-res.json(earnings.slice(0, 50));
-
-
-} catch (err) {
-console.error("Earnings error:", err.message);
-res.json([]);
-}
+  try {
+    const nasdaqHeaders = {
+      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+      Accept: "application/json, text/plain, */*",
+      Origin: "https://www.nasdaq.com",
+      Referer: "https://www.nasdaq.com/"
+    };
+    const [finnhubResponse, ...nasdaqResponses] = await Promise.all([
+      process.env.FINNHUB_API_KEY
+        ? axios.get("https://finnhub.io/api/v1/calendar/earnings", {
+            params: {
+              from: dates[0],
+              to: dates[6],
+              token: process.env.FINNHUB_API_KEY
+            },
+            timeout: 15000
+          }).catch((err) => {
+            console.log("Finnhub earnings calendar skipped:", err.response?.status || err.message);
+            return { data: { earningsCalendar: [] } };
+          })
+        : Promise.resolve({ data: { earningsCalendar: [] } }),
+      ...dates.map((date) =>
+        axios.get("https://api.nasdaq.com/api/calendar/earnings", {
+          params: { date },
+          headers: nasdaqHeaders,
+          timeout: 15000
+        }).catch((err) => {
+          console.log("Nasdaq earnings calendar skipped:", date, err.response?.status || err.message);
+          return { data: { data: { rows: [] } } };
+        })
+      )
+    ]);
+    const finnhubRows = finnhubResponse.data?.earningsCalendar || [];
+    const finnhubByDateAndSymbol = new Map(
+      finnhubRows.map((row) => [`${row.date}:${row.symbol}`, row])
+    );
+    const parseMarketCap = (value) => {
+      const number = Number(String(value || "").replace(/[$,]/g, ""));
+      return Number.isFinite(number) ? number : null;
+    };
+    const parseEstimate = (value) => {
+      const text = String(value || "").trim();
+      if (!text || text === "N/A") return null;
+      const negative = text.startsWith("(") && text.endsWith(")");
+      const number = Number(text.replace(/[$,()]/g, ""));
+      return Number.isFinite(number) ? (negative ? -number : number) : null;
+    };
+    const parseApiNumber = (value) => {
+      if (value === null || value === undefined || value === "") return null;
+      const number = Number(value);
+      return Number.isFinite(number) ? number : null;
+    };
+    const timeLabels = {
+      bmo: "Before open",
+      amc: "After close",
+      dmh: "During market",
+      "time-pre-market": "Before open",
+      "time-after-hours": "After close"
+    };
+    const days = dates.map((date, index) => {
+      const nasdaqRows = nasdaqResponses[index]?.data?.data?.rows || [];
+      const events = nasdaqRows.map((row) => {
+        const finnhub = finnhubByDateAndSymbol.get(`${date}:${row.symbol}`) || {};
+        return {
+          date,
+          symbol: row.symbol,
+          company: row.name || row.symbol,
+          marketCap: parseMarketCap(row.marketCap),
+          reportTime: timeLabels[finnhub.hour || row.time] || "Time not supplied",
+          fiscalQuarter: finnhub.quarter && finnhub.year
+            ? `Q${finnhub.quarter} ${finnhub.year}`
+            : row.fiscalQuarterEnding || null,
+          epsEstimate: parseApiNumber(finnhub.epsEstimate) ?? parseEstimate(row.epsForecast),
+          revenueEstimate: parseApiNumber(finnhub.revenueEstimate),
+          epsActual: parseApiNumber(finnhub.epsActual),
+          revenueActual: parseApiNumber(finnhub.revenueActual)
+        };
+      }).filter((event) => event.symbol)
+        .sort((a, b) => (b.marketCap || 0) - (a.marketCap || 0))
+        .slice(0, 8);
+      return { date, events };
+    });
+    const responseData = {
+      weekStart: dates[0],
+      weekEnd: dates[6],
+      days
+    };
+    earningsCalendarCache.set(cacheKey, { data: responseData, cachedAt: Date.now() });
+    return res.json(responseData);
+  } catch (err) {
+    console.error("Earnings calendar error:", err.message);
+    return res.status(500).json({ weekStart: dates[0], weekEnd: dates[6], days: [] });
+  }
 });
 
 // =========================
