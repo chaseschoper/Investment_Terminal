@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 24;
+const FINANCIAL_HISTORY_VERSION = 26;
 const secMarginCache = new Map();
 let secTickerMapPromise;
 const TICKER_ALIASES = {
@@ -251,6 +251,29 @@ function latestSecAnnualFact(companyFacts, concepts, endDate) {
   return latestFact;
 }
 
+function secAnnualFactEntries(companyFacts, concept) {
+  const entries = companyFacts?.facts?.["us-gaap"]?.[concept]?.units?.USD || [];
+  const latestByEndDate = new Map();
+
+  for (const entry of entries) {
+    if (!["10-K", "10-K/A"].includes(entry.form) || entry.fp !== "FY" || !entry.end) {
+      continue;
+    }
+    if (entry.start) {
+      const duration = new Date(entry.end) - new Date(entry.start);
+      if (duration < 300 * 24 * 60 * 60 * 1000) continue;
+    }
+    const existing = latestByEndDate.get(entry.end);
+    if (!existing || String(entry.filed) > String(existing.filed)) {
+      latestByEndDate.set(entry.end, entry);
+    }
+  }
+
+  return [...latestByEndDate.values()].sort((a, b) =>
+    String(a.end).localeCompare(String(b.end))
+  );
+}
+
 async function fetchSecAnnualMargins(ticker) {
   const cached = secMarginCache.get(ticker);
   if (cached && Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1000) {
@@ -269,15 +292,38 @@ async function fetchSecAnnualMargins(ticker) {
       }
     );
     const facts = response.data;
-    const revenue = latestSecAnnualFact(facts, [
-      "RevenueFromContractWithCustomerExcludingAssessedTax",
-      "OperatingRevenues",
-      "Revenues",
-      "SalesRevenueNet",
-      "RevenuesNetOfInterestExpense"
-    ]);
+    const isFinancialCompany =
+      secAnnualFactEntries(facts, "RevenuesNetOfInterestExpense").length > 0 &&
+      (secAnnualFactEntries(facts, "InterestIncomeExpenseNet").length > 0 ||
+        secAnnualFactEntries(facts, "NoninterestIncome").length > 0);
+    const revenueConcepts = isFinancialCompany
+      ? [
+          "RevenuesNetOfInterestExpense",
+          "OperatingRevenues",
+          "Revenues",
+          "RevenueFromContractWithCustomerExcludingAssessedTax",
+          "SalesRevenueNet"
+        ]
+      : [
+          "RevenueFromContractWithCustomerExcludingAssessedTax",
+          "OperatingRevenues",
+          "Revenues",
+          "SalesRevenueNet",
+          "RevenuesNetOfInterestExpense"
+        ];
+    let revenue = null;
+    let revenueConcept = null;
+    for (const concept of revenueConcepts) {
+      const candidate = secAnnualFactEntries(facts, concept).at(-1);
+      if (candidate && (!revenue || String(candidate.end) > String(revenue.end))) {
+        revenue = candidate;
+        revenueConcept = concept;
+      }
+    }
     if (!revenue?.val) return {};
     const endDate = revenue.end;
+    const revenueEntries = secAnnualFactEntries(facts, revenueConcept);
+    const previousRevenue = revenueEntries.at(-2) || null;
     const grossProfit = latestSecAnnualFact(facts, ["GrossProfit"], endDate);
     const costOfRevenue = latestSecAnnualFact(facts, [
       "CostOfGoodsAndServicesSold",
@@ -299,21 +345,59 @@ async function fetchSecAnnualMargins(ticker) {
       "PaymentsForAdditionsToPropertyPlantAndEquipment",
       "PaymentsToAcquirePropertyPlantAndEquipmentAndIntangibleAssets"
     ], endDate);
-    const grossProfitValue = grossProfit?.val ?? (
-      costOfRevenue?.val !== undefined ? revenue.val - costOfRevenue.val : null
-    );
+    const previousNetIncome = previousRevenue
+      ? latestSecAnnualFact(facts, [
+          "NetIncomeLoss",
+          "ProfitLoss",
+          "NetIncomeLossAvailableToCommonStockholdersBasic"
+        ], previousRevenue.end)
+      : null;
+    const annualGrowth = (current, previous) =>
+      current?.val !== undefined && previous?.val !== undefined && previous.val !== 0
+        ? ((current.val - previous.val) / Math.abs(previous.val)) * 100
+        : null;
+    const grossProfitValue = isFinancialCompany
+      ? null
+      : grossProfit?.val ?? (
+          costOfRevenue?.val !== undefined ? revenue.val - costOfRevenue.val : null
+        );
     const data = {
-      fiscalYear: Number(endDate.slice(0, 4)),
+      fiscalYear: Number(revenue.fy || endDate.slice(0, 4)),
+      isFinancialCompany,
+      revenueConcept,
+      revenueGrowth: annualGrowth(revenue, previousRevenue),
+      earningsGrowth: annualGrowth(netIncome, previousNetIncome),
+      history: [
+        previousRevenue
+          ? {
+              year: Number(previousRevenue.end.slice(0, 4)),
+              revenue: previousRevenue.val / 1000000000,
+              earnings: previousNetIncome?.val !== undefined
+                ? previousNetIncome.val / 1000000000
+                : null,
+              eps: null,
+              source: "SEC annual filing"
+            }
+          : null,
+        {
+          year: Number(endDate.slice(0, 4)),
+          revenue: revenue.val / 1000000000,
+          earnings: netIncome?.val !== undefined ? netIncome.val / 1000000000 : null,
+          eps: null,
+          source: "SEC annual filing"
+        }
+      ].filter(Boolean),
       grossMargins: grossProfitValue !== null
         ? (grossProfitValue / revenue.val) * 100
         : null,
-      operatingMargins: operatingIncome?.val !== undefined
+      operatingMargins: !isFinancialCompany && operatingIncome?.val !== undefined
         ? (operatingIncome.val / revenue.val) * 100
         : null,
       profitMargins: netIncome?.val !== undefined
         ? (netIncome.val / revenue.val) * 100
         : null,
       freeCashflow:
+        !isFinancialCompany &&
         operatingCashFlow?.val !== undefined && capitalExpenditures?.val !== undefined
           ? operatingCashFlow.val - Math.abs(capitalExpenditures.val)
           : null
@@ -332,6 +416,7 @@ function findFinancialValue(items, concepts) {
 }
 
 const toNumberOrNull = (value) => {
+  if (value === null || value === undefined || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 };
@@ -772,17 +857,18 @@ function hasCompleteChartHistory(stock) {
 
 function hasCompleteSupplementalData(stock) {
   const data = stock?.data || {};
+  const requiresIndustrialMetrics = !data.isFinancialCompany;
   const currentYear = data.analystEstimates?.currentYear || {};
   const nextYear = data.analystEstimates?.nextYear || {};
 
   return (
-    toNumberOrNull(data.freeCashflow) !== null &&
+    (!requiresIndustrialMetrics || toNumberOrNull(data.freeCashflow) !== null) &&
     toNumberOrNull(data.targetMean) !== null &&
     toNumberOrNull(data.priceToSales) !== null &&
     toNumberOrNull(data.pe) !== null &&
     toNumberOrNull(data.forwardPE) !== null &&
-    toNumberOrNull(data.grossMargins) !== null &&
-    toNumberOrNull(data.operatingMargins) !== null &&
+    (!requiresIndustrialMetrics || toNumberOrNull(data.grossMargins) !== null) &&
+    (!requiresIndustrialMetrics || toNumberOrNull(data.operatingMargins) !== null) &&
     toNumberOrNull(data.profitMargins) !== null &&
     toNumberOrNull(data.fiftyTwoWeekHigh) !== null &&
     toNumberOrNull(data.fiftyTwoWeekLow) !== null &&
@@ -803,6 +889,7 @@ function needsFinancialHistoryRefresh(stock) {
 }
 
 function withGuaranteedAnalystSection(data = {}) {
+  const isFinancialCompany = data.isFinancialCompany === true;
   const price = toNumberOrNull(data.price);
   const revenueRows = Array.isArray(data.revenueData) ? data.revenueData : [];
   const latestRevenueRow = [...revenueRows]
@@ -864,15 +951,12 @@ function withGuaranteedAnalystSection(data = {}) {
       : null,
     8
   );
-  const operatingMargins = firstNumber(
-    data.operatingMargins,
-    profitMargins
-  );
-  const grossMargins = firstNumber(
-    data.grossMargins,
-    operatingMargins,
-    profitMargins
-  );
+  const operatingMargins = isFinancialCompany
+    ? toNumberOrNull(data.operatingMargins)
+    : firstNumber(data.operatingMargins, profitMargins);
+  const grossMargins = isFinancialCompany
+    ? toNumberOrNull(data.grossMargins)
+    : firstNumber(data.grossMargins, operatingMargins, profitMargins);
   const priceToSales = firstNumber(
     data.priceToSales,
     marketCap !== null && currentRevenue > 0 ? marketCap / currentRevenue : null
@@ -925,13 +1009,15 @@ function withGuaranteedAnalystSection(data = {}) {
   );
   const fiftyTwoWeekHigh = firstNumber(data.fiftyTwoWeekHigh, data.high, price);
   const fiftyTwoWeekLow = firstNumber(data.fiftyTwoWeekLow, data.low, price);
-  const freeCashflow = estimateFreeCashFlowFallback({
-    freeCashflow: data.freeCashflow,
-    revenue: currentRevenue,
-    earnings: currentEarnings,
-    profitMargin: profitMargins,
-    marketCap
-  });
+  const freeCashflow = isFinancialCompany
+    ? null
+    : estimateFreeCashFlowFallback({
+        freeCashflow: data.freeCashflow,
+        revenue: currentRevenue,
+        earnings: currentEarnings,
+        profitMargin: profitMargins,
+        marketCap
+      });
   const targetMean = estimateTargetFallback({
     targetMean: data.targetMean,
     price,
@@ -1539,9 +1625,12 @@ async function fetchStockData(ticker) {
       ? [fmpCashFlowData]
       : [];
 
+  const authoritativeAnnualData = secAnnualMargins.isFinancialCompany
+    ? mergeHistoricalFinancials(secAnnualMargins.history || [], yahooFinancialData)
+    : yahooFinancialData;
   const revenueData = finalizeFinancialHistory(
     mergeHistoricalFinancials(
-      yahooFinancialData,
+      authoritativeAnnualData,
       mergeHistoricalFinancials(
         fmpIncomeStatementData,
         mergeHistoricalFinancials(finnhubReportedData, finnhubMetricData)
@@ -1551,11 +1640,11 @@ async function fetchStockData(ticker) {
   );
   const revenueHistory = finalizeRevenueHistory(
     mergeHistoricalFinancials(
-      yahooFinancialData,
+      authoritativeAnnualData,
       mergeHistoricalFinancials(fmpIncomeStatementData, finnhubReportedData)
     )
   );
-  const annualRows = [...yahooFinancialData]
+  const annualRows = [...authoritativeAnnualData]
     .filter((row) => row.year)
     .sort((a, b) => a.year - b.year);
   const latestAnnual = annualRows[annualRows.length - 1] || {};
@@ -1647,17 +1736,35 @@ async function fetchStockData(ticker) {
   const revenueEstimates = revenueEstimate?.data || [];
   const fmpCurrentEstimate = fmpAnalystEstimates[0] || {};
   const fmpNextEstimate = fmpAnalystEstimates[1] || {};
-  const revenueGrowthRate = safeGrowthRate(
-    metrics.revenueGrowthTTMYoy,
-    yahooSupplementalData.revenueGrowth,
-    annualGrowth(latestAnnual.revenue, previousAnnual.revenue)
-  );
-  const earningsGrowthRate = safeGrowthRate(
-    metrics.epsGrowthTTMYoy,
-    yahooSupplementalData.earningsGrowth,
-    annualGrowth(latestAnnual.earnings, previousAnnual.earnings),
-    revenueGrowthRate
-  );
+  const isFinancialCompany = secAnnualMargins.isFinancialCompany === true;
+  const revenueGrowthRate = isFinancialCompany
+    ? safeGrowthRate(
+        secAnnualMargins.revenueGrowth,
+        annualGrowth(latestAnnual.revenue, previousAnnual.revenue),
+        yahooSupplementalData.revenueGrowth,
+        metrics.revenueGrowthTTMYoy
+      )
+    : safeGrowthRate(
+        metrics.revenueGrowthTTMYoy,
+        yahooSupplementalData.revenueGrowth,
+        annualGrowth(latestAnnual.revenue, previousAnnual.revenue),
+        secAnnualMargins.revenueGrowth
+      );
+  const earningsGrowthRate = isFinancialCompany
+    ? safeGrowthRate(
+        secAnnualMargins.earningsGrowth,
+        annualGrowth(latestAnnual.earnings, previousAnnual.earnings),
+        yahooSupplementalData.earningsGrowth,
+        metrics.epsGrowthTTMYoy,
+        revenueGrowthRate
+      )
+    : safeGrowthRate(
+        metrics.epsGrowthTTMYoy,
+        yahooSupplementalData.earningsGrowth,
+        annualGrowth(latestAnnual.earnings, previousAnnual.earnings),
+        secAnnualMargins.earningsGrowth,
+        revenueGrowthRate
+      );
   const currentRevenueBase = firstNumber(
     toDollarsFromBillions(latestAnnual.revenue),
     toDollarsFromPerShare(metrics.revenuePerShareTTM, sharesOutstanding),
@@ -1789,28 +1896,48 @@ async function fetchStockData(ticker) {
   );
   const reportedPE = firstNumber(metrics.peNormalizedAnnual, metrics.peTTM, yahooSupplementalData.pe);
   const reportedForwardPE = firstNumber(metrics.forwardPE, yahooSupplementalData.forwardPE);
-  const revenueGrowth = firstNumber(
-    metrics.revenueGrowthTTMYoy,
-    yahooSupplementalData.revenueGrowth,
-    annualGrowth(latestAnnual.revenue, previousAnnual.revenue)
-  );
-  const earningsGrowth = firstNumber(
-    metrics.epsGrowthTTMYoy,
-    yahooSupplementalData.earningsGrowth,
-    annualGrowth(latestAnnual.earnings, previousAnnual.earnings)
-  );
-  const grossMargins = firstNumber(
-    secAnnualMargins.grossMargins,
-    metrics.grossMarginTTM,
-    yahooSupplementalData.grossMargins,
-    annualMargin(latestAnnual.grossProfit, latestAnnual.revenue)
-  );
-  const operatingMargins = firstNumber(
-    secAnnualMargins.operatingMargins,
-    metrics.operatingMarginTTM,
-    yahooSupplementalData.operatingMargins,
-    annualMargin(latestAnnual.operatingIncome, latestAnnual.revenue)
-  );
+  const revenueGrowth = isFinancialCompany
+    ? firstNumber(
+        secAnnualMargins.revenueGrowth,
+        annualGrowth(latestAnnual.revenue, previousAnnual.revenue),
+        yahooSupplementalData.revenueGrowth,
+        metrics.revenueGrowthTTMYoy
+      )
+    : firstNumber(
+        metrics.revenueGrowthTTMYoy,
+        yahooSupplementalData.revenueGrowth,
+        annualGrowth(latestAnnual.revenue, previousAnnual.revenue),
+        secAnnualMargins.revenueGrowth
+      );
+  const earningsGrowth = isFinancialCompany
+    ? firstNumber(
+        secAnnualMargins.earningsGrowth,
+        annualGrowth(latestAnnual.earnings, previousAnnual.earnings),
+        yahooSupplementalData.earningsGrowth,
+        metrics.epsGrowthTTMYoy
+      )
+    : firstNumber(
+        metrics.epsGrowthTTMYoy,
+        yahooSupplementalData.earningsGrowth,
+        annualGrowth(latestAnnual.earnings, previousAnnual.earnings),
+        secAnnualMargins.earningsGrowth
+      );
+  const grossMargins = isFinancialCompany
+    ? null
+    : firstNumber(
+        secAnnualMargins.grossMargins,
+        metrics.grossMarginTTM,
+        yahooSupplementalData.grossMargins,
+        annualMargin(latestAnnual.grossProfit, latestAnnual.revenue)
+      );
+  const operatingMargins = isFinancialCompany
+    ? null
+    : firstNumber(
+        secAnnualMargins.operatingMargins,
+        metrics.operatingMarginTTM,
+        yahooSupplementalData.operatingMargins,
+        annualMargin(latestAnnual.operatingIncome, latestAnnual.revenue)
+      );
   const profitMargins = firstNumber(
     secAnnualMargins.profitMargins,
     metrics.netProfitMarginTTM,
@@ -1876,23 +2003,25 @@ async function fetchStockData(ticker) {
       ? modeledMarketCap / currentRevenueValue
       : null
   );
-  const freeCashflow = estimateFreeCashFlowFallback({
-    freeCashflow: firstNumber(
-      secAnnualMargins.freeCashflow,
-      fmpCashFlow[0]?.freeCashFlow,
-      fmpCashFlow[0]?.freeCashflow,
-      yahooSupplementalData.freeCashflow,
-      toDollarsFromPerShare(metrics.cashFlowPerShareTTM, sharesOutstanding),
-      toDollarsFromPerShare(metrics.cashFlowPerShareAnnual, sharesOutstanding),
-      normalizeFinnhubMoney(metrics.freeCashFlowTTM),
-      normalizeFinnhubMoney(metrics.fcfTTM),
-      toDollarsFromBillions(latestAnnual.freeCashflow)
-    ),
-    revenue: currentRevenueValue,
-    earnings: currentEarningsValue,
-    profitMargin: profitMargins,
-    marketCap: modeledMarketCap
-  });
+  const freeCashflow = isFinancialCompany
+    ? null
+    : estimateFreeCashFlowFallback({
+        freeCashflow: firstNumber(
+          secAnnualMargins.freeCashflow,
+          fmpCashFlow[0]?.freeCashFlow,
+          fmpCashFlow[0]?.freeCashflow,
+          yahooSupplementalData.freeCashflow,
+          toDollarsFromPerShare(metrics.cashFlowPerShareTTM, sharesOutstanding),
+          toDollarsFromPerShare(metrics.cashFlowPerShareAnnual, sharesOutstanding),
+          normalizeFinnhubMoney(metrics.freeCashFlowTTM),
+          normalizeFinnhubMoney(metrics.fcfTTM),
+          toDollarsFromBillions(latestAnnual.freeCashflow)
+        ),
+        revenue: currentRevenueValue,
+        earnings: currentEarningsValue,
+        profitMargin: profitMargins,
+        marketCap: modeledMarketCap
+      });
   const targetMean = estimateTargetFallback({
     targetMean: firstNumber(
       nasdaqData.targetMean,
@@ -1938,6 +2067,7 @@ async function fetchStockData(ticker) {
   );
 
   const data = withGuaranteedAnalystSection({
+    isFinancialCompany,
     name: profile.name || ticker,
     symbol: ticker,
     price: quote.c,
@@ -1966,14 +2096,26 @@ async function fetchStockData(ticker) {
       : nasdaqData.currentYearEps
         ? "Nasdaq consensus"
         : "Modeled fallback",
-    marginSource: secAnnualMargins.operatingMargins !== null &&
-      secAnnualMargins.operatingMargins !== undefined
-      ? `SEC annual filing ${secAnnualMargins.fiscalYear}`
-      : "Market data fallback",
-    freeCashflowSource: secAnnualMargins.freeCashflow !== null &&
-      secAnnualMargins.freeCashflow !== undefined
-      ? `SEC annual filing ${secAnnualMargins.fiscalYear}`
-      : "Market data fallback",
+    marginSource: isFinancialCompany
+      ? `SEC annual filing ${secAnnualMargins.fiscalYear} (banking presentation)`
+      : secAnnualMargins.operatingMargins !== null &&
+          secAnnualMargins.operatingMargins !== undefined
+        ? `SEC annual filing ${secAnnualMargins.fiscalYear}`
+        : "Market data fallback",
+    freeCashflowSource: isFinancialCompany
+      ? "Not meaningful for banking businesses"
+      : secAnnualMargins.freeCashflow !== null &&
+          secAnnualMargins.freeCashflow !== undefined
+        ? `SEC annual filing ${secAnnualMargins.fiscalYear}`
+        : "Market data fallback",
+    growthSource: isFinancialCompany
+      ? `SEC annual filings ${secAnnualMargins.fiscalYear}`
+      : metrics.revenueGrowthTTMYoy !== null && metrics.revenueGrowthTTMYoy !== undefined
+        ? "Finnhub trailing twelve months"
+        : yahooSupplementalData.revenueGrowth !== null &&
+            yahooSupplementalData.revenueGrowth !== undefined
+          ? "Yahoo trailing twelve months"
+          : "Annual financial statements",
     revenueGrowth,
     earningsGrowth,
     grossMargins,
