@@ -1023,10 +1023,10 @@ return (
 
             <span className={`watch-session-change ${
               savedSymbolDetails[item]?.percentChange > 0
-                ? "positive"
+                ? "watch-positive"
                 : savedSymbolDetails[item]?.percentChange < 0
-                  ? "negative"
-                  : "neutral"
+                  ? "watch-negative"
+                  : "watch-neutral"
             }`}>
               {isNumber(savedSymbolDetails[item]?.percentChange)
                 ? `${savedSymbolDetails[item].percentChange > 0 ? "+" : ""}${savedSymbolDetails[item].percentChange.toFixed(2)}%`
@@ -2543,8 +2543,37 @@ return (
                     window.scrollTo({ top: 0, behavior: "smooth" });
                   }}
                 >
-                  <strong>{symbol}</strong>
-                  <span>{formatPrice(portfolioPrices[symbol])}</span>
+                  <span className="named-watchlist-identity">
+                    {savedSymbolDetails[symbol]?.logo ? (
+                      <img
+                        className="named-watchlist-logo"
+                        src={savedSymbolDetails[symbol].logo}
+                        alt=""
+                        onError={(event) => { event.currentTarget.style.display = "none"; }}
+                      />
+                    ) : (
+                      <span className="named-watchlist-logo-fallback">
+                        {symbol.slice(0, 1)}
+                      </span>
+                    )}
+                    <strong>{symbol}</strong>
+                  </span>
+                  <span className="named-watchlist-quote">
+                    <span className="named-watchlist-price">
+                      {formatPrice(portfolioPrices[symbol])}
+                    </span>
+                    <span className={`named-watchlist-change ${
+                      savedSymbolDetails[symbol]?.percentChange > 0
+                        ? "watch-positive"
+                        : savedSymbolDetails[symbol]?.percentChange < 0
+                          ? "watch-negative"
+                          : "watch-neutral"
+                    }`}>
+                      {isNumber(savedSymbolDetails[symbol]?.percentChange)
+                        ? `${savedSymbolDetails[symbol].percentChange > 0 ? "+" : ""}${savedSymbolDetails[symbol].percentChange.toFixed(2)}%`
+                        : "--"}
+                    </span>
+                  </span>
                 </button>
                 <button
                   className="named-watchlist-remove"
