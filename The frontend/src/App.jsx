@@ -3,6 +3,8 @@ import {
   BarChart,
   Bar,
   Cell,
+  PieChart,
+  Pie,
   LineChart,
   Line,
   XAxis,
@@ -127,6 +129,25 @@ const formatCalendarMoney = (value, missingLabel = "N/A") => {
 
 const formatCalendarEps = (value, missingLabel = "N/A") =>
   isNumber(value) ? `${value < 0 ? "-" : ""}$${Math.abs(value).toFixed(2)}` : missingLabel;
+
+const formatPortfolioCurrency = (value) => {
+  if (!isNumber(value)) return "$0.00";
+  return `${value < 0 ? "-" : ""}$${Math.abs(value).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })}`;
+};
+
+const PORTFOLIO_COLORS = [
+  "#60a5fa",
+  "#34d399",
+  "#f59e0b",
+  "#f472b6",
+  "#a78bfa",
+  "#22d3ee",
+  "#fb7185",
+  "#84cc16"
+];
 import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
@@ -784,6 +805,21 @@ const earningsWeekLabel = earnings?.weekStart && earnings?.weekEnd
       year: "numeric"
     })}`
   : "This week";
+const portfolioAllocationData = portfolio.map((position, index) => {
+  const currentPrice = portfolioPrices[position.symbol];
+  const allocationPrice = isNumber(currentPrice) && currentPrice > 0
+    ? currentPrice
+    : Number(position.avgCost) || 0;
+  return {
+    key: `${position.symbol}-${position.avgCost}-${index}`,
+    name: position.symbol,
+    value: allocationPrice * Number(position.shares || 0)
+  };
+}).filter((position) => position.value > 0);
+const totalPortfolioValue = portfolioAllocationData.reduce(
+  (total, position) => total + position.value,
+  0
+);
 
 const stopComputerRead = () => {
   window.speechSynthesis?.cancel();
@@ -860,6 +896,8 @@ return (
     {/* TOP WATCHLIST BAR */}
 
     <div className="top-watchlist">
+
+      <div className="watchlist-label">Watchlist</div>
 
       <div className="watchlist-scroll">
 
@@ -941,9 +979,19 @@ return (
 
     </div>
 
+    <nav className="section-tabs" aria-label="Page sections">
+      <a href="#overview">Overview</a>
+      <a href="#ai-analysis">AI Analysis</a>
+      <a href="#financials">Financials</a>
+      <a href="#metrics">Metrics</a>
+      <a href="#portfolio">Portfolio</a>
+      <a href="#comparison">Compare</a>
+      <a href="#earnings-calendar">Calendar</a>
+    </nav>
+
     {/* MAIN */}
 
-    <div className="main">
+    <div className="main" id="overview">
 
 
 
@@ -1048,7 +1096,7 @@ return (
 </div>
 {/* AI ANALYSIS */}
 
-<div className="chart-section">
+<div className="chart-section" id="ai-analysis">
 
   <h2 className="section-title">
     AI Stock Analysis
@@ -1332,7 +1380,7 @@ return (
 </div>
 {/* REVENUE CHART */}
 
-<div className="chart-section">
+<div className="chart-section" id="financials">
 
   <h2 className="section-title">
     Revenue Chart
@@ -1553,7 +1601,7 @@ return (
 </div>
         {/* METRICS */}
 
-   <div className="grid">
+   <div className="grid section-anchor" id="metrics">
 
   <div className="card">
     <div className="card-title">
@@ -1860,7 +1908,7 @@ return (
 
 {/* PORTFOLIO TRACKER */}
 
-<div className="portfolio-section">
+<div className="portfolio-section" id="portfolio">
 
   <h2 className="section-title">
     Portfolio Tracker
@@ -1945,6 +1993,7 @@ return (
       <span>Current</span>
       <span>Value</span>
       <span>P/L</span>
+      <span>Actions</span>
 
     </div>
 
@@ -1963,6 +2012,9 @@ return (
   const profit =
     value - cost;
 
+  const profitPercent =
+    cost > 0 ? (profit / cost) * 100 : 0;
+
   return (
 
     <div
@@ -1974,20 +2026,23 @@ return (
 
       <span>{position.shares}</span>
 
-      <span>${position.avgCost}</span>
+      <span>{formatPortfolioCurrency(Number(position.avgCost))}</span>
 
-      <span>${current.toFixed(2)}</span>
+      <span>{formatPortfolioCurrency(current)}</span>
 
-      <span>${value.toFixed(2)}</span>
+      <span>{formatPortfolioCurrency(value)}</span>
 
       <span
-        className={
+        className={`portfolio-return ${
           profit >= 0
             ? "green"
             : "red"
-        }
+        }`}
       >
-        ${profit.toFixed(2)}
+        <strong>{formatPortfolioCurrency(profit)}</strong>
+        <small>
+          {profitPercent >= 0 ? "+" : ""}{profitPercent.toFixed(2)}%
+        </small>
       </span>
 
       <button
@@ -2027,87 +2082,101 @@ return (
     Portfolio Performance
   </h2>
 
-  <div className="chart-box">
+  <div className="portfolio-visual-grid">
+    <div className="portfolio-visual-panel">
+      <h3>Portfolio Allocation</h3>
+      {portfolioAllocationData.length ? (
+        <>
+          <ResponsiveContainer width="100%" height={300}>
+            <PieChart>
+              <Pie
+                data={portfolioAllocationData}
+                dataKey="value"
+                nameKey="name"
+                cx="50%"
+                cy="50%"
+                innerRadius={62}
+                outerRadius={108}
+                paddingAngle={2}
+                stroke="none"
+              >
+                {portfolioAllocationData.map((position, index) => (
+                  <Cell
+                    key={position.key}
+                    fill={PORTFOLIO_COLORS[index % PORTFOLIO_COLORS.length]}
+                  />
+                ))}
+              </Pie>
+              <Tooltip formatter={(value) => formatPortfolioCurrency(Number(value))} />
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="allocation-legend">
+            {portfolioAllocationData.map((position, index) => (
+              <div className="allocation-legend-row" key={position.key}>
+                <span
+                  className="allocation-swatch"
+                  style={{ background: PORTFOLIO_COLORS[index % PORTFOLIO_COLORS.length] }}
+                />
+                <strong>{position.name}</strong>
+                <span>
+                  {totalPortfolioValue > 0
+                    ? `${((position.value / totalPortfolioValue) * 100).toFixed(1)}%`
+                    : "0.0%"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div className="portfolio-visual-empty">Add a position to see portfolio allocation.</div>
+      )}
+    </div>
 
-    <ResponsiveContainer
-      width="100%"
-      height={400}
-    >
-
-      <BarChart
-        data={portfolio.map((position) => {
-
-          const current =
-            portfolioPrices[position.symbol] || 0;
-
-          const value =
-            current * position.shares;
-
-          const cost =
-            position.avgCost * position.shares;
-
-          return {
-            symbol: position.symbol,
-            gain: Number(
-              (value - cost).toFixed(2)
-            ),
-          };
-
-        })}
-      >
-
-        <CartesianGrid stroke="#1f2937" />
-
-        <XAxis dataKey="symbol" />
-
-        <YAxis />
-
-        <Tooltip />
-
-<Bar
-  dataKey="gain"
-  radius={[6, 6, 0, 0]}
->
-  {
-    portfolio.map((position) => {
-
-      const current =
-        portfolioPrices[position.symbol] || 0;
-
-      const value =
-        current * position.shares;
-
-      const cost =
-        position.avgCost * position.shares;
-
-      const profit =
-        value - cost;
-
-      return (
-        <Cell
-          key={position.symbol}
-          fill={
-            profit >= 0
-              ? "#22c55e"
-              : "#ef4444"
-          }
-        />
-      );
-
-    })
-  }
-</Bar>
-
-      </BarChart>
-
-    </ResponsiveContainer>
-
+    <div className="portfolio-visual-panel">
+      <h3>Gain / Loss by Position</h3>
+      {portfolio.length ? (
+        <ResponsiveContainer width="100%" height={400}>
+          <BarChart
+            data={portfolio.map((position) => {
+              const current = portfolioPrices[position.symbol] || 0;
+              const value = current * position.shares;
+              const cost = position.avgCost * position.shares;
+              return {
+                symbol: position.symbol,
+                gain: Number((value - cost).toFixed(2))
+              };
+            })}
+          >
+            <CartesianGrid stroke="#1f2937" />
+            <XAxis dataKey="symbol" />
+            <YAxis />
+            <Tooltip formatter={(value) => formatPortfolioCurrency(Number(value))} />
+            <Bar dataKey="gain" radius={[6, 6, 0, 0]}>
+              {portfolio.map((position) => {
+                const current = portfolioPrices[position.symbol] || 0;
+                const value = current * position.shares;
+                const cost = position.avgCost * position.shares;
+                const profit = value - cost;
+                return (
+                  <Cell
+                    key={`${position.symbol}-${position.avgCost}`}
+                    fill={profit >= 0 ? "#22c55e" : "#ef4444"}
+                  />
+                );
+              })}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      ) : (
+        <div className="portfolio-visual-empty">Add a position to see performance.</div>
+      )}
+    </div>
   </div>
 
 </div>
 {/* MULTI STOCK COMPARISON */}
 
-<div className="chart-section">
+<div className="chart-section" id="comparison">
 
   <h2 className="section-title">
     Multi-Stock Comparison
@@ -2292,7 +2361,7 @@ return (
 
 {/* LIVE EARNINGS CALENDAR */}
 
-<div className="chart-section">
+<div className="chart-section" id="earnings-calendar">
 
   <div className="calendar-heading-row">
     <h2 className="section-title">
