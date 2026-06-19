@@ -1000,16 +1000,17 @@ return (
             }}
           >
 
-            {savedSymbolDetails[item]?.logo ? (
+            <span className="watch-logo-shell" aria-hidden="true">
+              <span className="watch-logo-fallback">{item.slice(0, 1)}</span>
+              {savedSymbolDetails[item]?.logo && (
               <img
                 className="watch-logo"
                 src={savedSymbolDetails[item].logo}
                 alt=""
                 onError={(event) => { event.currentTarget.style.display = "none"; }}
               />
-            ) : (
-              <span className="watch-logo-fallback">{item.slice(0, 1)}</span>
-            )}
+              )}
+            </span>
 
             <span className="watch-symbol">
               {item}
@@ -2544,18 +2545,19 @@ return (
                   }}
                 >
                   <span className="named-watchlist-identity">
-                    {savedSymbolDetails[symbol]?.logo ? (
+                    <span className="named-watchlist-logo-shell" aria-hidden="true">
+                      <span className="named-watchlist-logo-fallback">
+                        {symbol.slice(0, 1)}
+                      </span>
+                      {savedSymbolDetails[symbol]?.logo && (
                       <img
                         className="named-watchlist-logo"
                         src={savedSymbolDetails[symbol].logo}
                         alt=""
                         onError={(event) => { event.currentTarget.style.display = "none"; }}
                       />
-                    ) : (
-                      <span className="named-watchlist-logo-fallback">
-                        {symbol.slice(0, 1)}
-                      </span>
-                    )}
+                      )}
+                    </span>
                     <strong>{symbol}</strong>
                   </span>
                   <span className="named-watchlist-quote">

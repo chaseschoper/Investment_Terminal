@@ -1057,6 +1057,7 @@ body {
   min-width: fit-content;
 }
 
+.watch-logo-shell,
 .watch-logo,
 .watch-logo-fallback {
   width: 26px;
@@ -1065,7 +1066,16 @@ body {
   border-radius: 5px;
 }
 
+.watch-logo-shell,
+.named-watchlist-logo-shell {
+  position: relative;
+  display: block;
+  overflow: hidden;
+}
+
 .watch-logo {
+  position: absolute;
+  inset: 0;
   background: #ffffff;
   object-fit: contain;
   padding: 3px;
@@ -1373,6 +1383,7 @@ body {
   gap: 10px;
 }
 
+.named-watchlist-logo-shell,
 .named-watchlist-logo,
 .named-watchlist-logo-fallback {
   width: 28px;
@@ -1382,6 +1393,8 @@ body {
 }
 
 .named-watchlist-logo {
+  position: absolute;
+  inset: 0;
   background: #ffffff;
   object-fit: contain;
   padding: 3px;

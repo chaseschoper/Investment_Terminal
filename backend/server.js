@@ -24,7 +24,6 @@ const FINANCIAL_HISTORY_VERSION = 35;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
-const savedSymbolProfileCache = new Map();
 let secTickerMapPromise;
 const TICKER_ALIASES = {
   ZILLOW: "Z",
@@ -87,6 +86,13 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function getFinnhub(url) {
   const res = await axios.get(`${url}&token=${process.env.FINNHUB_API_KEY}`);
   return res.data;
+}
+
+function getFinnhubLogoUrl(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  return symbol
+    ? `https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/${encodeURIComponent(symbol)}.png`
+    : null;
 }
 
 async function getFmpData(ticker, label, endpoints) {
@@ -2416,7 +2422,7 @@ async function fetchStockData(ticker) {
     historicalPe,
     name: profile.name || ticker,
     symbol: ticker,
-    logo: profile.logo || null,
+    logo: profile.logo || getFinnhubLogoUrl(ticker),
     price: quote.c,
     change: quote.d,
     percentChange: quote.dp,
@@ -2556,7 +2562,7 @@ app.get("/api/prices", async (req, res) => {
     const savedData = savedBySymbol.get(symbol) || {};
     details[symbol] = {
       name: savedData.name || symbol,
-      logo: savedData.logo || null,
+      logo: savedData.logo || getFinnhubLogoUrl(symbol),
       change: toNumberOrNull(savedData.change),
       percentChange: toNumberOrNull(savedData.percentChange)
     };
@@ -2585,27 +2591,6 @@ app.get("/api/prices", async (req, res) => {
     const savedPrice = toNumberOrNull(savedData.price);
     if (!prices[symbol] && savedPrice !== null && savedPrice > 0) prices[symbol] = savedPrice;
 
-    if (!details[symbol].logo) {
-      const cachedProfile = savedSymbolProfileCache.get(symbol);
-      if (cachedProfile && Date.now() - cachedProfile.fetchedAt < 24 * 60 * 60 * 1000) {
-        details[symbol] = { ...details[symbol], ...cachedProfile.data };
-        return;
-      }
-
-      try {
-        const profile = await getFinnhub(
-          `https://finnhub.io/api/v1/stock/profile2?symbol=${symbol}`
-        );
-        const profileData = {
-          name: profile?.name || details[symbol].name,
-          logo: profile?.logo || null
-        };
-        details[symbol] = { ...details[symbol], ...profileData };
-        savedSymbolProfileCache.set(symbol, { data: profileData, fetchedAt: Date.now() });
-      } catch (err) {
-        console.log("Saved-symbol profile skipped:", symbol, err.response?.status || err.message);
-      }
-    }
   }));
 
   res.json({ prices, details });
