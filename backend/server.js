@@ -20,8 +20,9 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 28;
+const FINANCIAL_HISTORY_VERSION = 30;
 const secMarginCache = new Map();
+const yearEndPriceCache = new Map();
 let secTickerMapPromise;
 const TICKER_ALIASES = {
   ZILLOW: "Z",
@@ -367,6 +368,54 @@ async function fetchSecAnnualMargins(ticker) {
       current?.val !== undefined && previous?.val !== undefined && previous.val !== 0
         ? ((current.val - previous.val) / Math.abs(previous.val)) * 100
         : null;
+    const marginHistory = revenueEntries.slice(-6).map((revenueEntry) => {
+      const yearEnd = revenueEntry.end;
+      const annualGrossProfit = latestSecAnnualFact(facts, ["GrossProfit"], yearEnd);
+      const annualCostOfRevenue = latestSecAnnualFact(facts, [
+        "CostOfGoodsAndServicesSold",
+        "CostOfRevenue"
+      ], yearEnd);
+      const annualOperatingIncome = latestSecAnnualFact(
+        facts,
+        ["OperatingIncomeLoss"],
+        yearEnd
+      );
+      const annualNetIncome = latestSecAnnualFact(facts, [
+        "NetIncomeLoss",
+        "ProfitLoss",
+        "NetIncomeLossAvailableToCommonStockholdersBasic"
+      ], yearEnd);
+      const annualNetInterestIncome = latestSecAnnualFact(
+        facts,
+        ["InterestIncomeExpenseNet"],
+        yearEnd
+      );
+      const annualPreTaxIncome = latestSecAnnualFact(facts, [
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic"
+      ], yearEnd);
+      const annualGrossProfitValue = annualGrossProfit?.val ?? (
+        annualCostOfRevenue?.val !== undefined
+          ? revenueEntry.val - annualCostOfRevenue.val
+          : null
+      );
+      const percentageOfRevenue = (value) =>
+        value !== null && value !== undefined && revenueEntry.val !== 0
+          ? (value / revenueEntry.val) * 100
+          : null;
+
+      return {
+        year: Number(yearEnd.slice(0, 4)),
+        grossMargin: percentageOfRevenue(
+          isFinancialCompany ? annualNetInterestIncome?.val : annualGrossProfitValue
+        ),
+        operatingMargin: percentageOfRevenue(
+          isFinancialCompany ? annualPreTaxIncome?.val : annualOperatingIncome?.val
+        ),
+        profitMargin: percentageOfRevenue(annualNetIncome?.val),
+        source: "SEC annual filing"
+      };
+    });
     const grossProfitValue = isFinancialCompany
       ? null
       : grossProfit?.val ?? (
@@ -378,6 +427,7 @@ async function fetchSecAnnualMargins(ticker) {
       revenueConcept,
       revenueGrowth: annualGrowth(revenue, previousRevenue),
       earningsGrowth: annualGrowth(netIncome, previousNetIncome),
+      marginHistory,
       bankMetrics: isFinancialCompany
         ? {
             netInterestRevenueMix: netInterestIncome?.val !== undefined
@@ -796,6 +846,9 @@ function mergeHistoricalFinancials(primary, fallback) {
       revenue: row.revenue ?? existing.revenue ?? null,
       earnings: row.earnings ?? existing.earnings ?? null,
       eps: row.eps ?? existing.eps ?? null,
+      grossProfit: row.grossProfit ?? existing.grossProfit ?? null,
+      operatingIncome: row.operatingIncome ?? existing.operatingIncome ?? null,
+      freeCashflow: row.freeCashflow ?? existing.freeCashflow ?? null,
       source: row.source || existing.source
     });
   });
@@ -804,7 +857,9 @@ function mergeHistoricalFinancials(primary, fallback) {
     .filter((row) =>
       row.revenue !== null ||
       row.earnings !== null ||
-      row.eps !== null
+      row.eps !== null ||
+      row.grossProfit !== null ||
+      row.operatingIncome !== null
     )
     .sort((a, b) => a.year - b.year)
     .slice(-6);
@@ -835,6 +890,9 @@ function finalizeFinancialHistory(rows, sharesOutstanding) {
     revenue: toNumberOrNull(row.revenue),
     earnings: toNumberOrNull(row.earnings),
     eps: toNumberOrNull(row.eps),
+    grossProfit: toNumberOrNull(row.grossProfit),
+    operatingIncome: toNumberOrNull(row.operatingIncome),
+    freeCashflow: toNumberOrNull(row.freeCashflow),
     source: row.source
   }));
 }
@@ -1255,6 +1313,8 @@ async function fetchYahooFinancialHistory(ticker) {
         year: getStatementYear(row.endDate),
         revenue: toBillions(unwrapFinancialValue(row.totalRevenue)),
         earnings: toBillions(unwrapFinancialValue(row.netIncome)),
+        grossProfit: toBillions(unwrapFinancialValue(row.grossProfit)),
+        operatingIncome: toBillions(unwrapFinancialValue(row.operatingIncome)),
         eps: toNumberOrNull(
           unwrapFinancialValue(row.dilutedEPS) ??
             unwrapFinancialValue(row.basicEPS)
@@ -1284,6 +1344,52 @@ async function fetchYahooFinancialHistory(ticker) {
   } catch (err) {
     console.log("Yahoo financial history skipped:", ticker, err.message);
     return timeSeriesHistory;
+  }
+}
+
+async function fetchYahooYearEndPrices(ticker) {
+  const cached = yearEndPriceCache.get(ticker);
+  if (cached && Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1000) {
+    return cached.data;
+  }
+
+  try {
+    const currentYear = new Date().getFullYear();
+    const period1 = Math.floor(Date.UTC(currentYear - 6, 0, 1) / 1000);
+    const period2 = Math.floor(Date.now() / 1000);
+    const response = await axios.get(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}`,
+      {
+        params: { period1, period2, interval: "1mo", events: "history" },
+        headers: { "User-Agent": "Mozilla/5.0" },
+        timeout: 12000
+      }
+    );
+    const result = response.data?.chart?.result?.[0] || {};
+    const timestamps = result.timestamp || [];
+    const adjustedCloses = result.indicators?.adjclose?.[0]?.adjclose || [];
+    const closes = result.indicators?.quote?.[0]?.close || [];
+    const pricesByYear = new Map();
+
+    timestamps.forEach((timestamp, index) => {
+      const date = new Date(timestamp * 1000);
+      const close = firstYahooNumber(adjustedCloses[index], closes[index]);
+      if (Number.isNaN(date.getTime()) || close === null) return;
+      const year = date.getUTCFullYear();
+      const existing = pricesByYear.get(year);
+      if (!existing || timestamp > existing.timestamp) {
+        pricesByYear.set(year, { year, timestamp, close });
+      }
+    });
+
+    const data = [...pricesByYear.values()]
+      .map(({ year, close }) => ({ year, close }))
+      .sort((a, b) => a.year - b.year);
+    yearEndPriceCache.set(ticker, { data, fetchedAt: Date.now() });
+    return data;
+  } catch (err) {
+    console.log("Yahoo year-end prices skipped:", ticker, err.message);
+    return [];
   }
 }
 
@@ -1356,14 +1462,34 @@ async function fetchYahooSupplementalData(ticker) {
     const detail = summary?.summaryDetail || {};
     const trends = summary?.earningsTrend?.trend || [];
     const recommendationTrend = summary?.recommendationTrend?.trend || [];
-    const chartHighs = (chartData?.quotes || [])
+    const chartQuotes = chartData?.quotes || [];
+    const recentCutoff = Date.now() - 365 * 24 * 60 * 60 * 1000;
+    const recentChartQuotes = chartQuotes.filter((row) => {
+      const date = new Date(row.date);
+      return !Number.isNaN(date.getTime()) && date.getTime() >= recentCutoff;
+    });
+    const chartHighs = recentChartQuotes
       .map((row) => toNumberOrNull(row.high))
       .filter((value) => value !== null);
-    const chartLows = (chartData?.quotes || [])
+    const chartLows = recentChartQuotes
       .map((row) => toNumberOrNull(row.low))
       .filter((value) => value !== null);
     const chartHigh = chartHighs.length ? Math.max(...chartHighs) : null;
     const chartLow = chartLows.length ? Math.min(...chartLows) : null;
+    const yearEndPriceMap = new Map();
+    chartQuotes.forEach((row) => {
+      const date = new Date(row.date);
+      const close = firstYahooNumber(row.adjclose, row.close);
+      if (Number.isNaN(date.getTime()) || close === null) return;
+      const year = date.getFullYear();
+      const existing = yearEndPriceMap.get(year);
+      if (!existing || date > existing.date) {
+        yearEndPriceMap.set(year, { year, date, close });
+      }
+    });
+    const yearEndPrices = [...yearEndPriceMap.values()]
+      .map(({ year, close }) => ({ year, close }))
+      .sort((a, b) => a.year - b.year);
 
     const currentYear =
       trends.find((item) => item.period === "0y") || {};
@@ -1425,6 +1551,7 @@ async function fetchYahooSupplementalData(ticker) {
         quoteData.fiftyTwoWeekRange?.low,
         chartLow
       ),
+      yearEndPrices,
       revenueGrowth: normalizePercent(unwrapFinancialValue(financialData.revenueGrowth)),
       earningsGrowth: normalizePercent(unwrapFinancialValue(financialData.earningsGrowth)),
       grossMargins: normalizePercent(unwrapFinancialValue(financialData.grossMargins)),
@@ -1638,6 +1765,7 @@ async function fetchStockData(ticker) {
     yahooFinancialData,
     fmpIncomeStatementData,
     yahooSupplementalData,
+    yahooYearEndPrices,
     nasdaqData,
     stockAnalysisForecast,
     secAnnualMargins
@@ -1645,6 +1773,7 @@ async function fetchStockData(ticker) {
     fetchYahooFinancialHistory(ticker),
     fetchFmpIncomeStatementHistory(ticker),
     getYahooSupplementalData(ticker),
+    fetchYahooYearEndPrices(ticker),
     fetchNasdaqData(ticker),
     fetchStockAnalysisForecast(ticker),
     fetchSecAnnualMargins(ticker)
@@ -1708,6 +1837,55 @@ async function fetchStockData(ticker) {
 
     return (numeratorNumber / revenueNumber) * 100;
   };
+
+  const fallbackMarginHistory = revenueData.map((row) => ({
+    year: row.year,
+    grossMargin: annualMargin(row.grossProfit, row.revenue),
+    operatingMargin: annualMargin(row.operatingIncome, row.revenue),
+    profitMargin: annualMargin(row.earnings, row.revenue),
+    source: row.source
+  }));
+  const marginRowsByYear = new Map();
+  [...fallbackMarginHistory, ...(secAnnualMargins.marginHistory || [])].forEach((row) => {
+    if (!row?.year) return;
+    const existing = marginRowsByYear.get(row.year) || {};
+    marginRowsByYear.set(row.year, {
+      year: row.year,
+      grossMargin: row.grossMargin ?? existing.grossMargin ?? null,
+      operatingMargin: row.operatingMargin ?? existing.operatingMargin ?? null,
+      profitMargin: row.profitMargin ?? existing.profitMargin ?? null,
+      source: row.source || existing.source
+    });
+  });
+  const marginHistory = [...marginRowsByYear.values()]
+    .filter((row) =>
+      row.grossMargin !== null ||
+      row.operatingMargin !== null ||
+      row.profitMargin !== null
+    )
+    .sort((a, b) => a.year - b.year)
+    .slice(-6);
+  const yearEndPrices = new Map(
+    (yahooYearEndPrices.length
+      ? yahooYearEndPrices
+      : yahooSupplementalData.yearEndPrices || []
+    ).map((row) => [Number(row.year), row.close])
+  );
+  const historicalPe = revenueData
+    .map((row) => {
+      const price = toNumberOrNull(yearEndPrices.get(Number(row.year)));
+      const annualEps = toNumberOrNull(row.eps);
+      return {
+        year: row.year,
+        pe: price !== null && annualEps !== null && annualEps > 0
+          ? price / annualEps
+          : null,
+        price,
+        eps: annualEps
+      };
+    })
+    .filter((row) => row.pe !== null && row.pe > 0 && row.pe < 1000)
+    .slice(-6);
 
   const fmpPriceTargetData = await getFmpData(ticker, "price target", [
     "/stable/price-target-consensus?symbol={ticker}",
@@ -2102,6 +2280,8 @@ async function fetchStockData(ticker) {
   const data = withGuaranteedAnalystSection({
     isFinancialCompany,
     bankMetrics: secAnnualMargins.bankMetrics || null,
+    marginHistory,
+    historicalPe,
     name: profile.name || ticker,
     symbol: ticker,
     price: quote.c,

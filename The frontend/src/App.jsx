@@ -159,6 +159,40 @@ const API_URL =
   "https://investment-terminal-jtng.onrender.com";
 
 import "./App.css";
+
+function HistoricalLineChart({ title, data, dataKey, color, formatter, valueLabel }) {
+  return (
+    <section className="historical-chart-panel">
+      <h3>{title}</h3>
+      <div className="historical-chart-canvas">
+        {data.length ? (
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart
+              data={data}
+              margin={{ top: 12, right: 18, left: 6, bottom: 4 }}
+            >
+              <CartesianGrid stroke="#273244" />
+              <XAxis dataKey="year" />
+              <YAxis tickFormatter={formatter} width={58} />
+              <Tooltip formatter={(value) => [formatter(value), valueLabel]} />
+              <Line
+                type="monotone"
+                dataKey={dataKey}
+                stroke={color}
+                strokeWidth={3}
+                dot={{ r: 4 }}
+                activeDot={{ r: 6 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="historical-chart-empty">No annual history available.</div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function App() {
   const latestStockRequest = useRef(0);
   const latestComparisonRequest = useRef(0);
@@ -770,6 +804,16 @@ const earningsHistory =
 
 const epsHistory =
   buildChartRows(financialHistory, "eps");
+const historicalPeHistory = (stockData?.historicalPe || [])
+  .filter((row) => row?.year && row.year <= 2025 && isNumber(row.pe));
+const annualMarginHistory = (stockData?.marginHistory || [])
+  .filter((row) => row?.year && row.year <= 2025);
+const grossMarginHistory = annualMarginHistory
+  .filter((row) => isNumber(row.grossMargin));
+const operatingMarginHistory = annualMarginHistory
+  .filter((row) => isNumber(row.operatingMargin));
+const profitMarginHistory = annualMarginHistory
+  .filter((row) => isNumber(row.profitMargin));
 
 const estimateFromHistoryYear = (year, fallback = {}) => {
   const row = financialHistory.find(
@@ -1612,6 +1656,42 @@ return (
   </div>
 
 </div>
+
+<div className="historical-chart-grid">
+  <HistoricalLineChart
+    title="Historical Year-End P/E"
+    data={historicalPeHistory}
+    dataKey="pe"
+    color="#60a5fa"
+    formatter={(value) => `${Number(value).toFixed(1)}x`}
+    valueLabel="P/E"
+  />
+  <HistoricalLineChart
+    title={stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin History"}
+    data={grossMarginHistory}
+    dataKey="grossMargin"
+    color="#a78bfa"
+    formatter={(value) => `${Number(value).toFixed(1)}%`}
+    valueLabel={stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin"}
+  />
+  <HistoricalLineChart
+    title={stockData.isFinancialCompany ? "Pre-Tax Margin History" : "Operating Margin History"}
+    data={operatingMarginHistory}
+    dataKey="operatingMargin"
+    color="#f59e0b"
+    formatter={(value) => `${Number(value).toFixed(1)}%`}
+    valueLabel={stockData.isFinancialCompany ? "Pre-Tax Margin" : "Operating Margin"}
+  />
+  <HistoricalLineChart
+    title="Profit Margin History"
+    data={profitMarginHistory}
+    dataKey="profitMargin"
+    color="#34d399"
+    formatter={(value) => `${Number(value).toFixed(1)}%`}
+    valueLabel="Profit Margin"
+  />
+</div>
+
         {/* METRICS */}
 
    <div className="grid section-anchor" id="metrics">
