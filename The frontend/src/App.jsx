@@ -116,8 +116,8 @@ const shiftIsoDate = (isoDate, days) => {
   return toLocalIsoDate(date);
 };
 
-const formatCalendarMoney = (value) => {
-  if (!isNumber(value)) return "N/A";
+const formatCalendarMoney = (value, missingLabel = "N/A") => {
+  if (!isNumber(value)) return missingLabel;
   const absolute = Math.abs(value);
   const sign = value < 0 ? "-" : "";
   if (absolute >= 1e9) return `${sign}$${(absolute / 1e9).toFixed(1)}B`;
@@ -125,8 +125,8 @@ const formatCalendarMoney = (value) => {
   return `${sign}$${absolute.toLocaleString()}`;
 };
 
-const formatCalendarEps = (value) =>
-  isNumber(value) ? `${value < 0 ? "-" : ""}$${Math.abs(value).toFixed(2)}` : "N/A";
+const formatCalendarEps = (value, missingLabel = "N/A") =>
+  isNumber(value) ? `${value < 0 ? "-" : ""}$${Math.abs(value).toFixed(2)}` : missingLabel;
 import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
@@ -2377,8 +2377,8 @@ return (
               {event.reportTime}
               {event.fiscalQuarter && <small>{event.fiscalQuarter}</small>}
             </span>
-            <strong data-label="Revenue est.">{formatCalendarMoney(event.revenueEstimate)}</strong>
-            <strong data-label="EPS est.">{formatCalendarEps(event.epsEstimate)}</strong>
+            <strong data-label="Revenue est.">{formatCalendarMoney(event.revenueEstimate, "No estimate")}</strong>
+            <strong data-label="EPS est.">{formatCalendarEps(event.epsEstimate, "No estimate")}</strong>
             <span data-label="Market cap">{formatCalendarMoney(event.marketCap)}</span>
           </button>
         ))}

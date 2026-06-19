@@ -2861,6 +2861,8 @@ app.get("/api/earnings", async (req, res) => {
     date.setUTCDate(date.getUTCDate() + index);
     return toIsoDate(date);
   });
+  const paddedStart = new Date(weekStart);
+  paddedStart.setUTCDate(paddedStart.getUTCDate() - 45);
   const cacheKey = dates[0];
   const cached = earningsCalendarCache.get(cacheKey);
   if (cached && Date.now() - cached.cachedAt < 15 * 60 * 1000) {
@@ -2878,7 +2880,7 @@ app.get("/api/earnings", async (req, res) => {
       process.env.FINNHUB_API_KEY
         ? axios.get("https://finnhub.io/api/v1/calendar/earnings", {
             params: {
-              from: dates[0],
+              from: toIsoDate(paddedStart),
               to: dates[6],
               token: process.env.FINNHUB_API_KEY
             },
@@ -2903,6 +2905,12 @@ app.get("/api/earnings", async (req, res) => {
     const finnhubByDateAndSymbol = new Map(
       finnhubRows.map((row) => [`${row.date}:${row.symbol}`, row])
     );
+    const finnhubBySymbol = finnhubRows.reduce((map, row) => {
+      const rows = map.get(row.symbol) || [];
+      rows.push(row);
+      map.set(row.symbol, rows);
+      return map;
+    }, new Map());
     const parseMarketCap = (value) => {
       const number = Number(String(value || "").replace(/[$,]/g, ""));
       return Number.isFinite(number) ? number : null;
@@ -2929,14 +2937,30 @@ app.get("/api/earnings", async (req, res) => {
     const days = dates.map((date, index) => {
       const nasdaqRows = nasdaqResponses[index]?.data?.data?.rows || [];
       const events = nasdaqRows.map((row) => {
-        const finnhub = finnhubByDateAndSymbol.get(`${date}:${row.symbol}`) || {};
+        const exactFinnhub = finnhubByDateAndSymbol.get(`${date}:${row.symbol}`);
+        const nasdaqEps = parseEstimate(row.epsForecast);
+        const nearbyFinnhub = (finnhubBySymbol.get(row.symbol) || [])
+          .map((candidate) => ({
+            candidate,
+            distance: Math.abs(
+              new Date(`${candidate.date}T12:00:00Z`) - new Date(`${date}T12:00:00Z`)
+            ) / (24 * 60 * 60 * 1000)
+          }))
+          .filter(({ candidate, distance }) => {
+            if (distance > 45) return false;
+            const candidateEps = parseApiNumber(candidate.epsEstimate);
+            if (nasdaqEps === null || candidateEps === null) return true;
+            return Math.abs(nasdaqEps - candidateEps) <= Math.max(0.25, Math.abs(nasdaqEps) * 0.5);
+          })
+          .sort((a, b) => a.distance - b.distance)[0]?.candidate;
+        const finnhub = exactFinnhub || nearbyFinnhub || {};
         return {
           date,
           symbol: row.symbol,
           company: row.name || row.symbol,
           marketCap: parseMarketCap(row.marketCap),
-          reportTime: timeLabels[finnhub.hour || row.time] || "Time not supplied",
-          fiscalQuarter: finnhub.quarter && finnhub.year
+          reportTime: timeLabels[exactFinnhub?.hour || row.time] || "Time not supplied",
+          fiscalQuarter: exactFinnhub?.quarter && exactFinnhub?.year
             ? `Q${finnhub.quarter} ${finnhub.year}`
             : row.fiscalQuarterEnding || null,
           epsEstimate: parseApiNumber(finnhub.epsEstimate) ?? parseEstimate(row.epsForecast),
