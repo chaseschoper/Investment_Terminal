@@ -354,6 +354,9 @@ const [user, setUser] =
   const [portfolioPrices, setPortfolioPrices] =
     useState({});
 
+  const [savedSymbolDetails, setSavedSymbolDetails] =
+    useState({});
+
   const [portfolioTicker, setPortfolioTicker] =
     useState("");
 
@@ -391,6 +394,7 @@ const [user, setUser] =
 
 useEffect(() => {
   const symbols = [...new Set([
+    ticker,
     ...watchlist,
     ...portfolio.map((position) => position.symbol),
     ...namedWatchlists.flatMap((list) => list.symbols || [])
@@ -403,7 +407,7 @@ useEffect(() => {
   refreshPrices();
   const refreshTimer = window.setInterval(refreshPrices, 60 * 1000);
   return () => window.clearInterval(refreshTimer);
-}, [watchlist, portfolio, namedWatchlists]);
+}, [ticker, watchlist, portfolio, namedWatchlists]);
 
   /*
     LOAD STOCK WHEN TICKER CHANGES
@@ -714,7 +718,9 @@ const loadUserData = async () => {
         );
 
       const receivedPrices = response.data?.prices || {};
+      const receivedDetails = response.data?.details || {};
       setPortfolioPrices((prev) => ({ ...prev, ...receivedPrices }));
+      setSavedSymbolDetails((prev) => ({ ...prev, ...receivedDetails }));
       const missingSymbols = symbols.filter(
         (symbol) => !isNumber(receivedPrices[symbol])
       );
@@ -994,6 +1000,17 @@ return (
             }}
           >
 
+            {savedSymbolDetails[item]?.logo ? (
+              <img
+                className="watch-logo"
+                src={savedSymbolDetails[item].logo}
+                alt=""
+                onError={(event) => { event.currentTarget.style.display = "none"; }}
+              />
+            ) : (
+              <span className="watch-logo-fallback">{item.slice(0, 1)}</span>
+            )}
+
             <span className="watch-symbol">
               {item}
             </span>
@@ -1002,6 +1019,18 @@ return (
               $
               {portfolioPrices[item]
                 ?.toFixed(2) || "--"}
+            </span>
+
+            <span className={`watch-session-change ${
+              savedSymbolDetails[item]?.percentChange > 0
+                ? "positive"
+                : savedSymbolDetails[item]?.percentChange < 0
+                  ? "negative"
+                  : "neutral"
+            }`}>
+              {isNumber(savedSymbolDetails[item]?.percentChange)
+                ? `${savedSymbolDetails[item].percentChange > 0 ? "+" : ""}${savedSymbolDetails[item].percentChange.toFixed(2)}%`
+                : "--"}
             </span>
 
             <button
@@ -1069,6 +1098,7 @@ return (
     </div>
 
     <nav className="section-tabs" aria-label="Page sections">
+      <a href="#home">Home</a>
       <a href="#overview">Overview</a>
       <a href="#financials">Financials</a>
       <a href="#metrics">Metrics</a>
@@ -1082,13 +1112,22 @@ return (
 
     {/* MAIN */}
 
-    <div className="main" id="overview">
+    <div className="main">
+
+    <section className="welcome-hero" id="home" aria-labelledby="welcome-title">
+      <div className="welcome-hero-content">
+        <div className="welcome-kicker">Market research, focused</div>
+        <h1 id="welcome-title">Welcome to MrktRally</h1>
+        <p>Track companies, study the numbers, and keep your market view in one place.</p>
+        <a className="welcome-action" href="#overview">Explore the market</a>
+      </div>
+    </section>
 
 
 
     {/* SEARCH */}
 
-<div className="topbar">
+<div className="topbar" id="overview">
 
   <input
     className="search"
@@ -1127,17 +1166,28 @@ return (
 
         <div className="stock-header">
 
-          <div className="stock-name">
-            {stockData.name}
-          </div>
+          {(stockData.logo || savedSymbolDetails[ticker]?.logo) && (
+            <img
+              className="stock-company-logo"
+              src={stockData.logo || savedSymbolDetails[ticker]?.logo}
+              alt={`${stockData.name} logo`}
+              onError={(event) => { event.currentTarget.style.display = "none"; }}
+            />
+          )}
 
-          <div className="stock-price">
-            $
-            {stockData.price?.toFixed(2)}
-          </div>
+          <div className="stock-header-copy">
+            <div className="stock-name">
+              {stockData.name}
+            </div>
 
-          <div className="stock-change">
-            {stockData.symbol}
+            <div className="stock-price">
+              $
+              {stockData.price?.toFixed(2)}
+            </div>
+
+            <div className="stock-change">
+              {stockData.symbol}
+            </div>
           </div>
 
         </div>

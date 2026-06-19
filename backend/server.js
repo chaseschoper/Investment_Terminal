@@ -24,6 +24,7 @@ const FINANCIAL_HISTORY_VERSION = 35;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
+const savedSymbolProfileCache = new Map();
 let secTickerMapPromise;
 const TICKER_ALIASES = {
   ZILLOW: "Z",
@@ -2415,6 +2416,7 @@ async function fetchStockData(ticker) {
     historicalPe,
     name: profile.name || ticker,
     symbol: ticker,
+    logo: profile.logo || null,
     price: quote.c,
     change: quote.d,
     percentChange: quote.dp,
@@ -2541,34 +2543,72 @@ app.get("/api/prices", async (req, res) => {
     .filter((symbol) => /^[A-Z0-9.-]{1,10}$/.test(symbol)))]
     .slice(0, 30);
 
-  if (!symbols.length) return res.json({ prices: {} });
+  if (!symbols.length) return res.json({ prices: {}, details: {} });
 
   const prices = {};
+  const details = {};
+  const savedStocks = await Stock.find({ ticker: { $in: symbols } })
+    .select("ticker data.price data.change data.percentChange data.logo data.name")
+    .lean();
+  const savedBySymbol = new Map(savedStocks.map((stock) => [stock.ticker, stock.data || {}]));
+
   await Promise.all(symbols.map(async (symbol) => {
+    const savedData = savedBySymbol.get(symbol) || {};
+    details[symbol] = {
+      name: savedData.name || symbol,
+      logo: savedData.logo || null,
+      change: toNumberOrNull(savedData.change),
+      percentChange: toNumberOrNull(savedData.percentChange)
+    };
+
     const cached = livePriceCache.get(symbol);
     if (cached && Date.now() - cached.fetchedAt < 30 * 1000) {
       prices[symbol] = cached.price;
-      return;
+    } else {
+      try {
+        const quote = await getFinnhub(`https://finnhub.io/api/v1/quote?symbol=${symbol}`);
+        const price = toNumberOrNull(quote?.c);
+        if (price !== null && price > 0) {
+          prices[symbol] = price;
+          livePriceCache.set(symbol, { price, fetchedAt: Date.now() });
+        }
+        details[symbol] = {
+          ...details[symbol],
+          change: toNumberOrNull(quote?.d),
+          percentChange: toNumberOrNull(quote?.dp)
+        };
+      } catch (err) {
+        console.log("Saved-symbol price skipped:", symbol, err.response?.status || err.message);
+      }
     }
 
-    try {
-      const quote = await getFinnhub(`https://finnhub.io/api/v1/quote?symbol=${symbol}`);
-      const price = toNumberOrNull(quote?.c);
-      if (price !== null && price > 0) {
-        prices[symbol] = price;
-        livePriceCache.set(symbol, { price, fetchedAt: Date.now() });
+    const savedPrice = toNumberOrNull(savedData.price);
+    if (!prices[symbol] && savedPrice !== null && savedPrice > 0) prices[symbol] = savedPrice;
+
+    if (!details[symbol].logo) {
+      const cachedProfile = savedSymbolProfileCache.get(symbol);
+      if (cachedProfile && Date.now() - cachedProfile.fetchedAt < 24 * 60 * 60 * 1000) {
+        details[symbol] = { ...details[symbol], ...cachedProfile.data };
         return;
       }
-    } catch (err) {
-      console.log("Saved-symbol price skipped:", symbol, err.response?.status || err.message);
-    }
 
-    const savedStock = await Stock.findOne({ ticker: symbol }).select("data.price").lean();
-    const savedPrice = toNumberOrNull(savedStock?.data?.price);
-    if (savedPrice !== null && savedPrice > 0) prices[symbol] = savedPrice;
+      try {
+        const profile = await getFinnhub(
+          `https://finnhub.io/api/v1/stock/profile2?symbol=${symbol}`
+        );
+        const profileData = {
+          name: profile?.name || details[symbol].name,
+          logo: profile?.logo || null
+        };
+        details[symbol] = { ...details[symbol], ...profileData };
+        savedSymbolProfileCache.set(symbol, { data: profileData, fetchedAt: Date.now() });
+      } catch (err) {
+        console.log("Saved-symbol profile skipped:", symbol, err.response?.status || err.message);
+      }
+    }
   }));
 
-  res.json({ prices });
+  res.json({ prices, details });
 });
 
 app.get("/api/stock/:ticker", async (req, res) => {

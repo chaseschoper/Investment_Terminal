@@ -20,6 +20,68 @@ body {
   flex-direction: column;
 }
 
+.welcome-hero {
+  min-height: clamp(380px, 54vh, 540px);
+  display: flex;
+  align-items: center;
+  padding: 64px clamp(24px, 7vw, 112px);
+  background-color: rgba(5, 10, 14, 0.42);
+  background-image: url("/mrktrally-hero.png");
+  background-blend-mode: multiply;
+  background-size: cover;
+  background-position: center;
+  border-bottom: 1px solid #26333b;
+  scroll-margin-top: 114px;
+}
+
+.welcome-hero-content {
+  width: min(680px, 100%);
+}
+
+.welcome-kicker {
+  margin-bottom: 14px;
+  color: #5eead4;
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.welcome-hero h1 {
+  max-width: 660px;
+  font-size: clamp(42px, 6vw, 76px);
+  line-height: 1.02;
+  letter-spacing: 0;
+}
+
+.welcome-hero p {
+  max-width: 590px;
+  margin-top: 20px;
+  color: #d5dde2;
+  font-size: 18px;
+  line-height: 1.6;
+}
+
+.welcome-action {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  margin-top: 28px;
+  padding: 0 18px;
+  border: 1px solid #5eead4;
+  border-radius: 6px;
+  background: #0d9488;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.welcome-action:hover,
+.welcome-action:focus-visible {
+  background: #0f766e;
+  outline: none;
+}
+
 .research-section {
   order: 10;
 }
@@ -107,7 +169,7 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 30px;
+  margin: 36px 30px 30px;
 }
 
 .search {
@@ -128,18 +190,38 @@ body {
 /* HEADER */
 
 .stock-header {
-  margin-bottom: 35px;
+  display: flex;
+  align-items: flex-start;
+  gap: 22px;
+  margin: 0 30px 35px;
+}
+
+.stock-company-logo {
+  width: 72px;
+  height: 72px;
+  flex: 0 0 72px;
+  border: 1px solid #2b3744;
+  border-radius: 8px;
+  background: #ffffff;
+  object-fit: contain;
+  padding: 8px;
+}
+
+.stock-header-copy {
+  min-width: 0;
 }
 
 .stock-name {
   font-size: 44px;
   font-weight: 700;
+  line-height: 1.12;
 }
 
 .stock-price {
   font-size: 60px;
   font-weight: 700;
-  margin-top: 10px;
+  line-height: 1.05;
+  margin-top: 22px;
 }
 
 .stock-change {
@@ -970,6 +1052,29 @@ body {
   min-width: fit-content;
 }
 
+.watch-logo,
+.watch-logo-fallback {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  border-radius: 5px;
+}
+
+.watch-logo {
+  background: #ffffff;
+  object-fit: contain;
+  padding: 3px;
+}
+
+.watch-logo-fallback {
+  display: grid;
+  place-items: center;
+  background: #243244;
+  color: #dbeafe;
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .watchlist-stock:hover {
   border-color: #3b82f6;
   transform: translateY(-2px);
@@ -981,8 +1086,28 @@ body {
 }
 
 .watch-price {
-  color: #22c55e;
+  color: #e5e7eb;
   font-weight: 600;
+}
+
+.watch-session-change {
+  min-width: 54px;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.watch-session-change.positive {
+  color: #34d399;
+}
+
+.watch-session-change.negative {
+  color: #fb7185;
+}
+
+.watch-session-change.neutral {
+  color: #9ca3af;
 }
 
 .watch-remove {
@@ -1043,6 +1168,7 @@ body {
 }
 
 #overview,
+#home,
 #ai-analysis,
 #financials,
 #metrics,
@@ -1269,6 +1395,45 @@ body {
 }
 
 @media (max-width: 640px) {
+  .welcome-hero {
+    min-height: 420px;
+    align-items: flex-end;
+    padding: 44px 20px;
+    background-position: 62% center;
+  }
+
+  .welcome-hero h1 {
+    font-size: 44px;
+  }
+
+  .welcome-hero p {
+    font-size: 16px;
+  }
+
+  .topbar {
+    margin-inline: 16px;
+  }
+
+  .stock-header {
+    gap: 14px;
+    margin-inline: 16px;
+  }
+
+  .stock-company-logo {
+    width: 52px;
+    height: 52px;
+    flex-basis: 52px;
+  }
+
+  .stock-name {
+    font-size: 30px;
+  }
+
+  .stock-price {
+    margin-top: 16px;
+    font-size: 44px;
+  }
+
   .top-watchlist {
     gap: 12px;
     padding-inline: 12px;
