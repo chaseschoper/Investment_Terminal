@@ -24,6 +24,22 @@ body {
   order: 10;
 }
 
+.ai-stock-section {
+  order: 10;
+}
+
+.ai-earnings-section {
+  order: 11;
+}
+
+#portfolio {
+  order: 12;
+}
+
+.earnings-call-section {
+  order: 13;
+}
+
 .calendar-bottom-section {
   order: 20;
 }

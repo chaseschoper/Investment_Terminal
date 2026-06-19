@@ -1060,10 +1060,10 @@ return (
       <a href="#overview">Overview</a>
       <a href="#financials">Financials</a>
       <a href="#metrics">Metrics</a>
-      <a href="#portfolio">Portfolio</a>
       <a href="#comparison">Compare</a>
-      <a href="#earnings-calendar">Calendar</a>
       <a href="#ai-analysis">AI Analysis</a>
+      <a href="#portfolio">Portfolio</a>
+      <a href="#earnings-calendar">Calendar</a>
     </nav>
 
     {/* MAIN */}
@@ -1164,7 +1164,7 @@ return (
 </div>
 {/* AI ANALYSIS */}
 
-<div className="chart-section research-section" id="ai-analysis">
+<div className="chart-section research-section ai-stock-section" id="ai-analysis">
 
   <h2 className="section-title">
     AI Stock Analysis
@@ -1238,7 +1238,7 @@ return (
 </div>
 {/* AI EARNINGS TRANSCRIPT ANALYSIS */}
 
-<div className="chart-section research-section">
+<div className="chart-section research-section ai-earnings-section">
 
   <h2 className="section-title">
     AI Earnings Call Analysis
@@ -1327,7 +1327,7 @@ return (
 </div>
 {/* EARNINGS CALL TRANSCRIPTS */}
 
-<div className="chart-section research-section">
+<div className="chart-section research-section earnings-call-section">
 
   <h2 className="section-title">
     Earnings Call Audio & Transcript
