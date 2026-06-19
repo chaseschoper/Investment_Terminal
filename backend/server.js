@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 26;
+const FINANCIAL_HISTORY_VERSION = 27;
 const secMarginCache = new Map();
 let secTickerMapPromise;
 const TICKER_ALIASES = {
@@ -345,6 +345,17 @@ async function fetchSecAnnualMargins(ticker) {
       "PaymentsForAdditionsToPropertyPlantAndEquipment",
       "PaymentsToAcquirePropertyPlantAndEquipmentAndIntangibleAssets"
     ], endDate);
+    const netInterestIncome = latestSecAnnualFact(facts, [
+      "InterestIncomeExpenseNet"
+    ], endDate);
+    const preTaxIncome = latestSecAnnualFact(facts, [
+      "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+      "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic"
+    ], endDate);
+    const annualCashChange = latestSecAnnualFact(facts, [
+      "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseIncludingExchangeRateEffect",
+      "CashAndCashEquivalentsPeriodIncreaseDecrease"
+    ], endDate);
     const previousNetIncome = previousRevenue
       ? latestSecAnnualFact(facts, [
           "NetIncomeLoss",
@@ -367,6 +378,17 @@ async function fetchSecAnnualMargins(ticker) {
       revenueConcept,
       revenueGrowth: annualGrowth(revenue, previousRevenue),
       earningsGrowth: annualGrowth(netIncome, previousNetIncome),
+      bankMetrics: isFinancialCompany
+        ? {
+            netInterestRevenueMix: netInterestIncome?.val !== undefined
+              ? (netInterestIncome.val / revenue.val) * 100
+              : null,
+            preTaxMargin: preTaxIncome?.val !== undefined
+              ? (preTaxIncome.val / revenue.val) * 100
+              : null,
+            annualCashChange: annualCashChange?.val ?? null
+          }
+        : null,
       history: [
         previousRevenue
           ? {
@@ -2068,6 +2090,7 @@ async function fetchStockData(ticker) {
 
   const data = withGuaranteedAnalystSection({
     isFinancialCompany,
+    bankMetrics: secAnnualMargins.bankMetrics || null,
     name: profile.name || ticker,
     symbol: ticker,
     price: quote.c,

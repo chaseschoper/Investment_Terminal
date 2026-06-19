@@ -1667,21 +1667,29 @@ return (
 
   <div className="card">
     <div className="card-title">
-      Gross Margin
+      {stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin"}
     </div>
 
     <div className="card-value">
-{formatPercent(stockData.grossMargins)}
+{formatPercent(
+  stockData.isFinancialCompany
+    ? stockData.bankMetrics?.netInterestRevenueMix
+    : stockData.grossMargins
+)}
     </div>
   </div>
 
   <div className="card">
     <div className="card-title">
-      Operating Margin
+      {stockData.isFinancialCompany ? "Pre-Tax Margin" : "Operating Margin"}
     </div>
 
     <div className="card-value">
-{formatPercent(stockData.operatingMargins)}
+{formatPercent(
+  stockData.isFinancialCompany
+    ? stockData.bankMetrics?.preTaxMargin
+    : stockData.operatingMargins
+)}
     </div>
   </div>
 
@@ -1697,11 +1705,15 @@ return (
 
   <div className="card">
     <div className="card-title">
-      Free Cash Flow
+      {stockData.isFinancialCompany ? "Annual Cash Change" : "Free Cash Flow"}
     </div>
 
     <div className="card-value">
-{formatBillions(stockData.freeCashflow)}
+{formatBillions(
+  stockData.isFinancialCompany
+    ? stockData.bankMetrics?.annualCashChange
+    : stockData.freeCashflow
+)}
     </div>
   </div>
 
@@ -2289,16 +2301,24 @@ return (
     </div>
 
     <div className="comparison-stat">
-      <span>Gross Margin</span>
+      <span>{stock.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin"}</span>
 <strong>
-  {formatPercent(stock.grossMargins)}
+  {formatPercent(
+    stock.isFinancialCompany
+      ? stock.bankMetrics?.netInterestRevenueMix
+      : stock.grossMargins
+  )}
 </strong>
     </div>
 
     <div className="comparison-stat">
-      <span>Operating Margin</span>
+      <span>{stock.isFinancialCompany ? "Pre-Tax Margin" : "Operating Margin"}</span>
 <strong>
-  {formatPercent(stock.operatingMargins)}
+  {formatPercent(
+    stock.isFinancialCompany
+      ? stock.bankMetrics?.preTaxMargin
+      : stock.operatingMargins
+  )}
 </strong>
     </div>
 
@@ -2310,9 +2330,13 @@ return (
     </div>
 
     <div className="comparison-stat">
-      <span>Free Cash Flow</span>
+      <span>{stock.isFinancialCompany ? "Annual Cash Change" : "Free Cash Flow"}</span>
 <strong>
-  {formatBillions(stock.freeCashflow)}
+  {formatBillions(
+    stock.isFinancialCompany
+      ? stock.bankMetrics?.annualCashChange
+      : stock.freeCashflow
+  )}
 </strong>
     </div>
 
