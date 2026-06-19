@@ -158,6 +158,24 @@ const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
 
+const handleCompanyLogoError = (event, symbol) => {
+  const image = event.currentTarget;
+  const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
+  const fallbackUrls = [
+    `https://financialmodelingprep.com/image-stock/${safeSymbol}.png`,
+    `https://assets.parqet.com/logos/symbol/${safeSymbol}?format=png`
+  ];
+  const stage = Number(image.dataset.logoFallbackStage || 0);
+
+  if (fallbackUrls[stage]) {
+    image.dataset.logoFallbackStage = String(stage + 1);
+    image.src = fallbackUrls[stage];
+    return;
+  }
+
+  image.style.display = "none";
+};
+
 import "./App.css";
 
 function HistoricalLineChart({ title, data, dataKey, color, formatter, valueLabel }) {
@@ -1007,7 +1025,7 @@ return (
                 className="watch-logo"
                 src={savedSymbolDetails[item].logo}
                 alt=""
-                onError={(event) => { event.currentTarget.style.display = "none"; }}
+                onError={(event) => handleCompanyLogoError(event, item)}
               />
               )}
             </span>
@@ -1169,10 +1187,11 @@ return (
 
           {(stockData.logo || savedSymbolDetails[ticker]?.logo) && (
             <img
+              key={ticker}
               className="stock-company-logo"
               src={stockData.logo || savedSymbolDetails[ticker]?.logo}
               alt={`${stockData.name} logo`}
-              onError={(event) => { event.currentTarget.style.display = "none"; }}
+              onError={(event) => handleCompanyLogoError(event, ticker)}
             />
           )}
 
@@ -2554,7 +2573,7 @@ return (
                         className="named-watchlist-logo"
                         src={savedSymbolDetails[symbol].logo}
                         alt=""
-                        onError={(event) => { event.currentTarget.style.display = "none"; }}
+                        onError={(event) => handleCompanyLogoError(event, symbol)}
                       />
                       )}
                     </span>
