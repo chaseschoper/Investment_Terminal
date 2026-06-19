@@ -2219,7 +2219,7 @@ return (
 
 {/* PORTFOLIO PERFORMANCE */}
 
-<div className="chart-section">
+<div className="chart-section portfolio-performance-section">
 
   <h2 className="section-title">
     Portfolio Performance

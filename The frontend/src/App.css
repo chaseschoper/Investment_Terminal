@@ -36,6 +36,10 @@ body {
   order: 13;
 }
 
+.portfolio-performance-section {
+  order: 13;
+}
+
 .earnings-call-section {
   order: 12;
 }
