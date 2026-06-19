@@ -381,23 +381,19 @@ const [user, setUser] =
 
 
 useEffect(() => {
+  const symbols = [...new Set([
+    ...watchlist,
+    ...portfolio.map((position) => position.symbol)
+  ].map((symbol) => String(symbol || "").trim().toUpperCase()).filter(Boolean))];
 
+  const refreshPrices = () => {
+    loadSavedPrices(symbols);
+  };
 
-  watchlist.forEach((symbol) => {
-    loadPortfolioPrice(symbol);
-  });
-
-}, [watchlist]);
-
-
-  /*
-    SAVE PORTFOLIO
-  */
-
-  useEffect(() => {
-
-
-  }, [portfolio]);
+  refreshPrices();
+  const refreshTimer = window.setInterval(refreshPrices, 60 * 1000);
+  return () => window.clearInterval(refreshTimer);
+}, [watchlist, portfolio]);
 
   /*
     LOAD STOCK WHEN TICKER CHANGES
@@ -694,25 +690,42 @@ const loadUserData = async () => {
     LOAD PORTFOLIO PRICE
   */
 
-  const loadPortfolioPrice = async (symbol) => {
+  const loadSavedPrices = async (symbols, attempt = 0) => {
+    if (!symbols.length) return;
 
     try {
 
       const response =
         await axios.get(
-          `${API_URL}/api/stock/${symbol}`
+          `${API_URL}/api/prices`,
+          { params: { symbols: symbols.join(",") } }
         );
 
-      setPortfolioPrices((prev) => ({
-        ...prev,
-        [symbol]: response.data.price,
-      }));
+      const receivedPrices = response.data?.prices || {};
+      setPortfolioPrices((prev) => ({ ...prev, ...receivedPrices }));
+      const missingSymbols = symbols.filter(
+        (symbol) => !isNumber(receivedPrices[symbol])
+      );
+
+      if (missingSymbols.length && attempt < 20) {
+        window.setTimeout(
+          () => loadSavedPrices(missingSymbols, attempt + 1),
+          1000
+        );
+      }
 
     } catch (err) {
-
-      console.error(err);
+      if (attempt < 6) {
+        window.setTimeout(() => loadSavedPrices(symbols, attempt + 1), 1500);
+      } else {
+        console.error(err);
+      }
 
     }
+  };
+
+  const loadPortfolioPrice = async (symbol) => {
+    await loadSavedPrices([symbol]);
   };
 
   /*
@@ -1034,16 +1047,23 @@ return (
 
       </div>
 
+      <button
+        className="auth-top-button"
+        onClick={() => setShowAuth(true)}
+      >
+        {user ? user.username : "Login / Signup"}
+      </button>
+
     </div>
 
     <nav className="section-tabs" aria-label="Page sections">
       <a href="#overview">Overview</a>
-      <a href="#ai-analysis">AI Analysis</a>
       <a href="#financials">Financials</a>
       <a href="#metrics">Metrics</a>
       <a href="#portfolio">Portfolio</a>
       <a href="#comparison">Compare</a>
       <a href="#earnings-calendar">Calendar</a>
+      <a href="#ai-analysis">AI Analysis</a>
     </nav>
 
     {/* MAIN */}
@@ -1087,15 +1107,6 @@ return (
       Loading...
     </span>
   )}
-
-  <button
-    className="portfolio-btn"
-    onClick={() =>
-      setShowAuth(true)
-    }
-  >
-    {user ? user.username : "Login / Signup"}
-  </button>
 
 </div>
         {/* HEADER */}
@@ -1153,7 +1164,7 @@ return (
 </div>
 {/* AI ANALYSIS */}
 
-<div className="chart-section" id="ai-analysis">
+<div className="chart-section research-section" id="ai-analysis">
 
   <h2 className="section-title">
     AI Stock Analysis
@@ -1227,7 +1238,7 @@ return (
 </div>
 {/* AI EARNINGS TRANSCRIPT ANALYSIS */}
 
-<div className="chart-section">
+<div className="chart-section research-section">
 
   <h2 className="section-title">
     AI Earnings Call Analysis
@@ -1316,7 +1327,7 @@ return (
 </div>
 {/* EARNINGS CALL TRANSCRIPTS */}
 
-<div className="chart-section">
+<div className="chart-section research-section">
 
   <h2 className="section-title">
     Earnings Call Audio & Transcript

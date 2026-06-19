@@ -15,6 +15,15 @@ body {
   font-family: Inter, sans-serif;
 }
 
+.main {
+  display: flex;
+  flex-direction: column;
+}
+
+.research-section {
+  order: 10;
+}
+
 .app {
   min-height: 100vh;
   background: #0b0f14;
@@ -67,6 +76,9 @@ body {
 /* TOP BAR */
 
 .topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   margin-bottom: 30px;
 }
 
@@ -897,6 +909,26 @@ body {
   scrollbar-width: thin;
 }
 
+.auth-top-button {
+  min-height: 38px;
+  flex: 0 0 auto;
+  padding: 0 14px;
+  border: 1px solid #374151;
+  border-radius: 6px;
+  background: #172033;
+  color: #f9fafb;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.auth-top-button:hover,
+.auth-top-button:focus-visible {
+  border-color: #60a5fa;
+  outline: none;
+}
+
 .watchlist-stock {
   display: flex;
   align-items: center;
@@ -1055,6 +1087,21 @@ body {
   .top-watchlist {
     gap: 12px;
     padding-inline: 12px;
+  }
+
+  .auth-top-button {
+    width: 52px;
+    overflow: hidden;
+    padding: 0;
+    color: transparent;
+  }
+
+  .auth-top-button::after {
+    content: "Log in";
+    display: grid;
+    place-items: center;
+    color: #f9fafb;
+    font-size: 10px;
   }
 
   .section-tabs {

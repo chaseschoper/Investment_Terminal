@@ -23,6 +23,7 @@ const earningsCalendarCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 34;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
+const livePriceCache = new Map();
 let secTickerMapPromise;
 const TICKER_ALIASES = {
   ZILLOW: "Z",
@@ -2509,6 +2510,43 @@ function startStockFetch(ticker) {
 // =========================
 // STOCK ROUTE - AUTO ONBOARD TICKERS
 // =========================
+app.get("/api/prices", async (req, res) => {
+  const symbols = [...new Set(String(req.query.symbols || "")
+    .split(",")
+    .map((symbol) => symbol.trim().toUpperCase())
+    .filter((symbol) => /^[A-Z0-9.-]{1,10}$/.test(symbol)))]
+    .slice(0, 30);
+
+  if (!symbols.length) return res.json({ prices: {} });
+
+  const prices = {};
+  await Promise.all(symbols.map(async (symbol) => {
+    const cached = livePriceCache.get(symbol);
+    if (cached && Date.now() - cached.fetchedAt < 30 * 1000) {
+      prices[symbol] = cached.price;
+      return;
+    }
+
+    try {
+      const quote = await getFinnhub(`https://finnhub.io/api/v1/quote?symbol=${symbol}`);
+      const price = toNumberOrNull(quote?.c);
+      if (price !== null && price > 0) {
+        prices[symbol] = price;
+        livePriceCache.set(symbol, { price, fetchedAt: Date.now() });
+        return;
+      }
+    } catch (err) {
+      console.log("Saved-symbol price skipped:", symbol, err.response?.status || err.message);
+    }
+
+    const savedStock = await Stock.findOne({ ticker: symbol }).select("data.price").lean();
+    const savedPrice = toNumberOrNull(savedStock?.data?.price);
+    if (savedPrice !== null && savedPrice > 0) prices[symbol] = savedPrice;
+  }));
+
+  res.json({ prices });
+});
+
 app.get("/api/stock/:ticker", async (req, res) => {
   try {
     const requestedTicker = req.params.ticker.trim().toUpperCase();
