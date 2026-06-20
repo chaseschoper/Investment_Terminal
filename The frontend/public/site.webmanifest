@@ -1,0 +1,20 @@
+{
+  "name": "MrktRally",
+  "short_name": "MrktRally",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#080d0c",
+  "theme_color": "#080d0c",
+  "icons": [
+    {
+      "src": "/mrktrally-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/mrktrally-icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
