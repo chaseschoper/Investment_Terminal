@@ -214,6 +214,7 @@ function HistoricalLineChart({ title, data, dataKey, color, formatter, valueLabe
 function App() {
   const latestStockRequest = useRef(0);
   const stockRetryTimerRef = useRef(null);
+  const stockMemoryCacheRef = useRef(new Map());
   const latestComparisonRequest = useRef(0);
   const latestAiRequest = useRef(0);
   const latestEarningsCallRequest = useRef(0);
@@ -449,9 +450,10 @@ useEffect(() => {
       stockRetryTimerRef.current = null;
     }
     const requestId = ++latestStockRequest.current;
+    const cachedStock = stockMemoryCacheRef.current.get(ticker) || null;
     latestAiRequest.current += 1;
     latestEarningsCallRequest.current += 1;
-    setStockData(null);
+    setStockData(cachedStock);
     setAiAnalysis(null);
     setEarningsCall(null);
     setTranscriptSearch("");
@@ -459,7 +461,7 @@ useEffect(() => {
     setIsSpeechPlaying(false);
     setIsSpeechPaused(false);
     setSpeechError("");
-    setIsStockLoading(true);
+    setIsStockLoading(!cachedStock);
     loadStock(ticker, 0, requestId);
 
   }, [ticker]);
@@ -581,7 +583,7 @@ useEffect(() => {
       if (
         response.data.status === "pending"
       ) {
-        setIsStockLoading(true);
+        setIsStockLoading(!stockMemoryCacheRef.current.has(symbol));
         const retryDelay = attempt < 10
           ? 650
           : Math.min(3500, 900 + (attempt - 10) * 150);
@@ -590,6 +592,7 @@ useEffect(() => {
         return;
       }
 
+      stockMemoryCacheRef.current.set(symbol, response.data);
       setStockData(response.data);
       setIsStockLoading(false);
 
@@ -612,7 +615,7 @@ useEffect(() => {
         return;
       }
 
-      setIsStockLoading(true);
+      setIsStockLoading(!stockMemoryCacheRef.current.has(symbol));
       scheduleRetry(Math.min(5000, 1000 + attempt * 350));
 
     }
@@ -1188,8 +1191,9 @@ return (
       stockRetryTimerRef.current = null;
     }
     const requestId = ++latestStockRequest.current;
-    setStockData(null);
-    setIsStockLoading(true);
+    const cachedStock = stockMemoryCacheRef.current.get(symbol) || null;
+    setStockData(cachedStock);
+    setIsStockLoading(!cachedStock);
     loadStock(symbol, 0, requestId);
   }}
 >
