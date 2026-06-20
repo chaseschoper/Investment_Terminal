@@ -1865,14 +1865,23 @@ body {
   background: white;
 }
 
-.earnings-site-frame {
+.earnings-site-viewport {
   display: block;
   width: 100%;
   height: 760px;
   margin-bottom: 22px;
+  overflow: hidden;
   border: 1px solid #273244;
   border-radius: 8px;
   background: #ffffff;
+}
+
+.earnings-site-frame {
+  display: block;
+  width: 100%;
+  height: calc(100% + 76px);
+  border: 0;
+  transform: translateY(-76px);
 }
 
 .earnings-call-empty {
@@ -1911,7 +1920,12 @@ body {
     height: 520px;
   }
 
-  .earnings-site-frame {
+  .earnings-site-viewport {
     height: 620px;
+  }
+
+  .earnings-site-frame {
+    height: calc(100% + 64px);
+    transform: translateY(-64px);
   }
 }

@@ -1433,13 +1433,15 @@ return (
     {isEarningsCallLoading ? (
       <div className="earnings-call-empty">Loading earnings calls...</div>
     ) : earningsCall?.embedUrl ? (
-      <iframe
-        className="earnings-site-frame"
-        title={`${ticker} earnings calls`}
-        src={earningsCall.embedUrl}
-        loading="lazy"
-        allow="autoplay; encrypted-media"
-      />
+      <div className="earnings-site-viewport">
+        <iframe
+          className="earnings-site-frame"
+          title={`${ticker} earnings calls`}
+          src={earningsCall.embedUrl}
+          loading="lazy"
+          allow="autoplay; encrypted-media"
+        />
+      </div>
     ) : (
       <div className="earnings-call-empty">
         The embedded earnings-call site is temporarily unavailable.
