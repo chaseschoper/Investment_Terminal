@@ -425,7 +425,6 @@ const [user, setUser] =
 
 useEffect(() => {
   const symbols = [...new Set([
-    ticker,
     ...watchlist,
     ...portfolio.map((position) => position.symbol),
     ...namedWatchlists.flatMap((list) => list.symbols || [])
@@ -438,7 +437,7 @@ useEffect(() => {
   refreshPrices();
   const refreshTimer = window.setInterval(refreshPrices, 60 * 1000);
   return () => window.clearInterval(refreshTimer);
-}, [ticker, watchlist, portfolio, namedWatchlists]);
+}, [watchlist, portfolio, namedWatchlists]);
 
   /*
     LOAD STOCK WHEN TICKER CHANGES
@@ -462,6 +461,7 @@ useEffect(() => {
     setIsSpeechPaused(false);
     setSpeechError("");
     setIsStockLoading(!cachedStock);
+    loadSavedPrices([ticker]);
     loadStock(ticker, 0, requestId);
 
   }, [ticker]);
@@ -855,11 +855,14 @@ const loadUserData = async () => {
   };
 
 if (!stockData) {
+  const fastDetails = savedSymbolDetails[ticker] || {};
   stockData = {
-    name: isStockLoading
-      ? `Loading ${ticker}...`
-      : ticker,
+    name: fastDetails.name || (isStockLoading ? `Loading ${ticker}...` : ticker),
     symbol: ticker,
+    logo: fastDetails.logo || null,
+    price: portfolioPrices[ticker],
+    change: fastDetails.change,
+    percentChange: fastDetails.percentChange,
     revenueData: []
   };
 }
@@ -1245,8 +1248,9 @@ return (
             </div>
 
             <div className="stock-price">
-              $
-              {stockData.price?.toFixed(2)}
+              {isNumber(stockData.price)
+                ? `$${stockData.price.toFixed(2)}`
+                : "--"}
             </div>
 
             <div className="stock-change">
