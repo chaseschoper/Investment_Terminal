@@ -213,6 +213,7 @@ function HistoricalLineChart({ title, data, dataKey, color, formatter, valueLabe
 
 function App() {
   const latestStockRequest = useRef(0);
+  const stockRetryTimerRef = useRef(null);
   const latestComparisonRequest = useRef(0);
   const latestAiRequest = useRef(0);
   const latestEarningsCallRequest = useRef(0);
@@ -443,6 +444,10 @@ useEffect(() => {
   */
 
   useEffect(() => {
+    if (stockRetryTimerRef.current) {
+      window.clearTimeout(stockRetryTimerRef.current);
+      stockRetryTimerRef.current = null;
+    }
     const requestId = ++latestStockRequest.current;
     latestAiRequest.current += 1;
     latestEarningsCallRequest.current += 1;
@@ -458,6 +463,12 @@ useEffect(() => {
     loadStock(ticker, 0, requestId);
 
   }, [ticker]);
+
+  useEffect(() => () => {
+    if (stockRetryTimerRef.current) {
+      window.clearTimeout(stockRetryTimerRef.current);
+    }
+  }, []);
 
   useEffect(() => () => {
     window.speechSynthesis?.cancel();
@@ -507,23 +518,6 @@ useEffect(() => {
       });
   }, [ticker, stockData?.price, stockData?.updatedAt]);
 
-  useEffect(() => {
-    const symbol =
-      searchInput.trim().toUpperCase();
-
-    if (!symbol || symbol === ticker) {
-      return;
-    }
-
-    const timeout =
-      setTimeout(() => {
-        setTicker(symbol);
-      }, 300);
-
-    return () =>
-      clearTimeout(timeout);
-  }, [searchInput, ticker]);
-
   /*
     LOAD EARNINGS ON START
   */
@@ -560,12 +554,26 @@ useEffect(() => {
     requestId = Date.now()
   ) => {
 
+    if (requestId !== latestStockRequest.current) return;
+
+    const scheduleRetry = (delay) => {
+      if (requestId !== latestStockRequest.current) return;
+      if (stockRetryTimerRef.current) {
+        window.clearTimeout(stockRetryTimerRef.current);
+      }
+      stockRetryTimerRef.current = window.setTimeout(
+        () => loadStock(symbol, attempt + 1, requestId),
+        delay
+      );
+    };
+
     try {
       const response =
         await axios.get(
-          `${API_URL}/api/stock/${symbol}`
+          `${API_URL}/api/stock/${symbol}`,
+          { timeout: 15000 }
         );
-console.log(response.data);
+
       if (requestId !== latestStockRequest.current) {
         return;
       }
@@ -573,20 +581,11 @@ console.log(response.data);
       if (
         response.data.status === "pending"
       ) {
-        if (attempt >= 12) {
-          setIsStockLoading(false);
-          return;
-        }
-
-        setTimeout(
-          () =>
-            loadStock(
-              symbol,
-              attempt + 1,
-              requestId
-            ),
-          750
-        );
+        setIsStockLoading(true);
+        const retryDelay = attempt < 10
+          ? 650
+          : Math.min(3500, 900 + (attempt - 10) * 150);
+        scheduleRetry(retryDelay);
 
         return;
       }
@@ -595,10 +594,7 @@ console.log(response.data);
       setIsStockLoading(false);
 
       if (response.data.refreshing && attempt < 30) {
-        setTimeout(
-          () => loadStock(symbol, attempt + 1, requestId),
-          1000
-        );
+        scheduleRetry(1000);
       }
 
       setPortfolioPrices((prev) => ({
@@ -611,14 +607,13 @@ console.log(response.data);
       console.error(error);
       if (requestId !== latestStockRequest.current) return;
 
-      if (attempt < 6) {
-        setTimeout(
-          () => loadStock(symbol, attempt + 1, requestId),
-          1000
-        );
-      } else {
+      if (error.response?.status === 400 || error.response?.status === 404) {
         setIsStockLoading(false);
+        return;
       }
+
+      setIsStockLoading(true);
+      scheduleRetry(Math.min(5000, 1000 + attempt * 350));
 
     }
   };
@@ -1158,7 +1153,29 @@ return (
 
     {/* SEARCH */}
 
-<div className="topbar" id="overview">
+<form
+  className="topbar"
+  id="overview"
+  onSubmit={(event) => {
+    event.preventDefault();
+    const symbol = searchInput.trim().toUpperCase();
+    if (!symbol) return;
+
+    if (symbol !== ticker) {
+      setTicker(symbol);
+      return;
+    }
+
+    if (stockRetryTimerRef.current) {
+      window.clearTimeout(stockRetryTimerRef.current);
+      stockRetryTimerRef.current = null;
+    }
+    const requestId = ++latestStockRequest.current;
+    setStockData(null);
+    setIsStockLoading(true);
+    loadStock(symbol, 0, requestId);
+  }}
+>
 
   <input
     className="search"
@@ -1168,18 +1185,12 @@ return (
         e.target.value.toUpperCase()
       )
     }
-    onKeyDown={(e) => {
-      if (e.key === "Enter") {
-        const symbol =
-          searchInput.trim().toUpperCase();
-
-        if (symbol) {
-          setTicker(symbol);
-        }
-      }
-    }}
     placeholder="Search ticker..."
   />
+
+  <button className="stock-search-button" type="submit">
+    Search
+  </button>
 
   {isStockLoading && (
     <span
@@ -1192,7 +1203,7 @@ return (
     </span>
   )}
 
-</div>
+</form>
         {/* HEADER */}
 
         <div className="stock-header">

@@ -178,6 +178,7 @@ body {
 .topbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   margin: 36px auto 30px;
 }
@@ -195,6 +196,24 @@ body {
 .search:focus {
   outline: none;
   border: 1px solid #2563eb;
+}
+
+.stock-search-button {
+  min-height: 46px;
+  padding: 0 18px;
+  border: 1px solid #2563eb;
+  border-radius: 6px;
+  background: #1d4ed8;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.stock-search-button:hover,
+.stock-search-button:focus-visible {
+  background: #2563eb;
+  outline: none;
 }
 
 /* HEADER */
@@ -1507,6 +1526,16 @@ body {
 
   .topbar {
     margin-inline: auto;
+  }
+
+  .search {
+    width: auto;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .stock-search-button {
+    padding-inline: 14px;
   }
 
   .stock-header {

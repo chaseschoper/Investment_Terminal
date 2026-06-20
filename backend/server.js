@@ -2637,16 +2637,19 @@ app.get("/api/stock/:ticker", async (req, res) => {
       const updatedAt = stock.updatedAt ? new Date(stock.updatedAt) : null;
       const isStale =
         !updatedAt || Date.now() - updatedAt.getTime() > 2 * 60 * 1000;
+      const fetchIsMissing = !activeStockFetches.has(ticker);
 
-      if (isStale) {
-        await Stock.findOneAndUpdate(
-          { ticker },
-          {
-            status: "pending",
-            error: null,
-            updatedAt: new Date()
-          }
-        );
+      if (isStale || fetchIsMissing) {
+        if (isStale) {
+          await Stock.findOneAndUpdate(
+            { ticker },
+            {
+              status: "pending",
+              error: null,
+              updatedAt: new Date()
+            }
+          );
+        }
 
         startStockFetch(ticker);
       }
