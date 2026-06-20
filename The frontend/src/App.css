@@ -20,6 +20,11 @@ body {
   flex-direction: column;
 }
 
+.main > :not(.welcome-hero) {
+  width: min(1500px, calc(100% - 48px));
+  margin-inline: auto;
+}
+
 .welcome-hero {
   min-height: clamp(380px, 54vh, 540px);
   display: flex;
@@ -174,7 +179,7 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 36px 30px 30px;
+  margin: 36px auto 30px;
 }
 
 .search {
@@ -198,7 +203,7 @@ body {
   display: flex;
   align-items: flex-start;
   gap: 22px;
-  margin: 0 30px 35px;
+  margin: 0 auto 35px;
 }
 
 .stock-company-logo {
@@ -1044,6 +1049,17 @@ body {
   outline: none;
 }
 
+.auth-top-button.signout {
+  border-color: #475569;
+  background: #1b2533;
+}
+
+.auth-top-button.signout:hover,
+.auth-top-button.signout:focus-visible {
+  border-color: #fb7185;
+  color: #fecdd3;
+}
+
 .watchlist-stock {
   display: flex;
   align-items: center;
@@ -1477,6 +1493,10 @@ body {
     background-position: 62% center;
   }
 
+  .main > :not(.welcome-hero) {
+    width: min(calc(100% - 24px), 1500px);
+  }
+
   .welcome-hero h1 {
     font-size: 44px;
   }
@@ -1486,12 +1506,12 @@ body {
   }
 
   .topbar {
-    margin-inline: 16px;
+    margin-inline: auto;
   }
 
   .stock-header {
     gap: 14px;
-    margin-inline: 16px;
+    margin-inline: auto;
   }
 
   .stock-company-logo {
@@ -1536,6 +1556,11 @@ body {
     place-items: center;
     color: #f9fafb;
     font-size: 10px;
+  }
+
+
+  .auth-top-button.signout::after {
+    content: "Sign out";
   }
 
   .section-tabs {

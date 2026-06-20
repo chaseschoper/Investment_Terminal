@@ -227,6 +227,17 @@ const [username, setUsername] = useState("");
 const [email, setEmail] = useState("");
 
 const [password, setPassword] = useState("");
+
+const handleSignOut = () => {
+  localStorage.removeItem("token");
+  localStorage.removeItem("user");
+  setUser(null);
+  setWatchlist([]);
+  setPortfolio([]);
+  setNamedWatchlists([]);
+  setShowAuth(false);
+};
+
 const handleAuth = async () => {
 
   try {
@@ -1108,10 +1119,11 @@ return (
       </div>
 
       <button
-        className="auth-top-button"
-        onClick={() => setShowAuth(true)}
+        className={`auth-top-button ${user ? "signout" : ""}`}
+        onClick={() => user ? handleSignOut() : setShowAuth(true)}
+        title={user ? `Sign out ${user.username}` : "Login or create an account"}
       >
-        {user ? user.username : "Login / Signup"}
+        {user ? `Sign Out (${user.username})` : "Login / Signup"}
       </button>
 
     </div>
