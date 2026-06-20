@@ -153,6 +153,11 @@ const PORTFOLIO_COLORS = [
   "#fb7185",
   "#84cc16"
 ];
+const DEFAULT_PORTFOLIO = {
+  id: "portfolio-default",
+  name: "My Portfolio",
+  positions: []
+};
 import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
@@ -246,7 +251,8 @@ const handleSignOut = () => {
   localStorage.removeItem("user");
   setUser(null);
   setWatchlist([]);
-  setPortfolio([]);
+  setPortfolios([DEFAULT_PORTFOLIO]);
+  setActivePortfolioId(DEFAULT_PORTFOLIO.id);
   setNamedWatchlists([]);
   setShowAuth(false);
 };
@@ -390,8 +396,30 @@ const [user, setUser] =
   const [namedTickerInputs, setNamedTickerInputs] =
   useState({});
 
-  const [portfolio, setPortfolio] =
-  useState([]);
+  const [portfolios, setPortfolios] =
+  useState([DEFAULT_PORTFOLIO]);
+
+  const [activePortfolioId, setActivePortfolioId] =
+  useState(DEFAULT_PORTFOLIO.id);
+
+  const [newPortfolioName, setNewPortfolioName] =
+  useState("");
+
+  const activePortfolio = portfolios.find(
+    (item) => item.id === activePortfolioId
+  ) || portfolios[0] || DEFAULT_PORTFOLIO;
+
+  const portfolio = activePortfolio.positions || [];
+
+  const setPortfolio = (nextPositions) => {
+    setPortfolios((items) => items.map((item) => {
+      if (item.id !== activePortfolio.id) return item;
+      const positions = typeof nextPositions === "function"
+        ? nextPositions(item.positions || [])
+        : nextPositions;
+      return { ...item, positions };
+    }));
+  };
 
   const [portfolioPrices, setPortfolioPrices] =
     useState({});
@@ -437,7 +465,9 @@ const [user, setUser] =
 useEffect(() => {
   const symbols = [...new Set([
     ...watchlist,
-    ...portfolio.map((position) => position.symbol),
+    ...portfolios.flatMap((item) =>
+      (item.positions || []).map((position) => position.symbol)
+    ),
     ...namedWatchlists.flatMap((list) => list.symbols || [])
   ].map((symbol) => String(symbol || "").trim().toUpperCase()).filter(Boolean))];
 
@@ -448,7 +478,7 @@ useEffect(() => {
   refreshPrices();
   const refreshTimer = window.setInterval(refreshPrices, 60 * 1000);
   return () => window.clearInterval(refreshTimer);
-}, [watchlist, portfolio, namedWatchlists]);
+}, [watchlist, portfolios, namedWatchlists]);
 
   /*
     LOAD STOCK WHEN TICKER CHANGES
@@ -647,6 +677,8 @@ useEffect(() => {
         {
           watchlist,
           portfolio,
+          portfolios,
+          activePortfolioId,
           namedWatchlists,
         },
         {
@@ -675,7 +707,7 @@ useEffect(() => {
   return () =>
     clearTimeout(timeout);
 
-}, [watchlist, portfolio, namedWatchlists, user]);
+}, [watchlist, portfolios, activePortfolioId, namedWatchlists, user]);
        
   
 const loadUserData = async () => {
@@ -692,7 +724,19 @@ const loadUserData = async () => {
     );
 
     setWatchlist(response.data.watchlist || []);
-    setPortfolio(response.data.portfolio || []);
+    const savedPortfolios = Array.isArray(response.data.portfolios) && response.data.portfolios.length
+      ? response.data.portfolios
+      : [{
+          ...DEFAULT_PORTFOLIO,
+          positions: response.data.portfolio || []
+        }];
+    const savedActivePortfolioId = savedPortfolios.some(
+      (item) => item.id === response.data.activePortfolioId
+    )
+      ? response.data.activePortfolioId
+      : savedPortfolios[0].id;
+    setPortfolios(savedPortfolios);
+    setActivePortfolioId(savedActivePortfolioId);
     setNamedWatchlists(response.data.namedWatchlists || []);
 
     console.log("Loaded user data");
@@ -2112,9 +2156,78 @@ return (
 
 <div className="portfolio-section" id="portfolio">
 
-  <h2 className="section-title">
-    Portfolio Tracker
-  </h2>
+  <div className="portfolio-heading-row">
+    <h2 className="section-title">
+      Portfolio Tracker
+    </h2>
+    <form
+      className="portfolio-create"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const name = newPortfolioName.trim();
+        if (!name || portfolios.length >= 20) return;
+        const id = globalThis.crypto?.randomUUID?.() || `portfolio-${Date.now()}`;
+        setPortfolios((items) => [...items, { id, name, positions: [] }]);
+        setActivePortfolioId(id);
+        setNewPortfolioName("");
+      }}
+    >
+      <input
+        value={newPortfolioName}
+        onChange={(event) => setNewPortfolioName(event.target.value)}
+        placeholder="New portfolio name"
+        maxLength={60}
+      />
+      <button type="submit" disabled={!newPortfolioName.trim() || portfolios.length >= 20}>
+        Create
+      </button>
+    </form>
+  </div>
+
+  <div className="portfolio-tabs" role="tablist" aria-label="Portfolios">
+    {portfolios.map((item) => (
+      <button
+        key={item.id}
+        type="button"
+        role="tab"
+        aria-selected={item.id === activePortfolio.id}
+        className={item.id === activePortfolio.id ? "active" : ""}
+        onClick={() => setActivePortfolioId(item.id)}
+      >
+        {item.name}
+      </button>
+    ))}
+  </div>
+
+  <div className="portfolio-active-controls">
+    <label>
+      Portfolio name
+      <input
+        value={activePortfolio.name}
+        maxLength={60}
+        onChange={(event) => setPortfolios((items) => items.map((item) =>
+          item.id === activePortfolio.id
+            ? { ...item, name: event.target.value }
+            : item
+        ))}
+      />
+    </label>
+    <button
+      type="button"
+      className="portfolio-delete"
+      disabled={portfolios.length <= 1}
+      onClick={() => {
+        if (portfolios.length <= 1) return;
+        if (!window.confirm(`Delete ${activePortfolio.name} and all of its positions?`)) return;
+        const remaining = portfolios.filter((item) => item.id !== activePortfolio.id);
+        setPortfolios(remaining);
+        setActivePortfolioId(remaining[0].id);
+      }}
+    >
+      Delete Portfolio
+    </button>
+  </div>
+
 <div className="portfolio-add">
 
   <input
@@ -2154,10 +2267,12 @@ return (
   className="portfolio-btn"
   onClick={async () => {
 
+    const shares = Number(portfolioShares);
+    const avgCost = Number(portfolioCost);
     if (
       portfolioTicker &&
-      portfolioShares &&
-      portfolioCost
+      Number.isFinite(shares) && shares > 0 &&
+      Number.isFinite(avgCost) && avgCost >= 0
     ) {
 
       await loadPortfolioPrice(
@@ -2166,8 +2281,8 @@ return (
 
       const newPosition = {
         symbol: portfolioTicker,
-        shares: Number(portfolioShares),
-        avgCost: Number(portfolioCost),
+        shares,
+        avgCost,
       };
 
       setPortfolio((prev) => [
@@ -2200,7 +2315,7 @@ return (
     </div>
 
 
-{portfolio.map((position) => {
+{portfolio.map((position, positionIndex) => {
 
   const current =
     portfolioPrices[position.symbol] || 0;
@@ -2220,7 +2335,7 @@ return (
   return (
 
     <div
-      key={`${position.symbol}-${position.avgCost}`}
+      key={`${position.symbol}-${position.avgCost}-${positionIndex}`}
       className="portfolio-row"
     >
 
@@ -2251,16 +2366,8 @@ return (
   className="remove-position"
   onClick={() => {
 
-    setPortfolio(
-      portfolio.filter(
-        (_, index) =>
-          index !==
-          portfolio.findIndex(
-            (p) =>
-              p.symbol === position.symbol &&
-              p.avgCost === position.avgCost
-          )
-      )
+    setPortfolio((positions) =>
+      positions.filter((_, index) => index !== positionIndex)
     );
 
   }}
@@ -2281,7 +2388,7 @@ return (
 <div className="chart-section portfolio-performance-section">
 
   <h2 className="section-title">
-    Portfolio Performance
+    {activePortfolio.name} Performance
   </h2>
 
   <div className="portfolio-visual-grid">

@@ -31,6 +31,16 @@ const UserSchema = new mongoose.Schema({
     type: Array,
     default: [],
   },
+
+  portfolios: {
+    type: Array,
+    default: [],
+  },
+
+  activePortfolioId: {
+    type: String,
+    default: "",
+  },
 });
 
 module.exports = mongoose.model(

@@ -3593,7 +3593,35 @@ res.status(500).json({ error: "Login failed" });
 // SAVE USER DATA
 app.post("/api/save-data", authMiddleware, async (req, res) => {
 try {
-const { watchlist, portfolio, namedWatchlists } = req.body;
+const { watchlist, portfolio, portfolios, activePortfolioId, namedWatchlists } = req.body;
+const cleanPositions = (positions) => (Array.isArray(positions) ? positions : [])
+  .map((position) => ({
+    symbol: String(position?.symbol || "").trim().toUpperCase(),
+    shares: Number(position?.shares),
+    avgCost: Number(position?.avgCost)
+  }))
+  .filter((position) =>
+    /^[A-Z0-9.-]{1,10}$/.test(position.symbol) &&
+    Number.isFinite(position.shares) && position.shares > 0 &&
+    Number.isFinite(position.avgCost) && position.avgCost >= 0
+  )
+  .slice(0, 500);
+const cleanLegacyPortfolio = cleanPositions(portfolio);
+const cleanPortfolios = Array.isArray(portfolios)
+  ? portfolios.slice(0, 20).map((item, index) => ({
+      id: String(item?.id || `portfolio-${index}`).slice(0, 80),
+      name: String(item?.name || `Portfolio ${index + 1}`).trim().slice(0, 60),
+      positions: cleanPositions(item?.positions)
+    }))
+  : [];
+const savedPortfolios = cleanPortfolios.length
+  ? cleanPortfolios
+  : [{ id: "portfolio-default", name: "My Portfolio", positions: cleanLegacyPortfolio }];
+const savedActivePortfolioId = savedPortfolios.some(
+  (item) => item.id === String(activePortfolioId || "")
+)
+  ? String(activePortfolioId)
+  : savedPortfolios[0].id;
 const cleanNamedWatchlists = Array.isArray(namedWatchlists)
   ? namedWatchlists.slice(0, 20).map((list, index) => ({
       id: String(list?.id || `watchlist-${index}`).slice(0, 80),
@@ -3606,7 +3634,11 @@ const cleanNamedWatchlists = Array.isArray(namedWatchlists)
   : [];
 
 req.user.watchlist = watchlist;
-req.user.portfolio = portfolio;
+req.user.portfolios = savedPortfolios;
+req.user.activePortfolioId = savedActivePortfolioId;
+req.user.portfolio = savedPortfolios.find(
+  (item) => item.id === savedActivePortfolioId
+)?.positions || [];
 req.user.namedWatchlists = cleanNamedWatchlists;
 
 await req.user.save();
@@ -3624,6 +3656,8 @@ app.get("/api/user-data", authMiddleware, async (req, res) => {
 res.json({
 watchlist: req.user.watchlist || [],
 portfolio: req.user.portfolio || [],
+portfolios: req.user.portfolios || [],
+activePortfolioId: req.user.activePortfolioId || "",
 namedWatchlists: req.user.namedWatchlists || []
 });
 });

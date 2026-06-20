@@ -536,6 +536,121 @@ body {
   margin-top: 50px;
 }
 
+.portfolio-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 16px;
+}
+
+.portfolio-heading-row .section-title {
+  margin-bottom: 0;
+}
+
+.portfolio-create {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.portfolio-create input,
+.portfolio-active-controls input {
+  height: 40px;
+  border: 1px solid #374151;
+  border-radius: 6px;
+  background: #0b1117;
+  color: #f9fafb;
+  padding: 0 12px;
+  outline: none;
+}
+
+.portfolio-create input:focus,
+.portfolio-active-controls input:focus {
+  border-color: #60a5fa;
+}
+
+.portfolio-create button,
+.portfolio-delete {
+  min-height: 40px;
+  border: 1px solid #374151;
+  border-radius: 6px;
+  background: #172033;
+  color: #f9fafb;
+  padding: 0 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.portfolio-create button:disabled {
+  color: #6b7280;
+  cursor: default;
+}
+
+.portfolio-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.portfolio-tabs button {
+  min-height: 38px;
+  flex: 0 0 auto;
+  border: 1px solid #273244;
+  border-radius: 6px;
+  background: #111827;
+  color: #9ca3af;
+  padding: 0 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.portfolio-tabs button.active {
+  border-color: #34d399;
+  background: #12322d;
+  color: #ecfdf5;
+}
+
+.portfolio-active-controls {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  margin-bottom: 16px;
+  border-top: 1px solid #273244;
+  border-bottom: 1px solid #273244;
+}
+
+.portfolio-active-controls label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  color: #9ca3af;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.portfolio-active-controls input {
+  width: min(320px, 70vw);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.portfolio-delete {
+  border-color: #7f1d1d;
+  color: #fca5a5;
+}
+
+.portfolio-delete:disabled {
+  border-color: #273244;
+  color: #6b7280;
+  cursor: default;
+}
+
 .portfolio-table {
   background: #111827;
   border: 1px solid #1f2937;
@@ -1633,6 +1748,17 @@ body {
 
   .portfolio-add {
     flex-wrap: wrap;
+  }
+
+  .portfolio-heading-row,
+  .portfolio-active-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .portfolio-create input,
+  .portfolio-active-controls input {
+    width: 100%;
   }
 
   .portfolio-input {
