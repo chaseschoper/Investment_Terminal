@@ -2339,7 +2339,24 @@ return (
       className="portfolio-row"
     >
 
-      <span>{position.symbol}</span>
+      <span className="portfolio-company">
+        <span className="portfolio-logo-shell" aria-hidden="true">
+          <span className="portfolio-logo-fallback">
+            {position.symbol.slice(0, 1)}
+          </span>
+          {savedSymbolDetails[position.symbol]?.logo && (
+            <img
+              className="portfolio-logo"
+              src={savedSymbolDetails[position.symbol].logo}
+              alt=""
+              onError={(event) =>
+                handleCompanyLogoError(event, position.symbol)
+              }
+            />
+          )}
+        </span>
+        <strong>{position.symbol}</strong>
+      </span>
 
       <span>{position.shares}</span>
 
@@ -2915,8 +2932,27 @@ return (
             }}
           >
             <span className="calendar-company-name">
-              <strong>{event.symbol}</strong>
-              <small>{event.company}</small>
+              <span className="calendar-company-identity">
+                <span className="calendar-company-logo-shell" aria-hidden="true">
+                  <span className="calendar-company-logo-fallback">
+                    {event.symbol.slice(0, 1)}
+                  </span>
+                  {event.logo && (
+                    <img
+                      className="calendar-company-logo"
+                      src={event.logo}
+                      alt=""
+                      onError={(imageEvent) =>
+                        handleCompanyLogoError(imageEvent, event.symbol)
+                      }
+                    />
+                  )}
+                </span>
+                <span className="calendar-company-copy">
+                  <strong>{event.symbol}</strong>
+                  <small>{event.company}</small>
+                </span>
+              </span>
             </span>
             <span className="calendar-report-time">
               {event.reportTime}

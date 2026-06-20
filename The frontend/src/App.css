@@ -684,6 +684,48 @@ body {
   border-top: 1px solid #1f2937;
 }
 
+.portfolio-company {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.portfolio-logo-shell,
+.calendar-company-logo-shell {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #243244;
+}
+
+.portfolio-logo-shell {
+  width: 30px;
+  height: 30px;
+}
+
+.portfolio-logo-fallback,
+.calendar-company-logo-fallback {
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.portfolio-logo,
+.calendar-company-logo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 3px;
+  background: #ffffff;
+  object-fit: contain;
+}
+
 .green {
   color: #22c55e;
   font-weight: 700;
@@ -940,6 +982,22 @@ body {
 }
 
 .calendar-company-name {
+  min-width: 0;
+}
+
+.calendar-company-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.calendar-company-logo-shell {
+  width: 34px;
+  height: 34px;
+}
+
+.calendar-company-copy {
   min-width: 0;
 }
 

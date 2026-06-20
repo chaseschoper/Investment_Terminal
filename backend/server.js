@@ -3489,6 +3489,7 @@ app.get("/api/earnings", async (req, res) => {
           date,
           symbol: row.symbol,
           company: row.name || row.symbol,
+          logo: getFinnhubLogoUrl(row.symbol),
           marketCap: parseMarketCap(row.marketCap),
           reportTime: timeLabels[exactFinnhub?.hour || row.time] || "Time not supplied",
           fiscalQuarter: exactFinnhub?.quarter && exactFinnhub?.year
