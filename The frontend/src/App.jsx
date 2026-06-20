@@ -744,12 +744,29 @@ const loadUserData = async () => {
       const receivedPrices = response.data?.prices || {};
       const receivedDetails = response.data?.details || {};
       setPortfolioPrices((prev) => ({ ...prev, ...receivedPrices }));
-      setSavedSymbolDetails((prev) => ({ ...prev, ...receivedDetails }));
+      setSavedSymbolDetails((prev) => {
+        const next = { ...prev };
+        Object.entries(receivedDetails).forEach(([symbol, detail]) => {
+          next[symbol] = {
+            ...prev[symbol],
+            ...detail,
+            percentChange: isNumber(detail?.percentChange)
+              ? detail.percentChange
+              : prev[symbol]?.percentChange,
+            change: isNumber(detail?.change)
+              ? detail.change
+              : prev[symbol]?.change
+          };
+        });
+        return next;
+      });
       const missingSymbols = symbols.filter(
-        (symbol) => !isNumber(receivedPrices[symbol])
+        (symbol) =>
+          !isNumber(receivedPrices[symbol]) ||
+          !isNumber(receivedDetails[symbol]?.percentChange)
       );
 
-      if (missingSymbols.length && attempt < 20) {
+      if (missingSymbols.length && attempt < 40) {
         window.setTimeout(
           () => loadSavedPrices(missingSymbols, attempt + 1),
           1000

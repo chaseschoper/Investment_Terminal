@@ -2554,41 +2554,65 @@ app.get("/api/prices", async (req, res) => {
   const prices = {};
   const details = {};
   const savedStocks = await Stock.find({ ticker: { $in: symbols } })
-    .select("ticker data.price data.change data.percentChange data.logo data.name")
+    .select("ticker data.price data.change data.percentChange data.previousClose data.logo data.name")
     .lean();
   const savedBySymbol = new Map(savedStocks.map((stock) => [stock.ticker, stock.data || {}]));
 
   await Promise.all(symbols.map(async (symbol) => {
     const savedData = savedBySymbol.get(symbol) || {};
+    const savedPrice = toNumberOrNull(savedData.price);
+    const savedPreviousClose = toNumberOrNull(savedData.previousClose);
+    const savedPercentChange = toNumberOrNull(savedData.percentChange);
     details[symbol] = {
       name: savedData.name || symbol,
       logo: savedData.logo || getFinnhubLogoUrl(symbol),
       change: toNumberOrNull(savedData.change),
-      percentChange: toNumberOrNull(savedData.percentChange)
+      percentChange: savedPercentChange !== null
+        ? savedPercentChange
+        : savedPrice !== null && savedPreviousClose > 0
+          ? ((savedPrice - savedPreviousClose) / savedPreviousClose) * 100
+          : null
     };
 
     const cached = livePriceCache.get(symbol);
     if (cached && Date.now() - cached.fetchedAt < 30 * 1000) {
       prices[symbol] = cached.price;
+      details[symbol] = {
+        ...details[symbol],
+        change: toNumberOrNull(cached.change) ?? details[symbol].change,
+        percentChange: toNumberOrNull(cached.percentChange) ?? details[symbol].percentChange
+      };
     } else {
       try {
         const quote = await getFinnhub(`https://finnhub.io/api/v1/quote?symbol=${symbol}`);
         const price = toNumberOrNull(quote?.c);
+        const previousClose = toNumberOrNull(quote?.pc);
+        const change = toNumberOrNull(quote?.d);
+        const providerPercentChange = toNumberOrNull(quote?.dp);
+        const percentChange = providerPercentChange !== null
+          ? providerPercentChange
+          : price !== null && previousClose > 0
+            ? ((price - previousClose) / previousClose) * 100
+            : null;
         if (price !== null && price > 0) {
           prices[symbol] = price;
-          livePriceCache.set(symbol, { price, fetchedAt: Date.now() });
+          livePriceCache.set(symbol, {
+            price,
+            change,
+            percentChange,
+            fetchedAt: Date.now()
+          });
         }
         details[symbol] = {
           ...details[symbol],
-          change: toNumberOrNull(quote?.d),
-          percentChange: toNumberOrNull(quote?.dp)
+          change: change ?? details[symbol].change,
+          percentChange: percentChange ?? details[symbol].percentChange
         };
       } catch (err) {
         console.log("Saved-symbol price skipped:", symbol, err.response?.status || err.message);
       }
     }
 
-    const savedPrice = toNumberOrNull(savedData.price);
     if (!prices[symbol] && savedPrice !== null && savedPrice > 0) prices[symbol] = savedPrice;
 
   }));
