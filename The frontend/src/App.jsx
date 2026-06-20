@@ -178,12 +178,23 @@ const handleCompanyLogoError = (event, symbol) => {
 
 import "./App.css";
 
-function HistoricalLineChart({ title, data, dataKey, color, formatter, valueLabel }) {
+function StockDataLoading({ label = "Loading financial data..." }) {
+  return (
+    <div className="stock-data-loading" role="status">
+      <span className="stock-data-loading-dot" />
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function HistoricalLineChart({ title, data, dataKey, color, formatter, valueLabel, loading = false }) {
   return (
     <section className="historical-chart-panel">
       <h3>{title}</h3>
       <div className="historical-chart-canvas">
-        {data.length ? (
+        {loading ? (
+          <StockDataLoading label="Loading annual history..." />
+        ) : data.length ? (
           <ResponsiveContainer width="100%" height={300}>
             <LineChart
               data={data}
@@ -921,6 +932,7 @@ const nextYearEarningsGrowth = calculateEstimateGrowth(
   currentYearEstimate?.earnings,
   previousYearEstimate?.earnings
 );
+const stockValue = (value) => isStockLoading ? "Loading..." : value;
 const normalizedTranscriptSearch = transcriptSearch.trim().toLowerCase();
 const filteredTranscript = (earningsCall?.transcript || []).filter((section) =>
   !normalizedTranscriptSearch ||
@@ -1496,7 +1508,11 @@ return (
 
 <div className="chart-box">
 
-{revenueHistory.length ? (
+{isStockLoading ? (
+
+  <StockDataLoading label="Loading revenue history..." />
+
+) : revenueHistory.length ? (
 
 <ResponsiveContainer
   width="100%"
@@ -1568,7 +1584,11 @@ return (
 
   <div className="chart-box">
 
-    {earningsHistory.length ? (
+    {isStockLoading ? (
+
+      <StockDataLoading label="Loading net income history..." />
+
+    ) : earningsHistory.length ? (
 
       <ResponsiveContainer
         width="100%"
@@ -1643,7 +1663,11 @@ return (
 
   <div className="chart-box">
 
-    {epsHistory.length ? (
+    {isStockLoading ? (
+
+      <StockDataLoading label="Loading EPS history..." />
+
+    ) : epsHistory.length ? (
 
       <ResponsiveContainer
         width="100%"
@@ -1716,6 +1740,7 @@ return (
     color="#60a5fa"
     formatter={(value) => `${Number(value).toFixed(1)}x`}
     valueLabel="P/E"
+    loading={isStockLoading}
   />
   <HistoricalLineChart
     title={stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin History"}
@@ -1724,6 +1749,7 @@ return (
     color="#a78bfa"
     formatter={(value) => `${Number(value).toFixed(1)}%`}
     valueLabel={stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin"}
+    loading={isStockLoading}
   />
   <HistoricalLineChart
     title={stockData.isFinancialCompany ? "Pre-Tax Margin History" : "Operating Margin History"}
@@ -1732,6 +1758,7 @@ return (
     color="#f59e0b"
     formatter={(value) => `${Number(value).toFixed(1)}%`}
     valueLabel={stockData.isFinancialCompany ? "Pre-Tax Margin" : "Operating Margin"}
+    loading={isStockLoading}
   />
   <HistoricalLineChart
     title="Profit Margin History"
@@ -1740,6 +1767,7 @@ return (
     color="#34d399"
     formatter={(value) => `${Number(value).toFixed(1)}%`}
     valueLabel="Profit Margin"
+    loading={isStockLoading}
   />
 </div>
 
@@ -1753,7 +1781,7 @@ return (
     </div>
 
     <div className="card-value">
-{formatBillions(stockData.marketCap)}
+{stockValue(formatBillions(stockData.marketCap))}
     </div>
   </div>
 
@@ -1763,7 +1791,7 @@ return (
     </div>
 
     <div className="card-value">
-      {formatPlain(stockData.pe)}
+      {stockValue(formatPlain(stockData.pe))}
     </div>
   </div>
 
@@ -1773,7 +1801,7 @@ return (
     </div>
 
     <div className="card-value">
-      {formatPlain(stockData.forwardPE)}
+      {stockValue(formatPlain(stockData.forwardPE))}
     </div>
   </div>
 
@@ -1783,7 +1811,7 @@ return (
     </div>
 
     <div className="card-value">
-{formatPercent(stockData.revenueGrowth)}
+{stockValue(formatPercent(stockData.revenueGrowth))}
     </div>
   </div>
 
@@ -1793,7 +1821,7 @@ return (
     </div>
 
     <div className="card-value">
-{formatPercent(stockData.earningsGrowth)}
+{stockValue(formatPercent(stockData.earningsGrowth))}
     </div>
   </div>
 
@@ -1803,9 +1831,9 @@ return (
     </div>
 
     <div className="card-value">
-{stockData.sharesOutstanding
+{stockValue(stockData.sharesOutstanding
   ? `${(stockData.sharesOutstanding / 1000).toFixed(2)}B`
-  : "N/A"}
+  : "N/A")}
     </div>
   </div>
 
@@ -1815,11 +1843,11 @@ return (
     </div>
 
     <div className="card-value">
-{formatPercent(
+{stockValue(formatPercent(
   stockData.isFinancialCompany
     ? stockData.bankMetrics?.netInterestRevenueMix
     : stockData.grossMargins
-)}
+))}
     </div>
   </div>
 
@@ -1829,11 +1857,11 @@ return (
     </div>
 
     <div className="card-value">
-{formatPercent(
+{stockValue(formatPercent(
   stockData.isFinancialCompany
     ? stockData.bankMetrics?.preTaxMargin
     : stockData.operatingMargins
-)}
+))}
     </div>
   </div>
 
@@ -1843,7 +1871,7 @@ return (
     </div>
 
     <div className="card-value">
-{formatPercent(stockData.profitMargins)}
+{stockValue(formatPercent(stockData.profitMargins))}
     </div>
   </div>
 
@@ -1853,11 +1881,11 @@ return (
     </div>
 
     <div className="card-value">
-{formatBillions(
+{stockValue(formatBillions(
   stockData.isFinancialCompany
     ? stockData.bankMetrics?.annualCashChange
     : stockData.freeCashflow
-)}
+))}
     </div>
   </div>
 
@@ -1867,7 +1895,7 @@ return (
     </div>
 
     <div className="card-value">
-{formatPrice(stockData.targetMean)}
+{stockValue(formatPrice(stockData.targetMean))}
     </div>
   </div>
 
@@ -1877,7 +1905,7 @@ return (
     </div>
 
     <div className="card-value">
-      {stockData.recommendationKey || "N/A"}
+      {stockValue(stockData.recommendationKey || "N/A")}
     </div>
   </div>
 
@@ -1943,9 +1971,9 @@ return (
           <span>Revenue</span>
 
           <span>
-            {formatEstimateMoney(
+            {stockValue(formatEstimateMoney(
               previousYearEstimate?.revenue
-            )}
+            ))}
           </span>
         </div>
 
@@ -1960,9 +1988,9 @@ return (
           <span>Net Income</span>
 
           <span>
-            {formatEstimateMoney(
+            {stockValue(formatEstimateMoney(
               previousYearEstimate?.earnings
-            )}
+            ))}
           </span>
         </div>
 
@@ -1977,9 +2005,9 @@ return (
           <span>EPS</span>
 
           <span>
-            {formatEstimateEps(
+            {stockValue(formatEstimateEps(
               previousYearEstimate?.eps
-            )}
+            ))}
           </span>
         </div>
 
@@ -2014,9 +2042,9 @@ return (
           <span>Revenue</span>
 
           <span>
-            {formatEstimateMoney(
+            {stockValue(formatEstimateMoney(
               currentYearEstimate?.revenue
-            )}
+            ))}
           </span>
         </div>
 
@@ -2031,9 +2059,9 @@ return (
           <span>Net Income</span>
 
           <span>
-            {formatEstimateMoney(
+            {stockValue(formatEstimateMoney(
               currentYearEstimate?.earnings
-            )}
+            ))}
           </span>
         </div>
 
@@ -2048,9 +2076,9 @@ return (
           <span>EPS</span>
 
           <span>
-            {formatEstimateEps(
+            {stockValue(formatEstimateEps(
               currentYearEstimate?.eps
-            )}
+            ))}
           </span>
         </div>
 
@@ -2064,7 +2092,7 @@ return (
     <div className="estimate-growth-card">
       <span className="estimate-growth-label">Next Year Revenue Growth</span>
       <strong className={!isNumber(nextYearRevenueGrowth) ? "estimate-growth-unavailable" : nextYearRevenueGrowth >= 0 ? "estimate-growth-positive" : "estimate-growth-negative"}>
-        {formatPercent(nextYearRevenueGrowth)}
+        {stockValue(formatPercent(nextYearRevenueGrowth))}
       </strong>
       <span className="estimate-growth-period">Estimate vs. 2025 actual</span>
     </div>
@@ -2072,7 +2100,7 @@ return (
     <div className="estimate-growth-card">
       <span className="estimate-growth-label">Next Year Earnings Growth</span>
       <strong className={!isNumber(nextYearEarningsGrowth) ? "estimate-growth-unavailable" : nextYearEarningsGrowth >= 0 ? "estimate-growth-positive" : "estimate-growth-negative"}>
-        {formatPercent(nextYearEarningsGrowth)}
+        {stockValue(formatPercent(nextYearEarningsGrowth))}
       </strong>
       <span className="estimate-growth-period">Estimate vs. 2025 actual</span>
     </div>

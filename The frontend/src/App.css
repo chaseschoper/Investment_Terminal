@@ -311,6 +311,41 @@ body {
   width: 100%;
 }
 
+.stock-data-loading {
+  min-height: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #9ca3af;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.chart-box > .stock-data-loading {
+  min-height: 400px;
+}
+
+.stock-data-loading-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border-radius: 50%;
+  background: #34d399;
+  animation: stock-data-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes stock-data-pulse {
+  0%, 100% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 /* AI */
 
 .analysis-section {
