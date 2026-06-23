@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 43;
+const FINANCIAL_HISTORY_VERSION = 44;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -1116,7 +1116,7 @@ function historicalGrowth(rows, field, currentYear = 2025, previousYear = 2024) 
   const previous = toNumberOrNull((previousRow || fallbackPrevious)?.[field]);
 
   if (current === null || previous === null || previous === 0) return null;
-  return ((current - previous) / previous) * 100;
+  return ((current - previous) / Math.abs(previous)) * 100;
 }
 
 function hasChartHistory(stock, key) {

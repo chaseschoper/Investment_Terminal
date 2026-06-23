@@ -72,7 +72,7 @@ const formatEstimateEps = (value) =>
 
 const calculateEstimateGrowth = (estimate, actual) => {
   if (!isNumber(estimate) || !isNumber(actual) || actual === 0) return null;
-  return ((estimate - actual) / actual) * 100;
+  return ((estimate - actual) / Math.abs(actual)) * 100;
 };
 
 const buildChartRows = (rows, key) =>
@@ -162,7 +162,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 43;
+const FINANCIAL_HISTORY_VERSION = 44;
 
 const handleCompanyLogoError = (event, symbol) => {
   const image = event.currentTarget;
