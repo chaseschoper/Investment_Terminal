@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 47;
+const FINANCIAL_HISTORY_VERSION = 48;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -612,7 +612,7 @@ async function fetchSecAnnualMargins(ticker) {
     return data;
   } catch (err) {
     console.log("SEC annual margins skipped:", ticker, err.message);
-    return {};
+    return { secFetchFailed: true };
   }
 }
 
@@ -1179,6 +1179,41 @@ function needsFinancialHistoryRefresh(stock) {
     !hasCompleteChartHistory(stock) ||
     !hasCompleteSupplementalData(stock)
   );
+}
+
+function shouldPreserveBankMargins(data, previousData) {
+  if (!previousData?.isFinancialCompany || !previousData?.bankMetrics) return false;
+  if (data?.isFinancialCompany) return false;
+
+  const hasPreviousBankMarginHistory = (previousData.marginHistory || []).some((row) =>
+    toNumberOrNull(row?.grossMargin) !== null ||
+    toNumberOrNull(row?.operatingMargin) !== null
+  );
+  if (!hasPreviousBankMarginHistory) return false;
+
+  const latestGross = [...(data.marginHistory || [])]
+    .filter((row) => row?.year)
+    .sort((a, b) => a.year - b.year)
+    .at(-1)?.grossMargin;
+
+  return data?.marginSource === "Market data fallback" || toNumberOrNull(latestGross) === 0;
+}
+
+function preserveBankMargins(data, previousData) {
+  if (!shouldPreserveBankMargins(data, previousData)) return data;
+
+  return {
+    ...data,
+    isFinancialCompany: true,
+    bankMetrics: previousData.bankMetrics,
+    marginHistory: previousData.marginHistory,
+    grossMargins: previousData.grossMargins,
+    operatingMargins: previousData.operatingMargins,
+    profitMargins: previousData.profitMargins,
+    marginSource: previousData.marginSource || "SEC annual filing (banking presentation)",
+    freeCashflow: null,
+    freeCashflowSource: "Not meaningful for banking businesses"
+  };
 }
 
 function withGuaranteedAnalystSection(data = {}) {
@@ -1947,6 +1982,8 @@ const getImmediateStockSnapshot = async (ticker, previousData = {}) =>
   buildMinimalStockSnapshot(ticker, previousData);
 
 async function fetchStockData(ticker) {
+  const previousStock = await Stock.findOne({ ticker }).lean().catch(() => null);
+  const previousData = previousStock?.data || null;
   const quote = await getPrimaryQuote(ticker);
   const [profile, metricData, financials, priceTarget] = await Promise.all([
     getFinnhub(`https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}`).catch((err) => {
@@ -2703,7 +2740,7 @@ async function fetchStockData(ticker) {
       }
     : null;
 
-  const data = withGuaranteedAnalystSection({
+  const data = preserveBankMargins(withGuaranteedAnalystSection({
     isFinancialCompany,
     bankMetrics: displayedBankMetrics,
     marginHistory,
@@ -2784,7 +2821,7 @@ async function fetchStockData(ticker) {
     financialHistoryVersion: FINANCIAL_HISTORY_VERSION,
     revenueHistory,
     revenueData
-  });
+  }), previousData);
 
   await Stock.findOneAndUpdate(
     { ticker },
