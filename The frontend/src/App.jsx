@@ -163,7 +163,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 53;
+const FINANCIAL_HISTORY_VERSION = 54;
 
 const handleCompanyLogoError = (event, symbol) => {
   const image = event.currentTarget;
@@ -2046,7 +2046,7 @@ return (
     </div>
 
     <div className="card-value">
-      {stockValue(stockData.recommendationKey || "N/A")}
+      {stockValue(stockData.analystRatingText || stockData.recommendationKey || "N/A")}
     </div>
   </div>
 
@@ -2879,7 +2879,7 @@ return (
     <div className="comparison-stat">
       <span>Analyst Rating</span>
 <strong>
-  {stock.recommendationKey || "N/A"}
+  {stock.analystRatingText || stock.recommendationKey || "N/A"}
 </strong>
     </div>
 

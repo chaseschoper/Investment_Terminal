@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 53;
+const FINANCIAL_HISTORY_VERSION = 54;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -248,6 +248,21 @@ async function fetchStockAnalysisForecast(ticker) {
     const embeddedRevenueNext = readEmbeddedAnnualEstimate("revenueNext");
     const embeddedEpsThis = readEmbeddedAnnualEstimate("epsThis");
     const embeddedEpsNext = readEmbeddedAnnualEstimate("epsNext");
+    const readEmbeddedTarget = (key) => {
+      const match = forecastResponse.data.match(
+        new RegExp(`priceTargets:\\{[^}]*${key}:([^,}]+)`)
+      );
+      return match ? parseNasdaqNumber(match[1]) : null;
+    };
+    const ratingConsensus = forecastResponse.data.match(
+      /currentRatings:\{[^}]*consensus:"([^"]+)"/
+    )?.[1];
+    const ratingScore = parseNasdaqNumber(
+      forecastResponse.data.match(/currentRatings:\{[^}]*score:([^,}]+)/)?.[1]
+    );
+    const ratingCount = parseNasdaqNumber(
+      forecastResponse.data.match(/currentRatings:\{[^}]*count:([^,}]+)/)?.[1]
+    );
 
     return {
       fiscalYear: eps.year || revenue.year,
@@ -256,7 +271,13 @@ async function fetchStockAnalysisForecast(ticker) {
       nextYearRevenue: firstNumber(embeddedRevenueNext, revenue.nextValue),
       nextYearEps: firstNumber(embeddedEpsNext, eps.nextValue),
       pe: readStatistic("PE Ratio"),
-      forwardPE: readStatistic("Forward PE")
+      forwardPE: readStatistic("Forward PE"),
+      targetMean: readEmbeddedTarget("avg"),
+      targetMedian: readEmbeddedTarget("median"),
+      analystRatingText: firstText(ratingConsensus),
+      ratingConsensus,
+      ratingScore,
+      ratingCount
     };
   } catch (err) {
     console.log("StockAnalysis forecast skipped:", ticker, err.message);
@@ -654,6 +675,16 @@ const firstFiniteNumber = (...values) => {
   for (const value of values) {
     const number = toNumberOrNull(value);
     if (number !== null) return number;
+  }
+
+  return null;
+};
+
+const firstText = (...values) => {
+  for (const value of values) {
+    if (value === null || value === undefined) continue;
+    const text = String(value).trim();
+    if (text) return text;
   }
 
   return null;
@@ -1402,6 +1433,7 @@ function withGuaranteedAnalystSection(data = {}) {
     targetMean,
     price
   );
+  const analystRatingText = firstText(data.analystRatingText, recommendationKey);
   const latestYear =
     toNumberOrNull(latestRevenueRow.year) || new Date().getFullYear();
   const modeledGrowthRate = safeGrowthRate(revenueGrowth);
@@ -1456,6 +1488,7 @@ function withGuaranteedAnalystSection(data = {}) {
     freeCashflow,
     targetMean,
     recommendationKey,
+    analystRatingText,
     analystEstimates: {
       currentYear: {
         revenue: currentRevenue,
@@ -1850,9 +1883,18 @@ async function fetchYahooSupplementalData(ticker) {
       profitMargins: normalizePercent(unwrapFinancialValue(financialData.profitMargins)),
       freeCashflow: firstYahooNumber(financialData.freeCashflow),
       targetMean: firstYahooNumber(financialData.targetMeanPrice),
+      targetMedian: firstYahooNumber(financialData.targetMedianPrice),
       recommendationKey:
         normalizeRating(financialData.recommendationKey) ||
         normalizeRating(quoteData.averageAnalystRating),
+      analystRatingText: firstText(
+        quoteData.averageAnalystRating,
+        financialData.recommendationMean?.fmt && financialData.recommendationKey
+          ? `${financialData.recommendationMean.fmt} - ${financialData.recommendationKey}`
+          : null,
+        financialData.recommendationKey
+      ),
+      recommendationMean: firstYahooNumber(financialData.recommendationMean),
       recommendationTrend,
       analystEstimates: {
         currentYear: estimateFromTrend(currentYear),
@@ -1928,7 +1970,8 @@ async function fetchYahooQuickQuote(ticker) {
         quoteData.fiftyTwoWeekLow,
         quoteData.fiftyTwoWeekRange?.low
       ),
-      recommendationKey: normalizeRating(quoteData.averageAnalystRating)
+      recommendationKey: normalizeRating(quoteData.averageAnalystRating),
+      analystRatingText: firstText(quoteData.averageAnalystRating)
     };
   } catch (err) {
     console.log("Yahoo quick quote skipped:", ticker, err.message);
@@ -2376,7 +2419,10 @@ async function fetchStockData(ticker) {
     metrics.epsInclExtraItemsAnnual
   );
   const rating = getAnalystRating(
+    yahooSupplementalData.analystRatingText,
     yahooSupplementalData.recommendationKey,
+    stockAnalysisForecast.analystRatingText,
+    stockAnalysisForecast.ratingConsensus,
     recommendation,
     yahooSupplementalData.recommendationTrend,
     fmpRating.ratingRecommendation,
@@ -2753,6 +2799,9 @@ async function fetchStockData(ticker) {
   const targetMean = estimateTargetFallback({
     targetMean: firstNumber(
       yahooSupplementalData.targetMean,
+      yahooSupplementalData.targetMedian,
+      stockAnalysisForecast.targetMean,
+      stockAnalysisForecast.targetMedian,
       nasdaqData.targetMean,
       priceTarget?.targetMean,
       priceTarget?.targetMedian,
@@ -2771,6 +2820,13 @@ async function fetchStockData(ticker) {
     pe
   });
   const recommendationKey = estimateRatingFallback(rating, targetMean, quote.c);
+  const analystRatingText = firstText(
+    yahooSupplementalData.analystRatingText,
+    stockAnalysisForecast.analystRatingText,
+    stockAnalysisForecast.ratingConsensus,
+    rating,
+    recommendationKey
+  );
   const finnhubDividendYield = firstFiniteNumber(
     metrics.dividendYieldIndicatedAnnual,
     metrics.currentDividendYieldTTM,
@@ -2872,6 +2928,7 @@ async function fetchStockData(ticker) {
     freeCashflow,
     targetMean,
     recommendationKey,
+    analystRatingText,
     analystEstimates: {
       currentYear: {
         revenue: currentRevenueValue,
