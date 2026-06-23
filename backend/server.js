@@ -727,6 +727,16 @@ const sanitizeRevenueEstimate = (candidate, historicalRevenue) => {
   return ratio >= 0.4 && ratio <= 2.5 ? estimate : null;
 };
 
+const sanitizeNearTermRevenueEstimate = (candidate, baselineRevenue) => {
+  const estimate = toNumberOrNull(candidate);
+  const baseline = toNumberOrNull(baselineRevenue);
+  if (estimate === null) return null;
+  if (baseline === null || baseline <= 0) return estimate;
+
+  const ratio = estimate / baseline;
+  return ratio >= 0.85 && ratio <= 2.2 ? estimate : null;
+};
+
 const normalizeStatementDollars = (value) => {
   const number = toNumberOrNull(value);
   if (number === null || number === 0) return null;
@@ -1179,8 +1189,13 @@ function withGuaranteedAnalystSection(data = {}) {
   const currentYear = data.analystEstimates?.currentYear || {};
   const nextYear = data.analystEstimates?.nextYear || {};
   const followingYear = data.analystEstimates?.followingYear || {};
+  const latestReportedRevenue = toDollarsFromBillions(latestRevenueRow.revenue);
+  const safeCurrentRevenue = sanitizeNearTermRevenueEstimate(
+    currentYear.revenue,
+    latestReportedRevenue
+  );
   const currentRevenue = estimateRevenueFallback(
-    firstNumber(currentYear.revenue, toDollarsFromBillions(latestRevenueRow.revenue)),
+    firstNumber(safeCurrentRevenue, latestReportedRevenue),
     marketCap
   );
   const historicalEarnings = toDollarsFromBillions(latestRevenueRow.earnings);
@@ -1201,8 +1216,12 @@ function withGuaranteedAnalystSection(data = {}) {
     data.priceToSales,
     marketCap !== null && currentRevenue > 0 ? marketCap / currentRevenue : null
   );
+  const safeNextRevenue = sanitizeNearTermRevenueEstimate(
+    nextYear.revenue,
+    currentRevenue
+  );
   const nextRevenue = estimateRevenueFallback(
-    firstNumber(nextYear.revenue, estimateNextValue(currentRevenue, safeGrowthRate(revenueGrowth))),
+    firstNumber(safeNextRevenue, estimateNextValue(currentRevenue, safeGrowthRate(revenueGrowth))),
     marketCap !== null ? marketCap * (1 + safeGrowthRate(revenueGrowth)) : null
   );
   const provisionalCurrentEarnings = estimateEarningsFallback(
@@ -1215,8 +1234,12 @@ function withGuaranteedAnalystSection(data = {}) {
     nextRevenue,
     profitMargins
   );
+  const safeFollowingRevenue = sanitizeNearTermRevenueEstimate(
+    followingYear.revenue,
+    nextRevenue
+  );
   const followingRevenue = estimateRevenueFallback(
-    firstNumber(followingYear.revenue, estimateNextValue(nextRevenue, conservativeProjectionRate(revenueGrowth))),
+    firstNumber(safeFollowingRevenue, estimateNextValue(nextRevenue, conservativeProjectionRate(revenueGrowth))),
     marketCap !== null ? marketCap * (1 + conservativeProjectionRate(revenueGrowth)) : null
   );
   const provisionalFollowingEarnings = estimateEarningsFallback(
