@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 40;
+const FINANCIAL_HISTORY_VERSION = 41;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -2531,6 +2531,14 @@ async function fetchStockData(ticker) {
     revenue: followingRevenueValue,
     profitMargin: profitMargins
   });
+  const displayedFollowingEpsValue = sanitizeForwardEps(
+    estimateDecayedForwardValue(nextEpsValue, latestForecastBaselineEps, 0.55, 0.515) ??
+      followingEpsValue ??
+      (followingEarningsValue && sharesOutstandingValue
+        ? followingEarningsValue / (sharesOutstandingValue * 1000000)
+        : null),
+    nextEpsValue
+  );
   const pe = firstNumber(
     reportedPE,
     currentEpsValue ? quote.c / currentEpsValue : null
@@ -2637,7 +2645,7 @@ async function fetchStockData(ticker) {
     forwardEps: forwardEpsValue,
     consensusCurrentYearEps:
       stockAnalysisForecast.currentYearEps ?? nasdaqData.currentYearEps,
-    consensusNextYearEps: nasdaqData.nextYearEps,
+    consensusNextYearEps: displayedFollowingEpsValue,
     consensusCurrentYearRevenue: stockAnalysisRevenueEstimate,
     analystEstimateSource: stockAnalysisForecast.currentYearEps && stockAnalysisRevenueEstimate
       ? "S&P Global consensus via StockAnalysis"
@@ -2685,7 +2693,7 @@ async function fetchStockData(ticker) {
       followingYear: {
         revenue: followingRevenueValue,
         earnings: followingEarningsValue,
-        eps: followingEpsValue
+        eps: displayedFollowingEpsValue
       }
     },
     financialHistoryVersion: FINANCIAL_HISTORY_VERSION,
