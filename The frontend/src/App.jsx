@@ -75,6 +75,15 @@ const calculateEstimateGrowth = (estimate, actual) => {
   return ((estimate - actual) / actual) * 100;
 };
 
+const estimateForwardValue = (current, previous, fallbackGrowth = 0.05) => {
+  if (!isNumber(current)) return null;
+  const growth = calculateEstimateGrowth(current, previous);
+  const growthRate = isNumber(growth)
+    ? Math.max(-0.35, Math.min(0.35, growth / 100))
+    : fallbackGrowth;
+  return current * (1 + growthRate);
+};
+
 const buildChartRows = (rows, key) =>
   (rows || [])
     .map((item) => ({
@@ -419,6 +428,19 @@ const [user, setUser] =
         : nextPositions;
       return { ...item, positions };
     }));
+  };
+
+  const updatePortfolioPosition = (positionIndex, field, value) => {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number < 0) return;
+
+    setPortfolio((positions) =>
+      positions.map((position, index) =>
+        index === positionIndex
+          ? { ...position, [field]: number }
+          : position
+      )
+    );
   };
 
   const [portfolioPrices, setPortfolioPrices] =
@@ -968,13 +990,43 @@ const previousYearEstimate = estimateFromHistoryYear(
 );
 const currentYearEstimate =
   stockData?.analystEstimates?.nextYear || {};
-const nextYearRevenueGrowth = calculateEstimateGrowth(
+const followingYearSource =
+  stockData?.analystEstimates?.followingYear || {};
+const followingYearEstimate = {
+  revenue: isNumber(followingYearSource.revenue)
+    ? followingYearSource.revenue
+    : estimateForwardValue(
+        currentYearEstimate?.revenue,
+        previousYearEstimate?.revenue
+      ),
+  earnings: isNumber(followingYearSource.earnings)
+    ? followingYearSource.earnings
+    : estimateForwardValue(
+        currentYearEstimate?.earnings,
+        previousYearEstimate?.earnings
+      ),
+  eps: isNumber(followingYearSource.eps)
+    ? followingYearSource.eps
+    : estimateForwardValue(
+        currentYearEstimate?.eps,
+        previousYearEstimate?.eps
+      )
+};
+const currentYearRevenueGrowth = calculateEstimateGrowth(
   currentYearEstimate?.revenue,
   previousYearEstimate?.revenue
 );
-const nextYearEarningsGrowth = calculateEstimateGrowth(
+const currentYearEarningsGrowth = calculateEstimateGrowth(
   currentYearEstimate?.earnings,
   previousYearEstimate?.earnings
+);
+const nextYearRevenueGrowth = calculateEstimateGrowth(
+  followingYearEstimate?.revenue,
+  currentYearEstimate?.revenue
+);
+const nextYearEarningsGrowth = calculateEstimateGrowth(
+  followingYearEstimate?.earnings,
+  currentYearEstimate?.earnings
 );
 const stockValue = (value) => isStockLoading ? "Loading..." : value;
 const normalizedTranscriptSearch = transcriptSearch.trim().toLowerCase();
@@ -1981,9 +2033,9 @@ return (
   <div
   style={{
     display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: "80px",
-    maxWidth: "900px",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+    gap: "24px",
+    maxWidth: "1100px",
     margin: "0 auto",
   }}
 >
@@ -2130,15 +2182,102 @@ return (
 
     </div>
 
+    {/* Next Year */}
+    <div
+  style={{
+    padding: "20px",
+    borderRadius: "14px",
+    background: "#111827",
+    border: "1px solid #1f2937",
+  }}
+>
+
+      <h3 className="text-lg font-semibold mb-3">
+        Next Year
+      </h3>
+
+      <div className="space-y-2">
+
+<div
+  style={{
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "20px",
+    marginBottom: "10px",
+  }}
+>
+          <span>Revenue</span>
+
+          <span>
+            {stockValue(formatEstimateMoney(
+              followingYearEstimate?.revenue
+            ))}
+          </span>
+        </div>
+
+<div
+  style={{
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "20px",
+    marginBottom: "10px",
+  }}
+>
+          <span>Net Income</span>
+
+          <span>
+            {stockValue(formatEstimateMoney(
+              followingYearEstimate?.earnings
+            ))}
+          </span>
+        </div>
+
+<div
+  style={{
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "20px",
+    marginBottom: "10px",
+  }}
+>
+          <span>EPS</span>
+
+          <span>
+            {stockValue(formatEstimateEps(
+              followingYearEstimate?.eps
+            ))}
+          </span>
+        </div>
+
+      </div>
+
+    </div>
+
   </div>
 
   <div className="estimate-growth-grid">
+    <div className="estimate-growth-card">
+      <span className="estimate-growth-label">Current Year Revenue Growth</span>
+      <strong className={!isNumber(currentYearRevenueGrowth) ? "estimate-growth-unavailable" : currentYearRevenueGrowth >= 0 ? "estimate-growth-positive" : "estimate-growth-negative"}>
+        {stockValue(formatPercent(currentYearRevenueGrowth))}
+      </strong>
+      <span className="estimate-growth-period">Current estimate vs. 2025 actual</span>
+    </div>
+
+    <div className="estimate-growth-card">
+      <span className="estimate-growth-label">Current Year Earnings Growth</span>
+      <strong className={!isNumber(currentYearEarningsGrowth) ? "estimate-growth-unavailable" : currentYearEarningsGrowth >= 0 ? "estimate-growth-positive" : "estimate-growth-negative"}>
+        {stockValue(formatPercent(currentYearEarningsGrowth))}
+      </strong>
+      <span className="estimate-growth-period">Current estimate vs. 2025 actual</span>
+    </div>
+
     <div className="estimate-growth-card">
       <span className="estimate-growth-label">Next Year Revenue Growth</span>
       <strong className={!isNumber(nextYearRevenueGrowth) ? "estimate-growth-unavailable" : nextYearRevenueGrowth >= 0 ? "estimate-growth-positive" : "estimate-growth-negative"}>
         {stockValue(formatPercent(nextYearRevenueGrowth))}
       </strong>
-      <span className="estimate-growth-period">Estimate vs. 2025 actual</span>
+      <span className="estimate-growth-period">Next estimate vs. current estimate</span>
     </div>
 
     <div className="estimate-growth-card">
@@ -2146,7 +2285,7 @@ return (
       <strong className={!isNumber(nextYearEarningsGrowth) ? "estimate-growth-unavailable" : nextYearEarningsGrowth >= 0 ? "estimate-growth-positive" : "estimate-growth-negative"}>
         {stockValue(formatPercent(nextYearEarningsGrowth))}
       </strong>
-      <span className="estimate-growth-period">Estimate vs. 2025 actual</span>
+      <span className="estimate-growth-period">Next estimate vs. current estimate</span>
     </div>
   </div>
 
@@ -2358,9 +2497,33 @@ return (
         <strong>{position.symbol}</strong>
       </span>
 
-      <span>{position.shares}</span>
+      <span>
+        <input
+          className="portfolio-edit-input"
+          type="number"
+          min="0"
+          step="any"
+          value={position.shares}
+          aria-label={`${position.symbol} shares`}
+          onChange={(event) =>
+            updatePortfolioPosition(positionIndex, "shares", event.target.value)
+          }
+        />
+      </span>
 
-      <span>{formatPortfolioCurrency(Number(position.avgCost))}</span>
+      <span>
+        <input
+          className="portfolio-edit-input"
+          type="number"
+          min="0"
+          step="any"
+          value={position.avgCost}
+          aria-label={`${position.symbol} average cost`}
+          onChange={(event) =>
+            updatePortfolioPosition(positionIndex, "avgCost", event.target.value)
+          }
+        />
+      </span>
 
       <span>{formatPortfolioCurrency(current)}</span>
 

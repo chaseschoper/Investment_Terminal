@@ -223,7 +223,9 @@ async function fetchStockAnalysisForecast(ticker) {
         .map((_, element) => $(element).text().trim()).get();
       return {
         year: Number(headers[1]) || null,
-        value: parseAbbreviatedNumber(average[1])
+        value: parseAbbreviatedNumber(average[1]),
+        nextYear: Number(headers[2]) || null,
+        nextValue: parseAbbreviatedNumber(average[2])
       };
     };
     const revenue = readForecast("Revenue Forecast");
@@ -233,6 +235,8 @@ async function fetchStockAnalysisForecast(ticker) {
       fiscalYear: eps.year || revenue.year,
       currentYearRevenue: revenue.value,
       currentYearEps: eps.value,
+      nextYearRevenue: revenue.nextValue,
+      nextYearEps: eps.nextValue,
       pe: readStatistic("PE Ratio"),
       forwardPE: readStatistic("Forward PE")
     };
@@ -1069,6 +1073,7 @@ function hasCompleteSupplementalData(stock) {
   const requiresIndustrialMetrics = !data.isFinancialCompany;
   const currentYear = data.analystEstimates?.currentYear || {};
   const nextYear = data.analystEstimates?.nextYear || {};
+  const followingYear = data.analystEstimates?.followingYear || {};
 
   return (
     (!requiresIndustrialMetrics || toNumberOrNull(data.freeCashflow) !== null) &&
@@ -1180,6 +1185,15 @@ function withGuaranteedAnalystSection(data = {}) {
     nextRevenue,
     profitMargins
   );
+  const followingRevenue = estimateRevenueFallback(
+    firstNumber(followingYear.revenue, estimateNextValue(nextRevenue, safeGrowthRate(revenueGrowth))),
+    marketCap !== null ? marketCap * Math.pow(1 + safeGrowthRate(revenueGrowth), 2) : null
+  );
+  const provisionalFollowingEarnings = estimateEarningsFallback(
+    firstNumber(followingYear.earnings, estimateNextValue(provisionalNextEarnings, safeGrowthRate(earningsGrowth))),
+    followingRevenue,
+    profitMargins
+  );
   const currentEps = estimateEpsFallback(
     firstNumber(data.trailingEps, currentYear.eps),
     provisionalCurrentEarnings,
@@ -1188,6 +1202,11 @@ function withGuaranteedAnalystSection(data = {}) {
   const nextEps = estimateEpsFallback(
     firstNumber(data.consensusCurrentYearEps, data.forwardEps, nextYear.eps),
     provisionalNextEarnings,
+    sharesOutstanding
+  );
+  const followingEps = estimateEpsFallback(
+    firstNumber(data.consensusNextYearEps, followingYear.eps),
+    provisionalFollowingEarnings,
     sharesOutstanding
   );
   const currentEarnings = reconcileEarningsEstimate({
@@ -1202,6 +1221,13 @@ function withGuaranteedAnalystSection(data = {}) {
     eps: nextEps,
     shares: sharesOutstanding,
     revenue: nextRevenue,
+    profitMargin: profitMargins
+  });
+  const followingEarnings = reconcileEarningsEstimate({
+    earnings: provisionalFollowingEarnings,
+    eps: followingEps,
+    shares: sharesOutstanding,
+    revenue: followingRevenue,
     profitMargin: profitMargins
   });
   const trailingEps = toNumberOrNull(data.trailingEps);
@@ -1306,6 +1332,11 @@ function withGuaranteedAnalystSection(data = {}) {
         revenue: nextRevenue,
         earnings: nextEarnings,
         eps: nextEps
+      },
+      followingYear: {
+        revenue: followingRevenue,
+        earnings: followingEarnings,
+        eps: followingEps
       }
     },
     revenueHistory: guaranteedRevenueHistory,
@@ -1886,8 +1917,8 @@ async function fetchStockData(ticker) {
       "/api/v4/price-target-consensus?symbol={ticker}"
     ]),
     getFmpData(ticker, "analyst estimates", [
-      "/stable/analyst-estimates?symbol={ticker}&period=annual&limit=2",
-      "/api/v3/analyst-estimates/{ticker}?period=annual&limit=2"
+      "/stable/analyst-estimates?symbol={ticker}&period=annual&limit=3",
+      "/api/v3/analyst-estimates/{ticker}?period=annual&limit=3"
     ]),
     getFmpData(ticker, "rating", [
       "/stable/ratings-snapshot?symbol={ticker}",
@@ -2029,6 +2060,7 @@ async function fetchStockData(ticker) {
   const revenueEstimates = revenueEstimate?.data || [];
   const fmpCurrentEstimate = fmpAnalystEstimates[0] || {};
   const fmpNextEstimate = fmpAnalystEstimates[1] || {};
+  const fmpFollowingEstimate = fmpAnalystEstimates[2] || {};
   const isFinancialCompany = secAnnualMargins.isFinancialCompany === true;
   const revenueGrowthRate = chartRevenueGrowth !== null
     ? chartRevenueGrowth / 100
@@ -2148,6 +2180,24 @@ async function fetchStockData(ticker) {
     finnhubNextRevenueEstimate ??
     estimateNextValue(currentRevenue, revenueGrowthRate);
 
+  const stockAnalysisFollowingRevenueEstimate = sanitizeRevenueEstimate(
+    stockAnalysisForecast.nextYearRevenue,
+    currentRevenueBase
+  );
+  const fmpFollowingRevenueEstimate = sanitizeRevenueEstimate(
+    fmpEstimateField(fmpFollowingEstimate, "revenueAvg", "estimatedRevenueAvg"),
+    currentRevenueBase
+  );
+  const finnhubFollowingRevenueEstimate = sanitizeRevenueEstimate(
+    normalizeFinnhubMoney(revenueEstimates[2]?.revenueAvg),
+    currentRevenueBase
+  );
+  const followingRevenue =
+    stockAnalysisFollowingRevenueEstimate ??
+    fmpFollowingRevenueEstimate ??
+    finnhubFollowingRevenueEstimate ??
+    estimateNextValue(nextRevenue, revenueGrowthRate);
+
   const currentEarnings =
     firstNumber(
       fmpEstimateField(
@@ -2172,6 +2222,27 @@ async function fetchStockData(ticker) {
         ? nextEps * sharesOutstanding * 1000000
         : null,
       estimateNextValue(currentEarnings, earningsGrowthRate)
+    );
+
+  const followingEpsCandidate =
+    stockAnalysisForecast.nextYearEps ??
+    nasdaqData.nextYearEps ??
+    fmpEstimateField(fmpFollowingEstimate, "epsAvg", "estimatedEpsAvg") ??
+    epsEstimates[2]?.epsAvg ??
+    estimateNextValue(nextEps, earningsGrowthRate) ??
+    null;
+  const followingEps = sanitizeForwardEps(followingEpsCandidate, nextEps);
+  const followingEarnings =
+    firstNumber(
+      fmpEstimateField(
+        fmpFollowingEstimate,
+        "netIncomeAvg",
+        "estimatedNetIncomeAvg"
+      ),
+      followingEps && sharesOutstanding
+        ? followingEps * sharesOutstanding * 1000000
+        : null,
+      estimateNextValue(nextEarnings, earningsGrowthRate)
     );
 
   const marketCap =
@@ -2278,6 +2349,10 @@ async function fetchStockData(ticker) {
     nextRevenue,
     modeledMarketCap ? modeledMarketCap * (1 + revenueGrowthRate) : null
   );
+  const followingRevenueValue = estimateRevenueFallback(
+    followingRevenue,
+    modeledMarketCap ? modeledMarketCap * Math.pow(1 + revenueGrowthRate, 2) : null
+  );
   const provisionalCurrentEarningsValue = estimateEarningsFallback(
     currentEarnings,
     currentRevenueValue,
@@ -2288,6 +2363,11 @@ async function fetchStockData(ticker) {
     nextRevenueValue,
     profitMargins
   );
+  const provisionalFollowingEarningsValue = estimateEarningsFallback(
+    followingEarnings,
+    followingRevenueValue,
+    profitMargins
+  );
   const currentEpsValue = estimateEpsFallback(
     currentEps,
     provisionalCurrentEarningsValue,
@@ -2296,6 +2376,11 @@ async function fetchStockData(ticker) {
   const nextEpsValue = estimateEpsFallback(
     nextEps,
     provisionalNextEarningsValue,
+    modeledSharesOutstanding
+  );
+  const followingEpsValue = estimateEpsFallback(
+    followingEps,
+    provisionalFollowingEarningsValue,
     modeledSharesOutstanding
   );
   const currentEarningsValue = reconcileEarningsEstimate({
@@ -2310,6 +2395,13 @@ async function fetchStockData(ticker) {
     eps: nextEpsValue,
     shares: modeledSharesOutstanding,
     revenue: nextRevenueValue,
+    profitMargin: profitMargins
+  });
+  const followingEarningsValue = reconcileEarningsEstimate({
+    earnings: provisionalFollowingEarningsValue,
+    eps: followingEpsValue,
+    shares: modeledSharesOutstanding,
+    revenue: followingRevenueValue,
     profitMargin: profitMargins
   });
   const pe = firstNumber(
@@ -2462,6 +2554,11 @@ async function fetchStockData(ticker) {
         revenue: nextRevenueValue,
         earnings: nextEarningsValue,
         eps: nextEpsValue
+      },
+      followingYear: {
+        revenue: followingRevenueValue,
+        earnings: followingEarningsValue,
+        eps: followingEpsValue
       }
     },
     financialHistoryVersion: FINANCIAL_HISTORY_VERSION,
