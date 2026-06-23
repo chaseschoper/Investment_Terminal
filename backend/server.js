@@ -1760,12 +1760,74 @@ function getYahooSupplementalData(ticker) {
   return request;
 }
 
-async function publishFastStockSnapshot(ticker) {
-  const yahooData = await getYahooSupplementalData(ticker);
-  if (!yahooData?.price) return;
+async function fetchYahooQuickQuote(ticker) {
+  try {
+    const quoteData = await yahooFinance.quote(ticker);
+    return {
+      name: quoteData.longName || quoteData.shortName || ticker,
+      symbol: quoteData.symbol || ticker,
+      price: firstYahooNumber(quoteData.regularMarketPrice),
+      change: firstFiniteNumber(quoteData.regularMarketChange),
+      percentChange: firstFiniteNumber(quoteData.regularMarketChangePercent),
+      previousClose: firstYahooNumber(quoteData.regularMarketPreviousClose),
+      high: firstYahooNumber(quoteData.regularMarketDayHigh),
+      low: firstYahooNumber(quoteData.regularMarketDayLow),
+      open: firstYahooNumber(quoteData.regularMarketOpen),
+      marketCap: firstYahooNumber(quoteData.marketCap),
+      pe: firstYahooNumber(quoteData.trailingPE),
+      forwardPE: firstYahooNumber(quoteData.forwardPE),
+      trailingEps: firstYahooNumber(
+        quoteData.epsTrailingTwelveMonths,
+        quoteData.trailingEps
+      ),
+      forwardEps: firstYahooNumber(
+        quoteData.epsForward,
+        quoteData.forwardEps
+      ),
+      priceToSales: firstYahooNumber(quoteData.priceToSalesTrailing12Months),
+      dividendYield: normalizeDividendYield(
+        firstYahooNumber(
+          unwrapFinancialValue(quoteData.dividendYield),
+          unwrapFinancialValue(quoteData.trailingAnnualDividendYield)
+        )
+      ),
+      fiftyTwoWeekHigh: firstYahooNumber(
+        quoteData.fiftyTwoWeekHigh,
+        quoteData.fiftyTwoWeekRange?.high
+      ),
+      fiftyTwoWeekLow: firstYahooNumber(
+        quoteData.fiftyTwoWeekLow,
+        quoteData.fiftyTwoWeekRange?.low
+      ),
+      recommendationKey: normalizeRating(quoteData.averageAnalystRating)
+    };
+  } catch (err) {
+    console.log("Yahoo quick quote skipped:", ticker, err.message);
+    return {};
+  }
+}
 
+async function publishFastStockSnapshot(ticker) {
   const stock = await Stock.findOne({ ticker }).lean();
-  const previousData = stock?.data || {};
+  const quickData = await buildFastStockSnapshot(ticker, stock?.data || {});
+  if (!quickData) return;
+
+  await Stock.findOneAndUpdate(
+    { ticker, ...(stock?.updatedAt ? { updatedAt: stock.updatedAt } : {}) },
+    {
+      ticker,
+      status: "pending",
+      data: quickData,
+      updatedAt: new Date()
+    },
+    { upsert: true }
+  );
+}
+
+async function buildFastStockSnapshot(ticker, previousData = {}) {
+  const yahooData = await fetchYahooQuickQuote(ticker);
+  if (!yahooData?.price) return null;
+
   const definedValues = (data = {}) => Object.fromEntries(
     Object.entries(data).filter(([, value]) => value !== null && value !== undefined)
   );
@@ -1780,7 +1842,7 @@ async function publishFastStockSnapshot(ticker) {
     }
   };
   const nextEps = toNumberOrNull(analystEstimates.nextYear.eps);
-  const quickData = withGuaranteedAnalystSection({
+  return withGuaranteedAnalystSection({
     ...previousData,
     ...definedValues(yahooData),
     forwardPE: firstNumber(
@@ -1790,16 +1852,6 @@ async function publishFastStockSnapshot(ticker) {
     ),
     analystEstimates
   });
-
-  await Stock.findOneAndUpdate(
-    { ticker, updatedAt: stock.updatedAt },
-    {
-      ticker,
-      status: "pending",
-      data: quickData,
-      updatedAt: new Date()
-    }
-  );
 }
 
 async function fetchStockData(ticker) {
@@ -2729,12 +2781,13 @@ app.get("/api/stock/:ticker", async (req, res) => {
     let stock = await Stock.findOne({ ticker });
 
     if (!stock) {
+      const quickData = await buildFastStockSnapshot(ticker);
       stock = await Stock.findOneAndUpdate(
         { ticker },
         {
           ticker,
           status: "pending",
-          data: {},
+          data: quickData || {},
           updatedAt: new Date()
         },
         {
@@ -2744,6 +2797,16 @@ app.get("/api/stock/:ticker", async (req, res) => {
       );
 
       startStockFetch(ticker);
+
+      if (quickData) {
+        return res.json({
+          ticker,
+          status: "ready",
+          refreshing: true,
+          ...quickData,
+          updatedAt: stock.updatedAt
+        });
+      }
 
       return res.status(202).json({
         ticker,
@@ -2783,6 +2846,27 @@ app.get("/api/stock/:ticker", async (req, res) => {
           ...responseData,
           error: stock.error,
           updatedAt: stock.updatedAt
+        });
+      }
+
+      const quickData = await buildFastStockSnapshot(ticker);
+      if (quickData) {
+        await Stock.findOneAndUpdate(
+          { ticker },
+          {
+            status: "pending",
+            data: quickData,
+            error: null,
+            updatedAt: new Date()
+          }
+        );
+
+        return res.json({
+          ticker: stock.ticker,
+          status: "ready",
+          refreshing: true,
+          ...quickData,
+          updatedAt: new Date()
         });
       }
 
@@ -2843,6 +2927,27 @@ app.get("/api/stock/:ticker", async (req, res) => {
           ...responseData,
           error: stock.error,
           updatedAt: stock.updatedAt
+        });
+      }
+
+      const quickData = await buildFastStockSnapshot(ticker);
+      if (quickData) {
+        await Stock.findOneAndUpdate(
+          { ticker },
+          {
+            status: "pending",
+            data: quickData,
+            error: null,
+            updatedAt: new Date()
+          }
+        );
+
+        return res.json({
+          ticker,
+          status: "ready",
+          refreshing: true,
+          ...quickData,
+          updatedAt: new Date()
         });
       }
 
