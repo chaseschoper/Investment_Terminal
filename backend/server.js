@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 52;
+const FINANCIAL_HISTORY_VERSION = 53;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -2722,14 +2722,14 @@ async function fetchStockData(ticker) {
     yahooSupplementalData.bookValuePerShare
   );
   const priceToBook = firstNumber(
-    quote.c && bookValuePerShare ? quote.c / bookValuePerShare : null,
     yahooSupplementalData.priceToBook,
     metrics.pbAnnual,
     metrics.pbQuarterly,
     metrics.ptbvAnnual,
     metrics.ptbvQuarterly,
     metrics.priceToBookAnnual,
-    metrics.priceToBookQuarterly
+    metrics.priceToBookQuarterly,
+    quote.c && bookValuePerShare ? quote.c / bookValuePerShare : null
   );
   const freeCashflow = isFinancialCompany
     ? null
