@@ -1171,6 +1171,7 @@ function withGuaranteedAnalystSection(data = {}) {
   );
   const currentYear = data.analystEstimates?.currentYear || {};
   const nextYear = data.analystEstimates?.nextYear || {};
+  const followingYear = data.analystEstimates?.followingYear || {};
   const currentRevenue = estimateRevenueFallback(
     firstNumber(currentYear.revenue, toDollarsFromBillions(latestRevenueRow.revenue)),
     marketCap
