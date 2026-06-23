@@ -795,6 +795,13 @@ const estimateNextValue = (current, growthRate) => {
   return number * (1 + growthRate);
 };
 
+const conservativeProjectionRate = (growthRate, maxGrowth = 0.12) => {
+  const rate = toNumberOrNull(growthRate);
+  if (rate === null || rate === 0) return 0.05;
+  const normalized = Math.abs(rate) > 1 ? rate / 100 : rate;
+  return clamp(normalized, -0.15, maxGrowth);
+};
+
 const FALLBACK_SHARES_OUTSTANDING_MILLIONS = 100;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
@@ -1209,11 +1216,11 @@ function withGuaranteedAnalystSection(data = {}) {
     profitMargins
   );
   const followingRevenue = estimateRevenueFallback(
-    firstNumber(followingYear.revenue, estimateNextValue(nextRevenue, safeGrowthRate(revenueGrowth))),
-    marketCap !== null ? marketCap * Math.pow(1 + safeGrowthRate(revenueGrowth), 2) : null
+    firstNumber(followingYear.revenue, estimateNextValue(nextRevenue, conservativeProjectionRate(revenueGrowth))),
+    marketCap !== null ? marketCap * (1 + conservativeProjectionRate(revenueGrowth)) : null
   );
   const provisionalFollowingEarnings = estimateEarningsFallback(
-    firstNumber(followingYear.earnings, estimateNextValue(provisionalNextEarnings, safeGrowthRate(earningsGrowth))),
+    firstNumber(followingYear.earnings, estimateNextValue(provisionalNextEarnings, conservativeProjectionRate(earningsGrowth, 0.15))),
     followingRevenue,
     profitMargins
   );
@@ -2000,41 +2007,41 @@ async function fetchStockData(ticker) {
     epsEstimate,
     revenueEstimate
   ] = await Promise.all([
-    fetchYahooFinancialHistory(ticker),
-    fetchFmpIncomeStatementHistory(ticker),
-    getYahooSupplementalData(ticker),
-    fetchYahooYearEndPrices(ticker),
-    fetchNasdaqData(ticker),
-    fetchStockAnalysisForecast(ticker),
-    fetchSecAnnualMargins(ticker),
-    getFmpData(ticker, "cash flow", [
+    resolveWithin(fetchYahooFinancialHistory(ticker), 8000, []),
+    resolveWithin(fetchFmpIncomeStatementHistory(ticker), 8000, []),
+    resolveWithin(getYahooSupplementalData(ticker), 6500, {}),
+    resolveWithin(fetchYahooYearEndPrices(ticker), 6500, []),
+    resolveWithin(fetchNasdaqData(ticker), 6500, {}),
+    resolveWithin(fetchStockAnalysisForecast(ticker), 6500, {}),
+    resolveWithin(fetchSecAnnualMargins(ticker), 8000, {}),
+    resolveWithin(getFmpData(ticker, "cash flow", [
       "/stable/cash-flow-statement?symbol={ticker}&limit=1",
       "/api/v3/cash-flow-statement/{ticker}?period=annual&limit=1"
-    ]),
-    getFmpData(ticker, "price target", [
+    ]), 6500, null),
+    resolveWithin(getFmpData(ticker, "price target", [
       "/stable/price-target-consensus?symbol={ticker}",
       "/api/v4/price-target-consensus?symbol={ticker}"
-    ]),
-    getFmpData(ticker, "analyst estimates", [
+    ]), 6500, null),
+    resolveWithin(getFmpData(ticker, "analyst estimates", [
       "/stable/analyst-estimates?symbol={ticker}&period=annual&limit=3",
       "/api/v3/analyst-estimates/{ticker}?period=annual&limit=3"
-    ]),
-    getFmpData(ticker, "rating", [
+    ]), 6500, null),
+    resolveWithin(getFmpData(ticker, "rating", [
       "/stable/ratings-snapshot?symbol={ticker}",
       "/api/v3/rating/{ticker}"
-    ]),
-    getFinnhub(`https://finnhub.io/api/v1/stock/recommendation?symbol=${ticker}`).catch((err) => {
+    ]), 6500, null),
+    resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/recommendation?symbol=${ticker}`).catch((err) => {
       console.log("Recommendation skipped:", ticker, err.message);
       return [];
-    }),
-    getFinnhub(`https://finnhub.io/api/v1/stock/eps-estimate?symbol=${ticker}&freq=annual`).catch((err) => {
+    }), 6500, []),
+    resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/eps-estimate?symbol=${ticker}&freq=annual`).catch((err) => {
       console.log("EPS estimate skipped:", ticker, err.message);
       return {};
-    }),
-    getFinnhub(`https://finnhub.io/api/v1/stock/revenue-estimate?symbol=${ticker}&freq=annual`).catch((err) => {
+    }), 6500, {}),
+    resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/revenue-estimate?symbol=${ticker}&freq=annual`).catch((err) => {
       console.log("Revenue estimate skipped:", ticker, err.message);
       return {};
-    })
+    }), 6500, {})
   ]);
   fmpCashFlow = Array.isArray(fmpCashFlowData)
     ? fmpCashFlowData
@@ -2264,10 +2271,6 @@ async function fetchStockData(ticker) {
     fmpEstimateField(fmpNextEstimate, "revenueAvg", "estimatedRevenueAvg"),
     currentRevenueBase
   );
-  const yahooNextRevenueEstimate = sanitizeRevenueEstimate(
-    yahooSupplementalData.analystEstimates?.nextYear?.revenue,
-    currentRevenueBase
-  );
   const finnhubNextRevenueEstimate = sanitizeRevenueEstimate(
     normalizeFinnhubMoney(revenueEstimates[1]?.revenueAvg),
     currentRevenueBase
@@ -2275,7 +2278,6 @@ async function fetchStockData(ticker) {
   const nextRevenue =
     stockAnalysisRevenueEstimate ??
     fmpNextRevenueEstimate ??
-    yahooNextRevenueEstimate ??
     finnhubNextRevenueEstimate ??
     estimateNextValue(currentRevenue, revenueGrowthRate);
 
@@ -2287,6 +2289,10 @@ async function fetchStockData(ticker) {
     fmpEstimateField(fmpFollowingEstimate, "revenueAvg", "estimatedRevenueAvg"),
     currentRevenueBase
   );
+  const yahooFollowingRevenueEstimate = sanitizeRevenueEstimate(
+    yahooSupplementalData.analystEstimates?.nextYear?.revenue,
+    currentRevenueBase
+  );
   const finnhubFollowingRevenueEstimate = sanitizeRevenueEstimate(
     normalizeFinnhubMoney(revenueEstimates[2]?.revenueAvg),
     currentRevenueBase
@@ -2294,8 +2300,9 @@ async function fetchStockData(ticker) {
   const followingRevenue =
     stockAnalysisFollowingRevenueEstimate ??
     fmpFollowingRevenueEstimate ??
+    yahooFollowingRevenueEstimate ??
     finnhubFollowingRevenueEstimate ??
-    estimateNextValue(nextRevenue, revenueGrowthRate);
+    estimateNextValue(nextRevenue, conservativeProjectionRate(revenueGrowthRate));
 
   const currentEarnings =
     firstNumber(
@@ -2327,8 +2334,9 @@ async function fetchStockData(ticker) {
     stockAnalysisForecast.nextYearEps ??
     nasdaqData.nextYearEps ??
     fmpEstimateField(fmpFollowingEstimate, "epsAvg", "estimatedEpsAvg") ??
+    yahooSupplementalData.analystEstimates?.nextYear?.eps ??
     epsEstimates[2]?.epsAvg ??
-    estimateNextValue(nextEps, earningsGrowthRate) ??
+    estimateNextValue(nextEps, conservativeProjectionRate(earningsGrowthRate, 0.15)) ??
     null;
   const followingEps = sanitizeForwardEps(followingEpsCandidate, nextEps);
   const followingEarnings =
@@ -2341,7 +2349,7 @@ async function fetchStockData(ticker) {
       followingEps && sharesOutstanding
         ? followingEps * sharesOutstanding * 1000000
         : null,
-      estimateNextValue(nextEarnings, earningsGrowthRate)
+      estimateNextValue(nextEarnings, conservativeProjectionRate(earningsGrowthRate, 0.15))
     );
 
   const marketCap =

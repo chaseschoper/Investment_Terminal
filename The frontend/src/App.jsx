@@ -75,11 +75,16 @@ const calculateEstimateGrowth = (estimate, actual) => {
   return ((estimate - actual) / actual) * 100;
 };
 
-const estimateForwardValue = (current, previous, fallbackGrowth = 0.05) => {
+const estimateForwardValue = (
+  current,
+  previous,
+  fallbackGrowth = 0.05,
+  maxGrowth = 0.12
+) => {
   if (!isNumber(current)) return null;
   const growth = calculateEstimateGrowth(current, previous);
   const growthRate = isNumber(growth)
-    ? Math.max(-0.35, Math.min(0.35, growth / 100))
+    ? Math.max(-0.15, Math.min(maxGrowth, growth / 100))
     : fallbackGrowth;
   return current * (1 + growthRate);
 };
@@ -1003,13 +1008,17 @@ const followingYearEstimate = {
     ? followingYearSource.earnings
     : estimateForwardValue(
         currentYearEstimate?.earnings,
-        previousYearEstimate?.earnings
+        previousYearEstimate?.earnings,
+        0.05,
+        0.15
       ),
   eps: isNumber(followingYearSource.eps)
     ? followingYearSource.eps
     : estimateForwardValue(
         currentYearEstimate?.eps,
-        previousYearEstimate?.eps
+        previousYearEstimate?.eps,
+        0.05,
+        0.15
       )
 };
 const currentYearRevenueGrowth = calculateEstimateGrowth(
