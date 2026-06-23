@@ -805,6 +805,15 @@ const estimateNextValue = (current, growthRate) => {
   return number * (1 + growthRate);
 };
 
+const estimateDecayedForwardValue = (currentEstimate, previousActual, maxGrowth = 0.6) => {
+  const current = toNumberOrNull(currentEstimate);
+  const previous = toNumberOrNull(previousActual);
+  if (current === null || previous === null || previous === 0) return null;
+
+  const growth = (current - previous) / Math.abs(previous);
+  return current * (1 + clamp(growth * 0.5, -0.2, maxGrowth));
+};
+
 const conservativeProjectionRate = (growthRate, maxGrowth = 0.12) => {
   const rate = toNumberOrNull(growthRate);
   if (rate === null || rate === 0) return 0.05;
@@ -2305,7 +2314,9 @@ async function fetchStockData(ticker) {
     yahooSupplementalData.analystEstimates?.nextYear?.revenue,
     nextRevenue
   );
-  const followingRevenue = yahooFollowingRevenueEstimate;
+  const followingRevenue =
+    yahooFollowingRevenueEstimate ??
+    estimateDecayedForwardValue(nextRevenue, currentRevenueBase);
 
   const currentEarnings =
     firstNumber(
@@ -2335,6 +2346,7 @@ async function fetchStockData(ticker) {
 
   const followingEpsCandidate =
     yahooSupplementalData.analystEstimates?.nextYear?.eps ??
+    estimateDecayedForwardValue(nextEps, latestAnnual.eps, 0.5) ??
     stockAnalysisForecast.nextYearEps ??
     nasdaqData.nextYearEps ??
     fmpEstimateField(fmpFollowingEstimate, "epsAvg", "estimatedEpsAvg") ??
