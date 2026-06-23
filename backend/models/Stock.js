@@ -3,8 +3,7 @@ const mongoose = require("mongoose");
 const StockSchema = new mongoose.Schema({
   ticker: {
     type: String,
-    required: true,
-    unique: true
+    required: true
   },
 
   status: {
@@ -24,5 +23,7 @@ const StockSchema = new mongoose.Schema({
     default: Date.now
   }
 });
+
+StockSchema.index({ ticker: 1 }, { unique: true });
 
 module.exports = mongoose.model("Stock", StockSchema);

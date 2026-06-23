@@ -25,6 +25,7 @@ const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
 let secTickerMapPromise;
+let secTickerMapRetryAfter = 0;
 const TICKER_ALIASES = {
   ZILLOW: "Z",
   SALESFORCE: "CRM",
@@ -83,9 +84,21 @@ return res.status(401).json({ error: "Invalid token" });
 // =========================
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const isRateLimitError = (err) => err?.response?.status === 429;
+
 async function getFinnhub(url) {
-  const res = await axios.get(`${url}&token=${process.env.FINNHUB_API_KEY}`);
-  return res.data;
+  const requestUrl = `${url}&token=${process.env.FINNHUB_API_KEY}`;
+  try {
+    const res = await axios.get(requestUrl, { timeout: 8000 });
+    return res.data;
+  } catch (err) {
+    if (isRateLimitError(err)) {
+      await wait(750);
+      const retry = await axios.get(requestUrl, { timeout: 8000 });
+      return retry.data;
+    }
+    throw err;
+  }
 }
 
 function getFinnhubLogoUrl(ticker) {
@@ -104,7 +117,7 @@ async function getFmpData(ticker, label, endpoints) {
     const url = `https://financialmodelingprep.com${path}${separator}apikey=${process.env.FMP_API_KEY}`;
 
     try {
-      const res = await axios.get(url);
+      const res = await axios.get(url, { timeout: 8000 });
       const data = res.data;
       if (data?.["Error Message"] || data?.error) continue;
       if (Array.isArray(data) && !data.length) continue;
@@ -230,6 +243,10 @@ async function fetchStockAnalysisForecast(ticker) {
 }
 
 async function getSecTickerMap() {
+  if (!secTickerMapPromise && Date.now() < secTickerMapRetryAfter) {
+    throw new Error("SEC ticker map is temporarily unavailable");
+  }
+
   if (!secTickerMapPromise) {
     secTickerMapPromise = axios.get(
       "https://www.sec.gov/files/company_tickers.json",
@@ -244,6 +261,7 @@ async function getSecTickerMap() {
       ])
     )).catch((err) => {
       secTickerMapPromise = null;
+      secTickerMapRetryAfter = Date.now() + 5 * 60 * 1000;
       throw err;
     });
   }
@@ -1732,31 +1750,25 @@ async function publishFastStockSnapshot(ticker) {
 }
 
 async function fetchStockData(ticker) {
-  const quote = await getFinnhub(
-    `https://finnhub.io/api/v1/quote?symbol=${ticker}`
-  );
-
-  await wait(300);
-
-  let profile = {};
-  try {
-    profile = await getFinnhub(
-      `https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}`
-    );
-  } catch (err) {
-    console.log("Profile skipped:", ticker, err.message);
-  }
-
-  await wait(300);
-
-  let metricData = {};
-  try {
-    metricData = await getFinnhub(
-      `https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=all`
-    );
-  } catch (err) {
-    console.log("Finnhub metrics skipped:", ticker, err.message);
-  }
+  const [quote, profile, metricData, financials, priceTarget] = await Promise.all([
+    getFinnhub(`https://finnhub.io/api/v1/quote?symbol=${ticker}`),
+    getFinnhub(`https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}`).catch((err) => {
+      console.log("Profile skipped:", ticker, err.message);
+      return {};
+    }),
+    getFinnhub(`https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=all`).catch((err) => {
+      console.log("Finnhub metrics skipped:", ticker, err.message);
+      return {};
+    }),
+    getFinnhub(`https://finnhub.io/api/v1/stock/financials-reported?symbol=${ticker}&freq=annual`).catch((err) => {
+      console.log("Financials skipped:", ticker, err.message);
+      return {};
+    }),
+    getFinnhub(`https://finnhub.io/api/v1/stock/price-target?symbol=${ticker}`).catch((err) => {
+      console.log("Price target skipped:", ticker, err.message);
+      return {};
+    })
+  ]);
 
   const metrics = metricData?.metric || {};
   const sharesOutstanding = profile.shareOutstanding || null;
@@ -1764,63 +1776,52 @@ async function fetchStockData(ticker) {
   let finnhubReportedData = [];
   let finnhubMetricData = [];
 
-  try {
-    await wait(300);
+  const reports = financials?.data || [];
 
-    const financials = await getFinnhub(
-      `https://finnhub.io/api/v1/stock/financials-reported?symbol=${ticker}&freq=annual`
-    );
+  finnhubReportedData = reports
+    .slice(0, 5)
+    .map((report) => {
+      const ic = report.report?.ic || [];
 
-    const reports = financials?.data || [];
+      const revenue = findFinancialValue(ic, [
+        "us-gaap_Revenues",
+        "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+        "us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax",
+        "us-gaap_SalesRevenueNet",
+        "us-gaap_SalesRevenueGoodsNet",
+        "us-gaap_RevenuesNetOfInterestExpense",
+        "us-gaap_TotalRevenuesAndOtherIncome",
+        "us-gaap_InterestAndDividendIncomeOperating",
+        "us-gaap_NoninterestIncome",
+        "us-gaap_PremiumsEarnedNet",
+        "us-gaap_RealEstateRevenueNet",
+        "ifrs-full_Revenue"
+      ]);
 
-    finnhubReportedData = reports
-      .slice(0, 5)
-      .map((report) => {
-        const ic = report.report?.ic || [];
+      const earnings = findFinancialValue(ic, [
+        "us-gaap_NetIncomeLoss",
+        "us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic",
+        "us-gaap_NetIncomeLossAvailableToCommonStockholdersDiluted",
+        "us-gaap_ProfitLoss",
+        "ifrs-full_ProfitLoss"
+      ]);
 
-        const revenue = findFinancialValue(ic, [
-          "us-gaap_Revenues",
-          "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
-          "us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax",
-          "us-gaap_SalesRevenueNet",
-          "us-gaap_SalesRevenueGoodsNet",
-          "us-gaap_RevenuesNetOfInterestExpense",
-          "us-gaap_TotalRevenuesAndOtherIncome",
-          "us-gaap_InterestAndDividendIncomeOperating",
-          "us-gaap_NoninterestIncome",
-          "us-gaap_PremiumsEarnedNet",
-          "us-gaap_RealEstateRevenueNet",
-          "ifrs-full_Revenue"
-        ]);
+      const eps = findFinancialValue(ic, [
+        "us-gaap_EarningsPerShareDiluted",
+        "us-gaap_EarningsPerShareBasic",
+        "us-gaap_EarningsPerShareBasicAndDiluted"
+      ]);
 
-        const earnings = findFinancialValue(ic, [
-          "us-gaap_NetIncomeLoss",
-          "us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic",
-          "us-gaap_NetIncomeLossAvailableToCommonStockholdersDiluted",
-          "us-gaap_ProfitLoss",
-          "ifrs-full_ProfitLoss"
-        ]);
-
-        const eps = findFinancialValue(ic, [
-          "us-gaap_EarningsPerShareDiluted",
-          "us-gaap_EarningsPerShareBasic",
-          "us-gaap_EarningsPerShareBasicAndDiluted"
-        ]);
-
-        return {
-          year: report.year,
-          revenue: revenue ? revenue / 1000000000 : null,
-          earnings: earnings ? earnings / 1000000000 : null,
-          eps: eps ?? null,
-          source: "Finnhub filings"
-        };
-      })
-      .filter((item) => item.year)
-      .reverse();
-
-  } catch (err) {
-    console.log("Financials skipped:", ticker, err.message);
-  }
+      return {
+        year: report.year,
+        revenue: revenue ? revenue / 1000000000 : null,
+        earnings: earnings ? earnings / 1000000000 : null,
+        eps: eps ?? null,
+        source: "Finnhub filings"
+      };
+    })
+    .filter((item) => item.year)
+    .reverse();
 
   const annual = metricData?.series?.annual || {};
   const revenues = annual.revenue || [];
@@ -1849,16 +1850,6 @@ async function fetchStockData(ticker) {
     .filter((item) => item.year)
     .sort((a, b) => a.year - b.year);
 
-  let priceTarget = {};
-  try {
-    await wait(300);
-    priceTarget = await getFinnhub(
-      `https://finnhub.io/api/v1/stock/price-target?symbol=${ticker}`
-    );
-  } catch (err) {
-    console.log("Price target skipped:", ticker, err.message);
-  }
-
   let fmpCashFlow = [];
   let fmpPriceTarget = {};
   let fmpAnalystEstimates = [];
@@ -1870,7 +1861,14 @@ async function fetchStockData(ticker) {
     yahooYearEndPrices,
     nasdaqData,
     stockAnalysisForecast,
-    secAnnualMargins
+    secAnnualMargins,
+    fmpCashFlowData,
+    fmpPriceTargetData,
+    fmpAnalystEstimateData,
+    fmpRatingData,
+    recommendation,
+    epsEstimate,
+    revenueEstimate
   ] = await Promise.all([
     fetchYahooFinancialHistory(ticker),
     fetchFmpIncomeStatementHistory(ticker),
@@ -1878,18 +1876,52 @@ async function fetchStockData(ticker) {
     fetchYahooYearEndPrices(ticker),
     fetchNasdaqData(ticker),
     fetchStockAnalysisForecast(ticker),
-    fetchSecAnnualMargins(ticker)
-  ]);
-
-  const fmpCashFlowData = await getFmpData(ticker, "cash flow", [
-    "/stable/cash-flow-statement?symbol={ticker}&limit=1",
-    "/api/v3/cash-flow-statement/{ticker}?period=annual&limit=1"
+    fetchSecAnnualMargins(ticker),
+    getFmpData(ticker, "cash flow", [
+      "/stable/cash-flow-statement?symbol={ticker}&limit=1",
+      "/api/v3/cash-flow-statement/{ticker}?period=annual&limit=1"
+    ]),
+    getFmpData(ticker, "price target", [
+      "/stable/price-target-consensus?symbol={ticker}",
+      "/api/v4/price-target-consensus?symbol={ticker}"
+    ]),
+    getFmpData(ticker, "analyst estimates", [
+      "/stable/analyst-estimates?symbol={ticker}&period=annual&limit=2",
+      "/api/v3/analyst-estimates/{ticker}?period=annual&limit=2"
+    ]),
+    getFmpData(ticker, "rating", [
+      "/stable/ratings-snapshot?symbol={ticker}",
+      "/api/v3/rating/{ticker}"
+    ]),
+    getFinnhub(`https://finnhub.io/api/v1/stock/recommendation?symbol=${ticker}`).catch((err) => {
+      console.log("Recommendation skipped:", ticker, err.message);
+      return [];
+    }),
+    getFinnhub(`https://finnhub.io/api/v1/stock/eps-estimate?symbol=${ticker}&freq=annual`).catch((err) => {
+      console.log("EPS estimate skipped:", ticker, err.message);
+      return {};
+    }),
+    getFinnhub(`https://finnhub.io/api/v1/stock/revenue-estimate?symbol=${ticker}&freq=annual`).catch((err) => {
+      console.log("Revenue estimate skipped:", ticker, err.message);
+      return {};
+    })
   ]);
   fmpCashFlow = Array.isArray(fmpCashFlowData)
     ? fmpCashFlowData
     : fmpCashFlowData
       ? [fmpCashFlowData]
       : [];
+  fmpPriceTarget = Array.isArray(fmpPriceTargetData)
+    ? fmpPriceTargetData[0] || {}
+    : fmpPriceTargetData || {};
+  fmpAnalystEstimates = Array.isArray(fmpAnalystEstimateData)
+    ? fmpAnalystEstimateData
+    : fmpAnalystEstimateData
+      ? [fmpAnalystEstimateData]
+      : [];
+  fmpRating = Array.isArray(fmpRatingData)
+    ? fmpRatingData[0] || {}
+    : fmpRatingData || {};
 
   const authoritativeAnnualData = secAnnualMargins.isFinancialCompany
     ? mergeHistoricalFinancials(secAnnualMargins.history || [], yahooFinancialData)
@@ -1988,62 +2020,6 @@ async function fetchStockData(ticker) {
     })
     .filter((row) => row.pe !== null && Math.abs(row.pe) < 1000)
     .slice(-6);
-
-  const fmpPriceTargetData = await getFmpData(ticker, "price target", [
-    "/stable/price-target-consensus?symbol={ticker}",
-    "/api/v4/price-target-consensus?symbol={ticker}"
-  ]);
-  fmpPriceTarget = Array.isArray(fmpPriceTargetData)
-    ? fmpPriceTargetData[0] || {}
-    : fmpPriceTargetData || {};
-
-  const fmpAnalystEstimateData = await getFmpData(ticker, "analyst estimates", [
-    "/stable/analyst-estimates?symbol={ticker}&period=annual&limit=2",
-    "/api/v3/analyst-estimates/{ticker}?period=annual&limit=2"
-  ]);
-  fmpAnalystEstimates = Array.isArray(fmpAnalystEstimateData)
-    ? fmpAnalystEstimateData
-    : fmpAnalystEstimateData
-      ? [fmpAnalystEstimateData]
-      : [];
-
-  const fmpRatingData = await getFmpData(ticker, "rating", [
-    "/stable/ratings-snapshot?symbol={ticker}",
-    "/api/v3/rating/{ticker}"
-  ]);
-  fmpRating = Array.isArray(fmpRatingData)
-    ? fmpRatingData[0] || {}
-    : fmpRatingData || {};
-
-  let recommendation = [];
-  try {
-    await wait(300);
-    recommendation = await getFinnhub(
-      `https://finnhub.io/api/v1/stock/recommendation?symbol=${ticker}`
-    );
-  } catch (err) {
-    console.log("Recommendation skipped:", ticker, err.message);
-  }
-
-  let epsEstimate = {};
-  try {
-    await wait(300);
-    epsEstimate = await getFinnhub(
-      `https://finnhub.io/api/v1/stock/eps-estimate?symbol=${ticker}&freq=annual`
-    );
-  } catch (err) {
-    console.log("EPS estimate skipped:", ticker, err.message);
-  }
-
-  let revenueEstimate = {};
-  try {
-    await wait(300);
-    revenueEstimate = await getFinnhub(
-      `https://finnhub.io/api/v1/stock/revenue-estimate?symbol=${ticker}&freq=annual`
-    );
-  } catch (err) {
-    console.log("Revenue estimate skipped:", ticker, err.message);
-  }
 
   if (!quote || !quote.c || quote.c === 0) {
     throw new Error("No price returned");
