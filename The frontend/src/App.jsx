@@ -75,20 +75,6 @@ const calculateEstimateGrowth = (estimate, actual) => {
   return ((estimate - actual) / actual) * 100;
 };
 
-const estimateForwardValue = (
-  current,
-  previous,
-  fallbackGrowth = 0.05,
-  maxGrowth = 0.12
-) => {
-  if (!isNumber(current)) return null;
-  const growth = calculateEstimateGrowth(current, previous);
-  const growthRate = isNumber(growth)
-    ? Math.max(-0.15, Math.min(maxGrowth, growth / 100))
-    : fallbackGrowth;
-  return current * (1 + growthRate);
-};
-
 const buildChartRows = (rows, key) =>
   (rows || [])
     .map((item) => ({
@@ -999,28 +985,9 @@ const currentYearEstimate =
 const followingYearSource =
   stockData?.analystEstimates?.followingYear || {};
 const followingYearEstimate = {
-  revenue: isNumber(followingYearSource.revenue)
-    ? followingYearSource.revenue
-    : estimateForwardValue(
-        currentYearEstimate?.revenue,
-        previousYearEstimate?.revenue
-      ),
-  earnings: isNumber(followingYearSource.earnings)
-    ? followingYearSource.earnings
-    : estimateForwardValue(
-        currentYearEstimate?.earnings,
-        previousYearEstimate?.earnings,
-        0.05,
-        0.15
-      ),
-  eps: isNumber(followingYearSource.eps)
-    ? followingYearSource.eps
-    : estimateForwardValue(
-        currentYearEstimate?.eps,
-        previousYearEstimate?.eps,
-        0.05,
-        0.15
-      )
+  revenue: isNumber(followingYearSource.revenue) ? followingYearSource.revenue : null,
+  earnings: isNumber(followingYearSource.earnings) ? followingYearSource.earnings : null,
+  eps: isNumber(followingYearSource.eps) ? followingYearSource.eps : null
 };
 const currentYearRevenueGrowth = calculateEstimateGrowth(
   currentYearEstimate?.revenue,

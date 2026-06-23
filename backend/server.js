@@ -1238,12 +1238,9 @@ function withGuaranteedAnalystSection(data = {}) {
     followingYear.revenue,
     nextRevenue
   );
-  const followingRevenue = estimateRevenueFallback(
-    firstNumber(safeFollowingRevenue, estimateNextValue(nextRevenue, conservativeProjectionRate(revenueGrowth))),
-    marketCap !== null ? marketCap * (1 + conservativeProjectionRate(revenueGrowth)) : null
-  );
+  const followingRevenue = firstNumber(safeFollowingRevenue);
   const provisionalFollowingEarnings = estimateEarningsFallback(
-    firstNumber(followingYear.earnings, estimateNextValue(provisionalNextEarnings, conservativeProjectionRate(earningsGrowth, 0.15))),
+    firstNumber(followingYear.earnings),
     followingRevenue,
     profitMargins
   );
@@ -2304,28 +2301,11 @@ async function fetchStockData(ticker) {
     finnhubNextRevenueEstimate ??
     estimateNextValue(currentRevenue, revenueGrowthRate);
 
-  const stockAnalysisFollowingRevenueEstimate = sanitizeRevenueEstimate(
-    stockAnalysisForecast.nextYearRevenue,
-    currentRevenueBase
-  );
-  const fmpFollowingRevenueEstimate = sanitizeRevenueEstimate(
-    fmpEstimateField(fmpFollowingEstimate, "revenueAvg", "estimatedRevenueAvg"),
-    currentRevenueBase
-  );
   const yahooFollowingRevenueEstimate = sanitizeRevenueEstimate(
     yahooSupplementalData.analystEstimates?.nextYear?.revenue,
     nextRevenue
   );
-  const finnhubFollowingRevenueEstimate = sanitizeRevenueEstimate(
-    normalizeFinnhubMoney(revenueEstimates[2]?.revenueAvg),
-    currentRevenueBase
-  );
-  const followingRevenue =
-    yahooFollowingRevenueEstimate ??
-    stockAnalysisFollowingRevenueEstimate ??
-    fmpFollowingRevenueEstimate ??
-    finnhubFollowingRevenueEstimate ??
-    estimateNextValue(nextRevenue, conservativeProjectionRate(revenueGrowthRate));
+  const followingRevenue = yahooFollowingRevenueEstimate;
 
   const currentEarnings =
     firstNumber(
@@ -2366,13 +2346,7 @@ async function fetchStockData(ticker) {
     firstNumber(
       followingEps && sharesOutstanding
         ? followingEps * sharesOutstanding * 1000000
-        : null,
-      fmpEstimateField(
-        fmpFollowingEstimate,
-        "netIncomeAvg",
-        "estimatedNetIncomeAvg"
-      ),
-      estimateNextValue(nextEarnings, conservativeProjectionRate(earningsGrowthRate, 0.15))
+        : null
     );
 
   const marketCap =
@@ -2479,10 +2453,7 @@ async function fetchStockData(ticker) {
     nextRevenue,
     modeledMarketCap ? modeledMarketCap * (1 + revenueGrowthRate) : null
   );
-  const followingRevenueValue = estimateRevenueFallback(
-    followingRevenue,
-    modeledMarketCap ? modeledMarketCap * Math.pow(1 + revenueGrowthRate, 2) : null
-  );
+  const followingRevenueValue = normalizeStatementDollars(followingRevenue);
   const provisionalCurrentEarningsValue = estimateEarningsFallback(
     currentEarnings,
     currentRevenueValue,
