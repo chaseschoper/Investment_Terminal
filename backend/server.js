@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 38;
+const FINANCIAL_HISTORY_VERSION = 39;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -805,13 +805,18 @@ const estimateNextValue = (current, growthRate) => {
   return number * (1 + growthRate);
 };
 
-const estimateDecayedForwardValue = (currentEstimate, previousActual, maxGrowth = 0.6) => {
+const estimateDecayedForwardValue = (
+  currentEstimate,
+  previousActual,
+  maxGrowth = 0.6,
+  decay = 0.5
+) => {
   const current = toNumberOrNull(currentEstimate);
   const previous = toNumberOrNull(previousActual);
   if (current === null || previous === null || previous === 0) return null;
 
   const growth = (current - previous) / Math.abs(previous);
-  return current * (1 + clamp(growth * 0.5, -0.2, maxGrowth));
+  return current * (1 + clamp(growth * decay, -0.2, maxGrowth));
 };
 
 const conservativeProjectionRate = (growthRate, maxGrowth = 0.12) => {
@@ -2344,17 +2349,18 @@ async function fetchStockData(ticker) {
       estimateNextValue(currentEarnings, earningsGrowthRate)
     );
 
+  const latestHistoricalEps = [...revenueData]
+    .filter((row) => row?.year && toNumberOrNull(row?.eps) !== null)
+    .sort((a, b) => a.year - b.year)
+    .at(-1)?.eps;
   const latestForecastBaselineEps = firstNumber(
+    latestHistoricalEps,
     latestAnnual.eps,
-    [...revenueData]
-      .filter((row) => row?.year)
-      .sort((a, b) => a.year - b.year)
-      .at(-1)?.eps,
     currentEps
   );
   const followingEpsCandidate =
     yahooSupplementalData.analystEstimates?.nextYear?.eps ??
-    estimateDecayedForwardValue(nextEps, latestForecastBaselineEps, 0.5) ??
+    estimateDecayedForwardValue(nextEps, latestForecastBaselineEps, 0.55, 0.515) ??
     stockAnalysisForecast.nextYearEps ??
     nasdaqData.nextYearEps ??
     fmpEstimateField(fmpFollowingEstimate, "epsAvg", "estimatedEpsAvg") ??
