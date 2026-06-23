@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 37;
+const FINANCIAL_HISTORY_VERSION = 38;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -2344,9 +2344,17 @@ async function fetchStockData(ticker) {
       estimateNextValue(currentEarnings, earningsGrowthRate)
     );
 
+  const latestForecastBaselineEps = firstNumber(
+    latestAnnual.eps,
+    [...revenueData]
+      .filter((row) => row?.year)
+      .sort((a, b) => a.year - b.year)
+      .at(-1)?.eps,
+    currentEps
+  );
   const followingEpsCandidate =
     yahooSupplementalData.analystEstimates?.nextYear?.eps ??
-    estimateDecayedForwardValue(nextEps, latestAnnual.eps, 0.5) ??
+    estimateDecayedForwardValue(nextEps, latestForecastBaselineEps, 0.5) ??
     stockAnalysisForecast.nextYearEps ??
     nasdaqData.nextYearEps ??
     fmpEstimateField(fmpFollowingEstimate, "epsAvg", "estimatedEpsAvg") ??
