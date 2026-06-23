@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 59;
+const FINANCIAL_HISTORY_VERSION = 60;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -2583,6 +2583,7 @@ async function fetchStockData(ticker) {
     fmpEstimateField(fmpFollowingEstimate, "epsAvg", "estimatedEpsAvg"),
     epsEstimates[2]?.epsAvg
   );
+  const stockAnalysisFollowingEps = toNumberOrNull(stockAnalysisForecast.nextYearEps);
   const followingRevenueGrowthRate = nextRevenue && followingRevenue
     ? followingRevenue / nextRevenue - 1
     : null;
@@ -2609,7 +2610,9 @@ async function fetchStockData(ticker) {
     estimateDecayedForwardValue(nextEps, latestForecastBaselineEps, 0.55, 0.515) ??
     estimateNextValue(nextEps, conservativeProjectionRate(earningsGrowthRate, 0.15)) ??
     null;
-  const followingEps = sanitizeForwardEps(followingEpsCandidate, nextEps);
+  const followingEps =
+    stockAnalysisFollowingEps ??
+    sanitizeForwardEps(followingEpsCandidate, nextEps);
   const followingEarnings =
     firstNumber(
       followingEps && sharesOutstanding
@@ -2784,16 +2787,18 @@ async function fetchStockData(ticker) {
     revenue: followingRevenueValue,
     profitMargin: profitMargins
   });
-  const displayedFollowingEpsValue = sanitizeForwardEps(
-    (useRevenueGuidedFollowingEps ? revenueGuidedFollowingEps : providerFollowingEps) ??
-      revenueGuidedFollowingEps ??
-      estimateDecayedForwardValue(nextEpsValue, latestForecastBaselineEps, 0.55, 0.515) ??
-      followingEpsValue ??
-      (followingEarningsValue && sharesOutstandingValue
-        ? followingEarningsValue / (sharesOutstandingValue * 1000000)
-        : null),
-    nextEpsValue
-  );
+  const displayedFollowingEpsValue =
+    stockAnalysisFollowingEps ??
+    sanitizeForwardEps(
+      (useRevenueGuidedFollowingEps ? revenueGuidedFollowingEps : providerFollowingEps) ??
+        revenueGuidedFollowingEps ??
+        estimateDecayedForwardValue(nextEpsValue, latestForecastBaselineEps, 0.55, 0.515) ??
+        followingEpsValue ??
+        (followingEarningsValue && sharesOutstandingValue
+          ? followingEarningsValue / (sharesOutstandingValue * 1000000)
+          : null),
+      nextEpsValue
+    );
   const pe = firstNumber(
     reportedPE,
     currentEpsValue ? quote.c / currentEpsValue : null
