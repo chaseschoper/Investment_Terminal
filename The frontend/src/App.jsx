@@ -176,6 +176,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
+const FINANCIAL_HISTORY_VERSION = 37;
 
 const handleCompanyLogoError = (event, symbol) => {
   const image = event.currentTarget;
@@ -1038,10 +1039,15 @@ const nextYearEarningsGrowth = calculateEstimateGrowth(
   currentYearEstimate?.earnings
 );
 const isStockRefreshing = stockData?.refreshing === true;
+const areEstimatesRefreshing =
+  isStockRefreshing &&
+  stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION;
 const stockValue = (value) =>
   isStockLoading || (isStockRefreshing && (value === "N/A" || value === null || value === undefined))
     ? "Loading..."
     : value;
+const estimateValue = (value) =>
+  areEstimatesRefreshing ? "Loading..." : stockValue(value);
 const normalizedTranscriptSearch = transcriptSearch.trim().toLowerCase();
 const filteredTranscript = (earningsCall?.transcript || []).filter((section) =>
   !normalizedTranscriptSearch ||
@@ -2080,7 +2086,7 @@ return (
           <span>Revenue</span>
 
           <span>
-            {stockValue(formatEstimateMoney(
+            {estimateValue(formatEstimateMoney(
               previousYearEstimate?.revenue
             ))}
           </span>
@@ -2097,7 +2103,7 @@ return (
           <span>Net Income</span>
 
           <span>
-            {stockValue(formatEstimateMoney(
+            {estimateValue(formatEstimateMoney(
               previousYearEstimate?.earnings
             ))}
           </span>
@@ -2114,7 +2120,7 @@ return (
           <span>EPS</span>
 
           <span>
-            {stockValue(formatEstimateEps(
+            {estimateValue(formatEstimateEps(
               previousYearEstimate?.eps
             ))}
           </span>
@@ -2151,7 +2157,7 @@ return (
           <span>Revenue</span>
 
           <span>
-            {stockValue(formatEstimateMoney(
+            {estimateValue(formatEstimateMoney(
               currentYearEstimate?.revenue
             ))}
           </span>
@@ -2168,7 +2174,7 @@ return (
           <span>Net Income</span>
 
           <span>
-            {stockValue(formatEstimateMoney(
+            {estimateValue(formatEstimateMoney(
               currentYearEstimate?.earnings
             ))}
           </span>
@@ -2185,7 +2191,7 @@ return (
           <span>EPS</span>
 
           <span>
-            {stockValue(formatEstimateEps(
+            {estimateValue(formatEstimateEps(
               currentYearEstimate?.eps
             ))}
           </span>
@@ -2222,7 +2228,7 @@ return (
           <span>Revenue</span>
 
           <span>
-            {stockValue(formatEstimateMoney(
+            {estimateValue(formatEstimateMoney(
               followingYearEstimate?.revenue
             ))}
           </span>
@@ -2239,7 +2245,7 @@ return (
           <span>Net Income</span>
 
           <span>
-            {stockValue(formatEstimateMoney(
+            {estimateValue(formatEstimateMoney(
               followingYearEstimate?.earnings
             ))}
           </span>
@@ -2256,7 +2262,7 @@ return (
           <span>EPS</span>
 
           <span>
-            {stockValue(formatEstimateEps(
+            {estimateValue(formatEstimateEps(
               followingYearEstimate?.eps
             ))}
           </span>
@@ -2272,7 +2278,7 @@ return (
     <div className="estimate-growth-card">
       <span className="estimate-growth-label">Current Year Revenue Growth</span>
       <strong className={!isNumber(currentYearRevenueGrowth) ? "estimate-growth-unavailable" : currentYearRevenueGrowth >= 0 ? "estimate-growth-positive" : "estimate-growth-negative"}>
-        {stockValue(formatPercent(currentYearRevenueGrowth))}
+        {estimateValue(formatPercent(currentYearRevenueGrowth))}
       </strong>
       <span className="estimate-growth-period">Current estimate vs. 2025 actual</span>
     </div>
@@ -2280,7 +2286,7 @@ return (
     <div className="estimate-growth-card">
       <span className="estimate-growth-label">Current Year Earnings Growth</span>
       <strong className={!isNumber(currentYearEarningsGrowth) ? "estimate-growth-unavailable" : currentYearEarningsGrowth >= 0 ? "estimate-growth-positive" : "estimate-growth-negative"}>
-        {stockValue(formatPercent(currentYearEarningsGrowth))}
+        {estimateValue(formatPercent(currentYearEarningsGrowth))}
       </strong>
       <span className="estimate-growth-period">Current estimate vs. 2025 actual</span>
     </div>
@@ -2288,7 +2294,7 @@ return (
     <div className="estimate-growth-card">
       <span className="estimate-growth-label">Next Year Revenue Growth</span>
       <strong className={!isNumber(nextYearRevenueGrowth) ? "estimate-growth-unavailable" : nextYearRevenueGrowth >= 0 ? "estimate-growth-positive" : "estimate-growth-negative"}>
-        {stockValue(formatPercent(nextYearRevenueGrowth))}
+        {estimateValue(formatPercent(nextYearRevenueGrowth))}
       </strong>
       <span className="estimate-growth-period">Next estimate vs. current estimate</span>
     </div>
@@ -2296,7 +2302,7 @@ return (
     <div className="estimate-growth-card">
       <span className="estimate-growth-label">Next Year Earnings Growth</span>
       <strong className={!isNumber(nextYearEarningsGrowth) ? "estimate-growth-unavailable" : nextYearEarningsGrowth >= 0 ? "estimate-growth-positive" : "estimate-growth-negative"}>
-        {stockValue(formatPercent(nextYearEarningsGrowth))}
+        {estimateValue(formatPercent(nextYearEarningsGrowth))}
       </strong>
       <span className="estimate-growth-period">Next estimate vs. current estimate</span>
     </div>

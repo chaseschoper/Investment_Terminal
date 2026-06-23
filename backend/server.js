@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 36;
+const FINANCIAL_HISTORY_VERSION = 37;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -2314,7 +2314,7 @@ async function fetchStockData(ticker) {
   );
   const yahooFollowingRevenueEstimate = sanitizeRevenueEstimate(
     yahooSupplementalData.analystEstimates?.nextYear?.revenue,
-    currentRevenueBase
+    nextRevenue
   );
   const finnhubFollowingRevenueEstimate = sanitizeRevenueEstimate(
     normalizeFinnhubMoney(revenueEstimates[2]?.revenueAvg),
