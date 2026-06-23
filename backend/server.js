@@ -1760,6 +1760,15 @@ function getYahooSupplementalData(ticker) {
   return request;
 }
 
+const resolveWithin = (promise, ms, fallback = null) =>
+  new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), ms);
+    Promise.resolve(promise)
+      .then((value) => resolve(value))
+      .catch(() => resolve(fallback))
+      .finally(() => clearTimeout(timer));
+  });
+
 async function fetchYahooQuickQuote(ticker) {
   try {
     const quoteData = await yahooFinance.quote(ticker);
@@ -1853,6 +1862,21 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     analystEstimates
   });
 }
+
+function buildMinimalStockSnapshot(ticker, previousData = {}) {
+  return withGuaranteedAnalystSection({
+    ...previousData,
+    name: previousData.name || ticker,
+    symbol: ticker,
+    logo: previousData.logo || getFinnhubLogoUrl(ticker),
+    revenueData: previousData.revenueData || [],
+    revenueHistory: previousData.revenueHistory || []
+  });
+}
+
+const getImmediateStockSnapshot = async (ticker, previousData = {}) =>
+  (await resolveWithin(buildFastStockSnapshot(ticker, previousData), 1200, null)) ||
+  buildMinimalStockSnapshot(ticker, previousData);
 
 async function fetchStockData(ticker) {
   const quote = await getPrimaryQuote(ticker);
@@ -2781,7 +2805,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
     let stock = await Stock.findOne({ ticker });
 
     if (!stock) {
-      const quickData = await buildFastStockSnapshot(ticker);
+      const quickData = await getImmediateStockSnapshot(ticker);
       stock = await Stock.findOneAndUpdate(
         { ticker },
         {
@@ -2798,20 +2822,12 @@ app.get("/api/stock/:ticker", async (req, res) => {
 
       startStockFetch(ticker);
 
-      if (quickData) {
-        return res.json({
-          ticker,
-          status: "ready",
-          refreshing: true,
-          ...quickData,
-          updatedAt: stock.updatedAt
-        });
-      }
-
-      return res.status(202).json({
+      return res.json({
         ticker,
-        status: "pending",
-        message: `${ticker} has been added. Data is being fetched. Refresh in 30-60 seconds.`
+        status: "ready",
+        refreshing: true,
+        ...quickData,
+        updatedAt: stock.updatedAt
       });
     }
 
@@ -2849,32 +2865,23 @@ app.get("/api/stock/:ticker", async (req, res) => {
         });
       }
 
-      const quickData = await buildFastStockSnapshot(ticker);
-      if (quickData) {
-        await Stock.findOneAndUpdate(
-          { ticker },
-          {
-            status: "pending",
-            data: quickData,
-            error: null,
-            updatedAt: new Date()
-          }
-        );
-
-        return res.json({
-          ticker: stock.ticker,
-          status: "ready",
-          refreshing: true,
-          ...quickData,
+      const quickData = await getImmediateStockSnapshot(ticker, stock.data || {});
+      await Stock.findOneAndUpdate(
+        { ticker },
+        {
+          status: "pending",
+          data: quickData,
+          error: null,
           updatedAt: new Date()
-        });
-      }
+        }
+      );
 
-      return res.status(202).json({
+      return res.json({
         ticker: stock.ticker,
-        status: "pending",
-        message: `${ticker} is still updating. Refresh in 30-60 seconds.`,
-        updatedAt: stock.updatedAt
+        status: "ready",
+        refreshing: true,
+        ...quickData,
+        updatedAt: new Date()
       });
     }
 
@@ -2930,31 +2937,22 @@ app.get("/api/stock/:ticker", async (req, res) => {
         });
       }
 
-      const quickData = await buildFastStockSnapshot(ticker);
-      if (quickData) {
-        await Stock.findOneAndUpdate(
-          { ticker },
-          {
-            status: "pending",
-            data: quickData,
-            error: null,
-            updatedAt: new Date()
-          }
-        );
-
-        return res.json({
-          ticker,
-          status: "ready",
-          refreshing: true,
-          ...quickData,
+      const quickData = await getImmediateStockSnapshot(ticker, stock.data || {});
+      await Stock.findOneAndUpdate(
+        { ticker },
+        {
+          status: "pending",
+          data: quickData,
+          error: null,
           updatedAt: new Date()
-        });
-      }
+        }
+      );
 
-      return res.status(202).json({
+      return res.json({
         ticker,
-        status: "pending",
-        message: `${ticker} is being retried. Refresh in 30-60 seconds.`,
+        status: "ready",
+        refreshing: true,
+        ...quickData,
         updatedAt: new Date()
       });
     }
