@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 56;
+const FINANCIAL_HISTORY_VERSION = 57;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -36,6 +36,7 @@ const KNOWN_FINANCIAL_INSTITUTIONS = new Set([
   "C",
   "GS",
   "JPM",
+  "KB",
   "MS",
   "WFC"
 ]);
@@ -443,16 +444,37 @@ async function fetchSecAnnualMargins(ticker) {
     );
     const facts = response.data;
     const trailingEps = calculateSecTrailingEps(facts);
-    const hasBankRevenue =
+    const hasDedicatedBankRevenue =
       secAnnualFactEntries(facts, "RevenuesNetOfInterestExpense").length > 0 ||
-      secAnnualFactEntries(facts, "RevenueOtherFinancialServices").length > 0 ||
-      secAnnualFactEntries(facts, "Revenues").length > 0;
+      secAnnualFactEntries(facts, "RevenueOtherFinancialServices").length > 0;
+    const hasGenericRevenue = secAnnualFactEntries(facts, "Revenues").length > 0;
+    const hasIndustrialPresentation =
+      secAnnualFactEntries(facts, "GrossProfit").length > 0 &&
+      (
+        secAnnualFactEntries(facts, "RevenueFromContractWithCustomerExcludingAssessedTax").length > 0 ||
+        secAnnualFactEntries(facts, "SalesRevenueNet").length > 0 ||
+        secAnnualFactEntries(facts, "CostOfGoodsAndServicesSold").length > 0 ||
+        secAnnualFactEntries(facts, "CostOfRevenue").length > 0
+      );
     const hasBankPresentation =
-      secAnnualFactEntries(facts, "InterestIncomeExpenseNet").length > 0 ||
+      secAnnualFactEntries(facts, "InterestIncomeExpenseNet").length > 0 &&
+      (
+        secAnnualFactEntries(facts, "NoninterestIncome").length > 0 ||
+        secAnnualFactEntries(facts, "NoninterestIncomeOtherOperatingIncome").length > 0 ||
+        secAnnualFactEntries(facts, "NoninterestIncomeOther").length > 0 ||
+        secAnnualFactEntries(facts, "NoninterestExpense").length > 0
+      );
+    const hasFinancialPresentation =
+      hasBankPresentation ||
       secAnnualFactEntries(facts, "NoninterestIncome").length > 0 ||
       secAnnualFactEntries(facts, "NoninterestExpense").length > 0;
     const isFinancialCompany =
-      hasBankRevenue && (hasBankPresentation || KNOWN_FINANCIAL_INSTITUTIONS.has(ticker));
+      !hasIndustrialPresentation &&
+      (
+        KNOWN_FINANCIAL_INSTITUTIONS.has(ticker) ||
+        hasDedicatedBankRevenue ||
+        (hasGenericRevenue && hasFinancialPresentation)
+      );
     const revenueConcepts = isFinancialCompany
       ? [
           "RevenuesNetOfInterestExpense",
@@ -790,7 +812,9 @@ const sanitizeRevenueEstimate = (candidate, historicalRevenue) => {
   if (baseline === null || baseline <= 0) return estimate;
 
   const ratio = estimate / baseline;
-  return ratio >= 0.4 && ratio <= 2.5 ? estimate : null;
+  const maxRatio = baseline < 1000000000 ? 10 : baseline < 5000000000 ? 6 : 2.5;
+  const minRatio = baseline < 1000000000 ? 0.2 : 0.4;
+  return ratio >= minRatio && ratio <= maxRatio ? estimate : null;
 };
 
 const sanitizeNearTermRevenueEstimate = (candidate, baselineRevenue) => {
@@ -800,7 +824,9 @@ const sanitizeNearTermRevenueEstimate = (candidate, baselineRevenue) => {
   if (baseline === null || baseline <= 0) return estimate;
 
   const ratio = estimate / baseline;
-  return ratio >= 0.85 && ratio <= 2.2 ? estimate : null;
+  const maxRatio = baseline < 1000000000 ? 10 : baseline < 5000000000 ? 6 : 2.2;
+  const minRatio = baseline < 1000000000 ? 0.2 : 0.85;
+  return ratio >= minRatio && ratio <= maxRatio ? estimate : null;
 };
 
 const normalizeStatementDollars = (value) => {
