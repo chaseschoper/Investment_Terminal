@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 55;
+const FINANCIAL_HISTORY_VERSION = 56;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -1050,6 +1050,22 @@ const unwrapFinancialValue = (value) => {
 const firstYahooNumber = (...values) =>
   firstNumber(...values.map((value) => unwrapFinancialValue(value)));
 
+const reconcilePriceToBook = (reportedPriceToBook, price, bookValuePerShare) => {
+  const reported = toNumberOrNull(reportedPriceToBook);
+  const priceNumber = toNumberOrNull(price);
+  const bookValue = toNumberOrNull(bookValuePerShare);
+  const computed =
+    priceNumber !== null && bookValue !== null && bookValue > 0
+      ? priceNumber / bookValue
+      : null;
+
+  if (reported === null) return computed;
+  if (computed === null) return reported;
+
+  const ratio = computed / reported;
+  return ratio > 1.25 || ratio < 0.8 ? computed : reported;
+};
+
 const getStatementYear = (value) => {
   if (!value) return null;
 
@@ -1333,10 +1349,7 @@ function withGuaranteedAnalystSection(data = {}) {
     marketCap !== null && currentRevenue > 0 ? marketCap / currentRevenue : null
   );
   const bookValuePerShare = firstNumber(data.bookValuePerShare);
-  const priceToBook = firstNumber(
-    data.priceToBook,
-    price !== null && bookValuePerShare ? price / bookValuePerShare : null
-  );
+  const priceToBook = reconcilePriceToBook(data.priceToBook, price, bookValuePerShare);
   const safeNextRevenue = sanitizeNearTermRevenueEstimate(
     nextYear.revenue,
     currentRevenue
@@ -2776,14 +2789,13 @@ async function fetchStockData(ticker) {
     yahooSupplementalData.bookValuePerShare
   );
   const priceToBook = firstNumber(
-    yahooSupplementalData.priceToBook,
+    reconcilePriceToBook(yahooSupplementalData.priceToBook, quote.c, bookValuePerShare),
     metrics.pbAnnual,
     metrics.pbQuarterly,
     metrics.ptbvAnnual,
     metrics.ptbvQuarterly,
     metrics.priceToBookAnnual,
-    metrics.priceToBookQuarterly,
-    quote.c && bookValuePerShare ? quote.c / bookValuePerShare : null
+    metrics.priceToBookQuarterly
   );
   const freeCashflow = isFinancialCompany
     ? null
