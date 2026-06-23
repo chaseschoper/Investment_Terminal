@@ -685,6 +685,28 @@ const estimateForwardEpsFromHistory = (rows = []) => {
   return latest * (1 + clamp(medianGrowth, -0.3, 0.4));
 };
 
+const normalizeQuotePayload = (quote = {}, fallback = {}) => ({
+  c: firstNumber(quote.c, fallback.price),
+  d: firstFiniteNumber(quote.d, fallback.change),
+  dp: firstFiniteNumber(quote.dp, fallback.percentChange),
+  pc: firstNumber(quote.pc, fallback.previousClose),
+  h: firstNumber(quote.h, fallback.high),
+  l: firstNumber(quote.l, fallback.low),
+  o: firstNumber(quote.o, fallback.open)
+});
+
+async function getPrimaryQuote(ticker) {
+  try {
+    return normalizeQuotePayload(
+      await getFinnhub(`https://finnhub.io/api/v1/quote?symbol=${ticker}`)
+    );
+  } catch (err) {
+    console.log("Finnhub quote skipped:", ticker, err.response?.status || err.message);
+    const yahooData = await getYahooSupplementalData(ticker);
+    return normalizeQuotePayload({}, yahooData);
+  }
+}
+
 const sanitizeForwardEps = (candidate, historicalFallback) => {
   const estimate = toNumberOrNull(candidate);
   const fallback = toNumberOrNull(historicalFallback);
@@ -1781,8 +1803,8 @@ async function publishFastStockSnapshot(ticker) {
 }
 
 async function fetchStockData(ticker) {
-  const [quote, profile, metricData, financials, priceTarget] = await Promise.all([
-    getFinnhub(`https://finnhub.io/api/v1/quote?symbol=${ticker}`),
+  const quote = await getPrimaryQuote(ticker);
+  const [profile, metricData, financials, priceTarget] = await Promise.all([
     getFinnhub(`https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}`).catch((err) => {
       console.log("Profile skipped:", ticker, err.message);
       return {};
@@ -2810,6 +2832,19 @@ app.get("/api/stock/:ticker", async (req, res) => {
       );
 
       startStockFetch(ticker);
+
+      if (stock.data && Object.keys(stock.data).length) {
+        const responseData = withGuaranteedAnalystSection(stock.data);
+
+        return res.json({
+          ticker: stock.ticker,
+          status: "ready",
+          refreshing: true,
+          ...responseData,
+          error: stock.error,
+          updatedAt: stock.updatedAt
+        });
+      }
 
       return res.status(202).json({
         ticker,
