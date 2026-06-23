@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 46;
+const FINANCIAL_HISTORY_VERSION = 47;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -393,7 +393,11 @@ function calculateSecTrailingEps(companyFacts) {
 
 async function fetchSecAnnualMargins(ticker) {
   const cached = secMarginCache.get(ticker);
-  if (cached && Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1000) {
+  if (
+    cached &&
+    cached.version === FINANCIAL_HISTORY_VERSION &&
+    Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1000
+  ) {
     return cached.data;
   }
 
@@ -600,7 +604,11 @@ async function fetchSecAnnualMargins(ticker) {
           ? operatingCashFlow.val - Math.abs(capitalExpenditures.val)
           : null
     };
-    secMarginCache.set(ticker, { data, fetchedAt: Date.now() });
+    secMarginCache.set(ticker, {
+      data,
+      fetchedAt: Date.now(),
+      version: FINANCIAL_HISTORY_VERSION
+    });
     return data;
   } catch (err) {
     console.log("SEC annual margins skipped:", ticker, err.message);
