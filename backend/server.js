@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 51;
+const FINANCIAL_HISTORY_VERSION = 52;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -2376,9 +2376,9 @@ async function fetchStockData(ticker) {
     metrics.epsInclExtraItemsAnnual
   );
   const rating = getAnalystRating(
+    yahooSupplementalData.recommendationKey,
     recommendation,
     yahooSupplementalData.recommendationTrend,
-    yahooSupplementalData.recommendationKey,
     fmpRating.ratingRecommendation,
     fmpRating.rating,
     fmpRating.recommendation
@@ -2722,14 +2722,14 @@ async function fetchStockData(ticker) {
     yahooSupplementalData.bookValuePerShare
   );
   const priceToBook = firstNumber(
+    quote.c && bookValuePerShare ? quote.c / bookValuePerShare : null,
     yahooSupplementalData.priceToBook,
     metrics.pbAnnual,
     metrics.pbQuarterly,
     metrics.ptbvAnnual,
     metrics.ptbvQuarterly,
     metrics.priceToBookAnnual,
-    metrics.priceToBookQuarterly,
-    quote.c && bookValuePerShare ? quote.c / bookValuePerShare : null
+    metrics.priceToBookQuarterly
   );
   const freeCashflow = isFinancialCompany
     ? null
@@ -2752,6 +2752,7 @@ async function fetchStockData(ticker) {
       });
   const targetMean = estimateTargetFallback({
     targetMean: firstNumber(
+      yahooSupplementalData.targetMean,
       nasdaqData.targetMean,
       priceTarget?.targetMean,
       priceTarget?.targetMedian,
@@ -2761,8 +2762,7 @@ async function fetchStockData(ticker) {
       fmpPriceTarget?.targetMedian,
       fmpPriceTarget?.targetAverage,
       fmpPriceTarget?.priceTarget,
-      fmpPriceTarget?.targetPrice,
-      yahooSupplementalData.targetMean
+      fmpPriceTarget?.targetPrice
     ),
     price: quote.c,
     revenueGrowth,
@@ -4036,6 +4036,10 @@ res.status(500).json({ error: "Login failed" });
 app.post("/api/save-data", authMiddleware, async (req, res) => {
 try {
 const { watchlist, portfolio, portfolios, activePortfolioId, namedWatchlists } = req.body;
+const cleanSymbols = (symbols, limit = 100) => [...new Set((Array.isArray(symbols) ? symbols : [])
+  .map((symbol) => String(symbol).trim().toUpperCase())
+  .filter((symbol) => /^[A-Z0-9.-]{1,10}$/.test(symbol)))]
+  .slice(0, limit);
 const cleanPositions = (positions) => (Array.isArray(positions) ? positions : [])
   .map((position) => ({
     symbol: String(position?.symbol || "").trim().toUpperCase(),
@@ -4068,14 +4072,11 @@ const cleanNamedWatchlists = Array.isArray(namedWatchlists)
   ? namedWatchlists.slice(0, 20).map((list, index) => ({
       id: String(list?.id || `watchlist-${index}`).slice(0, 80),
       name: String(list?.name || `Watchlist ${index + 1}`).trim().slice(0, 60),
-      symbols: [...new Set((Array.isArray(list?.symbols) ? list.symbols : [])
-        .map((symbol) => String(symbol).trim().toUpperCase())
-        .filter((symbol) => /^[A-Z0-9.-]{1,10}$/.test(symbol)))]
-        .slice(0, 100)
+      symbols: cleanSymbols(list?.symbols)
     }))
   : [];
 
-req.user.watchlist = watchlist;
+req.user.watchlist = cleanSymbols(watchlist);
 req.user.portfolios = savedPortfolios;
 req.user.activePortfolioId = savedActivePortfolioId;
 req.user.portfolio = savedPortfolios.find(

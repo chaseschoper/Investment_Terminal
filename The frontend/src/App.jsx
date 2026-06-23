@@ -158,11 +158,12 @@ const DEFAULT_PORTFOLIO = {
   name: "My Portfolio",
   positions: []
 };
+const SAVED_LISTS_STORAGE_KEY = "mrktrally-saved-lists";
 import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 51;
+const FINANCIAL_HISTORY_VERSION = 52;
 
 const handleCompanyLogoError = (event, symbol) => {
   const image = event.currentTarget;
@@ -326,6 +327,8 @@ await loadUserData();
 
 const [user, setUser] =
   useState(null);
+const [hasLoadedSavedLists, setHasLoadedSavedLists] =
+  useState(false);
   useEffect(() => {
 
   const savedUser =
@@ -338,6 +341,28 @@ const [user, setUser] =
     );
 
     loadUserData();
+  } else {
+    try {
+      const savedLists = JSON.parse(
+        localStorage.getItem(SAVED_LISTS_STORAGE_KEY) || "{}"
+      );
+      if (Array.isArray(savedLists.watchlist)) {
+        setWatchlist(savedLists.watchlist);
+      }
+      if (Array.isArray(savedLists.portfolios) && savedLists.portfolios.length) {
+        setPortfolios(savedLists.portfolios);
+      }
+      if (savedLists.activePortfolioId) {
+        setActivePortfolioId(savedLists.activePortfolioId);
+      }
+      if (Array.isArray(savedLists.namedWatchlists)) {
+        setNamedWatchlists(savedLists.namedWatchlists);
+      }
+    } catch (error) {
+      console.error("Saved lists restore failed", error);
+    } finally {
+      setHasLoadedSavedLists(true);
+    }
   }
 
 }, []);
@@ -678,6 +703,18 @@ useEffect(() => {
 
 useEffect(() => {
 
+  if (!hasLoadedSavedLists) return;
+
+  localStorage.setItem(
+    SAVED_LISTS_STORAGE_KEY,
+    JSON.stringify({
+      watchlist,
+      portfolios,
+      activePortfolioId,
+      namedWatchlists,
+    })
+  );
+
   if (!user) return;
 
   const saveData = async () => {
@@ -721,7 +758,7 @@ useEffect(() => {
   return () =>
     clearTimeout(timeout);
 
-}, [watchlist, portfolios, activePortfolioId, namedWatchlists, user]);
+}, [watchlist, portfolios, activePortfolioId, namedWatchlists, user, hasLoadedSavedLists]);
        
   
 const loadUserData = async () => {
@@ -756,6 +793,8 @@ const loadUserData = async () => {
     console.log("Loaded user data");
   } catch (err) {
     console.error(err);
+  } finally {
+    setHasLoadedSavedLists(true);
   }
 };
     

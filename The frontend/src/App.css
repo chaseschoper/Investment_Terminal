@@ -2133,7 +2133,7 @@ body {
   position: relative;
   display: block;
   width: 100%;
-  height: 760px;
+  height: 640px;
   margin-bottom: 22px;
   overflow: hidden;
   border: 1px solid #273244;
@@ -2147,7 +2147,7 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  height: 132px;
+  height: 210px;
   pointer-events: none;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0), #ffffff 26%, #ffffff);
   z-index: 2;
@@ -2156,9 +2156,9 @@ body {
 .earnings-site-frame {
   display: block;
   width: 100%;
-  height: calc(100% + 208px);
+  height: calc(100% + 360px);
   border: 0;
-  transform: translateY(-76px);
+  transform: translateY(-138px);
 }
 
 .earnings-call-empty {
@@ -2198,15 +2198,15 @@ body {
   }
 
   .earnings-site-viewport {
-    height: 620px;
+    height: 560px;
   }
 
   .earnings-site-frame {
-    height: calc(100% + 188px);
-    transform: translateY(-64px);
+    height: calc(100% + 320px);
+    transform: translateY(-118px);
   }
 
   .earnings-site-viewport::after {
-    height: 124px;
+    height: 190px;
   }
 }
