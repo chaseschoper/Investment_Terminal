@@ -1037,7 +1037,11 @@ const nextYearEarningsGrowth = calculateEstimateGrowth(
   followingYearEstimate?.earnings,
   currentYearEstimate?.earnings
 );
-const stockValue = (value) => isStockLoading ? "Loading..." : value;
+const isStockRefreshing = stockData?.refreshing === true;
+const stockValue = (value) =>
+  isStockLoading || (isStockRefreshing && (value === "N/A" || value === null || value === undefined))
+    ? "Loading..."
+    : value;
 const normalizedTranscriptSearch = transcriptSearch.trim().toLowerCase();
 const filteredTranscript = (earningsCall?.transcript || []).filter((section) =>
   !normalizedTranscriptSearch ||
@@ -1613,7 +1617,7 @@ return (
 
 <div className="chart-box">
 
-{isStockLoading ? (
+{isStockLoading || (isStockRefreshing && !revenueHistory.length) ? (
 
   <StockDataLoading label="Loading revenue history..." />
 
@@ -1689,7 +1693,7 @@ return (
 
   <div className="chart-box">
 
-    {isStockLoading ? (
+    {isStockLoading || (isStockRefreshing && !earningsHistory.length) ? (
 
       <StockDataLoading label="Loading net income history..." />
 
@@ -1768,7 +1772,7 @@ return (
 
   <div className="chart-box">
 
-    {isStockLoading ? (
+    {isStockLoading || (isStockRefreshing && !epsHistory.length) ? (
 
       <StockDataLoading label="Loading EPS history..." />
 
@@ -1845,7 +1849,7 @@ return (
     color="#60a5fa"
     formatter={(value) => `${Number(value).toFixed(1)}x`}
     valueLabel="P/E"
-    loading={isStockLoading}
+    loading={isStockLoading || (isStockRefreshing && !historicalPeHistory.length)}
   />
   <HistoricalLineChart
     title={stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin History"}
@@ -1854,7 +1858,7 @@ return (
     color="#a78bfa"
     formatter={(value) => `${Number(value).toFixed(1)}%`}
     valueLabel={stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin"}
-    loading={isStockLoading}
+    loading={isStockLoading || (isStockRefreshing && !grossMarginHistory.length)}
   />
   <HistoricalLineChart
     title={stockData.isFinancialCompany ? "Pre-Tax Margin History" : "Operating Margin History"}
@@ -1863,7 +1867,7 @@ return (
     color="#f59e0b"
     formatter={(value) => `${Number(value).toFixed(1)}%`}
     valueLabel={stockData.isFinancialCompany ? "Pre-Tax Margin" : "Operating Margin"}
-    loading={isStockLoading}
+    loading={isStockLoading || (isStockRefreshing && !operatingMarginHistory.length)}
   />
   <HistoricalLineChart
     title="Profit Margin History"
@@ -1872,7 +1876,7 @@ return (
     color="#34d399"
     formatter={(value) => `${Number(value).toFixed(1)}%`}
     valueLabel="Profit Margin"
-    loading={isStockLoading}
+    loading={isStockLoading || (isStockRefreshing && !profitMarginHistory.length)}
   />
 </div>
 

@@ -2321,9 +2321,9 @@ async function fetchStockData(ticker) {
     currentRevenueBase
   );
   const followingRevenue =
+    yahooFollowingRevenueEstimate ??
     stockAnalysisFollowingRevenueEstimate ??
     fmpFollowingRevenueEstimate ??
-    yahooFollowingRevenueEstimate ??
     finnhubFollowingRevenueEstimate ??
     estimateNextValue(nextRevenue, conservativeProjectionRate(revenueGrowthRate));
 
@@ -2354,24 +2354,24 @@ async function fetchStockData(ticker) {
     );
 
   const followingEpsCandidate =
+    yahooSupplementalData.analystEstimates?.nextYear?.eps ??
     stockAnalysisForecast.nextYearEps ??
     nasdaqData.nextYearEps ??
     fmpEstimateField(fmpFollowingEstimate, "epsAvg", "estimatedEpsAvg") ??
-    yahooSupplementalData.analystEstimates?.nextYear?.eps ??
     epsEstimates[2]?.epsAvg ??
     estimateNextValue(nextEps, conservativeProjectionRate(earningsGrowthRate, 0.15)) ??
     null;
   const followingEps = sanitizeForwardEps(followingEpsCandidate, nextEps);
   const followingEarnings =
     firstNumber(
+      followingEps && sharesOutstanding
+        ? followingEps * sharesOutstanding * 1000000
+        : null,
       fmpEstimateField(
         fmpFollowingEstimate,
         "netIncomeAvg",
         "estimatedNetIncomeAvg"
       ),
-      followingEps && sharesOutstanding
-        ? followingEps * sharesOutstanding * 1000000
-        : null,
       estimateNextValue(nextEarnings, conservativeProjectionRate(earningsGrowthRate, 0.15))
     );
 
