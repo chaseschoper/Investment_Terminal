@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 54;
+const FINANCIAL_HISTORY_VERSION = 55;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -1198,6 +1198,7 @@ function hasCompleteSupplementalData(stock) {
     (!requiresIndustrialMetrics || toNumberOrNull(data.freeCashflow) !== null) &&
     toNumberOrNull(data.targetMean) !== null &&
     toNumberOrNull(data.priceToSales) !== null &&
+    toNumberOrNull(data.priceToBook) !== null &&
     toNumberOrNull(data.pe) !== null &&
     toNumberOrNull(data.forwardPE) !== null &&
     (!requiresIndustrialMetrics || toNumberOrNull(data.grossMargins) !== null) &&
@@ -1330,6 +1331,11 @@ function withGuaranteedAnalystSection(data = {}) {
   const priceToSales = firstNumber(
     data.priceToSales,
     marketCap !== null && currentRevenue > 0 ? marketCap / currentRevenue : null
+  );
+  const bookValuePerShare = firstNumber(data.bookValuePerShare);
+  const priceToBook = firstNumber(
+    data.priceToBook,
+    price !== null && bookValuePerShare ? price / bookValuePerShare : null
   );
   const safeNextRevenue = sanitizeNearTermRevenueEstimate(
     nextYear.revenue,
@@ -1477,6 +1483,8 @@ function withGuaranteedAnalystSection(data = {}) {
     sharesOutstanding,
     pe,
     priceToSales,
+    priceToBook,
+    bookValuePerShare,
     forwardPE,
     revenueGrowth,
     earningsGrowth,
@@ -2885,6 +2893,7 @@ async function fetchStockData(ticker) {
     marketCap,
     priceToSales,
     priceToBook,
+    bookValuePerShare,
     sharesOutstanding: sharesOutstandingValue,
     pe,
     forwardPE,
