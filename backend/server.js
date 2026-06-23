@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 41;
+const FINANCIAL_HISTORY_VERSION = 42;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -2358,13 +2358,36 @@ async function fetchStockData(ticker) {
     latestAnnual.eps,
     currentEps
   );
+  const providerFollowingEps = firstNumber(
+    yahooSupplementalData.analystEstimates?.nextYear?.eps,
+    stockAnalysisForecast.nextYearEps,
+    nasdaqData.nextYearEps,
+    fmpEstimateField(fmpFollowingEstimate, "epsAvg", "estimatedEpsAvg"),
+    epsEstimates[2]?.epsAvg
+  );
+  const followingRevenueGrowthRate = nextRevenue && followingRevenue
+    ? followingRevenue / nextRevenue - 1
+    : null;
+  const revenueGuidedFollowingEps = followingRevenueGrowthRate !== null
+    ? estimateNextValue(
+        nextEps,
+        clamp(followingRevenueGrowthRate * 1.03, -0.2, 0.55)
+      )
+    : null;
+  const providerFollowingEpsGrowth = providerFollowingEps && nextEps
+    ? providerFollowingEps / nextEps - 1
+    : null;
+  const useRevenueGuidedFollowingEps =
+    revenueGuidedFollowingEps !== null &&
+    (providerFollowingEps === null ||
+      (followingRevenueGrowthRate !== null &&
+        providerFollowingEpsGrowth !== null &&
+        followingRevenueGrowthRate - providerFollowingEpsGrowth > 0.08 &&
+        revenueGuidedFollowingEps / providerFollowingEps <= 1.25));
   const followingEpsCandidate =
+    (useRevenueGuidedFollowingEps ? revenueGuidedFollowingEps : providerFollowingEps) ??
+    revenueGuidedFollowingEps ??
     estimateDecayedForwardValue(nextEps, latestForecastBaselineEps, 0.55, 0.515) ??
-    yahooSupplementalData.analystEstimates?.nextYear?.eps ??
-    stockAnalysisForecast.nextYearEps ??
-    nasdaqData.nextYearEps ??
-    fmpEstimateField(fmpFollowingEstimate, "epsAvg", "estimatedEpsAvg") ??
-    epsEstimates[2]?.epsAvg ??
     estimateNextValue(nextEps, conservativeProjectionRate(earningsGrowthRate, 0.15)) ??
     null;
   const followingEps = sanitizeForwardEps(followingEpsCandidate, nextEps);
@@ -2532,7 +2555,9 @@ async function fetchStockData(ticker) {
     profitMargin: profitMargins
   });
   const displayedFollowingEpsValue = sanitizeForwardEps(
-    estimateDecayedForwardValue(nextEpsValue, latestForecastBaselineEps, 0.55, 0.515) ??
+    (useRevenueGuidedFollowingEps ? revenueGuidedFollowingEps : providerFollowingEps) ??
+      revenueGuidedFollowingEps ??
+      estimateDecayedForwardValue(nextEpsValue, latestForecastBaselineEps, 0.55, 0.515) ??
       followingEpsValue ??
       (followingEarningsValue && sharesOutstandingValue
         ? followingEarningsValue / (sharesOutstandingValue * 1000000)
