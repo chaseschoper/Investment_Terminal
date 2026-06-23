@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 45;
+const FINANCIAL_HISTORY_VERSION = 46;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -410,13 +410,19 @@ async function fetchSecAnnualMargins(ticker) {
     );
     const facts = response.data;
     const trailingEps = calculateSecTrailingEps(facts);
-    const isFinancialCompany =
-      secAnnualFactEntries(facts, "RevenuesNetOfInterestExpense").length > 0 &&
-      (secAnnualFactEntries(facts, "InterestIncomeExpenseNet").length > 0 ||
-        secAnnualFactEntries(facts, "NoninterestIncome").length > 0);
+    const hasBankRevenue =
+      secAnnualFactEntries(facts, "RevenuesNetOfInterestExpense").length > 0 ||
+      secAnnualFactEntries(facts, "RevenueOtherFinancialServices").length > 0 ||
+      secAnnualFactEntries(facts, "Revenues").length > 0;
+    const hasBankPresentation =
+      secAnnualFactEntries(facts, "InterestIncomeExpenseNet").length > 0 ||
+      secAnnualFactEntries(facts, "NoninterestIncome").length > 0 ||
+      secAnnualFactEntries(facts, "NoninterestExpense").length > 0;
+    const isFinancialCompany = hasBankRevenue && hasBankPresentation;
     const revenueConcepts = isFinancialCompany
       ? [
           "RevenuesNetOfInterestExpense",
+          "RevenueOtherFinancialServices",
           "OperatingRevenues",
           "Revenues",
           "RevenueFromContractWithCustomerExcludingAssessedTax",
@@ -468,6 +474,7 @@ async function fetchSecAnnualMargins(ticker) {
     ], endDate);
     const preTaxIncome = latestSecAnnualFact(facts, [
       "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+      "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
       "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic"
     ], endDate);
     const annualCashChange = latestSecAnnualFact(facts, [
@@ -509,6 +516,7 @@ async function fetchSecAnnualMargins(ticker) {
       );
       const annualPreTaxIncome = latestSecAnnualFact(facts, [
         "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
         "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic"
       ], yearEnd);
       const annualGrossProfitValue = annualGrossProfit?.val ?? (
