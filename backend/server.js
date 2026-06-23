@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 57;
+const FINANCIAL_HISTORY_VERSION = 58;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -2596,6 +2596,7 @@ async function fetchStockData(ticker) {
     ? providerFollowingEps / nextEps - 1
     : null;
   const useRevenueGuidedFollowingEps =
+    nextEps > 0 &&
     revenueGuidedFollowingEps !== null &&
     (providerFollowingEps === null ||
       (followingRevenueGrowthRate !== null &&
