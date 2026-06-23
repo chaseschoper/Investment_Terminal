@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 48;
+const FINANCIAL_HISTORY_VERSION = 49;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -31,6 +31,14 @@ const TICKER_ALIASES = {
   SALESFORCE: "CRM",
   NIKE: "NKE"
 };
+const KNOWN_FINANCIAL_INSTITUTIONS = new Set([
+  "BAC",
+  "C",
+  "GS",
+  "JPM",
+  "MS",
+  "WFC"
+]);
 const REVENUE_KEY_PRIORITY = {
   annualTotalRevenue: 5,
   annualOperatingRevenue: 4,
@@ -422,7 +430,8 @@ async function fetchSecAnnualMargins(ticker) {
       secAnnualFactEntries(facts, "InterestIncomeExpenseNet").length > 0 ||
       secAnnualFactEntries(facts, "NoninterestIncome").length > 0 ||
       secAnnualFactEntries(facts, "NoninterestExpense").length > 0;
-    const isFinancialCompany = hasBankRevenue && hasBankPresentation;
+    const isFinancialCompany =
+      hasBankRevenue && (hasBankPresentation || KNOWN_FINANCIAL_INSTITUTIONS.has(ticker));
     const revenueConcepts = isFinancialCompany
       ? [
           "RevenuesNetOfInterestExpense",
@@ -2110,7 +2119,7 @@ async function fetchStockData(ticker) {
     resolveWithin(fetchYahooYearEndPrices(ticker), 6500, []),
     resolveWithin(fetchNasdaqData(ticker), 6500, {}),
     resolveWithin(fetchStockAnalysisForecast(ticker), 6500, {}),
-    resolveWithin(fetchSecAnnualMargins(ticker), 8000, {}),
+    resolveWithin(fetchSecAnnualMargins(ticker), 14000, {}),
     resolveWithin(getFmpData(ticker, "cash flow", [
       "/stable/cash-flow-statement?symbol={ticker}&limit=1",
       "/api/v3/cash-flow-statement/{ticker}?period=annual&limit=1"
