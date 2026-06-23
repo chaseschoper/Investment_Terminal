@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 49;
+const FINANCIAL_HISTORY_VERSION = 50;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -2234,7 +2234,7 @@ async function fetchStockData(ticker) {
       source: row.source || existing.source
     });
   });
-  const marginHistory = [...marginRowsByYear.values()]
+  let marginHistory = [...marginRowsByYear.values()]
     .filter((row) =>
       row.grossMargin !== null ||
       row.operatingMargin !== null ||
@@ -2242,6 +2242,40 @@ async function fetchStockData(ticker) {
     )
     .sort((a, b) => a.year - b.year)
     .slice(-6);
+  const knownFinancialInstitution = KNOWN_FINANCIAL_INSTITUTIONS.has(ticker);
+  const latestRawMarginRow =
+    marginHistory.filter((row) => Number(row.year) <= 2025).at(-1) ||
+    marginHistory.at(-1) ||
+    {};
+  const needsFinancialMarginFallback =
+    knownFinancialInstitution &&
+    secAnnualMargins.isFinancialCompany !== true &&
+    (toNumberOrNull(latestRawMarginRow.grossMargin) === null ||
+      toNumberOrNull(latestRawMarginRow.grossMargin) === 0 ||
+      toNumberOrNull(latestRawMarginRow.operatingMargin) === null ||
+      toNumberOrNull(latestRawMarginRow.operatingMargin) === 0);
+  if (needsFinancialMarginFallback) {
+    const fallbackGrossMargin = firstNumber(
+      yahooSupplementalData.grossMargins,
+      metrics.grossMarginTTM,
+      metrics.netProfitMarginTTM
+    );
+    const fallbackOperatingMargin = firstNumber(
+      yahooSupplementalData.operatingMargins,
+      metrics.operatingMarginTTM,
+      metrics.netProfitMarginTTM
+    );
+    marginHistory = marginHistory.map((row) =>
+      row.year === latestRawMarginRow.year
+        ? {
+            ...row,
+            grossMargin: firstNumber(row.grossMargin, fallbackGrossMargin),
+            operatingMargin: firstNumber(row.operatingMargin, fallbackOperatingMargin),
+            source: "Market data fallback (banking presentation)"
+          }
+        : row
+    );
+  }
   const latestVisibleMarginRow =
     marginHistory.filter((row) => Number(row.year) <= 2025).at(-1) ||
     marginHistory.at(-1) ||
@@ -2277,7 +2311,9 @@ async function fetchStockData(ticker) {
   const fmpCurrentEstimate = fmpAnalystEstimates[0] || {};
   const fmpNextEstimate = fmpAnalystEstimates[1] || {};
   const fmpFollowingEstimate = fmpAnalystEstimates[2] || {};
-  const isFinancialCompany = secAnnualMargins.isFinancialCompany === true;
+  const isFinancialCompany =
+    secAnnualMargins.isFinancialCompany === true ||
+    (knownFinancialInstitution && needsFinancialMarginFallback);
   const revenueGrowthRate = chartRevenueGrowth !== null
     ? chartRevenueGrowth / 100
     : isFinancialCompany
@@ -2786,7 +2822,9 @@ async function fetchStockData(ticker) {
         ? "Nasdaq consensus"
         : "Modeled fallback",
     marginSource: isFinancialCompany
-      ? `SEC annual filing ${secAnnualMargins.fiscalYear} (banking presentation)`
+      ? secAnnualMargins.isFinancialCompany === true
+        ? `SEC annual filing ${secAnnualMargins.fiscalYear} (banking presentation)`
+        : "Market data fallback (banking presentation)"
       : secAnnualMargins.operatingMargins !== null &&
           secAnnualMargins.operatingMargins !== undefined
         ? `SEC annual filing ${secAnnualMargins.fiscalYear}`
