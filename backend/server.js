@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 50;
+const FINANCIAL_HISTORY_VERSION = 51;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -1815,6 +1815,12 @@ async function fetchYahooSupplementalData(ticker) {
         detail.priceToSalesTrailing12Months,
         quoteData.priceToSalesTrailing12Months
       ),
+      priceToBook: firstYahooNumber(
+        keyStats.priceToBook,
+        quoteData.priceToBook,
+        financialData.priceToBook
+      ),
+      bookValuePerShare: firstYahooNumber(keyStats.bookValue, quoteData.bookValue),
       sharesOutstanding: firstYahooNumber(keyStats.sharesOutstanding, quoteData.sharesOutstanding),
       dividendYield: normalizeDividendYield(
         firstFiniteNumber(
@@ -1906,6 +1912,8 @@ async function fetchYahooQuickQuote(ticker) {
         quoteData.forwardEps
       ),
       priceToSales: firstYahooNumber(quoteData.priceToSalesTrailing12Months),
+      priceToBook: firstYahooNumber(quoteData.priceToBook),
+      bookValuePerShare: firstYahooNumber(quoteData.bookValue),
       dividendYield: normalizeDividendYield(
         firstYahooNumber(
           unwrapFinancialValue(quoteData.dividendYield),
@@ -2708,6 +2716,21 @@ async function fetchStockData(ticker) {
       ? modeledMarketCap / currentRevenueValue
       : null
   );
+  const bookValuePerShare = firstNumber(
+    metrics.bookValuePerShareAnnual,
+    metrics.bookValuePerShareQuarterly,
+    yahooSupplementalData.bookValuePerShare
+  );
+  const priceToBook = firstNumber(
+    yahooSupplementalData.priceToBook,
+    metrics.pbAnnual,
+    metrics.pbQuarterly,
+    metrics.ptbvAnnual,
+    metrics.ptbvQuarterly,
+    metrics.priceToBookAnnual,
+    metrics.priceToBookQuarterly,
+    quote.c && bookValuePerShare ? quote.c / bookValuePerShare : null
+  );
   const freeCashflow = isFinancialCompany
     ? null
     : estimateFreeCashFlowFallback({
@@ -2805,6 +2828,7 @@ async function fetchStockData(ticker) {
     fiftyTwoWeekLow,
     marketCap,
     priceToSales,
+    priceToBook,
     sharesOutstanding: sharesOutstandingValue,
     pe,
     forwardPE,

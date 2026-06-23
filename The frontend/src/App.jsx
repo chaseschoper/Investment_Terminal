@@ -162,7 +162,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 50;
+const FINANCIAL_HISTORY_VERSION = 51;
 
 const handleCompanyLogoError = (event, symbol) => {
   const image = event.currentTarget;
@@ -1889,6 +1889,26 @@ return (
 
   <div className="card">
     <div className="card-title">
+      Price-to-Sales
+    </div>
+
+    <div className="card-value">
+      {stockValue(formatPlain(stockData.priceToSales))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      Price-to-Book
+    </div>
+
+    <div className="card-value">
+      {stockValue(formatPlain(stockData.priceToBook))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
       Revenue Growth
     </div>
 
@@ -2746,6 +2766,13 @@ return (
       <span>Price-to-Sales</span>
 <strong>
   {formatPlain(stock.priceToSales)}
+</strong>
+    </div>
+
+    <div className="comparison-stat">
+      <span>Price-to-Book</span>
+<strong>
+  {formatPlain(stock.priceToBook)}
 </strong>
     </div>
 
