@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 42;
+const FINANCIAL_HISTORY_VERSION = 43;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -230,13 +230,23 @@ async function fetchStockAnalysisForecast(ticker) {
     };
     const revenue = readForecast("Revenue Forecast");
     const eps = readForecast("EPS Forecast");
+    const readEmbeddedAnnualEstimate = (key) => {
+      const match = forecastResponse.data.match(
+        new RegExp(`${key}:\\{last:[^,}]+,this:([^,}]+)`)
+      );
+      return match ? parseNasdaqNumber(match[1]) : null;
+    };
+    const embeddedRevenueThis = readEmbeddedAnnualEstimate("revenueThis");
+    const embeddedRevenueNext = readEmbeddedAnnualEstimate("revenueNext");
+    const embeddedEpsThis = readEmbeddedAnnualEstimate("epsThis");
+    const embeddedEpsNext = readEmbeddedAnnualEstimate("epsNext");
 
     return {
       fiscalYear: eps.year || revenue.year,
-      currentYearRevenue: revenue.value,
-      currentYearEps: eps.value,
-      nextYearRevenue: revenue.nextValue,
-      nextYearEps: eps.nextValue,
+      currentYearRevenue: firstNumber(embeddedRevenueThis, revenue.value),
+      currentYearEps: firstNumber(embeddedEpsThis, eps.value),
+      nextYearRevenue: firstNumber(embeddedRevenueNext, revenue.nextValue),
+      nextYearEps: firstNumber(embeddedEpsNext, eps.nextValue),
       pe: readStatistic("PE Ratio"),
       forwardPE: readStatistic("Forward PE")
     };
@@ -2319,8 +2329,13 @@ async function fetchStockData(ticker) {
     yahooSupplementalData.analystEstimates?.nextYear?.revenue,
     nextRevenue
   );
+  const stockAnalysisFollowingRevenueEstimate = sanitizeRevenueEstimate(
+    stockAnalysisForecast.nextYearRevenue,
+    nextRevenue
+  );
   const followingRevenue =
     yahooFollowingRevenueEstimate ??
+    stockAnalysisFollowingRevenueEstimate ??
     estimateDecayedForwardValue(nextRevenue, currentRevenueBase);
 
   const currentEarnings =
