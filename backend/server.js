@@ -20,7 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 44;
+const FINANCIAL_HISTORY_VERSION = 45;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -2180,6 +2180,10 @@ async function fetchStockData(ticker) {
     )
     .sort((a, b) => a.year - b.year)
     .slice(-6);
+  const latestVisibleMarginRow =
+    marginHistory.filter((row) => Number(row.year) <= 2025).at(-1) ||
+    marginHistory.at(-1) ||
+    {};
   const yearEndPrices = new Map(
     (yahooYearEndPrices.length
       ? yahooYearEndPrices
@@ -2491,22 +2495,33 @@ async function fetchStockData(ticker) {
     metrics.epsGrowthTTMYoy
   );
   const grossMargins = isFinancialCompany
-    ? null
+    ? firstNumber(
+        latestVisibleMarginRow.grossMargin,
+        secAnnualMargins.grossMargins,
+        yahooSupplementalData.grossMargins
+      )
     : firstNumber(
+        latestVisibleMarginRow.grossMargin,
         secAnnualMargins.grossMargins,
         metrics.grossMarginTTM,
         yahooSupplementalData.grossMargins,
         annualMargin(latestAnnual.grossProfit, latestAnnual.revenue)
       );
   const operatingMargins = isFinancialCompany
-    ? null
+    ? firstNumber(
+        latestVisibleMarginRow.operatingMargin,
+        secAnnualMargins.operatingMargins,
+        yahooSupplementalData.operatingMargins
+      )
     : firstNumber(
+        latestVisibleMarginRow.operatingMargin,
         secAnnualMargins.operatingMargins,
         metrics.operatingMarginTTM,
         yahooSupplementalData.operatingMargins,
         annualMargin(latestAnnual.operatingIncome, latestAnnual.revenue)
       );
   const profitMargins = firstNumber(
+    latestVisibleMarginRow.profitMargin,
     secAnnualMargins.profitMargins,
     metrics.netProfitMarginTTM,
     yahooSupplementalData.profitMargins,
@@ -2658,9 +2673,23 @@ async function fetchStockData(ticker) {
     metrics["52WeekLowPrice"]
   );
 
+  const displayedBankMetrics = isFinancialCompany
+    ? {
+        ...(secAnnualMargins.bankMetrics || {}),
+        netInterestRevenueMix: firstNumber(
+          latestVisibleMarginRow.grossMargin,
+          secAnnualMargins.bankMetrics?.netInterestRevenueMix
+        ),
+        preTaxMargin: firstNumber(
+          latestVisibleMarginRow.operatingMargin,
+          secAnnualMargins.bankMetrics?.preTaxMargin
+        )
+      }
+    : null;
+
   const data = withGuaranteedAnalystSection({
     isFinancialCompany,
-    bankMetrics: secAnnualMargins.bankMetrics || null,
+    bankMetrics: displayedBankMetrics,
     marginHistory,
     historicalPe,
     name: profile.name || ticker,
