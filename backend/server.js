@@ -21,7 +21,7 @@ const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 60;
+const FINANCIAL_HISTORY_VERSION = 62;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -637,6 +637,10 @@ async function fetchSecAnnualMargins(ticker) {
               earnings: previousNetIncome?.val !== undefined
                 ? previousNetIncome.val / 1000000000
                 : null,
+              operatingCashflow: latestSecAnnualFact(facts, [
+                "NetCashProvidedByUsedInOperatingActivities",
+                "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"
+              ], previousRevenue.end)?.val / 1000000000,
               eps: null,
               source: "SEC annual filing"
             }
@@ -645,6 +649,9 @@ async function fetchSecAnnualMargins(ticker) {
           year: Number(endDate.slice(0, 4)),
           revenue: revenue.val / 1000000000,
           earnings: netIncome?.val !== undefined ? netIncome.val / 1000000000 : null,
+          operatingCashflow: operatingCashFlow?.val !== undefined
+            ? operatingCashFlow.val / 1000000000
+            : null,
           eps: null,
           source: "SEC annual filing"
         }
@@ -1135,7 +1142,9 @@ function mergeHistoricalFinancials(primary, fallback) {
       eps: row.eps ?? existing.eps ?? null,
       grossProfit: row.grossProfit ?? existing.grossProfit ?? null,
       operatingIncome: row.operatingIncome ?? existing.operatingIncome ?? null,
+      operatingCashflow: row.operatingCashflow ?? existing.operatingCashflow ?? null,
       freeCashflow: row.freeCashflow ?? existing.freeCashflow ?? null,
+      sharesOutstanding: row.sharesOutstanding ?? existing.sharesOutstanding ?? null,
       source: row.source || existing.source
     });
   });
@@ -1146,7 +1155,10 @@ function mergeHistoricalFinancials(primary, fallback) {
       row.earnings !== null ||
       row.eps !== null ||
       row.grossProfit !== null ||
-      row.operatingIncome !== null
+      row.operatingIncome !== null ||
+      row.operatingCashflow !== null ||
+      row.freeCashflow !== null ||
+      row.sharesOutstanding !== null
     )
     .sort((a, b) => a.year - b.year)
     .slice(-6);
@@ -1171,6 +1183,16 @@ function fillEstimatedEps(rows, sharesOutstanding) {
   }));
 }
 
+const normalizeHistoricalShares = (candidate, currentShares) => {
+  let shares = toNumberOrNull(candidate);
+  const baseline = toNumberOrNull(currentShares);
+  if (shares === null || baseline === null || baseline <= 0) return shares;
+
+  while (shares > 0 && shares < baseline * 0.4) shares *= 10;
+  while (shares > baseline * 2.5) shares /= 10;
+  return shares;
+};
+
 function finalizeFinancialHistory(rows, sharesOutstanding) {
   return fillEstimatedEps(rows, sharesOutstanding).map((row) => ({
     year: row.year,
@@ -1179,7 +1201,22 @@ function finalizeFinancialHistory(rows, sharesOutstanding) {
     eps: toNumberOrNull(row.eps),
     grossProfit: toNumberOrNull(row.grossProfit),
     operatingIncome: toNumberOrNull(row.operatingIncome),
+    operatingCashflow: toNumberOrNull(row.operatingCashflow),
     freeCashflow: toNumberOrNull(row.freeCashflow),
+    sharesOutstanding: normalizeHistoricalShares(
+      firstFiniteNumber(
+        row.sharesOutstanding,
+        row.earnings !== null &&
+          row.earnings !== undefined &&
+          row.eps !== null &&
+          row.eps !== undefined &&
+          row.eps !== 0
+          ? (row.earnings * 1000) / row.eps
+          : null,
+        sharesOutstanding
+      ),
+      sharesOutstanding
+    ),
     source: row.source
   }));
 }
@@ -1581,6 +1618,8 @@ async function fetchYahooTimeSeriesFinancials(ticker) {
       "annualNetIncomeContinuousOperations",
       "annualGrossProfit",
       "annualOperatingIncome",
+      "annualOperatingCashFlow",
+      "annualNetCashProvidedByUsedInOperatingActivities",
       "annualFreeCashFlow",
       "annualDilutedEPS",
       "annualBasicEPS"
@@ -1646,6 +1685,15 @@ async function fetchYahooTimeSeriesFinancials(ticker) {
 
         if (key === "annualOperatingIncome") {
           row.operatingIncome = row.operatingIncome ?? toBillions(value);
+        }
+
+        if (
+          [
+            "annualOperatingCashFlow",
+            "annualNetCashProvidedByUsedInOperatingActivities"
+          ].includes(key)
+        ) {
+          row.operatingCashflow = row.operatingCashflow ?? toBillions(value);
         }
 
         if (key === "annualFreeCashFlow") {
@@ -1785,6 +1833,17 @@ async function fetchFmpIncomeStatementHistory(ticker) {
           revenue: toBillions(row.revenue),
           earnings: toBillions(row.netIncome),
           eps: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
+          sharesOutstanding: toNumberOrNull(
+            row.weightedAverageShsOutDil ??
+            row.weightedAverageShsOutDiluted ??
+            row.weightedAverageShsOut
+          )
+            ? toNumberOrNull(
+                row.weightedAverageShsOutDil ??
+                row.weightedAverageShsOutDiluted ??
+                row.weightedAverageShsOut
+              ) / 1000000
+            : null,
           source: "FMP income statement"
         }))
         .filter((row) => row.year)
@@ -2227,8 +2286,8 @@ async function fetchStockData(ticker) {
     resolveWithin(fetchStockAnalysisForecast(ticker), 6500, {}),
     resolveWithin(fetchSecAnnualMargins(ticker), 14000, {}),
     resolveWithin(getFmpData(ticker, "cash flow", [
-      "/stable/cash-flow-statement?symbol={ticker}&limit=1",
-      "/api/v3/cash-flow-statement/{ticker}?period=annual&limit=1"
+      "/stable/cash-flow-statement?symbol={ticker}&period=annual&limit=6",
+      "/api/v3/cash-flow-statement/{ticker}?period=annual&limit=6"
     ]), 6500, null),
     resolveWithin(getFmpData(ticker, "price target", [
       "/stable/price-target-consensus?symbol={ticker}",
@@ -2271,6 +2330,19 @@ async function fetchStockData(ticker) {
   fmpRating = Array.isArray(fmpRatingData)
     ? fmpRatingData[0] || {}
     : fmpRatingData || {};
+  const fmpCashFlowHistory = fmpCashFlow
+    .map((row) => ({
+      year: Number(row.calendarYear || String(row.date || "").slice(0, 4)),
+      operatingCashflow: toBillions(
+        row.operatingCashFlow ??
+        row.operatingCashflow ??
+        row.netCashProvidedByOperatingActivities
+      ),
+      freeCashflow: toBillions(row.freeCashFlow ?? row.freeCashflow),
+      source: "FMP cash flow statement"
+    }))
+    .filter((row) => row.year)
+    .sort((a, b) => a.year - b.year);
 
   const authoritativeAnnualData = secAnnualMargins.isFinancialCompany
     ? mergeHistoricalFinancials(secAnnualMargins.history || [], yahooFinancialData)
@@ -2279,8 +2351,11 @@ async function fetchStockData(ticker) {
     mergeHistoricalFinancials(
       authoritativeAnnualData,
       mergeHistoricalFinancials(
-        fmpIncomeStatementData,
-        mergeHistoricalFinancials(finnhubReportedData, finnhubMetricData)
+        fmpCashFlowHistory,
+        mergeHistoricalFinancials(
+          fmpIncomeStatementData,
+          mergeHistoricalFinancials(finnhubReportedData, finnhubMetricData)
+        )
       )
     ),
     sharesOutstanding
@@ -2837,6 +2912,20 @@ async function fetchStockData(ticker) {
     metrics.priceToBookAnnual,
     metrics.priceToBookQuarterly
   );
+  const operatingCashflow = isFinancialCompany
+    ? null
+    : firstNumber(
+        secAnnualMargins.history?.at(-1)?.operatingCashflow !== null &&
+          secAnnualMargins.history?.at(-1)?.operatingCashflow !== undefined
+          ? toDollarsFromBillions(secAnnualMargins.history.at(-1).operatingCashflow)
+          : null,
+        fmpCashFlow[0]?.operatingCashFlow,
+        fmpCashFlow[0]?.operatingCashflow,
+        fmpCashFlow[0]?.netCashProvidedByOperatingActivities,
+        toDollarsFromPerShare(metrics.cashFlowPerShareTTM, sharesOutstanding),
+        toDollarsFromPerShare(metrics.cashFlowPerShareAnnual, sharesOutstanding),
+        toDollarsFromBillions(latestAnnual.operatingCashflow)
+      );
   const freeCashflow = isFinancialCompany
     ? null
     : estimateFreeCashFlowFallback({
@@ -2951,6 +3040,7 @@ async function fetchStockData(ticker) {
     forwardPE,
     trailingEps: trailingEpsValue,
     forwardEps: forwardEpsValue,
+    operatingCashflow,
     consensusCurrentYearEps:
       stockAnalysisForecast.currentYearEps ?? nasdaqData.currentYearEps,
     consensusNextYearEps: displayedFollowingEpsValue,

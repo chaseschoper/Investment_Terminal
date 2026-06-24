@@ -40,6 +40,13 @@ const formatDividendYield = (value) =>
 const formatBillions = (value) =>
   isNumber(value) ? `$${(value / 1e9).toFixed(1)}B` : "N/A";
 
+const formatSharesMillions = (value) => {
+  if (!isNumber(value)) return "N/A";
+  return value >= 1000
+    ? `${(value / 1000).toFixed(2)}B`
+    : `${value.toFixed(1)}M`;
+};
+
 const formatPlain = (value) =>
   isNumber(value) ? value.toFixed(2) : "N/A";
 
@@ -359,7 +366,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 60;
+const FINANCIAL_HISTORY_VERSION = 62;
 
 const handleCompanyLogoError = (event, symbol) => {
   const image = event.currentTarget;
@@ -1284,6 +1291,10 @@ const earningsHistory =
 
 const epsHistory =
   buildChartRows(financialHistory, "eps");
+const operatingCashflowHistory =
+  buildChartRows(financialHistory, "operatingCashflow");
+const sharesOutstandingHistory =
+  buildChartRows(financialHistory, "sharesOutstanding");
 const historicalPeHistory = (stockData?.historicalPe || [])
   .filter((row) => row?.year && row.year <= 2025 && isNumber(row.pe));
 const annualMarginHistory = (stockData?.marginHistory || [])
@@ -2229,6 +2240,24 @@ return (
     valueLabel="Profit Margin"
     loading={isStockLoading || (isStockRefreshing && !profitMarginHistory.length)}
   />
+  <HistoricalLineChart
+    title="Operating Cash Flow History"
+    data={operatingCashflowHistory}
+    dataKey="operatingCashflow"
+    color="#22d3ee"
+    formatter={formatChartBillions}
+    valueLabel="Operating Cash Flow"
+    loading={isStockLoading || (isStockRefreshing && !operatingCashflowHistory.length)}
+  />
+  <HistoricalLineChart
+    title="Shares Outstanding History"
+    data={sharesOutstandingHistory}
+    dataKey="sharesOutstanding"
+    color="#f472b6"
+    formatter={formatSharesMillions}
+    valueLabel="Shares"
+    loading={isStockLoading || (isStockRefreshing && !sharesOutstandingHistory.length)}
+  />
 </div>
 
         {/* METRICS */}
@@ -2368,6 +2397,18 @@ return (
 ))}
     </div>
   </div>
+
+  {!stockData.isFinancialCompany && (
+  <div className="card">
+    <div className="card-title">
+      Operating Cash Flow
+    </div>
+
+    <div className="card-value">
+{stockValue(formatBillions(stockData.operatingCashflow))}
+    </div>
+  </div>
+  )}
 
   <div className="card">
     <div className="card-title">
