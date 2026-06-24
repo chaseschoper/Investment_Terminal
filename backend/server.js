@@ -3145,37 +3145,83 @@ app.get("/api/market-indices", async (req, res) => {
     return res.json(cached.data);
   }
 
-  const fetchYahooIndex = async (index) => {
-    const quote = await yahooFinance.quote(index.yahooSymbol);
-    const price = firstYahooNumber(quote.regularMarketPrice);
-    const change = firstFiniteNumber(quote.regularMarketChange);
-    const percentChange = firstFiniteNumber(quote.regularMarketChangePercent);
-    if (price === null) throw new Error(`Missing ${index.label} price`);
+  const buildIndexQuote = (index, symbol, price, change, percentChange, source) => {
+    const priceValue = toNumberOrNull(price);
+    const changeValue = toNumberOrNull(change);
+    const percentValue = toNumberOrNull(percentChange);
+    if (priceValue === null) return null;
     return {
       key: index.key,
       label: index.label,
-      symbol: index.yahooSymbol,
-      price,
-      change,
-      percentChange
+      symbol,
+      price: priceValue,
+      change: changeValue,
+      percentChange: percentValue,
+      source
     };
   };
 
-  const fetchFallbackIndex = async (index) => {
+  const fetchYahooIndex = async (index) => {
+    const quote = await yahooFinance.quote(index.yahooSymbol);
+    const indexQuote = buildIndexQuote(
+      index,
+      index.yahooSymbol,
+      firstYahooNumber(quote.regularMarketPrice),
+      firstFiniteNumber(quote.regularMarketChange),
+      firstFiniteNumber(quote.regularMarketChangePercent),
+      "Yahoo"
+    );
+    if (!indexQuote) throw new Error(`Missing ${index.label} price`);
+    return indexQuote;
+  };
+
+  const fetchFmpFallbackIndex = async (index) => {
+    if (!process.env.FMP_API_KEY) return null;
+    const response = await axios.get(
+      `https://financialmodelingprep.com/api/v3/quote/${encodeURIComponent(index.fallbackSymbol)}`,
+      {
+        params: { apikey: process.env.FMP_API_KEY },
+        timeout: 8000
+      }
+    );
+    const quote = Array.isArray(response.data) ? response.data[0] : null;
+    return buildIndexQuote(
+      index,
+      index.fallbackSymbol,
+      quote?.price,
+      quote?.change,
+      quote?.changesPercentage,
+      "FMP"
+    );
+  };
+
+  const fetchFinnhubFallbackIndex = async (index) => {
     if (!process.env.FINNHUB_API_KEY) return null;
     const quote = await getFinnhub(`https://finnhub.io/api/v1/quote?symbol=${index.fallbackSymbol}`);
-    const price = toNumberOrNull(quote?.c);
-    const change = toNumberOrNull(quote?.d);
-    const percentChange = toNumberOrNull(quote?.dp);
-    if (price === null) return null;
-    return {
-      key: index.key,
-      label: index.label,
-      symbol: index.fallbackSymbol,
-      price,
-      change,
-      percentChange
-    };
+    return buildIndexQuote(
+      index,
+      index.fallbackSymbol,
+      quote?.c,
+      quote?.d,
+      quote?.dp,
+      "Finnhub"
+    );
+  };
+
+  const fetchSavedFallbackIndex = async (index) => {
+    const savedStock = await Stock.findOne({ ticker: index.fallbackSymbol })
+      .select("ticker data.price data.change data.percentChange data.previousClose")
+      .lean();
+    const savedData = savedStock?.data || {};
+    const price = toNumberOrNull(savedData.price);
+    const change = toNumberOrNull(savedData.change);
+    const percentChange = firstFiniteNumber(
+      savedData.percentChange,
+      price !== null && toNumberOrNull(savedData.previousClose) > 0
+        ? ((price - toNumberOrNull(savedData.previousClose)) / toNumberOrNull(savedData.previousClose)) * 100
+        : null
+    );
+    return buildIndexQuote(index, index.fallbackSymbol, price, change, percentChange, "Cached");
   };
 
   const indices = await Promise.all(MARKET_INDICES.map(async (index) => {
@@ -3183,12 +3229,20 @@ app.get("/api/market-indices", async (req, res) => {
       return await fetchYahooIndex(index);
     } catch (err) {
       console.log("Market index Yahoo quote skipped:", index.label, err.message);
-      try {
-        return await fetchFallbackIndex(index);
-      } catch (fallbackErr) {
-        console.log("Market index fallback skipped:", index.label, fallbackErr.response?.status || fallbackErr.message);
-        return null;
+      const fallbacks = [
+        ["FMP", fetchFmpFallbackIndex],
+        ["Finnhub", fetchFinnhubFallbackIndex],
+        ["cached", fetchSavedFallbackIndex]
+      ];
+      for (const [label, fetchFallback] of fallbacks) {
+        try {
+          const fallbackQuote = await fetchFallback(index);
+          if (fallbackQuote) return fallbackQuote;
+        } catch (fallbackErr) {
+          console.log(`Market index ${label} fallback skipped:`, index.label, fallbackErr.response?.status || fallbackErr.message);
+        }
       }
+      return null;
     }
   }));
 

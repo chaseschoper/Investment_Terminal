@@ -64,6 +64,113 @@ const getMarketSignal = (indices = []) => {
   return { label: "Market Watch", tone: "neutral" };
 };
 
+const getEasternParts = (date) => {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+
+  const values = Object.fromEntries(
+    parts
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, Number(part.value)])
+  );
+
+  return values;
+};
+
+const getEasternDateAsUtc = ({ year, month, day, hour = 0, minute = 0, second = 0 }) => {
+  const targetUtc = Date.UTC(year, month - 1, day, hour, minute, second);
+  let estimate = new Date(targetUtc);
+
+  for (let index = 0; index < 2; index += 1) {
+    const actual = getEasternParts(estimate);
+    const actualUtc = Date.UTC(
+      actual.year,
+      actual.month - 1,
+      actual.day,
+      actual.hour,
+      actual.minute,
+      actual.second
+    );
+    estimate = new Date(estimate.getTime() - (actualUtc - targetUtc));
+  }
+
+  return estimate;
+};
+
+const addEasternCalendarDays = (parts, days) => {
+  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + days, 12));
+  return {
+    year: date.getUTCFullYear(),
+    month: date.getUTCMonth() + 1,
+    day: date.getUTCDate(),
+  };
+};
+
+const getEasternWeekday = (parts) =>
+  new Date(Date.UTC(parts.year, parts.month - 1, parts.day, 12)).getUTCDay();
+
+const isWeekdayMarketSession = (parts) => {
+  const day = getEasternWeekday(parts);
+  return day !== 0 && day !== 6;
+};
+
+const formatCountdownDuration = (milliseconds) => {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${hours}h ${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`;
+};
+
+const getMarketClock = (now = new Date()) => {
+  const parts = getEasternParts(now);
+  const open = getEasternDateAsUtc({ ...parts, hour: 9, minute: 30, second: 0 });
+  const close = getEasternDateAsUtc({ ...parts, hour: 16, minute: 0, second: 0 });
+  const isTradingDay = isWeekdayMarketSession(parts);
+
+  if (isTradingDay && now >= open && now < close) {
+    return {
+      label: "Market closes in",
+      value: formatCountdownDuration(close.getTime() - now.getTime()),
+      tone: "open",
+    };
+  }
+
+  if (isTradingDay && now < open) {
+    return {
+      label: "Market opens in",
+      value: formatCountdownDuration(open.getTime() - now.getTime()),
+      tone: "closed",
+    };
+  }
+
+  for (let offset = 1; offset <= 7; offset += 1) {
+    const nextParts = addEasternCalendarDays(parts, offset);
+    if (isWeekdayMarketSession(nextParts)) {
+      const nextOpen = getEasternDateAsUtc({ ...nextParts, hour: 9, minute: 30, second: 0 });
+      return {
+        label: "Market opens in",
+        value: formatCountdownDuration(nextOpen.getTime() - now.getTime()),
+        tone: "closed",
+      };
+    }
+  }
+
+  return {
+    label: "Market opens in",
+    value: "--",
+    tone: "closed",
+  };
+};
+
 const formatChartBillions = (value) => {
   if (!isNumber(value)) return "N/A";
 
@@ -490,6 +597,9 @@ const [hasLoadedSavedLists, setHasLoadedSavedLists] =
   const [isMarketLoading, setIsMarketLoading] =
     useState(false);
 
+  const [marketClockNow, setMarketClockNow] =
+    useState(() => new Date());
+
   const [portfolioTicker, setPortfolioTicker] =
     useState("");
 
@@ -570,6 +680,14 @@ useEffect(() => {
     isActive = false;
     window.clearInterval(refreshTimer);
   };
+}, []);
+
+useEffect(() => {
+  const timer = window.setInterval(() => {
+    setMarketClockNow(new Date());
+  }, 1000);
+
+  return () => window.clearInterval(timer);
 }, []);
 
   /*
@@ -1208,6 +1326,7 @@ const pauseComputerRead = () => {
 };
 
 const marketSignal = getMarketSignal(marketIndices);
+const marketClock = getMarketClock(marketClockNow);
 
 
  
@@ -1458,6 +1577,11 @@ return (
         <div className="market-strip" aria-label="Market index snapshot">
           <div className={`market-signal ${marketSignal.tone}`}>
             <span>{marketSignal.label}</span>
+          </div>
+
+          <div className={`market-countdown ${marketClock.tone}`}>
+            <span>{marketClock.label}</span>
+            <strong>{marketClock.value}</strong>
           </div>
 
           <div className="market-index-grid">
