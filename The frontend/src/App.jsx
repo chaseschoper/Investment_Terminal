@@ -211,12 +211,16 @@ const buildChartRows = (rows, key) =>
   (rows || [])
     .map((item) => ({
       year: item.year,
+      period: item.period || String(item.year),
+      isInterim: Boolean(item.isInterim),
       [key]: isNumber(item[key])
         ? item[key]
         : null,
     }))
     .filter((item) =>
-      item.year && item.year <= 2025 && item[key] !== null
+      item.year &&
+      item[key] !== null &&
+      (item.isInterim || item.year <= new Date().getFullYear())
     );
 
 const splitForSpeech = (text, maxLength = 1200) => {
@@ -366,7 +370,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 62;
+const FINANCIAL_HISTORY_VERSION = 65;
 
 const handleCompanyLogoError = (event, symbol) => {
   const image = event.currentTarget;
@@ -411,7 +415,7 @@ function HistoricalLineChart({ title, data, dataKey, color, formatter, valueLabe
               margin={{ top: 12, right: 18, left: 6, bottom: 4 }}
             >
               <CartesianGrid stroke="#273244" />
-              <XAxis dataKey="year" />
+              <XAxis dataKey="period" />
               <YAxis tickFormatter={formatter} width={58} />
               <Tooltip formatter={(value) => [formatter(value), valueLabel]} />
               <Line
@@ -1293,12 +1297,19 @@ const epsHistory =
   buildChartRows(financialHistory, "eps");
 const operatingCashflowHistory =
   buildChartRows(financialHistory, "operatingCashflow");
+const freeCashflowHistory =
+  buildChartRows(financialHistory, "freeCashflow");
 const sharesOutstandingHistory =
   buildChartRows(financialHistory, "sharesOutstanding");
 const historicalPeHistory = (stockData?.historicalPe || [])
-  .filter((row) => row?.year && row.year <= 2025 && isNumber(row.pe));
+  .map((row) => ({ ...row, period: row.period || String(row.year) }))
+  .filter((row) => row?.year && row.year <= new Date().getFullYear() && isNumber(row.pe));
 const annualMarginHistory = (stockData?.marginHistory || [])
-  .filter((row) => row?.year && row.year <= 2025);
+  .map((row) => ({ ...row, period: row.period || String(row.year) }))
+  .filter((row) =>
+    row?.year &&
+    (row.isInterim || row.year <= new Date().getFullYear())
+  );
 const grossMarginHistory = annualMarginHistory
   .filter((row) => isNumber(row.grossMargin));
 const operatingMarginHistory = annualMarginHistory
@@ -2248,6 +2259,15 @@ return (
     formatter={formatChartBillions}
     valueLabel="Operating Cash Flow"
     loading={isStockLoading || (isStockRefreshing && !operatingCashflowHistory.length)}
+  />
+  <HistoricalLineChart
+    title="Free Cash Flow History"
+    data={freeCashflowHistory}
+    dataKey="freeCashflow"
+    color="#14b8a6"
+    formatter={formatChartBillions}
+    valueLabel="Free Cash Flow"
+    loading={isStockLoading || (isStockRefreshing && !freeCashflowHistory.length)}
   />
   <HistoricalLineChart
     title="Shares Outstanding History"
