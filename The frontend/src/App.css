@@ -44,6 +44,7 @@ body {
 }
 
 .welcome-kicker {
+  width: min(660px, 100%);
   margin-bottom: 14px;
   color: #5eead4;
   font-size: 13px;
@@ -293,7 +294,7 @@ body {
   border: 1px solid #273244;
   border-radius: 8px;
   background: #111827;
-  color: #d1d5db;
+  color: #ffffff;
   font-size: 13px;
   font-weight: 900;
   text-align: center;
@@ -302,12 +303,12 @@ body {
 
 .market-signal.positive {
   border-color: rgba(52, 211, 153, 0.45);
-  color: #34d399;
+  color: #ffffff;
 }
 
 .market-signal.negative {
   border-color: rgba(251, 113, 133, 0.45);
-  color: #fb7185;
+  color: #ffffff;
 }
 
 .market-countdown {
@@ -386,11 +387,13 @@ body {
 }
 
 .market-index-change.positive {
-  color: #34d399;
+  color: #ffffff;
+  background: transparent;
 }
 
 .market-index-change.negative {
-  color: #fb7185;
+  color: #ffffff;
+  background: transparent;
 }
 
 .market-index-change.neutral {

@@ -43,9 +43,9 @@ const KNOWN_FINANCIAL_INSTITUTIONS = new Set([
 ]);
 
 const MARKET_INDICES = [
-  { key: "sp500", label: "S&P 500", yahooSymbol: "^GSPC", fallbackSymbol: "SPY" },
-  { key: "dow", label: "Dow Jones", yahooSymbol: "^DJI", fallbackSymbol: "DIA" },
-  { key: "nasdaq", label: "Nasdaq", yahooSymbol: "^IXIC", fallbackSymbol: "QQQ" }
+  { key: "sp500", label: "S&P 500", yahooSymbol: "^GSPC", investingPath: "us-spx-500" },
+  { key: "dow", label: "Dow Jones", yahooSymbol: "^DJI", investingPath: "us-30" },
+  { key: "nasdaq", label: "Nasdaq", yahooSymbol: "^IXIC", investingPath: "nasdaq-composite" }
 ];
 
 const REVENUE_KEY_PRIORITY = {
@@ -3161,6 +3161,88 @@ app.get("/api/market-indices", async (req, res) => {
     };
   };
 
+  const parseIndexNumber = (value) => {
+    if (value === null || value === undefined) return null;
+    const normalized = String(value)
+      .replace(/,/g, "")
+      .replace(/[()%+]/g, "")
+      .trim();
+    const number = Number(normalized);
+    if (!Number.isFinite(number)) return null;
+    return String(value).includes("-") ? -Math.abs(number) : number;
+  };
+
+  const fetchInvestingIndex = async (index) => {
+    const response = await axios.get(
+      `https://www.investing.com/indices/${index.investingPath}`,
+      {
+        headers: {
+          "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        },
+        timeout: 8000
+      }
+    );
+    const $ = cheerio.load(response.data || "");
+    const price = parseIndexNumber($('[data-test="instrument-price-last"]').first().text());
+    const change = parseIndexNumber($('[data-test="instrument-price-change"]').first().text());
+    const percentChange = parseIndexNumber($('[data-test="instrument-price-change-percent"]').first().text());
+    const indexQuote = buildIndexQuote(
+      index,
+      index.yahooSymbol,
+      price,
+      change,
+      percentChange,
+      "Investing.com"
+    );
+    if (!indexQuote) throw new Error(`Missing ${index.label} Investing.com price`);
+    return indexQuote;
+  };
+
+  const fetchYahooChartIndex = async (index) => {
+    const response = await axios.get(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(index.yahooSymbol)}`,
+      {
+        params: {
+          interval: "1d",
+          range: "5d"
+        },
+        headers: {
+          "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
+          Accept: "application/json,text/plain,*/*"
+        },
+        timeout: 8000
+      }
+    );
+    const result = response.data?.chart?.result?.[0];
+    const meta = result?.meta || {};
+    const closes = result?.indicators?.quote?.[0]?.close || [];
+    const currentPrice = firstFiniteNumber(
+      meta.regularMarketPrice,
+      [...closes].reverse().find((value) => toNumberOrNull(value) !== null)
+    );
+    const previousClose = firstFiniteNumber(
+      meta.chartPreviousClose,
+      closes.length > 1 ? closes[closes.length - 2] : null
+    );
+    const change = currentPrice !== null && previousClose !== null
+      ? currentPrice - previousClose
+      : null;
+    const percentChange = change !== null && previousClose
+      ? (change / previousClose) * 100
+      : null;
+    const indexQuote = buildIndexQuote(
+      index,
+      index.yahooSymbol,
+      currentPrice,
+      change,
+      percentChange,
+      "Yahoo Chart"
+    );
+    if (!indexQuote) throw new Error(`Missing ${index.label} chart price`);
+    return indexQuote;
+  };
+
   const fetchYahooIndex = async (index) => {
     const quote = await yahooFinance.quote(index.yahooSymbol);
     const indexQuote = buildIndexQuote(
@@ -3175,75 +3257,23 @@ app.get("/api/market-indices", async (req, res) => {
     return indexQuote;
   };
 
-  const fetchFmpFallbackIndex = async (index) => {
-    if (!process.env.FMP_API_KEY) return null;
-    const response = await axios.get(
-      `https://financialmodelingprep.com/api/v3/quote/${encodeURIComponent(index.fallbackSymbol)}`,
-      {
-        params: { apikey: process.env.FMP_API_KEY },
-        timeout: 8000
-      }
-    );
-    const quote = Array.isArray(response.data) ? response.data[0] : null;
-    return buildIndexQuote(
-      index,
-      index.fallbackSymbol,
-      quote?.price,
-      quote?.change,
-      quote?.changesPercentage,
-      "FMP"
-    );
-  };
-
-  const fetchFinnhubFallbackIndex = async (index) => {
-    if (!process.env.FINNHUB_API_KEY) return null;
-    const quote = await getFinnhub(`https://finnhub.io/api/v1/quote?symbol=${index.fallbackSymbol}`);
-    return buildIndexQuote(
-      index,
-      index.fallbackSymbol,
-      quote?.c,
-      quote?.d,
-      quote?.dp,
-      "Finnhub"
-    );
-  };
-
-  const fetchSavedFallbackIndex = async (index) => {
-    const savedStock = await Stock.findOne({ ticker: index.fallbackSymbol })
-      .select("ticker data.price data.change data.percentChange data.previousClose")
-      .lean();
-    const savedData = savedStock?.data || {};
-    const price = toNumberOrNull(savedData.price);
-    const change = toNumberOrNull(savedData.change);
-    const percentChange = firstFiniteNumber(
-      savedData.percentChange,
-      price !== null && toNumberOrNull(savedData.previousClose) > 0
-        ? ((price - toNumberOrNull(savedData.previousClose)) / toNumberOrNull(savedData.previousClose)) * 100
-        : null
-    );
-    return buildIndexQuote(index, index.fallbackSymbol, price, change, percentChange, "Cached");
-  };
-
   const indices = await Promise.all(MARKET_INDICES.map(async (index) => {
-    try {
-      return await fetchYahooIndex(index);
-    } catch (err) {
-      console.log("Market index Yahoo quote skipped:", index.label, err.message);
-      const fallbacks = [
-        ["FMP", fetchFmpFallbackIndex],
-        ["Finnhub", fetchFinnhubFallbackIndex],
-        ["cached", fetchSavedFallbackIndex]
-      ];
-      for (const [label, fetchFallback] of fallbacks) {
-        try {
-          const fallbackQuote = await fetchFallback(index);
-          if (fallbackQuote) return fallbackQuote;
-        } catch (fallbackErr) {
-          console.log(`Market index ${label} fallback skipped:`, index.label, fallbackErr.response?.status || fallbackErr.message);
-        }
+    const sources = [
+      ["Investing.com", fetchInvestingIndex],
+      ["Yahoo chart", fetchYahooChartIndex],
+      ["Yahoo quote", fetchYahooIndex]
+    ];
+
+    for (const [label, fetchIndex] of sources) {
+      try {
+        const indexQuote = await fetchIndex(index);
+        if (indexQuote) return indexQuote;
+      } catch (err) {
+        console.log(`Market index ${label} skipped:`, index.label, err.response?.status || err.message);
       }
-      return null;
     }
+
+    return null;
   }));
 
   const data = {
@@ -3251,10 +3281,12 @@ app.get("/api/market-indices", async (req, res) => {
     updatedAt: new Date().toISOString()
   };
 
-  marketIndexCache.set("latest", {
-    fetchedAt: Date.now(),
-    data
-  });
+  if (data.indices.length) {
+    marketIndexCache.set("latest", {
+      fetchedAt: Date.now(),
+      data
+    });
+  }
 
   return res.json(data);
 });
