@@ -284,6 +284,77 @@ const DEFAULT_PORTFOLIO = {
   positions: []
 };
 const SAVED_LISTS_STORAGE_KEY = "mrktrally-saved-lists";
+const MARKET_INDEX_ORDER = [
+  { key: "sp500", label: "S&P 500" },
+  { key: "dow", label: "Dow Jones" },
+  { key: "nasdaq", label: "Nasdaq" }
+];
+
+const normalizeSymbolList = (symbols = []) =>
+  [...new Set((Array.isArray(symbols) ? symbols : [])
+    .map((symbol) => String(symbol || "").trim().toUpperCase())
+    .filter(Boolean))];
+
+const normalizePortfolios = (items = []) => {
+  if (!Array.isArray(items) || !items.length) return [];
+  return items.map((item, index) => ({
+    id: String(item?.id || `portfolio-${index}`),
+    name: String(item?.name || `Portfolio ${index + 1}`),
+    positions: Array.isArray(item?.positions) ? item.positions : []
+  }));
+};
+
+const hasPortfolioPositions = (items = []) =>
+  normalizePortfolios(items).some((item) => item.positions.length > 0);
+
+const mergePortfolios = (localItems = [], remoteItems = []) => {
+  const merged = new Map();
+
+  [...normalizePortfolios(localItems), ...normalizePortfolios(remoteItems)].forEach((portfolio, index) => {
+    const id = portfolio.id || `portfolio-${index}`;
+    const existing = merged.get(id);
+    if (!existing) {
+      merged.set(id, portfolio);
+      return;
+    }
+
+    const positionsBySymbol = new Map(
+      (existing.positions || []).map((position) => [String(position.symbol || "").toUpperCase(), position])
+    );
+    (portfolio.positions || []).forEach((position) => {
+      const symbol = String(position.symbol || "").toUpperCase();
+      if (symbol) positionsBySymbol.set(symbol, position);
+    });
+    merged.set(id, {
+      ...existing,
+      ...portfolio,
+      positions: [...positionsBySymbol.values()]
+    });
+  });
+
+  const result = [...merged.values()];
+  return result.length ? result : [DEFAULT_PORTFOLIO];
+};
+
+const mergeNamedWatchlists = (localLists = [], remoteLists = []) => {
+  const merged = new Map();
+
+  [...(Array.isArray(localLists) ? localLists : []), ...(Array.isArray(remoteLists) ? remoteLists : [])]
+    .forEach((list, index) => {
+      const id = String(list?.id || `watchlist-${index}`);
+      const existing = merged.get(id);
+      merged.set(id, {
+        id,
+        name: String(list?.name || existing?.name || `Watchlist ${index + 1}`),
+        symbols: normalizeSymbolList([
+          ...(existing?.symbols || []),
+          ...(Array.isArray(list?.symbols) ? list.symbols : [])
+        ])
+      });
+    });
+
+  return [...merged.values()];
+};
 import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
@@ -454,6 +525,8 @@ const [user, setUser] =
   useState(null);
 const [hasLoadedSavedLists, setHasLoadedSavedLists] =
   useState(false);
+const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
+  useState(false);
   useEffect(() => {
 
   const savedUser =
@@ -483,6 +556,13 @@ const [hasLoadedSavedLists, setHasLoadedSavedLists] =
       if (Array.isArray(savedLists.namedWatchlists)) {
         setNamedWatchlists(savedLists.namedWatchlists);
       }
+      setHasMeaningfulSavedLists(
+        Boolean(
+          (savedLists.watchlist || []).length ||
+          hasPortfolioPositions(savedLists.portfolios || []) ||
+          (savedLists.namedWatchlists || []).some((list) => (list.symbols || []).length)
+        )
+      );
     } catch (error) {
       console.error("Saved lists restore failed", error);
     } finally {
@@ -595,7 +675,7 @@ const [hasLoadedSavedLists, setHasLoadedSavedLists] =
     useState([]);
 
   const [isMarketLoading, setIsMarketLoading] =
-    useState(false);
+    useState(true);
 
   const [marketClockNow, setMarketClockNow] =
     useState(() => new Date());
@@ -876,6 +956,16 @@ useEffect(() => {
 
   if (!hasLoadedSavedLists) return;
 
+  const hasSavedContent = Boolean(
+    watchlist.length ||
+    hasPortfolioPositions(portfolios) ||
+    namedWatchlists.some((list) => (list.symbols || []).length)
+  );
+
+  if (hasSavedContent) {
+    setHasMeaningfulSavedLists(true);
+  }
+
   localStorage.setItem(
     SAVED_LISTS_STORAGE_KEY,
     JSON.stringify({
@@ -886,7 +976,7 @@ useEffect(() => {
     })
   );
 
-  if (!user) return;
+  if (!user || (!hasSavedContent && !hasMeaningfulSavedLists)) return;
 
   const saveData = async () => {
 
@@ -935,6 +1025,14 @@ useEffect(() => {
 const loadUserData = async () => {
   try {
     const token = localStorage.getItem("token");
+    let localSavedLists = {};
+    try {
+      localSavedLists = JSON.parse(
+        localStorage.getItem(SAVED_LISTS_STORAGE_KEY) || "{}"
+      );
+    } catch (error) {
+      console.error("Local saved lists read failed", error);
+    }
 
     const response = await axios.get(
       `${API_URL}/api/user-data`,
@@ -945,21 +1043,46 @@ const loadUserData = async () => {
       }
     );
 
-    setWatchlist(response.data.watchlist || []);
-    const savedPortfolios = Array.isArray(response.data.portfolios) && response.data.portfolios.length
+    const remoteWatchlist = response.data.watchlist || [];
+    const remotePortfolios = Array.isArray(response.data.portfolios) && response.data.portfolios.length
       ? response.data.portfolios
       : [{
           ...DEFAULT_PORTFOLIO,
           positions: response.data.portfolio || []
         }];
-    const savedActivePortfolioId = savedPortfolios.some(
-      (item) => item.id === response.data.activePortfolioId
+    const mergedWatchlist = normalizeSymbolList([
+      ...(localSavedLists.watchlist || []),
+      ...remoteWatchlist
+    ]);
+    const mergedPortfolios = mergePortfolios(
+      localSavedLists.portfolios || [],
+      remotePortfolios
+    );
+    const mergedNamedWatchlists = mergeNamedWatchlists(
+      localSavedLists.namedWatchlists || [],
+      response.data.namedWatchlists || []
+    );
+    const preferredActivePortfolioId =
+      localSavedLists.activePortfolioId ||
+      response.data.activePortfolioId ||
+      mergedPortfolios[0].id;
+    const savedActivePortfolioId = mergedPortfolios.some(
+      (item) => item.id === preferredActivePortfolioId
     )
-      ? response.data.activePortfolioId
-      : savedPortfolios[0].id;
-    setPortfolios(savedPortfolios);
+      ? preferredActivePortfolioId
+      : mergedPortfolios[0].id;
+
+    setWatchlist(mergedWatchlist);
+    setPortfolios(mergedPortfolios);
     setActivePortfolioId(savedActivePortfolioId);
-    setNamedWatchlists(response.data.namedWatchlists || []);
+    setNamedWatchlists(mergedNamedWatchlists);
+    setHasMeaningfulSavedLists(
+      Boolean(
+        mergedWatchlist.length ||
+        hasPortfolioPositions(mergedPortfolios) ||
+        mergedNamedWatchlists.some((list) => (list.symbols || []).length)
+      )
+    );
 
     console.log("Loaded user data");
   } catch (err) {
@@ -1327,6 +1450,10 @@ const pauseComputerRead = () => {
 
 const marketSignal = getMarketSignal(marketIndices);
 const marketClock = getMarketClock(marketClockNow);
+const displayedMarketIndices = MARKET_INDEX_ORDER.map((item) => ({
+  ...item,
+  ...(marketIndices.find((index) => index.key === item.key) || {})
+}));
 
 
  
@@ -1585,11 +1712,10 @@ return (
           </div>
 
           <div className="market-index-grid">
-            {marketIndices.length ? (
-              marketIndices.map((index) => (
+            {displayedMarketIndices.map((index) => (
                 <div className="market-index-card" key={index.key}>
                   <span className="market-index-label">{index.label}</span>
-                  <strong>{formatIndexPrice(index.price)}</strong>
+                  <strong>{isNumber(index.price) ? formatIndexPrice(index.price) : "Loading"}</strong>
                   <span className={`market-index-change ${
                     index.percentChange > 0
                       ? "positive"
@@ -1602,18 +1728,7 @@ return (
                       : isMarketLoading ? "Loading" : "--"}
                   </span>
                 </div>
-              ))
-            ) : (
-              ["S&P 500", "Dow Jones", "Nasdaq"].map((label) => (
-                <div className="market-index-card loading" key={label}>
-                  <span className="market-index-label">{label}</span>
-                  <strong>--</strong>
-                  <span className="market-index-change neutral">
-                    {isMarketLoading ? "Loading" : "--"}
-                  </span>
-                </div>
-              ))
-            )}
+              ))}
           </div>
         </div>
         {/* LIVE STOCK CHART */}

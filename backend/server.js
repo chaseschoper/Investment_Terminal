@@ -3141,7 +3141,7 @@ app.get("/api/prices", async (req, res) => {
 
 app.get("/api/market-indices", async (req, res) => {
   const cached = marketIndexCache.get("latest");
-  if (cached && Date.now() - cached.fetchedAt < 60 * 1000) {
+  if (cached && Date.now() - cached.fetchedAt < 5 * 60 * 1000) {
     return res.json(cached.data);
   }
 
@@ -3561,8 +3561,18 @@ function buildResearchAnalysis(stock) {
 
   const baseTarget = target || price;
   const growthRate = clamp((forecastRevenueGrowth || revenueGrowth || 5) / 100, -0.2, 0.35);
-  const bullPrice = price ? Math.max(baseTarget || price, price * (1 + Math.max(0.12, growthRate))) : null;
-  const bearPrice = price ? price * (1 - clamp(0.15 + Math.max(0, (forwardPE || 0) - 35) / 300, 0.15, 0.35)) : null;
+  const bullPremium = Math.max(0.12, growthRate, targetUpside !== null ? targetUpside / 200 : 0);
+  const bullPrice = baseTarget !== null
+    ? baseTarget * (1 + bullPremium)
+    : price !== null
+      ? price * (1 + bullPremium)
+      : null;
+  const bearDiscount = clamp(0.15 + Math.max(0, (forwardPE || 0) - 35) / 300, 0.15, 0.35);
+  const bearPrice = baseTarget !== null
+    ? baseTarget * (1 - bearDiscount)
+    : price !== null
+      ? price * (1 - bearDiscount)
+      : null;
 
   const highlights = [];
   if (latest.revenue !== null) highlights.push(`${latest.year} revenue was ${analysisMoney(toDollarsFromBillions(latest.revenue))}, ${revenueGrowth >= 0 ? "up" : "down"} ${round(Math.abs(revenueGrowth || 0))}% year over year.`);
@@ -4345,6 +4355,21 @@ const cleanNamedWatchlists = Array.isArray(namedWatchlists)
       symbols: cleanSymbols(list?.symbols)
     }))
   : [];
+const hasIncomingData =
+  cleanSymbols(watchlist).length > 0 ||
+  savedPortfolios.some((item) => item.positions.length > 0) ||
+  cleanNamedWatchlists.some((list) => list.symbols.length > 0);
+const hasExistingData =
+  (req.user.watchlist || []).length > 0 ||
+  (req.user.portfolios || []).some((item) => (item.positions || []).length > 0) ||
+  (req.user.namedWatchlists || []).some((list) => (list.symbols || []).length > 0);
+
+if (!hasIncomingData && hasExistingData) {
+  return res.json({
+    success: true,
+    skippedEmptyOverwrite: true
+  });
+}
 
 req.user.watchlist = cleanSymbols(watchlist);
 req.user.portfolios = savedPortfolios;
