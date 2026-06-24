@@ -51,6 +51,12 @@ body {
   text-transform: uppercase;
 }
 
+.welcome-title-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
 .welcome-hero h1 {
   max-width: 660px;
   margin: 0;
@@ -61,6 +67,18 @@ body {
   line-height: 1.02;
   letter-spacing: 0;
   text-shadow: 0 3px 18px rgba(0, 0, 0, 0.58);
+}
+
+.welcome-logo {
+  width: clamp(64px, 8vw, 96px);
+  height: clamp(64px, 8vw, 96px);
+  flex: 0 0 auto;
+  border: 1px solid rgba(94, 234, 212, 0.42);
+  border-radius: 8px;
+  background: rgba(8, 16, 24, 0.68);
+  object-fit: contain;
+  padding: 10px;
+  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.36);
 }
 
 .welcome-hero p {
@@ -257,6 +275,91 @@ body {
   margin-top: 10px;
   color: #1572e3;
   font-size: 18px;
+}
+
+.market-strip {
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 14px;
+  margin: -12px auto 28px;
+}
+
+.market-signal {
+  min-width: 148px;
+  display: grid;
+  place-items: center;
+  padding: 12px 14px;
+  border: 1px solid #273244;
+  border-radius: 8px;
+  background: #111827;
+  color: #d1d5db;
+  font-size: 13px;
+  font-weight: 900;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.market-signal.positive {
+  border-color: rgba(52, 211, 153, 0.45);
+  color: #34d399;
+}
+
+.market-signal.negative {
+  border-color: rgba(251, 113, 133, 0.45);
+  color: #fb7185;
+}
+
+.market-index-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(132px, 1fr));
+  gap: 10px;
+  width: min(560px, 100%);
+}
+
+.market-index-card {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid #273244;
+  border-radius: 8px;
+  background: #111827;
+}
+
+.market-index-label,
+.market-index-change {
+  display: block;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.market-index-label {
+  color: #9ca3af;
+}
+
+.market-index-card strong {
+  display: block;
+  margin-top: 6px;
+  color: #f9fafb;
+  font-size: 20px;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+.market-index-change {
+  margin-top: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.market-index-change.positive {
+  color: #34d399;
+}
+
+.market-index-change.negative {
+  color: #fb7185;
+}
+
+.market-index-change.neutral {
+  color: #9ca3af;
 }
 
 /* GRID */
@@ -1744,6 +1847,17 @@ body {
     font-size: 44px;
   }
 
+  .welcome-title-row {
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .welcome-logo {
+    width: 58px;
+    height: 58px;
+    padding: 7px;
+  }
+
   .welcome-hero p {
     font-size: 16px;
   }
@@ -1780,6 +1894,20 @@ body {
   .stock-price {
     margin-top: 16px;
     font-size: 44px;
+  }
+
+  .market-strip {
+    flex-direction: column;
+    margin-top: -10px;
+  }
+
+  .market-signal {
+    min-height: 42px;
+  }
+
+  .market-index-grid {
+    grid-template-columns: 1fr;
+    width: 100%;
   }
 
   .top-watchlist {

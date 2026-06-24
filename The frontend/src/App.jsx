@@ -46,6 +46,24 @@ const formatPlain = (value) =>
 const formatPrice = (value) =>
   isNumber(value) ? `$${value.toFixed(2)}` : "N/A";
 
+const formatIndexPrice = (value) =>
+  isNumber(value) ? value.toLocaleString(undefined, {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
+  }) : "--";
+
+const getMarketSignal = (indices = []) => {
+  if (indices.some((index) => isNumber(index.percentChange) && index.percentChange <= -1.5)) {
+    return { label: "Market Selloff", tone: "negative" };
+  }
+
+  if (indices.some((index) => isNumber(index.percentChange) && index.percentChange >= 1.5)) {
+    return { label: "Market Rally", tone: "positive" };
+  }
+
+  return { label: "Market Watch", tone: "neutral" };
+};
+
 const formatChartBillions = (value) => {
   if (!isNumber(value)) return "N/A";
 
@@ -466,6 +484,12 @@ const [hasLoadedSavedLists, setHasLoadedSavedLists] =
   const [savedSymbolDetails, setSavedSymbolDetails] =
     useState({});
 
+  const [marketIndices, setMarketIndices] =
+    useState([]);
+
+  const [isMarketLoading, setIsMarketLoading] =
+    useState(false);
+
   const [portfolioTicker, setPortfolioTicker] =
     useState("");
 
@@ -518,6 +542,35 @@ useEffect(() => {
   const refreshTimer = window.setInterval(refreshPrices, 60 * 1000);
   return () => window.clearInterval(refreshTimer);
 }, [watchlist, portfolios, namedWatchlists]);
+
+useEffect(() => {
+  let isActive = true;
+
+  const loadMarketIndices = async () => {
+    setIsMarketLoading(true);
+    try {
+      const response = await axios.get(`${API_URL}/api/market-indices`, {
+        timeout: 8000,
+      });
+      if (isActive) {
+        setMarketIndices(response.data.indices || []);
+      }
+    } catch (error) {
+      console.error("Market indices failed", error);
+    } finally {
+      if (isActive) {
+        setIsMarketLoading(false);
+      }
+    }
+  };
+
+  loadMarketIndices();
+  const refreshTimer = window.setInterval(loadMarketIndices, 60 * 1000);
+  return () => {
+    isActive = false;
+    window.clearInterval(refreshTimer);
+  };
+}, []);
 
   /*
     LOAD STOCK WHEN TICKER CHANGES
@@ -1154,6 +1207,8 @@ const pauseComputerRead = () => {
   }
 };
 
+const marketSignal = getMarketSignal(marketIndices);
+
 
  
 
@@ -1299,7 +1354,14 @@ return (
     <section className="welcome-hero" id="home" aria-labelledby="welcome-title">
       <div className="welcome-hero-content">
         <div className="welcome-kicker">Market research, focused</div>
-        <h1 id="welcome-title">Welcome to MrktRally</h1>
+        <div className="welcome-title-row">
+          <h1 id="welcome-title">Welcome to MrktRally</h1>
+          <img
+            className="welcome-logo"
+            src="/mrktrally-icon.png"
+            alt="MrktRally logo"
+          />
+        </div>
         <p>Track companies, study the numbers, and keep your market view in one place.</p>
         <a className="welcome-action" href="#overview">Explore the market</a>
       </div>
@@ -1391,6 +1453,44 @@ return (
             </div>
           </div>
 
+        </div>
+
+        <div className="market-strip" aria-label="Market index snapshot">
+          <div className={`market-signal ${marketSignal.tone}`}>
+            <span>{marketSignal.label}</span>
+          </div>
+
+          <div className="market-index-grid">
+            {marketIndices.length ? (
+              marketIndices.map((index) => (
+                <div className="market-index-card" key={index.key}>
+                  <span className="market-index-label">{index.label}</span>
+                  <strong>{formatIndexPrice(index.price)}</strong>
+                  <span className={`market-index-change ${
+                    index.percentChange > 0
+                      ? "positive"
+                      : index.percentChange < 0
+                        ? "negative"
+                        : "neutral"
+                  }`}>
+                    {isNumber(index.percentChange)
+                      ? `${index.percentChange > 0 ? "+" : ""}${index.percentChange.toFixed(2)}%`
+                      : isMarketLoading ? "Loading" : "--"}
+                  </span>
+                </div>
+              ))
+            ) : (
+              ["S&P 500", "Dow Jones", "Nasdaq"].map((label) => (
+                <div className="market-index-card loading" key={label}>
+                  <span className="market-index-label">{label}</span>
+                  <strong>--</strong>
+                  <span className="market-index-change neutral">
+                    {isMarketLoading ? "Loading" : "--"}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
         </div>
         {/* LIVE STOCK CHART */}
 

@@ -20,6 +20,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
+const marketIndexCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 60;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
@@ -40,6 +41,12 @@ const KNOWN_FINANCIAL_INSTITUTIONS = new Set([
   "MS",
   "WFC"
 ]);
+
+const MARKET_INDICES = [
+  { key: "sp500", label: "S&P 500", yahooSymbol: "^GSPC", fallbackSymbol: "SPY" },
+  { key: "dow", label: "Dow Jones", yahooSymbol: "^DJI", fallbackSymbol: "DIA" },
+  { key: "nasdaq", label: "Nasdaq", yahooSymbol: "^IXIC", fallbackSymbol: "QQQ" }
+];
 
 const REVENUE_KEY_PRIORITY = {
   annualTotalRevenue: 5,
@@ -3130,6 +3137,72 @@ app.get("/api/prices", async (req, res) => {
   }));
 
   res.json({ prices, details });
+});
+
+app.get("/api/market-indices", async (req, res) => {
+  const cached = marketIndexCache.get("latest");
+  if (cached && Date.now() - cached.fetchedAt < 60 * 1000) {
+    return res.json(cached.data);
+  }
+
+  const fetchYahooIndex = async (index) => {
+    const quote = await yahooFinance.quote(index.yahooSymbol);
+    const price = firstYahooNumber(quote.regularMarketPrice);
+    const change = firstFiniteNumber(quote.regularMarketChange);
+    const percentChange = firstFiniteNumber(quote.regularMarketChangePercent);
+    if (price === null) throw new Error(`Missing ${index.label} price`);
+    return {
+      key: index.key,
+      label: index.label,
+      symbol: index.yahooSymbol,
+      price,
+      change,
+      percentChange
+    };
+  };
+
+  const fetchFallbackIndex = async (index) => {
+    if (!process.env.FINNHUB_API_KEY) return null;
+    const quote = await getFinnhub(`https://finnhub.io/api/v1/quote?symbol=${index.fallbackSymbol}`);
+    const price = toNumberOrNull(quote?.c);
+    const change = toNumberOrNull(quote?.d);
+    const percentChange = toNumberOrNull(quote?.dp);
+    if (price === null) return null;
+    return {
+      key: index.key,
+      label: index.label,
+      symbol: index.fallbackSymbol,
+      price,
+      change,
+      percentChange
+    };
+  };
+
+  const indices = await Promise.all(MARKET_INDICES.map(async (index) => {
+    try {
+      return await fetchYahooIndex(index);
+    } catch (err) {
+      console.log("Market index Yahoo quote skipped:", index.label, err.message);
+      try {
+        return await fetchFallbackIndex(index);
+      } catch (fallbackErr) {
+        console.log("Market index fallback skipped:", index.label, fallbackErr.response?.status || fallbackErr.message);
+        return null;
+      }
+    }
+  }));
+
+  const data = {
+    indices: indices.filter(Boolean),
+    updatedAt: new Date().toISOString()
+  };
+
+  marketIndexCache.set("latest", {
+    fetchedAt: Date.now(),
+    data
+  });
+
+  return res.json(data);
 });
 
 app.get("/api/stock/:ticker", async (req, res) => {
