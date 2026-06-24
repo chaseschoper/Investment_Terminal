@@ -1608,6 +1608,7 @@ return (
           title={`${ticker} earnings calls`}
           src={earningsCall.embedUrl}
           loading="lazy"
+          scrolling="no"
           allow="autoplay; encrypted-media"
         />
       </div>
