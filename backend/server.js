@@ -40,6 +40,11 @@ const KNOWN_FINANCIAL_INSTITUTIONS = new Set([
   "MS",
   "WFC"
 ]);
+
+const getRequestBaseUrl = (req) => {
+  const protocol = req.get("x-forwarded-proto") || req.protocol || "https";
+  return `${protocol}://${req.get("host")}`;
+};
 const REVENUE_KEY_PRIORITY = {
   annualTotalRevenue: 5,
   annualOperatingRevenue: 4,
@@ -3765,6 +3770,54 @@ async function getEarningsCallEmbedUrl(ticker) {
     : "https://earningscall.biz/";
 }
 
+async function getCleanEarningsCallEmbedHtml(ticker) {
+  const targetUrl = await getEarningsCallEmbedUrl(ticker);
+  const response = await axios.get(targetUrl, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36"
+    },
+    timeout: 15000
+  });
+  const hideChromeCss = `
+    <base href="${targetUrl}">
+    <style>
+      html, body {
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow-x: hidden !important;
+      }
+
+      header,
+      nav,
+      footer,
+      [role="navigation"],
+      [class*="navbar" i],
+      [class*="nav-bar" i],
+      [class*="footer" i],
+      [class*="pricing" i],
+      [href*="pricing" i],
+      [href*="login" i],
+      [href*="about" i],
+      [href*="privacy" i],
+      [href*="terms" i] {
+        display: none !important;
+      }
+
+      main {
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+      }
+    </style>
+  `;
+
+  const html = String(response.data || "");
+  if (html.includes("</head>")) {
+    return html.replace("</head>", `${hideChromeCss}</head>`);
+  }
+
+  return `${hideChromeCss}${html}`;
+}
+
 async function fetchEarningsCallBiz(ticker, apiBaseUrl) {
   if (!process.env.EARNINGSCALL_API_KEY) return null;
 
@@ -3899,11 +3952,29 @@ app.get("/api/earnings-call/:ticker/audio", async (req, res) => {
   }
 });
 
+app.get("/api/earnings-call/:ticker/embed", async (req, res) => {
+  const ticker = req.params.ticker.trim().toUpperCase();
+
+  if (!/^[A-Z0-9.-]{1,15}$/.test(ticker)) {
+    return res.status(400).send("Invalid ticker");
+  }
+
+  try {
+    const html = await getCleanEarningsCallEmbedHtml(ticker);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "public, max-age=900");
+    return res.send(html);
+  } catch (err) {
+    console.error("Clean earnings embed failed:", ticker, err.message);
+    return res.status(502).send("Earnings call embed unavailable");
+  }
+});
+
 app.get("/api/earnings-call/:ticker", async (req, res) => {
   const ticker = req.params.ticker.trim().toUpperCase();
 
   try {
-    const embedUrl = await getEarningsCallEmbedUrl(ticker);
+    const embedUrl = `${getRequestBaseUrl(req)}/api/earnings-call/${encodeURIComponent(ticker)}/embed`;
     return res.json({
       available: false,
       symbol: ticker,
