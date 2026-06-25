@@ -21,7 +21,7 @@ const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 93;
+const FINANCIAL_HISTORY_VERSION = 94;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -2071,13 +2071,15 @@ async function fetchYahooYearEndPrices(ticker) {
   }
 
   try {
-    const currentYear = new Date().getFullYear();
-    const period1 = Math.floor(Date.UTC(currentYear - 6, 0, 1) / 1000);
-    const period2 = Math.floor(Date.now() / 1000);
     const response = await axios.get(
       `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}`,
       {
-        params: { period1, period2, interval: "1mo", events: "history" },
+        params: {
+          range: "6y",
+          interval: "1mo",
+          events: "history",
+          includeAdjustedClose: true
+        },
         headers: { "User-Agent": "Mozilla/5.0" },
         timeout: 12000
       }
