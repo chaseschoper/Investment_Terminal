@@ -393,7 +393,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 72;
+const FINANCIAL_HISTORY_VERSION = 79;
 
 const handleCompanyLogoError = (event, symbol) => {
   const image = event.currentTarget;
@@ -1367,13 +1367,13 @@ const previousYearEstimate = estimateFromHistoryYear(
   stockData?.analystEstimates?.currentYear
 );
 const currentYearEstimate =
+  stockData?.analystEstimates?.currentYear || {};
+const nextYearSource =
   stockData?.analystEstimates?.nextYear || {};
-const followingYearSource =
-  stockData?.analystEstimates?.followingYear || {};
-const followingYearEstimate = {
-  revenue: isNumber(followingYearSource.revenue) ? followingYearSource.revenue : null,
-  earnings: isNumber(followingYearSource.earnings) ? followingYearSource.earnings : null,
-  eps: isNumber(followingYearSource.eps) ? followingYearSource.eps : null
+const nextYearEstimate = {
+  revenue: isNumber(nextYearSource.revenue) ? nextYearSource.revenue : null,
+  earnings: isNumber(nextYearSource.earnings) ? nextYearSource.earnings : null,
+  eps: isNumber(nextYearSource.eps) ? nextYearSource.eps : null
 };
 const currentYearRevenueGrowth = calculateEstimateGrowth(
   currentYearEstimate?.revenue,
@@ -1384,11 +1384,11 @@ const currentYearEarningsGrowth = calculateEstimateGrowth(
   previousYearEstimate?.earnings
 );
 const nextYearRevenueGrowth = calculateEstimateGrowth(
-  followingYearEstimate?.revenue,
+  nextYearEstimate?.revenue,
   currentYearEstimate?.revenue
 );
 const nextYearEarningsGrowth = calculateEstimateGrowth(
-  followingYearEstimate?.earnings,
+  nextYearEstimate?.earnings,
   currentYearEstimate?.earnings
 );
 const isStockRefreshing = stockData?.refreshing === true;
@@ -2686,7 +2686,7 @@ return (
 
           <span>
             {estimateValue(formatEstimateMoney(
-              followingYearEstimate?.revenue
+              nextYearEstimate?.revenue
             ))}
           </span>
         </div>
@@ -2703,7 +2703,7 @@ return (
 
           <span>
             {estimateValue(formatEstimateMoney(
-              followingYearEstimate?.earnings
+              nextYearEstimate?.earnings
             ))}
           </span>
         </div>
@@ -2720,7 +2720,7 @@ return (
 
           <span>
             {estimateValue(formatEstimateEps(
-              followingYearEstimate?.eps
+              nextYearEstimate?.eps
             ))}
           </span>
         </div>
