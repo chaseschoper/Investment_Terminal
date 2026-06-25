@@ -1362,8 +1362,21 @@ const estimateFromHistoryYear = (year, fallback = {}) => {
   };
 };
 
+const latestCompletedEstimateYear = [...financialHistory]
+  .filter((row) =>
+    Number.isFinite(Number(row?.year)) &&
+    !row?.isInterim &&
+    !row?.isCurrent &&
+    Number(row.year) <= new Date().getFullYear() &&
+    (isNumber(row.revenue) || isNumber(row.earnings) || isNumber(row.eps))
+  )
+  .sort((a, b) => Number(a.year) - Number(b.year))
+  .at(-1)?.year;
+const previousYearLabel = latestCompletedEstimateYear
+  ? `${latestCompletedEstimateYear}`
+  : "Previous Year";
 const previousYearEstimate = estimateFromHistoryYear(
-  2025,
+  latestCompletedEstimateYear,
   stockData?.analystEstimates?.currentYear
 );
 const currentYearEstimate =
@@ -2529,7 +2542,7 @@ return (
 >
 
       <h3 className="text-lg font-semibold mb-3">
-        Previous Year
+        {previousYearLabel}
       </h3>
 
       <div className="space-y-2">
@@ -2739,7 +2752,7 @@ return (
       <strong className={!isNumber(currentYearRevenueGrowth) ? "estimate-growth-unavailable" : currentYearRevenueGrowth >= 0 ? "estimate-growth-positive" : "estimate-growth-negative"}>
         {estimateValue(formatPercent(currentYearRevenueGrowth))}
       </strong>
-      <span className="estimate-growth-period">Current estimate vs. 2025 actual</span>
+      <span className="estimate-growth-period">Current estimate vs. {previousYearLabel} actual</span>
     </div>
 
     <div className="estimate-growth-card">
@@ -2747,7 +2760,7 @@ return (
       <strong className={!isNumber(currentYearEarningsGrowth) ? "estimate-growth-unavailable" : currentYearEarningsGrowth >= 0 ? "estimate-growth-positive" : "estimate-growth-negative"}>
         {estimateValue(formatPercent(currentYearEarningsGrowth))}
       </strong>
-      <span className="estimate-growth-period">Current estimate vs. 2025 actual</span>
+      <span className="estimate-growth-period">Current estimate vs. {previousYearLabel} actual</span>
     </div>
 
     <div className="estimate-growth-card">

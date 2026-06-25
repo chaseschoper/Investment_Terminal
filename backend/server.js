@@ -3001,17 +3001,21 @@ async function fetchStockData(ticker) {
     currentEpsBase ??
     null;
 
+  const projectedNextEps = estimateNextValue(
+    currentEps,
+    conservativeProjectionRate(earningsGrowthRate, 0.22)
+  );
   const nextEpsCandidate =
     yahooNextEstimate.eps ??
     yahooSupplementalData.forwardEps ??
-    stockAnalysisForecast.nextYearEps ??
-    nasdaqData.nextYearEps ??
     fmpEstimateField(fmpNextEstimate, "epsAvg", "estimatedEpsAvg") ??
     epsEstimates[1]?.epsAvg ??
     metrics.epsEstimateNextYear ??
-    epsFromForwardPE(quote.c, metrics.forwardPE ?? yahooSupplementalData.forwardPE) ??
+    nasdaqData.nextYearEps ??
+    projectedNextEps ??
+    stockAnalysisForecast.nextYearEps ??
     historicalForwardEps ??
-    estimateNextValue(currentEps, earningsGrowthRate) ??
+    epsFromForwardPE(quote.c, metrics.forwardPE ?? yahooSupplementalData.forwardPE) ??
     null;
   const nextEps = sanitizeForwardEps(nextEpsCandidate, historicalForwardEps);
 
@@ -3511,13 +3515,26 @@ async function fetchStockData(ticker) {
   const displayedNextRevenueValue = preservePreviousYahooEstimates
     ? previousYahooEstimates.nextYear?.revenue ?? null
     : yahooNextRevenueRaw ?? nextRevenueValue;
+  const projectedDisplayedNextEpsValue = estimateNextValue(
+    displayedCurrentEpsValue,
+    conservativeProjectionRate(earningsGrowthRate, 0.15)
+  );
+  const displayedNextEpsFallback =
+    nextEpsValue !== null &&
+    (
+      yahooNextEpsRaw !== null ||
+      displayedCurrentEpsValue === null ||
+      nextEpsValue >= displayedCurrentEpsValue * 0.55
+    )
+      ? nextEpsValue
+      : null;
   const displayedNextEpsValue = firstNumber(
     preservePreviousYahooEstimates ? previousYahooEstimates.nextYear?.eps : null,
     yahooNextEpsRaw,
-    nextEpsValue,
+    displayedNextEpsFallback,
+    projectedDisplayedNextEpsValue,
     displayedFollowingEpsValue,
     followingEpsValue,
-    estimateNextValue(displayedCurrentEpsValue, conservativeProjectionRate(earningsGrowthRate, 0.15))
   );
   const displayedNextEarningsValue =
     preservePreviousYahooEstimates && previousYahooEstimates.nextYear?.earnings !== undefined
@@ -4112,8 +4129,9 @@ function buildResearchAnalysis(stock) {
   const history = [...(data.revenueData || [])]
     .filter((row) => row?.year)
     .sort((a, b) => a.year - b.year);
-  const latest = history.at(-1) || {};
-  const previous = history.at(-2) || {};
+  const annualHistory = history.filter((row) => !row?.isInterim && !row?.isCurrent);
+  const latest = annualHistory.at(-1) || history.at(-1) || {};
+  const previous = annualHistory.at(-2) || history.at(-2) || {};
   const price = toNumberOrNull(data.price);
   const target = toNumberOrNull(data.targetMean);
   const marketCap = toNumberOrNull(data.marketCap);
@@ -4132,9 +4150,13 @@ function buildResearchAnalysis(stock) {
   const epsGrowth = percentChange(latest.eps, previous.eps);
   const targetUpside = price && target ? ((target - price) / price) * 100 : null;
   const fcfYield = marketCap && freeCashflow ? (freeCashflow / marketCap) * 100 : null;
-  const forecast = data.analystEstimates?.nextYear || {};
+  const forecast = data.analystEstimates?.currentYear || {};
+  const nextForecast = data.analystEstimates?.nextYear || {};
   const forecastRevenueGrowth = percentChange(forecast.revenue, toDollarsFromBillions(latest.revenue));
+  const forecastIncomeGrowth = percentChange(forecast.earnings, toDollarsFromBillions(latest.earnings));
   const forecastEpsGrowth = percentChange(forecast.eps, latest.eps);
+  const nextForecastRevenueGrowth = percentChange(nextForecast.revenue, forecast.revenue);
+  const nextForecastIncomeGrowth = percentChange(nextForecast.earnings, forecast.earnings);
 
   let score = 50;
   score += clamp((revenueGrowth || 0) / 3, -12, 15);
@@ -4155,7 +4177,8 @@ function buildResearchAnalysis(stock) {
   if (forwardPE && pe && forwardPE < pe * 0.9) catalysts.push(`Forward P/E of ${round(forwardPE)}x is below the current ${round(pe)}x multiple.`);
   if (targetUpside !== null && targetUpside > 8) catalysts.push(`The consensus target implies ${round(targetUpside)}% upside from the current price.`);
   if (fcfYield !== null && fcfYield > 2) catalysts.push(`Free cash flow yield is ${round(fcfYield)}%, supporting reinvestment or capital returns.`);
-  if (forecastRevenueGrowth !== null && forecastRevenueGrowth > 5) catalysts.push(`Consensus revenue implies approximately ${round(forecastRevenueGrowth)}% growth for the current forecast period.`);
+  if (forecastRevenueGrowth !== null && forecastRevenueGrowth > 5) catalysts.push(`Consensus revenue implies approximately ${round(forecastRevenueGrowth)}% growth from the latest completed fiscal year.`);
+  if (forecastIncomeGrowth !== null && forecastIncomeGrowth > 5) catalysts.push(`Consensus net income implies approximately ${round(forecastIncomeGrowth)}% growth from the latest completed fiscal year.`);
 
   if (revenueGrowth !== null && revenueGrowth < 3) risks.push(`Revenue growth slowed to ${round(revenueGrowth)}%, leaving less room for execution misses.`);
   if (incomeGrowth !== null && incomeGrowth < 0) risks.push(`Net income declined ${round(Math.abs(incomeGrowth))}% in the latest reported year.`);
@@ -4191,7 +4214,7 @@ function buildResearchAnalysis(stock) {
 
   const earningsPositives = catalysts.slice(0, 4);
   const earningsRisks = risks.slice(0, 4);
-  const confidence = Math.round(clamp(50 + (revenueGrowth || 0) / 2 + (incomeGrowth || 0) / 4 + (forecastEpsGrowth || 0) / 4, 15, 90));
+  const confidence = Math.round(clamp(50 + (revenueGrowth || 0) / 2 + (incomeGrowth || 0) / 4 + (forecastIncomeGrowth || forecastEpsGrowth || 0) / 4, 15, 90));
   const caution = 100 - confidence;
 
   return {
@@ -4231,7 +4254,7 @@ function buildResearchAnalysis(stock) {
       risks: earningsRisks,
       confidence,
       caution,
-      outlook: `Consensus implies ${forecastRevenueGrowth !== null ? `${round(forecastRevenueGrowth)}% revenue growth` : "an unavailable revenue growth rate"} and ${forecastEpsGrowth !== null ? `${round(forecastEpsGrowth)}% EPS growth` : "an unavailable EPS growth rate"}. Watch whether operating margin can hold near ${round(data.operatingMargins)}% while the company works toward those estimates.`,
+      outlook: `Consensus implies ${forecastRevenueGrowth !== null ? `${round(forecastRevenueGrowth)}% revenue growth` : "an unavailable revenue growth rate"} and ${forecastIncomeGrowth !== null ? `${round(forecastIncomeGrowth)}% net income growth` : "an unavailable net income growth rate"} from the latest completed fiscal year${nextForecastRevenueGrowth !== null || nextForecastIncomeGrowth !== null ? `, with next-year estimates implying ${nextForecastRevenueGrowth !== null ? `${round(nextForecastRevenueGrowth)}% revenue growth` : "unavailable revenue growth"} and ${nextForecastIncomeGrowth !== null ? `${round(nextForecastIncomeGrowth)}% net income growth` : "unavailable net income growth"}` : ""}. Watch whether operating margin can hold near ${round(data.operatingMargins)}% while the company works toward those estimates.`,
       questions: [
         `What assumptions have changed most in the outlook for revenue and demand?`,
         `Can operating margin remain near ${round(data.operatingMargins)}% while investment continues?`,
