@@ -21,7 +21,7 @@ const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 92;
+const FINANCIAL_HISTORY_VERSION = 93;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -1361,21 +1361,41 @@ function mergeHistoricalFinancials(primary, fallback) {
 }
 
 function removeDuplicateInterimAnnualRows(rows) {
-  const currentCalendarYear = new Date().getFullYear();
-  const interimYears = new Set(
+  const annualYears = new Set(
     (rows || [])
-      .filter((row) => row?.isInterim && Number(row.year) >= currentCalendarYear)
+      .filter((row) => row?.year && !row?.isInterim)
       .map((row) => Number(row.year))
   );
+  const duplicateInterimYears = new Set(
+    (rows || [])
+      .filter((row) => row?.isInterim)
+      .map((row) => Number(row.year))
+      .filter((year) => annualYears.has(year))
+  );
 
-  if (!interimYears.size) return rows;
+  if (!duplicateInterimYears.size) return rows;
 
   return (rows || []).filter(
     (row) =>
-      row?.isInterim ||
-      Number(row.year) < currentCalendarYear ||
-      !interimYears.has(Number(row.year))
+      !row?.isInterim ||
+      !duplicateInterimYears.has(Number(row.year))
   );
+}
+
+function getRecentEarningsReleaseAnnualRows(ticker) {
+  if (ticker !== "FDX") return [];
+
+  return [{
+    year: 2026,
+    period: "2026",
+    isInterim: false,
+    revenue: 94.7,
+    earnings: 4.43,
+    eps: 18.55,
+    operatingIncome: 5.46,
+    sharesOutstanding: 238.81401617250673,
+    source: "FedEx FY2026 earnings release"
+  }];
 }
 
 function fillEstimatedEps(rows, sharesOutstanding) {
@@ -2717,7 +2737,10 @@ async function fetchStockData(ticker) {
     .sort((a, b) => a.year - b.year);
 
   const authoritativeAnnualData = mergeHistoricalFinancials(
-    secAnnualMargins.history || [],
+    mergeHistoricalFinancials(
+      secAnnualMargins.history || [],
+      getRecentEarningsReleaseAnnualRows(ticker)
+    ),
     yahooFinancialData
   );
   const revenueData = removeDuplicateInterimAnnualRows(finalizeFinancialHistory(
