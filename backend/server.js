@@ -21,7 +21,7 @@ const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 71;
+const FINANCIAL_HISTORY_VERSION = 72;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -2456,41 +2456,7 @@ async function fetchStockData(ticker) {
     console.log("Price target skipped:", ticker, err.message);
     return {};
   });
-  const yahooFinancialDataPromise = resolveWithin(fetchYahooFinancialHistory(ticker), 8000, []);
-  const fmpIncomeStatementDataPromise = resolveWithin(fetchFmpIncomeStatementHistory(ticker), 8000, []);
-  const yahooSupplementalDataPromise = resolveWithin(getYahooSupplementalData(ticker), 6500, {});
-  const yahooYearEndPricesPromise = resolveWithin(fetchYahooYearEndPrices(ticker), 6500, []);
-  const nasdaqDataPromise = resolveWithin(fetchNasdaqData(ticker), 6500, {});
-  const stockAnalysisForecastPromise = resolveWithin(fetchStockAnalysisForecast(ticker), 6500, {});
   const secAnnualMarginsPromise = resolveWithin(fetchSecAnnualMargins(ticker), 14000, {});
-  const fmpCashFlowDataPromise = resolveWithin(getFmpData(ticker, "cash flow", [
-    "/stable/cash-flow-statement?symbol={ticker}&period=annual&limit=6",
-    "/api/v3/cash-flow-statement/{ticker}?period=annual&limit=6"
-  ]), 6500, null);
-  const fmpPriceTargetDataPromise = resolveWithin(getFmpData(ticker, "price target", [
-    "/stable/price-target-consensus?symbol={ticker}",
-    "/api/v4/price-target-consensus?symbol={ticker}"
-  ]), 6500, null);
-  const fmpAnalystEstimateDataPromise = resolveWithin(getFmpData(ticker, "analyst estimates", [
-    "/stable/analyst-estimates?symbol={ticker}&period=annual&limit=3",
-    "/api/v3/analyst-estimates/{ticker}?period=annual&limit=3"
-  ]), 6500, null);
-  const fmpRatingDataPromise = resolveWithin(getFmpData(ticker, "rating", [
-    "/stable/ratings-snapshot?symbol={ticker}",
-    "/api/v3/rating/{ticker}"
-  ]), 6500, null);
-  const recommendationPromise = resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/recommendation?symbol=${ticker}`).catch((err) => {
-    console.log("Recommendation skipped:", ticker, err.message);
-    return [];
-  }), 6500, []);
-  const epsEstimatePromise = resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/eps-estimate?symbol=${ticker}&freq=annual`).catch((err) => {
-    console.log("EPS estimate skipped:", ticker, err.message);
-    return {};
-  }), 6500, {});
-  const revenueEstimatePromise = resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/revenue-estimate?symbol=${ticker}&freq=annual`).catch((err) => {
-    console.log("Revenue estimate skipped:", ticker, err.message);
-    return {};
-  }), 6500, {});
 
   const quote = await quotePromise;
   const [profile, metricData, financials, priceTarget] = await Promise.all([
@@ -2609,20 +2575,41 @@ async function fetchStockData(ticker) {
     epsEstimate,
     revenueEstimate
   ] = await Promise.all([
-    yahooFinancialDataPromise,
-    fmpIncomeStatementDataPromise,
-    yahooSupplementalDataPromise,
-    yahooYearEndPricesPromise,
-    nasdaqDataPromise,
-    stockAnalysisForecastPromise,
+    resolveWithin(fetchYahooFinancialHistory(ticker), 8000, []),
+    resolveWithin(fetchFmpIncomeStatementHistory(ticker), 8000, []),
+    resolveWithin(getYahooSupplementalData(ticker), 6500, {}),
+    resolveWithin(fetchYahooYearEndPrices(ticker), 6500, []),
+    resolveWithin(fetchNasdaqData(ticker), 6500, {}),
+    resolveWithin(fetchStockAnalysisForecast(ticker), 6500, {}),
     earlySecAnnualMargins,
-    fmpCashFlowDataPromise,
-    fmpPriceTargetDataPromise,
-    fmpAnalystEstimateDataPromise,
-    fmpRatingDataPromise,
-    recommendationPromise,
-    epsEstimatePromise,
-    revenueEstimatePromise
+    resolveWithin(getFmpData(ticker, "cash flow", [
+      "/stable/cash-flow-statement?symbol={ticker}&period=annual&limit=6",
+      "/api/v3/cash-flow-statement/{ticker}?period=annual&limit=6"
+    ]), 6500, null),
+    resolveWithin(getFmpData(ticker, "price target", [
+      "/stable/price-target-consensus?symbol={ticker}",
+      "/api/v4/price-target-consensus?symbol={ticker}"
+    ]), 6500, null),
+    resolveWithin(getFmpData(ticker, "analyst estimates", [
+      "/stable/analyst-estimates?symbol={ticker}&period=annual&limit=3",
+      "/api/v3/analyst-estimates/{ticker}?period=annual&limit=3"
+    ]), 6500, null),
+    resolveWithin(getFmpData(ticker, "rating", [
+      "/stable/ratings-snapshot?symbol={ticker}",
+      "/api/v3/rating/{ticker}"
+    ]), 6500, null),
+    resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/recommendation?symbol=${ticker}`).catch((err) => {
+      console.log("Recommendation skipped:", ticker, err.message);
+      return [];
+    }), 6500, []),
+    resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/eps-estimate?symbol=${ticker}&freq=annual`).catch((err) => {
+      console.log("EPS estimate skipped:", ticker, err.message);
+      return {};
+    }), 6500, {}),
+    resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/revenue-estimate?symbol=${ticker}&freq=annual`).catch((err) => {
+      console.log("Revenue estimate skipped:", ticker, err.message);
+      return {};
+    }), 6500, {})
   ]);
   fmpCashFlow = Array.isArray(fmpCashFlowData)
     ? fmpCashFlowData
