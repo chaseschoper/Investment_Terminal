@@ -21,7 +21,7 @@ const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 82;
+const FINANCIAL_HISTORY_VERSION = 83;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -3006,7 +3006,6 @@ async function fetchStockData(ticker) {
     currentEps
   );
   const providerFollowingEps = firstNumber(
-    yahooSupplementalData.analystEstimates?.nextYear?.eps,
     stockAnalysisForecast.nextYearEps,
     nasdaqData.nextYearEps,
     fmpEstimateField(fmpFollowingEstimate, "epsAvg", "estimatedEpsAvg"),
@@ -3386,13 +3385,26 @@ async function fetchStockData(ticker) {
     yahooNextRevenueRaw !== null ||
     yahooNextEpsRaw !== null;
   const displayedCurrentRevenueValue = yahooCurrentRevenueRaw ?? currentRevenueValue;
-  const displayedCurrentEpsValue = yahooCurrentEpsRaw ?? currentEpsValue;
+  const displayedCurrentEpsValue = firstNumber(
+    yahooNextEpsRaw,
+    nextEpsValue,
+    yahooCurrentEpsRaw,
+    currentEpsValue
+  );
   const displayedCurrentEarningsValue =
-    yahooCurrentEarningsValue ?? currentEarningsValue;
+    displayedCurrentEpsValue !== null && modeledSharesOutstanding
+      ? displayedCurrentEpsValue * modeledSharesOutstanding * 1000000
+      : yahooCurrentEarningsValue ?? currentEarningsValue;
   const displayedNextRevenueValue = yahooNextRevenueRaw ?? nextRevenueValue;
-  const displayedNextEpsValue = yahooNextEpsRaw ?? nextEpsValue;
+  const displayedNextEpsValue = firstNumber(
+    displayedFollowingEpsValue,
+    followingEpsValue,
+    estimateNextValue(displayedCurrentEpsValue, conservativeProjectionRate(earningsGrowthRate, 0.15))
+  );
   const displayedNextEarningsValue =
-    yahooNextEarningsValue ?? nextEarningsValue;
+    displayedNextEpsValue !== null && modeledSharesOutstanding
+      ? displayedNextEpsValue * modeledSharesOutstanding * 1000000
+      : yahooNextEarningsValue ?? nextEarningsValue;
 
   const data = preserveBankMargins(withGuaranteedAnalystSection({
     isFinancialCompany,
