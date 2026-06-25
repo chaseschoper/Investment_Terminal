@@ -393,7 +393,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 81;
+const FINANCIAL_HISTORY_VERSION = 82;
 
 const handleCompanyLogoError = (event, symbol) => {
   const image = event.currentTarget;
@@ -1400,7 +1400,9 @@ const stockValue = (value) =>
     ? "Loading..."
     : value;
 const estimateValue = (value) =>
-  areEstimatesRefreshing ? "Loading..." : stockValue(value);
+  areEstimatesRefreshing && (value === "N/A" || value === null || value === undefined)
+    ? "Loading..."
+    : stockValue(value);
 const normalizedTranscriptSearch = transcriptSearch.trim().toLowerCase();
 const filteredTranscript = (earningsCall?.transcript || []).filter((section) =>
   !normalizedTranscriptSearch ||

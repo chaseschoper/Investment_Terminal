@@ -21,7 +21,7 @@ const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 81;
+const FINANCIAL_HISTORY_VERSION = 82;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -1545,7 +1545,14 @@ function preserveBankMargins(data, previousData) {
 }
 
 function withGuaranteedAnalystSection(data = {}) {
-  const yahooLockedEstimates = data.analystEstimatesSource === "Yahoo Finance";
+  const yahooLockedEstimates =
+    data.analystEstimatesSource === "Yahoo Finance" &&
+    (
+      toNumberOrNull(data.analystEstimates?.currentYear?.revenue) !== null ||
+      toNumberOrNull(data.analystEstimates?.currentYear?.eps) !== null ||
+      toNumberOrNull(data.analystEstimates?.nextYear?.revenue) !== null ||
+      toNumberOrNull(data.analystEstimates?.nextYear?.eps) !== null
+    );
   const isFinancialCompany = data.isFinancialCompany === true;
   const price = toNumberOrNull(data.price);
   const revenueRows = Array.isArray(data.revenueData) ? data.revenueData : [];
@@ -3373,6 +3380,20 @@ async function fetchStockData(ticker) {
       }
     : null;
 
+  const hasYahooEstimateValues =
+    yahooCurrentRevenueRaw !== null ||
+    yahooCurrentEpsRaw !== null ||
+    yahooNextRevenueRaw !== null ||
+    yahooNextEpsRaw !== null;
+  const displayedCurrentRevenueValue = yahooCurrentRevenueRaw ?? currentRevenueValue;
+  const displayedCurrentEpsValue = yahooCurrentEpsRaw ?? currentEpsValue;
+  const displayedCurrentEarningsValue =
+    yahooCurrentEarningsValue ?? currentEarningsValue;
+  const displayedNextRevenueValue = yahooNextRevenueRaw ?? nextRevenueValue;
+  const displayedNextEpsValue = yahooNextEpsRaw ?? nextEpsValue;
+  const displayedNextEarningsValue =
+    yahooNextEarningsValue ?? nextEarningsValue;
+
   const data = preserveBankMargins(withGuaranteedAnalystSection({
     isFinancialCompany,
     bankMetrics: displayedBankMetrics,
@@ -3440,17 +3461,19 @@ async function fetchStockData(ticker) {
     targetMean,
     recommendationKey,
     analystRatingText,
-    analystEstimatesSource: "Yahoo Finance",
+    analystEstimatesSource: hasYahooEstimateValues
+      ? "Yahoo Finance"
+      : "Fallback estimate",
     analystEstimates: {
       currentYear: {
-        revenue: yahooCurrentRevenueRaw,
-        earnings: yahooCurrentEarningsValue,
-        eps: yahooCurrentEpsRaw
+        revenue: displayedCurrentRevenueValue,
+        earnings: displayedCurrentEarningsValue,
+        eps: displayedCurrentEpsValue
       },
       nextYear: {
-        revenue: yahooNextRevenueRaw,
-        earnings: yahooNextEarningsValue,
-        eps: yahooNextEpsRaw
+        revenue: displayedNextRevenueValue,
+        earnings: displayedNextEarningsValue,
+        eps: displayedNextEpsValue
       },
       followingYear: {
         revenue: followingRevenueValue,
