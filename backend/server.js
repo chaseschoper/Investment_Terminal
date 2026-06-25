@@ -21,7 +21,7 @@ const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 69;
+const FINANCIAL_HISTORY_VERSION = 70;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -1412,6 +1412,8 @@ function finalizeRevenueHistory(rows) {
   const revenueRows = (rows || [])
     .map((row) => ({
       year: row.year,
+      period: row.period || String(row.year),
+      isInterim: Boolean(row.isInterim),
       revenue: toNumberOrNull(row.revenue),
       source: row.source
     }))
