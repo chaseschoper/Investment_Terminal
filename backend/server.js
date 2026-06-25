@@ -21,7 +21,7 @@ const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 70;
+const FINANCIAL_HISTORY_VERSION = 71;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -1456,10 +1456,21 @@ function hasChartHistory(stock, key) {
 }
 
 function hasCompleteChartHistory(stock) {
+  const data = stock?.data || {};
+  const latestHistoryYear = Math.max(
+    ...((data.revenueData || [])
+      .map((row) => Number(row.year))
+      .filter((year) => Number.isFinite(year)))
+  );
+  const needsInterimCheck =
+    Number.isFinite(latestHistoryYear) &&
+    latestHistoryYear >= new Date().getFullYear() - 1;
+
   return (
     hasChartHistory(stock, "revenue") &&
     hasChartHistory(stock, "earnings") &&
-    hasChartHistory(stock, "eps")
+    hasChartHistory(stock, "eps") &&
+    (!needsInterimCheck || Boolean(data.interimHistoryCheckedAt))
   );
 }
 
@@ -2344,31 +2355,162 @@ const getImmediateStockSnapshot = async (ticker, previousData = {}) =>
   (await resolveWithin(buildFastStockSnapshot(ticker, previousData), 1200, null)) ||
   buildMinimalStockSnapshot(ticker, previousData);
 
+async function publishChartHistorySnapshot(ticker, previousData = {}, secAnnualMargins = {}, sharesOutstanding = null) {
+  if (!Array.isArray(secAnnualMargins.history) || !secAnnualMargins.history.length) return;
+
+  const revenueData = removeDuplicateInterimAnnualRows(finalizeFinancialHistory(
+    mergeHistoricalFinancials(secAnnualMargins.history, previousData.revenueData || []),
+    sharesOutstanding
+  ));
+
+  if (!hasCompleteChartHistory({ data: { ...previousData, revenueData, interimHistoryCheckedAt: new Date().toISOString() } })) {
+    return;
+  }
+
+  const revenueHistory = removeDuplicateInterimAnnualRows(finalizeRevenueHistory(revenueData));
+  const annualMargin = (numerator, revenue) => {
+    const numeratorNumber = toNumberOrNull(numerator);
+    const revenueNumber = toNumberOrNull(revenue);
+    return numeratorNumber !== null && revenueNumber ? (numeratorNumber / revenueNumber) * 100 : null;
+  };
+  const fallbackMarginHistory = revenueData.map((row) => ({
+    year: row.year,
+    period: row.period || String(row.year),
+    isInterim: Boolean(row.isInterim),
+    grossMargin: annualMargin(row.grossProfit, row.revenue),
+    operatingMargin: annualMargin(row.operatingIncome, row.revenue),
+    profitMargin: annualMargin(row.earnings, row.revenue),
+    source: row.source
+  }));
+  const marginRowsByPeriod = new Map();
+
+  [...fallbackMarginHistory, ...(secAnnualMargins.marginHistory || [])].forEach((row) => {
+    if (!row?.year) return;
+    const period = row.period || String(row.year);
+    const rowKey = row.isInterim ? `${row.year}:${period}` : `${row.year}:annual`;
+    const existing = marginRowsByPeriod.get(rowKey) || {};
+    marginRowsByPeriod.set(rowKey, {
+      year: row.year,
+      period,
+      isInterim: row.isInterim ?? existing.isInterim ?? false,
+      grossMargin: row.grossMargin ?? existing.grossMargin ?? null,
+      operatingMargin: row.operatingMargin ?? existing.operatingMargin ?? null,
+      profitMargin: row.profitMargin ?? existing.profitMargin ?? null,
+      source: row.source || existing.source
+    });
+  });
+
+  const marginHistory = removeDuplicateInterimAnnualRows([...marginRowsByPeriod.values()]
+    .filter((row) =>
+      row.grossMargin !== null ||
+      row.operatingMargin !== null ||
+      row.profitMargin !== null
+    )
+    .sort((a, b) => {
+      const yearDiff = a.year - b.year;
+      if (yearDiff !== 0) return yearDiff;
+      if (a.isInterim !== b.isInterim) return a.isInterim ? 1 : -1;
+      return String(a.period || "").localeCompare(String(b.period || ""));
+    })
+    .slice(-7));
+  const nextData = withGuaranteedAnalystSection({
+    ...previousData,
+    financialHistoryVersion: FINANCIAL_HISTORY_VERSION,
+    interimHistoryCheckedAt: new Date().toISOString(),
+    hasInterimHistory: revenueData.some((row) => row.isInterim),
+    latestInterimPeriod: revenueData.findLast((row) => row.isInterim)?.period || null,
+    revenueHistory,
+    revenueData,
+    marginHistory: marginHistory.length ? marginHistory : previousData.marginHistory
+  });
+
+  await Stock.findOneAndUpdate(
+    { ticker },
+    {
+      ticker,
+      status: "pending",
+      data: nextData,
+      updatedAt: new Date()
+    },
+    { upsert: true }
+  );
+}
+
 async function fetchStockData(ticker) {
   const previousStock = await Stock.findOne({ ticker }).lean().catch(() => null);
   const previousData = previousStock?.data || null;
-  const quote = await getPrimaryQuote(ticker);
+  const quotePromise = getPrimaryQuote(ticker);
+  const profilePromise = getFinnhub(`https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}`).catch((err) => {
+    console.log("Profile skipped:", ticker, err.message);
+    return {};
+  });
+  const metricDataPromise = getFinnhub(`https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=all`).catch((err) => {
+    console.log("Finnhub metrics skipped:", ticker, err.message);
+    return {};
+  });
+  const financialsPromise = getFinnhub(`https://finnhub.io/api/v1/stock/financials-reported?symbol=${ticker}&freq=annual`).catch((err) => {
+    console.log("Financials skipped:", ticker, err.message);
+    return {};
+  });
+  const priceTargetPromise = getFinnhub(`https://finnhub.io/api/v1/stock/price-target?symbol=${ticker}`).catch((err) => {
+    console.log("Price target skipped:", ticker, err.message);
+    return {};
+  });
+  const yahooFinancialDataPromise = resolveWithin(fetchYahooFinancialHistory(ticker), 8000, []);
+  const fmpIncomeStatementDataPromise = resolveWithin(fetchFmpIncomeStatementHistory(ticker), 8000, []);
+  const yahooSupplementalDataPromise = resolveWithin(getYahooSupplementalData(ticker), 6500, {});
+  const yahooYearEndPricesPromise = resolveWithin(fetchYahooYearEndPrices(ticker), 6500, []);
+  const nasdaqDataPromise = resolveWithin(fetchNasdaqData(ticker), 6500, {});
+  const stockAnalysisForecastPromise = resolveWithin(fetchStockAnalysisForecast(ticker), 6500, {});
+  const secAnnualMarginsPromise = resolveWithin(fetchSecAnnualMargins(ticker), 14000, {});
+  const fmpCashFlowDataPromise = resolveWithin(getFmpData(ticker, "cash flow", [
+    "/stable/cash-flow-statement?symbol={ticker}&period=annual&limit=6",
+    "/api/v3/cash-flow-statement/{ticker}?period=annual&limit=6"
+  ]), 6500, null);
+  const fmpPriceTargetDataPromise = resolveWithin(getFmpData(ticker, "price target", [
+    "/stable/price-target-consensus?symbol={ticker}",
+    "/api/v4/price-target-consensus?symbol={ticker}"
+  ]), 6500, null);
+  const fmpAnalystEstimateDataPromise = resolveWithin(getFmpData(ticker, "analyst estimates", [
+    "/stable/analyst-estimates?symbol={ticker}&period=annual&limit=3",
+    "/api/v3/analyst-estimates/{ticker}?period=annual&limit=3"
+  ]), 6500, null);
+  const fmpRatingDataPromise = resolveWithin(getFmpData(ticker, "rating", [
+    "/stable/ratings-snapshot?symbol={ticker}",
+    "/api/v3/rating/{ticker}"
+  ]), 6500, null);
+  const recommendationPromise = resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/recommendation?symbol=${ticker}`).catch((err) => {
+    console.log("Recommendation skipped:", ticker, err.message);
+    return [];
+  }), 6500, []);
+  const epsEstimatePromise = resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/eps-estimate?symbol=${ticker}&freq=annual`).catch((err) => {
+    console.log("EPS estimate skipped:", ticker, err.message);
+    return {};
+  }), 6500, {});
+  const revenueEstimatePromise = resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/revenue-estimate?symbol=${ticker}&freq=annual`).catch((err) => {
+    console.log("Revenue estimate skipped:", ticker, err.message);
+    return {};
+  }), 6500, {});
+
+  const quote = await quotePromise;
   const [profile, metricData, financials, priceTarget] = await Promise.all([
-    getFinnhub(`https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}`).catch((err) => {
-      console.log("Profile skipped:", ticker, err.message);
-      return {};
-    }),
-    getFinnhub(`https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=all`).catch((err) => {
-      console.log("Finnhub metrics skipped:", ticker, err.message);
-      return {};
-    }),
-    getFinnhub(`https://finnhub.io/api/v1/stock/financials-reported?symbol=${ticker}&freq=annual`).catch((err) => {
-      console.log("Financials skipped:", ticker, err.message);
-      return {};
-    }),
-    getFinnhub(`https://finnhub.io/api/v1/stock/price-target?symbol=${ticker}`).catch((err) => {
-      console.log("Price target skipped:", ticker, err.message);
-      return {};
-    })
+    profilePromise,
+    metricDataPromise,
+    financialsPromise,
+    priceTargetPromise
   ]);
 
   const metrics = metricData?.metric || {};
   const sharesOutstanding = profile.shareOutstanding || null;
+  const earlySecAnnualMargins = await secAnnualMarginsPromise;
+  await publishChartHistorySnapshot(
+    ticker,
+    previousData || {},
+    earlySecAnnualMargins,
+    sharesOutstanding
+  ).catch((err) => {
+    console.log("Early chart history snapshot skipped:", ticker, err.message);
+  });
 
   let finnhubReportedData = [];
   let finnhubMetricData = [];
@@ -2467,41 +2609,20 @@ async function fetchStockData(ticker) {
     epsEstimate,
     revenueEstimate
   ] = await Promise.all([
-    resolveWithin(fetchYahooFinancialHistory(ticker), 8000, []),
-    resolveWithin(fetchFmpIncomeStatementHistory(ticker), 8000, []),
-    resolveWithin(getYahooSupplementalData(ticker), 6500, {}),
-    resolveWithin(fetchYahooYearEndPrices(ticker), 6500, []),
-    resolveWithin(fetchNasdaqData(ticker), 6500, {}),
-    resolveWithin(fetchStockAnalysisForecast(ticker), 6500, {}),
-    resolveWithin(fetchSecAnnualMargins(ticker), 14000, {}),
-    resolveWithin(getFmpData(ticker, "cash flow", [
-      "/stable/cash-flow-statement?symbol={ticker}&period=annual&limit=6",
-      "/api/v3/cash-flow-statement/{ticker}?period=annual&limit=6"
-    ]), 6500, null),
-    resolveWithin(getFmpData(ticker, "price target", [
-      "/stable/price-target-consensus?symbol={ticker}",
-      "/api/v4/price-target-consensus?symbol={ticker}"
-    ]), 6500, null),
-    resolveWithin(getFmpData(ticker, "analyst estimates", [
-      "/stable/analyst-estimates?symbol={ticker}&period=annual&limit=3",
-      "/api/v3/analyst-estimates/{ticker}?period=annual&limit=3"
-    ]), 6500, null),
-    resolveWithin(getFmpData(ticker, "rating", [
-      "/stable/ratings-snapshot?symbol={ticker}",
-      "/api/v3/rating/{ticker}"
-    ]), 6500, null),
-    resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/recommendation?symbol=${ticker}`).catch((err) => {
-      console.log("Recommendation skipped:", ticker, err.message);
-      return [];
-    }), 6500, []),
-    resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/eps-estimate?symbol=${ticker}&freq=annual`).catch((err) => {
-      console.log("EPS estimate skipped:", ticker, err.message);
-      return {};
-    }), 6500, {}),
-    resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/revenue-estimate?symbol=${ticker}&freq=annual`).catch((err) => {
-      console.log("Revenue estimate skipped:", ticker, err.message);
-      return {};
-    }), 6500, {})
+    yahooFinancialDataPromise,
+    fmpIncomeStatementDataPromise,
+    yahooSupplementalDataPromise,
+    yahooYearEndPricesPromise,
+    nasdaqDataPromise,
+    stockAnalysisForecastPromise,
+    earlySecAnnualMargins,
+    fmpCashFlowDataPromise,
+    fmpPriceTargetDataPromise,
+    fmpAnalystEstimateDataPromise,
+    fmpRatingDataPromise,
+    recommendationPromise,
+    epsEstimatePromise,
+    revenueEstimatePromise
   ]);
   fmpCashFlow = Array.isArray(fmpCashFlowData)
     ? fmpCashFlowData
@@ -3315,6 +3436,9 @@ async function fetchStockData(ticker) {
       }
     },
     financialHistoryVersion: FINANCIAL_HISTORY_VERSION,
+    interimHistoryCheckedAt: new Date().toISOString(),
+    hasInterimHistory: revenueData.some((row) => row.isInterim),
+    latestInterimPeriod: revenueData.findLast((row) => row.isInterim)?.period || null,
     revenueHistory,
     revenueData
   }), previousData);
