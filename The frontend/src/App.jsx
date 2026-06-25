@@ -71,6 +71,13 @@ const getMarketSignal = (indices = []) => {
   return { label: "Market Watch", tone: "neutral" };
 };
 
+const getMarketIndexTone = (percentChange) => {
+  if (!isNumber(percentChange)) return "neutral";
+  if (percentChange >= 1.5) return "rally";
+  if (percentChange <= -1.5) return "selloff";
+  return "neutral";
+};
+
 const getEasternParts = (date) => {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
@@ -1781,7 +1788,7 @@ return (
 
           <div className="market-index-grid">
             {displayedMarketIndices.map((index) => (
-                <div className="market-index-card" key={index.key}>
+                <div className={`market-index-card ${getMarketIndexTone(index.percentChange)}`} key={index.key}>
                   <span className="market-index-label">{index.label}</span>
                   <strong>{isNumber(index.price) ? formatIndexPrice(index.price) : "Loading"}</strong>
                   <span className={`market-index-change ${

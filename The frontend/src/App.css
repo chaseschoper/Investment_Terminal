@@ -361,6 +361,16 @@ body {
   background: #111827;
 }
 
+.market-index-card.rally {
+  border-color: rgba(16, 185, 129, 0.55);
+  background: linear-gradient(135deg, #065f46 0%, #047857 100%);
+}
+
+.market-index-card.selloff {
+  border-color: rgba(248, 113, 113, 0.58);
+  background: linear-gradient(135deg, #991b1b 0%, #dc2626 100%);
+}
+
 .market-index-label,
 .market-index-change {
   display: block;
@@ -372,6 +382,11 @@ body {
   color: #9ca3af;
 }
 
+.market-index-card.rally .market-index-label,
+.market-index-card.selloff .market-index-label {
+  color: rgba(255, 255, 255, 0.82);
+}
+
 .market-index-card strong {
   display: block;
   margin-top: 6px;
@@ -379,6 +394,13 @@ body {
   font-size: 20px;
   line-height: 1.15;
   font-variant-numeric: tabular-nums;
+}
+
+.market-index-card.rally strong,
+.market-index-card.selloff strong,
+.market-index-card.rally .market-index-change,
+.market-index-card.selloff .market-index-change {
+  color: #ffffff;
 }
 
 .market-index-change {
