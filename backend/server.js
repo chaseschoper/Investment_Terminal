@@ -21,7 +21,7 @@ const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 86;
+const FINANCIAL_HISTORY_VERSION = 88;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -2997,8 +2997,8 @@ async function fetchStockData(ticker) {
   const nextEpsCandidate =
     yahooNextEstimate.eps ??
     yahooSupplementalData.forwardEps ??
-    stockAnalysisForecast.currentYearEps ??
-    nasdaqData.currentYearEps ??
+    stockAnalysisForecast.nextYearEps ??
+    nasdaqData.nextYearEps ??
     fmpEstimateField(fmpNextEstimate, "epsAvg", "estimatedEpsAvg") ??
     epsEstimates[1]?.epsAvg ??
     metrics.epsEstimateNextYear ??
@@ -3489,10 +3489,11 @@ async function fetchStockData(ticker) {
     : yahooCurrentRevenueRaw ?? currentRevenueValue;
   const displayedCurrentEpsValue = firstNumber(
     preservePreviousYahooEstimates ? previousYahooEstimates.currentYear?.eps : null,
-    yahooNextEpsRaw,
-    nextEpsValue,
     yahooCurrentEpsRaw,
-    currentEpsValue
+    yahooSupplementalData.forwardEps,
+    currentEpsValue,
+    nextEpsValue,
+    yahooNextEpsRaw
   );
   const displayedCurrentEarningsValue =
     preservePreviousYahooEstimates && previousYahooEstimates.currentYear?.earnings !== undefined
@@ -3505,6 +3506,8 @@ async function fetchStockData(ticker) {
     : yahooNextRevenueRaw ?? nextRevenueValue;
   const displayedNextEpsValue = firstNumber(
     preservePreviousYahooEstimates ? previousYahooEstimates.nextYear?.eps : null,
+    yahooNextEpsRaw,
+    nextEpsValue,
     displayedFollowingEpsValue,
     followingEpsValue,
     estimateNextValue(displayedCurrentEpsValue, conservativeProjectionRate(earningsGrowthRate, 0.15))
