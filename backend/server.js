@@ -21,7 +21,7 @@ const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 65;
+const FINANCIAL_HISTORY_VERSION = 66;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -2631,12 +2631,15 @@ async function fetchStockData(ticker) {
       : yahooSupplementalData.yearEndPrices || []
     ).map((row) => [Number(row.year), row.close])
   );
-  const historicalPe = revenueData
+  let historicalPe = revenueData
+    .filter((row) => !row.isInterim)
     .map((row) => {
       const price = toNumberOrNull(yearEndPrices.get(Number(row.year)));
       const annualEps = toNumberOrNull(row.eps);
       return {
         year: row.year,
+        period: row.period || String(row.year),
+        isInterim: Boolean(row.isInterim),
         pe: price !== null && annualEps !== null && annualEps !== 0
           ? price / annualEps
           : null,
@@ -2924,6 +2927,19 @@ async function fetchStockData(ticker) {
     yahooSupplementalData.pe,
     metrics.peNormalizedAnnual
   );
+  if (reportedPE !== null && Number.isFinite(reportedPE) && Math.abs(reportedPE) < 1000) {
+    historicalPe = [
+      ...historicalPe,
+      {
+        year: new Date().getFullYear(),
+        period: "Current",
+        isCurrent: true,
+        pe: reportedPE,
+        price: quote.c,
+        eps: trailingEpsValue
+      }
+    ].slice(-7);
+  }
   const reportedForwardPE = firstNumber(
     stockAnalysisForecast.forwardPE,
     metrics.forwardPE,

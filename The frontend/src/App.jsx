@@ -223,6 +223,29 @@ const buildChartRows = (rows, key) =>
       (item.isInterim || item.year <= new Date().getFullYear())
     );
 
+const mergeChartRows = (rows, key) => {
+  const merged = new Map();
+
+  (rows || []).forEach((item) => {
+    if (!item?.year || !isNumber(item[key])) return;
+    const period = item.period || String(item.year);
+    const mergeKey = period || `${item.year}-${item.isInterim ? "interim" : "annual"}`;
+    merged.set(mergeKey, {
+      ...(merged.get(mergeKey) || {}),
+      ...item,
+      period,
+      isInterim: Boolean(item.isInterim),
+    });
+  });
+
+  return [...merged.values()].sort((a, b) => {
+    const yearDiff = Number(a.year) - Number(b.year);
+    if (yearDiff !== 0) return yearDiff;
+    if (a.isInterim !== b.isInterim) return a.isInterim ? 1 : -1;
+    return String(a.period).localeCompare(String(b.period));
+  });
+};
+
 const splitForSpeech = (text, maxLength = 1200) => {
   const sentences = String(text || "").match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [];
   const chunks = [];
@@ -370,7 +393,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 65;
+const FINANCIAL_HISTORY_VERSION = 66;
 
 const handleCompanyLogoError = (event, symbol) => {
   const image = event.currentTarget;
@@ -1286,9 +1309,13 @@ const revenueHistorySource =
   buildChartRows(stockData?.revenueHistory || [], "revenue");
 
 const revenueHistory =
-  revenueHistorySource.length
-    ? revenueHistorySource
-    : buildChartRows(financialHistory, "revenue");
+  mergeChartRows(
+    [
+      ...buildChartRows(financialHistory, "revenue"),
+      ...revenueHistorySource,
+    ],
+    "revenue"
+  );
 
 const earningsHistory =
   buildChartRows(financialHistory, "earnings");
@@ -1303,7 +1330,11 @@ const sharesOutstandingHistory =
   buildChartRows(financialHistory, "sharesOutstanding");
 const historicalPeHistory = (stockData?.historicalPe || [])
   .map((row) => ({ ...row, period: row.period || String(row.year) }))
-  .filter((row) => row?.year && row.year <= new Date().getFullYear() && isNumber(row.pe));
+  .filter((row) =>
+    row?.year &&
+    (row.isInterim || row.isCurrent || row.year <= new Date().getFullYear()) &&
+    isNumber(row.pe)
+  );
 const annualMarginHistory = (stockData?.marginHistory || [])
   .map((row) => ({ ...row, period: row.period || String(row.year) }))
   .filter((row) =>
@@ -2015,7 +2046,7 @@ return (
           stroke="#1f2937"
         />
 
-        <XAxis dataKey="year" />
+        <XAxis dataKey="period" />
 
         <YAxis
   tickFormatter={(value) =>
@@ -2089,7 +2120,7 @@ return (
 
           <CartesianGrid stroke="#1f2937" />
 
-          <XAxis dataKey="year" />
+          <XAxis dataKey="period" />
 
           <YAxis
             tickFormatter={(value) =>
@@ -2168,7 +2199,7 @@ return (
 
           <CartesianGrid stroke="#1f2937" />
 
-          <XAxis dataKey="year" />
+          <XAxis dataKey="period" />
 
           <YAxis
             tickFormatter={(value) =>
