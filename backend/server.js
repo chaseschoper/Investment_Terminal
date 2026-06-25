@@ -21,7 +21,7 @@ const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 88;
+const FINANCIAL_HISTORY_VERSION = 91;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -1574,6 +1574,11 @@ function preserveBankMargins(data, previousData) {
 }
 
 function withGuaranteedAnalystSection(data = {}) {
+  const hasSuppliedAnalystEstimates =
+    toNumberOrNull(data.analystEstimates?.currentYear?.revenue) !== null &&
+    toNumberOrNull(data.analystEstimates?.currentYear?.eps) !== null &&
+    toNumberOrNull(data.analystEstimates?.nextYear?.revenue) !== null &&
+    toNumberOrNull(data.analystEstimates?.nextYear?.eps) !== null;
   const yahooLockedEstimates =
     data.analystEstimatesSource === "Yahoo Finance" &&
     (
@@ -1866,7 +1871,7 @@ function withGuaranteedAnalystSection(data = {}) {
     targetMean,
     recommendationKey,
     analystRatingText,
-    analystEstimates: yahooLockedEstimates
+    analystEstimates: yahooLockedEstimates || hasSuppliedAnalystEstimates
       ? data.analystEstimates
       : fallbackAnalystEstimates,
     revenueHistory: guaranteedRevenueHistory,
@@ -2990,6 +2995,8 @@ async function fetchStockData(ticker) {
     fmpEstimateField(fmpCurrentEstimate, "epsAvg", "estimatedEpsAvg") ??
     epsEstimates[0]?.epsAvg ??
     metrics.epsEstimateCurrentYear ??
+    stockAnalysisForecast.currentYearEps ??
+    nasdaqData.currentYearEps ??
     estimateNextValue(currentEpsBase, conservativeProjectionRate(earningsGrowthRate, 0.15)) ??
     currentEpsBase ??
     null;
