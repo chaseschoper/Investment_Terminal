@@ -21,7 +21,7 @@ const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 91;
+const FINANCIAL_HISTORY_VERSION = 92;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -3005,19 +3005,24 @@ async function fetchStockData(ticker) {
     currentEps,
     conservativeProjectionRate(earningsGrowthRate, 0.22)
   );
+  const trustedNextEpsCandidate = firstNumber(
+    yahooNextEstimate.eps,
+    stockAnalysisForecast.nextYearEps,
+    fmpEstimateField(fmpNextEstimate, "epsAvg", "estimatedEpsAvg"),
+    epsEstimates[1]?.epsAvg,
+    metrics.epsEstimateNextYear
+  );
   const nextEpsCandidate =
-    yahooNextEstimate.eps ??
+    trustedNextEpsCandidate ??
     yahooSupplementalData.forwardEps ??
-    fmpEstimateField(fmpNextEstimate, "epsAvg", "estimatedEpsAvg") ??
-    epsEstimates[1]?.epsAvg ??
-    metrics.epsEstimateNextYear ??
     nasdaqData.nextYearEps ??
     projectedNextEps ??
-    stockAnalysisForecast.nextYearEps ??
     historicalForwardEps ??
     epsFromForwardPE(quote.c, metrics.forwardPE ?? yahooSupplementalData.forwardPE) ??
     null;
-  const nextEps = sanitizeForwardEps(nextEpsCandidate, historicalForwardEps);
+  const nextEps = trustedNextEpsCandidate !== null
+    ? trustedNextEpsCandidate
+    : sanitizeForwardEps(nextEpsCandidate, historicalForwardEps);
 
   const yahooCurrentRevenueRaw = normalizeStatementDollars(yahooCurrentEstimate.revenue);
   const yahooNextRevenueRaw = normalizeStatementDollars(yahooNextEstimate.revenue);
@@ -3105,8 +3110,6 @@ async function fetchStockData(ticker) {
     currentEps
   );
   const providerFollowingEps = firstNumber(
-    stockAnalysisForecast.nextYearEps,
-    nasdaqData.nextYearEps,
     fmpEstimateField(fmpFollowingEstimate, "epsAvg", "estimatedEpsAvg"),
     epsEstimates[2]?.epsAvg
   );
@@ -3531,6 +3534,7 @@ async function fetchStockData(ticker) {
   const displayedNextEpsValue = firstNumber(
     preservePreviousYahooEstimates ? previousYahooEstimates.nextYear?.eps : null,
     yahooNextEpsRaw,
+    stockAnalysisForecast.nextYearEps,
     displayedNextEpsFallback,
     projectedDisplayedNextEpsValue,
     displayedFollowingEpsValue,
@@ -3573,7 +3577,7 @@ async function fetchStockData(ticker) {
     operatingCashflow,
     consensusCurrentYearEps:
       stockAnalysisForecast.currentYearEps ?? nasdaqData.currentYearEps,
-    consensusNextYearEps: displayedFollowingEpsValue,
+    consensusNextYearEps: displayedNextEpsValue,
     consensusCurrentYearRevenue: stockAnalysisRevenueEstimate,
     analystEstimateSource: stockAnalysisForecast.currentYearEps && stockAnalysisRevenueEstimate
       ? "S&P Global consensus via StockAnalysis"
