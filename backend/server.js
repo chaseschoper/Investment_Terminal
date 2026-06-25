@@ -21,7 +21,7 @@ const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 68;
+const FINANCIAL_HISTORY_VERSION = 69;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -2939,10 +2939,10 @@ async function fetchStockData(ticker) {
     FALLBACK_SHARES_OUTSTANDING_MILLIONS
   );
   const trailingEpsValue = firstNumber(
+    secAnnualMargins.trailingEps,
     yahooSupplementalData.trailingEps,
     metrics.epsTTM,
-    metrics.epsInclExtraItemsTTM,
-    secAnnualMargins.trailingEps
+    metrics.epsInclExtraItemsTTM
   );
   const forwardEpsValue = firstNumber(
     stockAnalysisForecast.forwardPE > 0
