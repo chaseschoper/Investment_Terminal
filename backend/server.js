@@ -21,7 +21,7 @@ const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 66;
+const FINANCIAL_HISTORY_VERSION = 68;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -1285,16 +1285,18 @@ const getStatementYear = (value) => {
 };
 
 function mergeHistoricalFinancials(primary, fallback) {
-  const rowsByYear = new Map();
+  const rowsByPeriod = new Map();
 
   [...fallback, ...primary].forEach((row) => {
     if (!row?.year) return;
 
-    const existing = rowsByYear.get(row.year) || { year: row.year };
+    const period = row.period || String(row.year);
+    const rowKey = row.isInterim ? `${row.year}:${period}` : `${row.year}:annual`;
+    const existing = rowsByPeriod.get(rowKey) || { year: row.year };
 
-    rowsByYear.set(row.year, {
+    rowsByPeriod.set(rowKey, {
       year: row.year,
-      period: row.period ?? existing.period ?? null,
+      period: period ?? existing.period ?? null,
       isInterim: row.isInterim ?? existing.isInterim ?? false,
       revenue: row.revenue ?? existing.revenue ?? null,
       earnings: row.earnings ?? existing.earnings ?? null,
@@ -1308,7 +1310,7 @@ function mergeHistoricalFinancials(primary, fallback) {
     });
   });
 
-  return [...rowsByYear.values()]
+  const mergedRows = [...rowsByPeriod.values()]
     .filter((row) =>
       row.revenue !== null ||
       row.earnings !== null ||
@@ -1319,8 +1321,32 @@ function mergeHistoricalFinancials(primary, fallback) {
       row.freeCashflow !== null ||
       row.sharesOutstanding !== null
     )
-    .sort((a, b) => a.year - b.year)
-    .slice(-6);
+    .sort((a, b) => {
+      const yearDiff = a.year - b.year;
+      if (yearDiff !== 0) return yearDiff;
+      if (a.isInterim !== b.isInterim) return a.isInterim ? 1 : -1;
+      return String(a.period || "").localeCompare(String(b.period || ""));
+    });
+
+  return removeDuplicateInterimAnnualRows(mergedRows).slice(-7);
+}
+
+function removeDuplicateInterimAnnualRows(rows) {
+  const currentCalendarYear = new Date().getFullYear();
+  const interimYears = new Set(
+    (rows || [])
+      .filter((row) => row?.isInterim && Number(row.year) >= currentCalendarYear)
+      .map((row) => Number(row.year))
+  );
+
+  if (!interimYears.size) return rows;
+
+  return (rows || []).filter(
+    (row) =>
+      row?.isInterim ||
+      Number(row.year) < currentCalendarYear ||
+      !interimYears.has(Number(row.year))
+  );
 }
 
 function fillEstimatedEps(rows, sharesOutstanding) {
@@ -2509,7 +2535,7 @@ async function fetchStockData(ticker) {
     secAnnualMargins.history || [],
     yahooFinancialData
   );
-  const revenueData = finalizeFinancialHistory(
+  const revenueData = removeDuplicateInterimAnnualRows(finalizeFinancialHistory(
     mergeHistoricalFinancials(
       authoritativeAnnualData,
       mergeHistoricalFinancials(
@@ -2521,13 +2547,13 @@ async function fetchStockData(ticker) {
       )
     ),
     sharesOutstanding
-  );
-  const revenueHistory = finalizeRevenueHistory(
+  ));
+  const revenueHistory = removeDuplicateInterimAnnualRows(finalizeRevenueHistory(
     mergeHistoricalFinancials(
       authoritativeAnnualData,
       mergeHistoricalFinancials(fmpIncomeStatementData, finnhubReportedData)
     )
-  );
+  ));
   const annualRows = [...authoritativeAnnualData]
     .filter((row) => row.year)
     .sort((a, b) => a.year - b.year);
@@ -2560,18 +2586,22 @@ async function fetchStockData(ticker) {
 
   const fallbackMarginHistory = revenueData.map((row) => ({
     year: row.year,
+    period: row.period || String(row.year),
+    isInterim: Boolean(row.isInterim),
     grossMargin: annualMargin(row.grossProfit, row.revenue),
     operatingMargin: annualMargin(row.operatingIncome, row.revenue),
     profitMargin: annualMargin(row.earnings, row.revenue),
     source: row.source
   }));
-  const marginRowsByYear = new Map();
+  const marginRowsByPeriod = new Map();
   [...fallbackMarginHistory, ...(secAnnualMargins.marginHistory || [])].forEach((row) => {
     if (!row?.year) return;
-    const existing = marginRowsByYear.get(row.year) || {};
-    marginRowsByYear.set(row.year, {
+    const period = row.period || String(row.year);
+    const rowKey = row.isInterim ? `${row.year}:${period}` : `${row.year}:annual`;
+    const existing = marginRowsByPeriod.get(rowKey) || {};
+    marginRowsByPeriod.set(rowKey, {
       year: row.year,
-      period: row.period || existing.period || String(row.year),
+      period,
       isInterim: row.isInterim ?? existing.isInterim ?? false,
       grossMargin: row.grossMargin ?? existing.grossMargin ?? null,
       operatingMargin: row.operatingMargin ?? existing.operatingMargin ?? null,
@@ -2579,14 +2609,19 @@ async function fetchStockData(ticker) {
       source: row.source || existing.source
     });
   });
-  let marginHistory = [...marginRowsByYear.values()]
+  let marginHistory = removeDuplicateInterimAnnualRows([...marginRowsByPeriod.values()]
     .filter((row) =>
       row.grossMargin !== null ||
       row.operatingMargin !== null ||
       row.profitMargin !== null
     )
-    .sort((a, b) => a.year - b.year)
-    .slice(-6);
+    .sort((a, b) => {
+      const yearDiff = a.year - b.year;
+      if (yearDiff !== 0) return yearDiff;
+      if (a.isInterim !== b.isInterim) return a.isInterim ? 1 : -1;
+      return String(a.period || "").localeCompare(String(b.period || ""));
+    })
+    .slice(-7));
   const knownFinancialInstitution = KNOWN_FINANCIAL_INSTITUTIONS.has(ticker);
   const latestRawMarginRow =
     marginHistory.filter((row) => Number(row.year) <= 2025).at(-1) ||
