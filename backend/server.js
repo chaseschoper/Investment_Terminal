@@ -21,7 +21,7 @@ const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 85;
+const FINANCIAL_HISTORY_VERSION = 86;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -375,8 +375,10 @@ function secInterimFactEntries(companyFacts, concept, afterEndDate) {
   for (const entry of entries) {
     if (!["10-Q", "10-Q/A"].includes(entry.form) || !entry.end) continue;
     if (afterEndDate && String(entry.end) <= String(afterEndDate)) continue;
+    let durationDays = null;
     if (entry.start) {
       const duration = new Date(entry.end) - new Date(entry.start);
+      durationDays = duration / 86400000;
       if (duration < 50 * 24 * 60 * 60 * 1000 || duration > 300 * 24 * 60 * 60 * 1000) {
         continue;
       }
@@ -384,7 +386,7 @@ function secInterimFactEntries(companyFacts, concept, afterEndDate) {
     const key = `${entry.fp || ""}:${entry.end}`;
     const existing = latestByPeriod.get(key);
     if (!existing || String(entry.filed) > String(existing.filed)) {
-      latestByPeriod.set(key, entry);
+      latestByPeriod.set(key, { ...entry, durationDays });
     }
   }
 
@@ -394,12 +396,23 @@ function secInterimFactEntries(companyFacts, concept, afterEndDate) {
   );
 }
 
-function latestSecInterimFact(companyFacts, concepts, endDate) {
+function latestSecInterimFact(companyFacts, concepts, endDate, referenceEntry = null) {
   let latestFact = null;
 
   for (const concept of concepts) {
-    const candidates = secInterimFactEntries(companyFacts, concept, null)
+    let candidates = secInterimFactEntries(companyFacts, concept, null)
       .filter((entry) => !endDate || entry.end === endDate);
+    if (referenceEntry) {
+      const matchingDuration = candidates.filter((entry) =>
+        (!referenceEntry.fp || entry.fp === referenceEntry.fp) &&
+        (
+          !referenceEntry.durationDays ||
+          !entry.durationDays ||
+          Math.abs(entry.durationDays - referenceEntry.durationDays) <= 20
+        )
+      );
+      if (matchingDuration.length) candidates = matchingDuration;
+    }
     const candidate = candidates.at(-1);
     if (candidate && (!latestFact || String(candidate.end) > String(latestFact.end))) {
       latestFact = candidate;
@@ -593,57 +606,73 @@ async function fetchSecAnnualMargins(ticker) {
           "NetIncomeLossAvailableToCommonStockholdersBasic"
         ], previousRevenue.end)
       : null;
-    const latestInterimRevenue = secInterimFactEntries(facts, revenueConcept, endDate).at(-1) || null;
-    const latestInterimEnd = latestInterimRevenue?.end || null;
-    const interimNetIncome = latestInterimEnd
-      ? latestSecInterimFact(facts, [
-          "NetIncomeLoss",
-          "ProfitLoss",
-          "NetIncomeLossAvailableToCommonStockholdersBasic"
-        ], latestInterimEnd)
-      : null;
-    const interimGrossProfit = latestInterimEnd
-      ? latestSecInterimFact(facts, ["GrossProfit"], latestInterimEnd)
-      : null;
-    const interimCostOfRevenue = latestInterimEnd
-      ? latestSecInterimFact(facts, [
-          "CostOfGoodsAndServicesSold",
-          "CostOfRevenue"
-        ], latestInterimEnd)
-      : null;
-    const interimOperatingIncome = latestInterimEnd
-      ? latestSecInterimFact(facts, ["OperatingIncomeLoss"], latestInterimEnd)
-      : null;
-    const interimNetInterestIncome = latestInterimEnd
-      ? latestSecInterimFact(facts, ["InterestIncomeExpenseNet"], latestInterimEnd)
-      : null;
-    const interimPreTaxIncome = latestInterimEnd
-      ? latestSecInterimFact(facts, [
-          "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
-          "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
-          "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic"
-        ], latestInterimEnd)
-      : null;
-    const interimOperatingCashFlow = latestInterimEnd
-      ? latestSecInterimFact(facts, [
-          "NetCashProvidedByUsedInOperatingActivities",
-          "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"
-        ], latestInterimEnd)
-      : null;
-    const interimCapitalExpenditures = latestInterimEnd
-      ? latestSecInterimFact(facts, [
-          "PaymentsToAcquirePropertyPlantAndEquipment",
-          "PaymentsToAcquireProductiveAssets",
-          "PaymentsForAdditionsToPropertyPlantAndEquipment",
-          "PaymentsToAcquirePropertyPlantAndEquipmentAndIntangibleAssets"
-        ], latestInterimEnd)
-      : null;
-    const interimEps = latestInterimEnd
-      ? latestSecInterimFact(facts, [
-          "EarningsPerShareDiluted",
-          "EarningsPerShareBasicAndDiluted"
-        ], latestInterimEnd)
-      : null;
+    const interimRevenueEntries = secInterimFactEntries(facts, revenueConcept, endDate);
+    const latestInterimRevenue = interimRevenueEntries.at(-1) || null;
+    const buildInterimFacts = (interimRevenueEntry) => {
+      const interimEnd = interimRevenueEntry?.end || null;
+      if (!interimEnd) return null;
+      const interimNetIncome = latestSecInterimFact(facts, [
+        "NetIncomeLoss",
+        "ProfitLoss",
+        "NetIncomeLossAvailableToCommonStockholdersBasic"
+      ], interimEnd, interimRevenueEntry);
+      const interimGrossProfit = latestSecInterimFact(
+        facts,
+        ["GrossProfit"],
+        interimEnd,
+        interimRevenueEntry
+      );
+      const interimCostOfRevenue = latestSecInterimFact(facts, [
+        "CostOfGoodsAndServicesSold",
+        "CostOfRevenue"
+      ], interimEnd, interimRevenueEntry);
+      const interimOperatingIncome = latestSecInterimFact(
+        facts,
+        ["OperatingIncomeLoss"],
+        interimEnd,
+        interimRevenueEntry
+      );
+      const interimNetInterestIncome = latestSecInterimFact(
+        facts,
+        ["InterestIncomeExpenseNet"],
+        interimEnd,
+        interimRevenueEntry
+      );
+      const interimPreTaxIncome = latestSecInterimFact(facts, [
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic"
+      ], interimEnd, interimRevenueEntry);
+      const interimOperatingCashFlow = latestSecInterimFact(facts, [
+        "NetCashProvidedByUsedInOperatingActivities",
+        "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"
+      ], interimEnd, interimRevenueEntry);
+      const interimCapitalExpenditures = latestSecInterimFact(facts, [
+        "PaymentsToAcquirePropertyPlantAndEquipment",
+        "PaymentsToAcquireProductiveAssets",
+        "PaymentsForAdditionsToPropertyPlantAndEquipment",
+        "PaymentsToAcquirePropertyPlantAndEquipmentAndIntangibleAssets"
+      ], interimEnd, interimRevenueEntry);
+      const interimEps = latestSecInterimFact(facts, [
+        "EarningsPerShareDiluted",
+        "EarningsPerShareBasicAndDiluted"
+      ], interimEnd, interimRevenueEntry);
+
+      return {
+        end: interimEnd,
+        netIncome: interimNetIncome,
+        grossProfit: interimGrossProfit,
+        costOfRevenue: interimCostOfRevenue,
+        operatingIncome: interimOperatingIncome,
+        netInterestIncome: interimNetInterestIncome,
+        preTaxIncome: interimPreTaxIncome,
+        operatingCashFlow: interimOperatingCashFlow,
+        capitalExpenditures: interimCapitalExpenditures,
+        eps: interimEps
+      };
+    };
+    const interimPeriodLabel = (interimRevenueEntry) =>
+      `${interimRevenueEntry.fy || interimRevenueEntry.end.slice(0, 4)} ${interimRevenueEntry.fp || "Interim"} YTD`;
     const annualGrowth = (current, previous) =>
       current?.val !== undefined && previous?.val !== undefined && previous.val !== 0
         ? ((current.val - previous.val) / Math.abs(previous.val)) * 100
@@ -700,33 +729,32 @@ async function fetchSecAnnualMargins(ticker) {
         source: "SEC annual filing"
       };
       }),
-      latestInterimRevenue
-        ? (() => {
-            const interimGrossProfitValue = interimGrossProfit?.val ?? (
-              interimCostOfRevenue?.val !== undefined
-                ? latestInterimRevenue.val - interimCostOfRevenue.val
-                : null
-            );
-            const percentageOfInterimRevenue = (value) =>
-              value !== null && value !== undefined && latestInterimRevenue.val !== 0
-                ? (value / latestInterimRevenue.val) * 100
-                : null;
+      ...interimRevenueEntries.map((interimRevenueEntry) => {
+        const interimFacts = buildInterimFacts(interimRevenueEntry);
+        const interimGrossProfitValue = interimFacts?.grossProfit?.val ?? (
+          interimFacts?.costOfRevenue?.val !== undefined
+            ? interimRevenueEntry.val - interimFacts.costOfRevenue.val
+            : null
+        );
+        const percentageOfInterimRevenue = (value) =>
+          value !== null && value !== undefined && interimRevenueEntry.val !== 0
+            ? (value / interimRevenueEntry.val) * 100
+            : null;
 
-            return {
-              year: Number(latestInterimRevenue.fy || latestInterimEnd.slice(0, 4)),
-              period: `${latestInterimRevenue.fy || latestInterimEnd.slice(0, 4)} ${latestInterimRevenue.fp || "Interim"} YTD`,
-              isInterim: true,
-              grossMargin: percentageOfInterimRevenue(
-                isFinancialCompany ? interimNetInterestIncome?.val : interimGrossProfitValue
-              ),
-              operatingMargin: percentageOfInterimRevenue(
-                isFinancialCompany ? interimPreTaxIncome?.val : interimOperatingIncome?.val
-              ),
-              profitMargin: percentageOfInterimRevenue(interimNetIncome?.val),
-              source: "SEC interim filing"
-            };
-          })()
-        : null
+        return {
+          year: Number(interimRevenueEntry.fy || interimRevenueEntry.end.slice(0, 4)),
+          period: interimPeriodLabel(interimRevenueEntry),
+          isInterim: true,
+          grossMargin: percentageOfInterimRevenue(
+            isFinancialCompany ? interimFacts?.netInterestIncome?.val : interimGrossProfitValue
+          ),
+          operatingMargin: percentageOfInterimRevenue(
+            isFinancialCompany ? interimFacts?.preTaxIncome?.val : interimFacts?.operatingIncome?.val
+          ),
+          profitMargin: percentageOfInterimRevenue(interimFacts?.netIncome?.val),
+          source: "SEC interim filing"
+        };
+      })
     ].filter(Boolean);
     const grossProfitValue = isFinancialCompany
       ? null
@@ -778,40 +806,41 @@ async function fetchSecAnnualMargins(ticker) {
           eps: null,
           source: "SEC annual filing"
         },
-        latestInterimRevenue
-          ? {
-              year: Number(latestInterimRevenue.fy || latestInterimEnd.slice(0, 4)),
-              period: `${latestInterimRevenue.fy || latestInterimEnd.slice(0, 4)} ${latestInterimRevenue.fp || "Interim"} YTD`,
-              isInterim: true,
-              revenue: latestInterimRevenue.val / 1000000000,
-              earnings: interimNetIncome?.val !== undefined
-                ? interimNetIncome.val / 1000000000
+        ...interimRevenueEntries.map((interimRevenueEntry) => {
+          const interimFacts = buildInterimFacts(interimRevenueEntry);
+          const interimGrossProfitValue = interimFacts?.grossProfit?.val ?? (
+            interimFacts?.costOfRevenue?.val !== undefined
+              ? interimRevenueEntry.val - interimFacts.costOfRevenue.val
+              : null
+          );
+
+          return {
+            year: Number(interimRevenueEntry.fy || interimRevenueEntry.end.slice(0, 4)),
+            period: interimPeriodLabel(interimRevenueEntry),
+            isInterim: true,
+            revenue: interimRevenueEntry.val / 1000000000,
+            earnings: interimFacts?.netIncome?.val !== undefined
+              ? interimFacts.netIncome.val / 1000000000
+              : null,
+            grossProfit:
+              interimGrossProfitValue !== null && interimGrossProfitValue !== undefined
+                ? interimGrossProfitValue / 1000000000
                 : null,
-              grossProfit: (() => {
-                const interimGrossProfitValue = interimGrossProfit?.val ?? (
-                  interimCostOfRevenue?.val !== undefined
-                    ? latestInterimRevenue.val - interimCostOfRevenue.val
-                    : null
-                );
-                return interimGrossProfitValue !== null && interimGrossProfitValue !== undefined
-                  ? interimGrossProfitValue / 1000000000
-                  : null;
-              })(),
-              operatingIncome: interimOperatingIncome?.val !== undefined
-                ? interimOperatingIncome.val / 1000000000
+            operatingIncome: interimFacts?.operatingIncome?.val !== undefined
+              ? interimFacts.operatingIncome.val / 1000000000
+              : null,
+            operatingCashflow: interimFacts?.operatingCashFlow?.val !== undefined
+              ? interimFacts.operatingCashFlow.val / 1000000000
+              : null,
+            freeCashflow:
+              interimFacts?.operatingCashFlow?.val !== undefined &&
+              interimFacts?.capitalExpenditures?.val !== undefined
+                ? (interimFacts.operatingCashFlow.val - Math.abs(interimFacts.capitalExpenditures.val)) / 1000000000
                 : null,
-              operatingCashflow: interimOperatingCashFlow?.val !== undefined
-                ? interimOperatingCashFlow.val / 1000000000
-                : null,
-              freeCashflow:
-                interimOperatingCashFlow?.val !== undefined &&
-                interimCapitalExpenditures?.val !== undefined
-                  ? (interimOperatingCashFlow.val - Math.abs(interimCapitalExpenditures.val)) / 1000000000
-                  : null,
-              eps: interimEps?.val ?? null,
-              source: "SEC interim filing"
-            }
-          : null
+            eps: interimFacts?.eps?.val ?? null,
+            source: "SEC interim filing"
+          };
+        })
       ].filter(Boolean),
       grossMargins: grossProfitValue !== null
         ? (grossProfitValue / revenue.val) * 100
@@ -3443,25 +3472,47 @@ async function fetchStockData(ticker) {
     yahooCurrentEpsRaw !== null ||
     yahooNextRevenueRaw !== null ||
     yahooNextEpsRaw !== null;
-  const displayedCurrentRevenueValue = yahooCurrentRevenueRaw ?? currentRevenueValue;
+  const previousYahooEstimates =
+    previousData?.analystEstimatesSource === "Yahoo Finance"
+      ? previousData.analystEstimates
+      : null;
+  const preservePreviousYahooEstimates =
+    !hasYahooEstimateValues &&
+    (
+      toNumberOrNull(previousYahooEstimates?.currentYear?.revenue) !== null ||
+      toNumberOrNull(previousYahooEstimates?.currentYear?.eps) !== null ||
+      toNumberOrNull(previousYahooEstimates?.nextYear?.revenue) !== null ||
+      toNumberOrNull(previousYahooEstimates?.nextYear?.eps) !== null
+    );
+  const displayedCurrentRevenueValue = preservePreviousYahooEstimates
+    ? previousYahooEstimates.currentYear?.revenue ?? null
+    : yahooCurrentRevenueRaw ?? currentRevenueValue;
   const displayedCurrentEpsValue = firstNumber(
+    preservePreviousYahooEstimates ? previousYahooEstimates.currentYear?.eps : null,
     yahooNextEpsRaw,
     nextEpsValue,
     yahooCurrentEpsRaw,
     currentEpsValue
   );
   const displayedCurrentEarningsValue =
-    displayedCurrentEpsValue !== null && modeledSharesOutstanding
+    preservePreviousYahooEstimates && previousYahooEstimates.currentYear?.earnings !== undefined
+      ? previousYahooEstimates.currentYear.earnings
+      : displayedCurrentEpsValue !== null && modeledSharesOutstanding
       ? displayedCurrentEpsValue * modeledSharesOutstanding * 1000000
       : yahooCurrentEarningsValue ?? currentEarningsValue;
-  const displayedNextRevenueValue = yahooNextRevenueRaw ?? nextRevenueValue;
+  const displayedNextRevenueValue = preservePreviousYahooEstimates
+    ? previousYahooEstimates.nextYear?.revenue ?? null
+    : yahooNextRevenueRaw ?? nextRevenueValue;
   const displayedNextEpsValue = firstNumber(
+    preservePreviousYahooEstimates ? previousYahooEstimates.nextYear?.eps : null,
     displayedFollowingEpsValue,
     followingEpsValue,
     estimateNextValue(displayedCurrentEpsValue, conservativeProjectionRate(earningsGrowthRate, 0.15))
   );
   const displayedNextEarningsValue =
-    displayedNextEpsValue !== null && modeledSharesOutstanding
+    preservePreviousYahooEstimates && previousYahooEstimates.nextYear?.earnings !== undefined
+      ? previousYahooEstimates.nextYear.earnings
+      : displayedNextEpsValue !== null && modeledSharesOutstanding
       ? displayedNextEpsValue * modeledSharesOutstanding * 1000000
       : yahooNextEarningsValue ?? nextEarningsValue;
 
@@ -3532,7 +3583,7 @@ async function fetchStockData(ticker) {
     targetMean,
     recommendationKey,
     analystRatingText,
-    analystEstimatesSource: hasYahooEstimateValues
+    analystEstimatesSource: hasYahooEstimateValues || preservePreviousYahooEstimates
       ? "Yahoo Finance"
       : "Fallback estimate",
     analystEstimates: {
