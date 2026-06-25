@@ -1373,7 +1373,7 @@ const latestCompletedEstimateYear = [...financialHistory]
   .sort((a, b) => Number(a.year) - Number(b.year))
   .at(-1)?.year;
 const previousYearLabel = latestCompletedEstimateYear
-  ? `${latestCompletedEstimateYear}`
+  ? `${latestCompletedEstimateYear} Fiscal Year`
   : "Previous Year";
 const previousYearEstimate = estimateFromHistoryYear(
   latestCompletedEstimateYear,
