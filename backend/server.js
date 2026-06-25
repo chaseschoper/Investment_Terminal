@@ -21,7 +21,7 @@ const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 79;
+const FINANCIAL_HISTORY_VERSION = 81;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -1545,6 +1545,7 @@ function preserveBankMargins(data, previousData) {
 }
 
 function withGuaranteedAnalystSection(data = {}) {
+  const yahooLockedEstimates = data.analystEstimatesSource === "Yahoo Finance";
   const isFinancialCompany = data.isFinancialCompany === true;
   const price = toNumberOrNull(data.price);
   const revenueRows = Array.isArray(data.revenueData) ? data.revenueData : [];
@@ -1768,6 +1769,24 @@ function withGuaranteedAnalystSection(data = {}) {
         revenue: row.revenue,
         source: row.source
       }));
+  const fallbackAnalystEstimates = {
+    currentYear: {
+      revenue: currentRevenue,
+      earnings: currentEarnings,
+      eps: currentEps
+    },
+    nextYear: {
+      revenue: nextRevenue,
+      earnings: nextEarnings,
+      eps: nextEps
+    },
+    followingYear: {
+      revenue: followingRevenue,
+      earnings: followingEarnings,
+      eps: followingEps
+    }
+  };
+
   return {
     ...data,
     marketCap,
@@ -1788,23 +1807,9 @@ function withGuaranteedAnalystSection(data = {}) {
     targetMean,
     recommendationKey,
     analystRatingText,
-    analystEstimates: {
-      currentYear: {
-        revenue: currentRevenue,
-        earnings: currentEarnings,
-        eps: currentEps
-      },
-      nextYear: {
-        revenue: nextRevenue,
-        earnings: nextEarnings,
-        eps: nextEps
-      },
-      followingYear: {
-        revenue: followingRevenue,
-        earnings: followingEarnings,
-        eps: followingEps
-      }
-    },
+    analystEstimates: yahooLockedEstimates
+      ? data.analystEstimates
+      : fallbackAnalystEstimates,
     revenueHistory: guaranteedRevenueHistory,
     revenueData: guaranteedRevenueData
   };
@@ -2879,7 +2884,10 @@ async function fetchStockData(ticker) {
   );
 
   const historicalForwardEps = estimateForwardEpsFromHistory(revenueData);
+  const yahooCurrentEstimate = yahooSupplementalData.analystEstimates?.currentYear || {};
+  const yahooNextEstimate = yahooSupplementalData.analystEstimates?.nextYear || {};
   const currentEps =
+    yahooCurrentEstimate.eps ??
     fmpEstimateField(fmpCurrentEstimate, "epsAvg", "estimatedEpsAvg") ??
     epsEstimates[0]?.epsAvg ??
     metrics.epsEstimateCurrentYear ??
@@ -2888,9 +2896,10 @@ async function fetchStockData(ticker) {
     null;
 
   const nextEpsCandidate =
+    yahooNextEstimate.eps ??
+    yahooSupplementalData.forwardEps ??
     stockAnalysisForecast.currentYearEps ??
     nasdaqData.currentYearEps ??
-    yahooSupplementalData.forwardEps ??
     fmpEstimateField(fmpNextEstimate, "epsAvg", "estimatedEpsAvg") ??
     epsEstimates[1]?.epsAvg ??
     metrics.epsEstimateNextYear ??
@@ -2900,6 +2909,10 @@ async function fetchStockData(ticker) {
     null;
   const nextEps = sanitizeForwardEps(nextEpsCandidate, historicalForwardEps);
 
+  const yahooCurrentRevenueRaw = normalizeStatementDollars(yahooCurrentEstimate.revenue);
+  const yahooNextRevenueRaw = normalizeStatementDollars(yahooNextEstimate.revenue);
+  const yahooCurrentEpsRaw = toNumberOrNull(yahooCurrentEstimate.eps);
+  const yahooNextEpsRaw = toNumberOrNull(yahooNextEstimate.eps);
   const stockAnalysisRevenueEstimate = sanitizeNearTermRevenueEstimate(
     stockAnalysisForecast.currentYearRevenue,
     currentRevenueBase
@@ -2908,18 +2921,15 @@ async function fetchStockData(ticker) {
     fmpEstimateField(fmpCurrentEstimate, "revenueAvg", "estimatedRevenueAvg"),
     currentRevenueBase
   );
-  const yahooCurrentRevenueEstimate = sanitizeNearTermRevenueEstimate(
-    yahooSupplementalData.analystEstimates?.currentYear?.revenue,
-    currentRevenueBase
-  );
+  const yahooCurrentRevenueEstimate = yahooCurrentRevenueRaw;
   const finnhubCurrentRevenueEstimate = sanitizeNearTermRevenueEstimate(
     normalizeFinnhubMoney(revenueEstimates[0]?.revenueAvg),
     currentRevenueBase
   );
   const currentRevenue =
+    yahooCurrentRevenueEstimate ??
     stockAnalysisRevenueEstimate ??
     fmpCurrentRevenueEstimate ??
-    yahooCurrentRevenueEstimate ??
     finnhubCurrentRevenueEstimate ??
     estimateNextValue(currentRevenueBase, revenueGrowthRate) ??
     currentRevenueBase;
@@ -2928,10 +2938,7 @@ async function fetchStockData(ticker) {
     stockAnalysisForecast.nextYearRevenue,
     currentRevenue
   );
-  const yahooNextRevenueEstimate = sanitizeNearTermRevenueEstimate(
-    yahooSupplementalData.analystEstimates?.nextYear?.revenue,
-    currentRevenue
-  );
+  const yahooNextRevenueEstimate = yahooNextRevenueRaw;
   const fmpNextRevenueEstimate = sanitizeNearTermRevenueEstimate(
     fmpEstimateField(fmpNextEstimate, "revenueAvg", "estimatedRevenueAvg"),
     currentRevenue
@@ -2941,8 +2948,8 @@ async function fetchStockData(ticker) {
     currentRevenue
   );
   const nextRevenue =
-    stockAnalysisNextRevenueEstimate ??
     yahooNextRevenueEstimate ??
+    stockAnalysisNextRevenueEstimate ??
     fmpNextRevenueEstimate ??
     finnhubNextRevenueEstimate ??
     estimateNextValue(currentRevenue, revenueGrowthRate);
@@ -2957,28 +2964,28 @@ async function fetchStockData(ticker) {
 
   const currentEarnings =
     firstNumber(
+      currentEps && sharesOutstanding
+        ? currentEps * sharesOutstanding * 1000000
+        : null,
       fmpEstimateField(
         fmpCurrentEstimate,
         "netIncomeAvg",
         "estimatedNetIncomeAvg"
       ),
       currentEarningsBase,
-      currentEps && sharesOutstanding
-        ? currentEps * sharesOutstanding * 1000000
-        : null,
       estimateNextValue(currentEarningsBase, earningsGrowthRate)
     );
 
   const nextEarnings =
     firstNumber(
+      nextEps && sharesOutstanding
+        ? nextEps * sharesOutstanding * 1000000
+        : null,
       fmpEstimateField(
         fmpNextEstimate,
         "netIncomeAvg",
         "estimatedNetIncomeAvg"
       ),
-      nextEps && sharesOutstanding
-        ? nextEps * sharesOutstanding * 1000000
-        : null,
       estimateNextValue(currentEarnings, earningsGrowthRate)
     );
 
@@ -2992,13 +2999,13 @@ async function fetchStockData(ticker) {
     currentEps
   );
   const providerFollowingEps = firstNumber(
-    stockAnalysisForecast.nextYearEps,
     yahooSupplementalData.analystEstimates?.nextYear?.eps,
+    stockAnalysisForecast.nextYearEps,
     nasdaqData.nextYearEps,
     fmpEstimateField(fmpFollowingEstimate, "epsAvg", "estimatedEpsAvg"),
     epsEstimates[2]?.epsAvg
   );
-  const stockAnalysisFollowingEps = toNumberOrNull(stockAnalysisForecast.nextYearEps);
+  const stockAnalysisFollowingEps = null;
   const followingRevenueGrowthRate = nextRevenue && followingRevenue
     ? followingRevenue / nextRevenue - 1
     : null;
@@ -3227,6 +3234,14 @@ async function fetchStockData(ticker) {
           : null),
       nextEpsValue
     );
+  const yahooCurrentEarningsValue =
+    yahooCurrentEpsRaw !== null && modeledSharesOutstanding
+      ? yahooCurrentEpsRaw * modeledSharesOutstanding * 1000000
+      : null;
+  const yahooNextEarningsValue =
+    yahooNextEpsRaw !== null && modeledSharesOutstanding
+      ? yahooNextEpsRaw * modeledSharesOutstanding * 1000000
+      : null;
   const pe = firstNumber(
     reportedPE,
     currentEpsValue ? quote.c / currentEpsValue : null
@@ -3425,16 +3440,17 @@ async function fetchStockData(ticker) {
     targetMean,
     recommendationKey,
     analystRatingText,
+    analystEstimatesSource: "Yahoo Finance",
     analystEstimates: {
       currentYear: {
-        revenue: currentRevenueValue,
-        earnings: currentEarningsValue,
-        eps: currentEpsValue
+        revenue: yahooCurrentRevenueRaw,
+        earnings: yahooCurrentEarningsValue,
+        eps: yahooCurrentEpsRaw
       },
       nextYear: {
-        revenue: nextRevenueValue,
-        earnings: nextEarningsValue,
-        eps: nextEpsValue
+        revenue: yahooNextRevenueRaw,
+        earnings: yahooNextEarningsValue,
+        eps: yahooNextEpsRaw
       },
       followingYear: {
         revenue: followingRevenueValue,
