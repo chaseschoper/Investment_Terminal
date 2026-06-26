@@ -21,7 +21,7 @@ const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 94;
+const FINANCIAL_HISTORY_VERSION = 95;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -1741,13 +1741,14 @@ function withGuaranteedAnalystSection(data = {}) {
     followingRevenue,
     profitMargins
   );
+  const consensusCurrentYearEps = toNumberOrNull(data.consensusCurrentYearEps);
   const currentEps = estimateEpsFallback(
-    firstNumber(currentYear.eps, data.trailingEps),
+    firstNumber(consensusCurrentYearEps, currentYear.eps, data.trailingEps),
     provisionalCurrentEarnings,
     sharesOutstanding
   );
   const nextEps = estimateEpsFallback(
-    firstNumber(nextYear.eps, data.consensusCurrentYearEps, data.forwardEps),
+    firstNumber(nextYear.eps, data.consensusNextYearEps, data.forwardEps),
     provisionalNextEarnings,
     sharesOutstanding
   );
@@ -1870,6 +1871,26 @@ function withGuaranteedAnalystSection(data = {}) {
       eps: followingEps
     }
   };
+  const suppliedCurrentEps = toNumberOrNull(data.analystEstimates?.currentYear?.eps);
+  const suppliedNextEps = toNumberOrNull(data.analystEstimates?.nextYear?.eps);
+  const currentEpsNeedsRepair =
+    consensusCurrentYearEps !== null &&
+    suppliedCurrentEps !== null &&
+    (
+      suppliedCurrentEps > consensusCurrentYearEps * 1.25 ||
+      suppliedCurrentEps < consensusCurrentYearEps * 0.75 ||
+      (suppliedNextEps !== null && suppliedCurrentEps > suppliedNextEps * 1.25)
+    );
+  const suppliedAnalystEstimates = currentEpsNeedsRepair
+    ? {
+        ...(data.analystEstimates || {}),
+        currentYear: {
+          ...(data.analystEstimates?.currentYear || {}),
+          earnings: currentEarnings,
+          eps: currentEps
+        }
+      }
+    : data.analystEstimates;
 
   return {
     ...data,
@@ -1892,7 +1913,7 @@ function withGuaranteedAnalystSection(data = {}) {
     recommendationKey,
     analystRatingText,
     analystEstimates: yahooLockedEstimates || hasSuppliedAnalystEstimates
-      ? data.analystEstimates
+      ? suppliedAnalystEstimates
       : fallbackAnalystEstimates,
     revenueHistory: guaranteedRevenueHistory,
     revenueData: guaranteedRevenueData
@@ -3529,10 +3550,7 @@ async function fetchStockData(ticker) {
   const displayedCurrentEpsValue = firstNumber(
     preservePreviousYahooEstimates ? previousYahooEstimates.currentYear?.eps : null,
     yahooCurrentEpsRaw,
-    yahooSupplementalData.forwardEps,
-    currentEpsValue,
-    nextEpsValue,
-    yahooNextEpsRaw
+    currentEpsValue
   );
   const displayedCurrentEarningsValue =
     preservePreviousYahooEstimates && previousYahooEstimates.currentYear?.earnings !== undefined

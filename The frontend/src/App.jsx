@@ -422,7 +422,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 94;
+const FINANCIAL_HISTORY_VERSION = 95;
 
 const handleCompanyLogoError = (event, symbol) => {
   const image = event.currentTarget;
