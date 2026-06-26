@@ -38,7 +38,7 @@ const formatDividendYield = (value) =>
   isNumber(value) ? `${(Math.abs(value) > 1 ? value : value * 100).toFixed(2)}%` : "N/A";
 
 const formatBillions = (value) =>
-  isNumber(value) ? `$${(value / 1e9).toFixed(1)}B` : "N/A";
+  isNumber(value) ? formatMoney(value / 1e9) : "N/A";
 
 const formatSharesMillions = (value) => {
   if (!isNumber(value)) return "N/A";
