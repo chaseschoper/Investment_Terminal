@@ -4994,11 +4994,48 @@ res.status(500).json({ error: "Login failed" });
 // SAVE USER DATA
 app.post("/api/save-data", authMiddleware, async (req, res) => {
 try {
-const { watchlist, portfolio, portfolios, activePortfolioId, namedWatchlists } = req.body;
+const { watchlist, portfolio, portfolios, activePortfolioId, namedWatchlists, projections } = req.body;
 const cleanSymbols = (symbols, limit = 100) => [...new Set((Array.isArray(symbols) ? symbols : [])
   .map((symbol) => String(symbol).trim().toUpperCase())
   .filter((symbol) => /^[A-Z0-9.-]{1,10}$/.test(symbol)))]
   .slice(0, limit);
+const cleanProjectionNumberMap = (values) => {
+  if (!values || typeof values !== "object" || Array.isArray(values)) return {};
+
+  return Object.fromEntries(
+    Object.entries(values)
+      .filter(([year, value]) =>
+        /^\d{4}$/.test(String(year)) &&
+        /^-?\d{0,6}(\.\d{0,4})?$/.test(String(value ?? ""))
+      )
+      .slice(0, 10)
+      .map(([year, value]) => [String(year), String(value ?? "").slice(0, 20)])
+  );
+};
+const cleanProjectionCase = (settings = {}) => ({
+  revenueGrowth: cleanProjectionNumberMap(settings.revenueGrowth),
+  netIncomeGrowth: cleanProjectionNumberMap(settings.netIncomeGrowth),
+  sharesGrowth: cleanProjectionNumberMap(settings.sharesGrowth),
+  lowPe: cleanProjectionNumberMap(settings.lowPe),
+  highPe: cleanProjectionNumberMap(settings.highPe)
+});
+const cleanProjections = (items) => {
+  if (!items || typeof items !== "object" || Array.isArray(items)) return {};
+
+  return Object.fromEntries(
+    Object.entries(items)
+      .filter(([symbol]) => /^[A-Z0-9.-]{1,10}$/.test(String(symbol).toUpperCase()))
+      .slice(0, 300)
+      .map(([symbol, cases]) => [
+        String(symbol).toUpperCase(),
+        {
+          bull: cleanProjectionCase(cases?.bull),
+          base: cleanProjectionCase(cases?.base),
+          bear: cleanProjectionCase(cases?.bear)
+        }
+      ])
+  );
+};
 const cleanPositions = (positions) => (Array.isArray(positions) ? positions : [])
   .map((position) => ({
     symbol: String(position?.symbol || "").trim().toUpperCase(),
@@ -5034,14 +5071,17 @@ const cleanNamedWatchlists = Array.isArray(namedWatchlists)
       symbols: cleanSymbols(list?.symbols)
     }))
   : [];
+const cleanSavedProjections = cleanProjections(projections);
 const hasIncomingData =
   cleanSymbols(watchlist).length > 0 ||
   savedPortfolios.some((item) => item.positions.length > 0) ||
-  cleanNamedWatchlists.some((list) => list.symbols.length > 0);
+  cleanNamedWatchlists.some((list) => list.symbols.length > 0) ||
+  Object.keys(cleanSavedProjections).length > 0;
 const hasExistingData =
   (req.user.watchlist || []).length > 0 ||
   (req.user.portfolios || []).some((item) => (item.positions || []).length > 0) ||
-  (req.user.namedWatchlists || []).some((list) => (list.symbols || []).length > 0);
+  (req.user.namedWatchlists || []).some((list) => (list.symbols || []).length > 0) ||
+  Object.keys(req.user.projections || {}).length > 0;
 
 if (!hasIncomingData && hasExistingData) {
   return res.json({
@@ -5057,6 +5097,7 @@ req.user.portfolio = savedPortfolios.find(
   (item) => item.id === savedActivePortfolioId
 )?.positions || [];
 req.user.namedWatchlists = cleanNamedWatchlists;
+req.user.projections = cleanSavedProjections;
 
 await req.user.save();
 
@@ -5075,7 +5116,8 @@ watchlist: req.user.watchlist || [],
 portfolio: req.user.portfolio || [],
 portfolios: req.user.portfolios || [],
 activePortfolioId: req.user.activePortfolioId || "",
-namedWatchlists: req.user.namedWatchlists || []
+namedWatchlists: req.user.namedWatchlists || [],
+projections: req.user.projections || {}
 });
 });
 

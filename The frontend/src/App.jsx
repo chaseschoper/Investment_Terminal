@@ -79,6 +79,11 @@ const getMarketIndexTone = (percentChange) => {
 };
 
 const PROJECTION_YEARS = [2026, 2027, 2028, 2029, 2030];
+const PROJECTION_CASES = [
+  { id: "bull", label: "Bull Case" },
+  { id: "base", label: "Base Case" },
+  { id: "bear", label: "Bear Case" }
+];
 const DEFAULT_PROJECTION_ASSUMPTIONS = {
   revenueGrowth: "10",
   netIncomeGrowth: "10",
@@ -89,6 +94,38 @@ const DEFAULT_PROJECTION_ASSUMPTIONS = {
 
 const getProjectionAssumptionValue = (settings, key, year) =>
   settings?.[key]?.[year] ?? DEFAULT_PROJECTION_ASSUMPTIONS[key] ?? "";
+
+const createProjectionCaseSettings = () => ({
+  revenueGrowth: {},
+  netIncomeGrowth: {},
+  sharesGrowth: {},
+  lowPe: {},
+  highPe: {}
+});
+
+const normalizeProjectionCaseSettings = (settings = {}) => ({
+  revenueGrowth: settings.revenueGrowth || {},
+  netIncomeGrowth: settings.netIncomeGrowth || {},
+  sharesGrowth: settings.sharesGrowth || {},
+  lowPe: settings.lowPe || {},
+  highPe: settings.highPe || {}
+});
+
+const normalizeStockProjections = (items = {}) => {
+  if (!items || typeof items !== "object" || Array.isArray(items)) return {};
+
+  return Object.fromEntries(
+    Object.entries(items).map(([symbol, cases]) => [
+      String(symbol || "").toUpperCase(),
+      Object.fromEntries(
+        PROJECTION_CASES.map((projectionCase) => [
+          projectionCase.id,
+          normalizeProjectionCaseSettings(cases?.[projectionCase.id])
+        ])
+      )
+    ])
+  );
+};
 
 const parseInputPercent = (value) => {
   const number = Number(value);
@@ -515,6 +552,7 @@ const handleSignOut = () => {
   setPortfolios([DEFAULT_PORTFOLIO]);
   setActivePortfolioId(DEFAULT_PORTFOLIO.id);
   setNamedWatchlists([]);
+  setSavedProjections({});
   setShowAuth(false);
 };
 
@@ -619,11 +657,13 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
       if (Array.isArray(savedLists.namedWatchlists)) {
         setNamedWatchlists(savedLists.namedWatchlists);
       }
+      setSavedProjections(normalizeStockProjections(savedLists.projections || {}));
       setHasMeaningfulSavedLists(
         Boolean(
           (savedLists.watchlist || []).length ||
           hasPortfolioPositions(savedLists.portfolios || []) ||
-          (savedLists.namedWatchlists || []).some((list) => (list.symbols || []).length)
+          (savedLists.namedWatchlists || []).some((list) => (list.symbols || []).length) ||
+          Object.keys(savedLists.projections || {}).length
         )
       );
     } catch (error) {
@@ -640,14 +680,8 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
 
   const [searchInput, setSearchInput] =
     useState("NVDA");
-  const [projectionSettings, setProjectionSettings] =
-    useState({
-      revenueGrowth: {},
-      netIncomeGrowth: {},
-      sharesGrowth: {},
-      lowPe: {},
-      highPe: {}
-    });
+  const [savedProjections, setSavedProjections] =
+    useState({});
 
   let [stockData, setStockData] =
     useState(null);
@@ -1031,6 +1065,7 @@ useEffect(() => {
     watchlist.length ||
     hasPortfolioPositions(portfolios) ||
     namedWatchlists.some((list) => (list.symbols || []).length)
+    || Object.keys(savedProjections || {}).length
   );
 
   if (hasSavedContent) {
@@ -1044,6 +1079,7 @@ useEffect(() => {
       portfolios,
       activePortfolioId,
       namedWatchlists,
+      projections: savedProjections,
     })
   );
 
@@ -1063,6 +1099,7 @@ useEffect(() => {
           portfolios,
           activePortfolioId,
           namedWatchlists,
+          projections: savedProjections,
         },
         {
           headers: {
@@ -1090,7 +1127,7 @@ useEffect(() => {
   return () =>
     clearTimeout(timeout);
 
-}, [watchlist, portfolios, activePortfolioId, namedWatchlists, user, hasLoadedSavedLists]);
+}, [watchlist, portfolios, activePortfolioId, namedWatchlists, savedProjections, user, hasLoadedSavedLists]);
        
   
 const loadUserData = async () => {
@@ -1133,6 +1170,10 @@ const loadUserData = async () => {
       localSavedLists.namedWatchlists || [],
       response.data.namedWatchlists || []
     );
+    const mergedProjections = {
+      ...normalizeStockProjections(response.data.projections || {}),
+      ...normalizeStockProjections(localSavedLists.projections || {})
+    };
     const preferredActivePortfolioId =
       localSavedLists.activePortfolioId ||
       response.data.activePortfolioId ||
@@ -1147,11 +1188,13 @@ const loadUserData = async () => {
     setPortfolios(mergedPortfolios);
     setActivePortfolioId(savedActivePortfolioId);
     setNamedWatchlists(mergedNamedWatchlists);
+    setSavedProjections(mergedProjections);
     setHasMeaningfulSavedLists(
       Boolean(
         mergedWatchlist.length ||
         hasPortfolioPositions(mergedPortfolios) ||
-        mergedNamedWatchlists.some((list) => (list.symbols || []).length)
+        mergedNamedWatchlists.some((list) => (list.symbols || []).length) ||
+        Object.keys(mergedProjections).length
       )
     );
 
@@ -1441,17 +1484,37 @@ const nextYearEarningsGrowth = calculateEstimateGrowth(
   nextYearEstimate?.earnings,
   currentYearEstimate?.earnings
 );
-const updateProjectionSetting = (key, year, value) => {
-  setProjectionSettings((settings) => ({
-    ...settings,
-    [key]: {
-      ...(settings[key] || {}),
-      [year]: value
-    }
-  }));
+const projectionSymbol = String(stockData?.symbol || ticker || "").toUpperCase();
+const projectionSettingsByCase =
+  savedProjections[projectionSymbol] ||
+  Object.fromEntries(
+    PROJECTION_CASES.map((projectionCase) => [
+      projectionCase.id,
+      createProjectionCaseSettings()
+    ])
+  );
+const updateProjectionSetting = (caseId, key, year, value) => {
+  setSavedProjections((items) => {
+    const symbolCases = items[projectionSymbol] || {};
+
+    return {
+      ...items,
+      [projectionSymbol]: {
+        ...symbolCases,
+        [caseId]: {
+          ...normalizeProjectionCaseSettings(symbolCases[caseId]),
+          [key]: {
+            ...(symbolCases[caseId]?.[key] || {}),
+            [year]: value
+          }
+        }
+      }
+    };
+  });
 };
-const getProjectionInputValue = (key, year) => {
-  const savedValue = projectionSettings?.[key]?.[year];
+const getProjectionInputValue = (caseId, key, year) => {
+  const caseSettings = normalizeProjectionCaseSettings(projectionSettingsByCase[caseId]);
+  const savedValue = caseSettings?.[key]?.[year];
   if (savedValue !== undefined) return savedValue;
 
   if (key === "revenueGrowth" && year === 2027 && isNumber(nextYearRevenueGrowth)) {
@@ -1462,7 +1525,7 @@ const getProjectionInputValue = (key, year) => {
     return nextYearEarningsGrowth.toFixed(2);
   }
 
-  return getProjectionAssumptionValue(projectionSettings, key, year);
+  return getProjectionAssumptionValue(caseSettings, key, year);
 };
 const projectionShareBase =
   isNumber(stockData?.sharesOutstanding) && stockData.sharesOutstanding > 0
@@ -1470,18 +1533,18 @@ const projectionShareBase =
     : isNumber(currentYearEstimate?.earnings) && isNumber(currentYearEstimate?.eps) && currentYearEstimate.eps !== 0
       ? currentYearEstimate.earnings / currentYearEstimate.eps
       : null;
-const projectionRows = PROJECTION_YEARS.reduce((rows, year) => {
+const buildProjectionRows = (caseId) => PROJECTION_YEARS.reduce((rows, year) => {
   const previousRow = rows.at(-1);
   const isBaseYear = year === PROJECTION_YEARS[0];
   const revenueGrowthRate = isBaseYear
     ? null
-    : parseInputPercent(getProjectionInputValue("revenueGrowth", year)) ?? 0;
+    : parseInputPercent(getProjectionInputValue(caseId, "revenueGrowth", year)) ?? 0;
   const netIncomeGrowthRate = isBaseYear
     ? null
-    : parseInputPercent(getProjectionInputValue("netIncomeGrowth", year)) ?? 0;
+    : parseInputPercent(getProjectionInputValue(caseId, "netIncomeGrowth", year)) ?? 0;
   const sharesGrowthRate = isBaseYear
     ? 0
-    : parseInputPercent(getProjectionInputValue("sharesGrowth", year)) ?? 0;
+    : parseInputPercent(getProjectionInputValue(caseId, "sharesGrowth", year)) ?? 0;
   const revenue = isBaseYear
     ? (isNumber(currentYearEstimate?.revenue) ? currentYearEstimate.revenue : null)
     : isNumber(previousRow?.revenue)
@@ -1502,8 +1565,8 @@ const projectionRows = PROJECTION_YEARS.reduce((rows, year) => {
     : isNumber(netIncome) && isNumber(shares) && shares !== 0
       ? netIncome / shares
       : null;
-  const lowPe = parseInputNumber(getProjectionInputValue("lowPe", year));
-  const highPe = parseInputNumber(getProjectionInputValue("highPe", year));
+  const lowPe = parseInputNumber(getProjectionInputValue(caseId, "lowPe", year));
+  const highPe = parseInputNumber(getProjectionInputValue(caseId, "highPe", year));
   const lowPrice = isNumber(eps) && isNumber(lowPe) ? eps * lowPe : null;
   const highPrice = isNumber(eps) && isNumber(highPe) ? eps * highPe : null;
   const currentPrice = stockData?.price;
@@ -1534,24 +1597,22 @@ const projectionRows = PROJECTION_YEARS.reduce((rows, year) => {
 
   return rows;
 }, []);
-const projectionTerminalRow = projectionRows.at(-1) || {};
 const projectionYearsToTerminal = PROJECTION_YEARS.at(-1) - PROJECTION_YEARS[0];
-const projectionLowCagr =
-  isNumber(projectionTerminalRow.lowPrice) &&
-  projectionTerminalRow.lowPrice > 0 &&
-  isNumber(stockData?.price) &&
-  stockData.price > 0 &&
-  projectionYearsToTerminal > 0
-    ? (Math.pow(projectionTerminalRow.lowPrice / stockData.price, 1 / projectionYearsToTerminal) - 1) * 100
-    : null;
-const projectionHighCagr =
-  isNumber(projectionTerminalRow.highPrice) &&
-  projectionTerminalRow.highPrice > 0 &&
-  isNumber(stockData?.price) &&
-  stockData.price > 0 &&
-  projectionYearsToTerminal > 0
-    ? (Math.pow(projectionTerminalRow.highPrice / stockData.price, 1 / projectionYearsToTerminal) - 1) * 100
-    : null;
+const projectionCases = PROJECTION_CASES.map((projectionCase) => {
+  const rows = buildProjectionRows(projectionCase.id);
+  const terminalRow = rows.at(-1) || {};
+
+  return {
+    ...projectionCase,
+    rows,
+    lowCagr: isNumber(terminalRow.lowReturn) && projectionYearsToTerminal > 0
+      ? terminalRow.lowReturn / projectionYearsToTerminal
+      : null,
+    highCagr: isNumber(terminalRow.highReturn) && projectionYearsToTerminal > 0
+      ? terminalRow.highReturn / projectionYearsToTerminal
+      : null
+  };
+});
 const isStockRefreshing = stockData?.refreshing === true;
 const areEstimatesRefreshing =
   isStockRefreshing &&
@@ -2954,165 +3015,174 @@ return (
     </div>
   </div>
 
-  <div className="projections-table-wrap">
-    <table className="projections-table">
-      <thead>
-        <tr>
-          <th>Metric</th>
-          {projectionRows.map((row) => (
-            <th key={row.year}>{row.year}</th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <th>Revenue</th>
-          {projectionRows.map((row) => (
-            <td key={row.year}>{estimateValue(formatEstimateMoney(row.revenue))}</td>
-          ))}
-        </tr>
-        <tr className="projection-assumption-row">
-          <th>Revenue Growth</th>
-          {projectionRows.map((row) => (
-            <td key={row.year}>
-              {row.year === PROJECTION_YEARS[0] ? (
-                estimateValue(formatPercent(row.revenueGrowth))
-              ) : (
-                <input
-                  value={getProjectionInputValue("revenueGrowth", row.year)}
-                  onChange={(event) => updateProjectionSetting("revenueGrowth", row.year, event.target.value)}
-                  inputMode="decimal"
-                  aria-label={`${row.year} revenue growth`}
-                />
-              )}
-            </td>
-          ))}
-        </tr>
-        <tr>
-          <th>Net Income</th>
-          {projectionRows.map((row) => (
-            <td key={row.year}>{estimateValue(formatEstimateMoney(row.netIncome))}</td>
-          ))}
-        </tr>
-        <tr className="projection-assumption-row">
-          <th>NI Growth</th>
-          {projectionRows.map((row) => (
-            <td key={row.year}>
-              {row.year === PROJECTION_YEARS[0] ? (
-                estimateValue(formatPercent(row.netIncomeGrowth))
-              ) : (
-                <input
-                  value={getProjectionInputValue("netIncomeGrowth", row.year)}
-                  onChange={(event) => updateProjectionSetting("netIncomeGrowth", row.year, event.target.value)}
-                  inputMode="decimal"
-                  aria-label={`${row.year} net income growth`}
-                />
-              )}
-            </td>
-          ))}
-        </tr>
-        <tr className="projection-assumption-row">
-          <th>NI Margin</th>
-          {projectionRows.map((row) => (
-            <td key={row.year}>{estimateValue(formatPercent(row.netIncomeMargin))}</td>
-          ))}
-        </tr>
-        <tr>
-          <th>Shares Outstanding</th>
-          {projectionRows.map((row) => (
-            <td key={row.year}>
-              {isNumber(row.shares)
-                ? row.shares.toLocaleString(undefined, { maximumFractionDigits: 0 })
-                : estimateValue("N/A")}
-            </td>
-          ))}
-        </tr>
-        <tr className="projection-assumption-row">
-          <th>Shares Growth</th>
-          {projectionRows.map((row) => (
-            <td key={row.year}>
-              {row.year === PROJECTION_YEARS[0] ? (
-                estimateValue(formatPercent(row.sharesGrowth))
-              ) : (
-                <input
-                  value={getProjectionInputValue("sharesGrowth", row.year)}
-                  onChange={(event) => updateProjectionSetting("sharesGrowth", row.year, event.target.value)}
-                  inputMode="decimal"
-                  aria-label={`${row.year} shares growth`}
-                />
-              )}
-            </td>
-          ))}
-        </tr>
-        <tr>
-          <th>EPS</th>
-          {projectionRows.map((row) => (
-            <td key={row.year}>{estimateValue(formatEstimateEps(row.eps))}</td>
-          ))}
-        </tr>
-        <tr className="projection-input-row">
-          <th>Low P/E</th>
-          {projectionRows.map((row) => (
-            <td key={row.year}>
-              <input
-                value={getProjectionInputValue("lowPe", row.year)}
-                onChange={(event) => updateProjectionSetting("lowPe", row.year, event.target.value)}
-                inputMode="decimal"
-                aria-label={`${row.year} low PE`}
-              />
-            </td>
-          ))}
-        </tr>
-        <tr className="projection-input-row">
-          <th>High P/E</th>
-          {projectionRows.map((row) => (
-            <td key={row.year}>
-              <input
-                value={getProjectionInputValue("highPe", row.year)}
-                onChange={(event) => updateProjectionSetting("highPe", row.year, event.target.value)}
-                inputMode="decimal"
-                aria-label={`${row.year} high PE`}
-              />
-            </td>
-          ))}
-        </tr>
-        <tr className="projection-output-row">
-          <th>Low Price</th>
-          {projectionRows.map((row) => (
-            <td key={row.year}>{estimateValue(formatPrice(row.lowPrice))}</td>
-          ))}
-        </tr>
-        <tr className="projection-output-row">
-          <th>High Price</th>
-          {projectionRows.map((row) => (
-            <td key={row.year}>{estimateValue(formatPrice(row.highPrice))}</td>
-          ))}
-        </tr>
-        <tr className="projection-output-row">
-          <th>Low Return</th>
-          {projectionRows.map((row) => (
-            <td key={row.year}>{estimateValue(formatPercent(row.lowReturn))}</td>
-          ))}
-        </tr>
-        <tr className="projection-output-row">
-          <th>High Return</th>
-          {projectionRows.map((row) => (
-            <td key={row.year}>{estimateValue(formatPercent(row.highReturn))}</td>
-          ))}
-        </tr>
-      </tbody>
-    </table>
-  </div>
+  <div className="projection-save-note">Saved automatically for {projectionSymbol || "this stock"}.</div>
 
-  <div className="projection-cagr-grid">
-    <div>
-      <span>Low CAGR</span>
-      <strong>{estimateValue(formatPercent(projectionLowCagr))}</strong>
-    </div>
-    <div>
-      <span>High CAGR</span>
-      <strong>{estimateValue(formatPercent(projectionHighCagr))}</strong>
-    </div>
+  <div className="projection-case-stack">
+    {projectionCases.map((projectionCase) => (
+      <div className={`projection-case projection-case-${projectionCase.id}`} key={projectionCase.id}>
+        <h3>{projectionCase.label}</h3>
+        <div className="projections-table-wrap">
+          <table className="projections-table">
+            <thead>
+              <tr>
+                <th>Metric</th>
+                {projectionCase.rows.map((row) => (
+                  <th key={row.year}>{row.year}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th>Revenue</th>
+                {projectionCase.rows.map((row) => (
+                  <td key={row.year}>{estimateValue(formatEstimateMoney(row.revenue))}</td>
+                ))}
+              </tr>
+              <tr className="projection-assumption-row">
+                <th>Revenue Growth</th>
+                {projectionCase.rows.map((row) => (
+                  <td key={row.year}>
+                    {row.year === PROJECTION_YEARS[0] ? (
+                      estimateValue(formatPercent(row.revenueGrowth))
+                    ) : (
+                      <input
+                        value={getProjectionInputValue(projectionCase.id, "revenueGrowth", row.year)}
+                        onChange={(event) => updateProjectionSetting(projectionCase.id, "revenueGrowth", row.year, event.target.value)}
+                        inputMode="decimal"
+                        aria-label={`${projectionCase.label} ${row.year} revenue growth`}
+                      />
+                    )}
+                  </td>
+                ))}
+              </tr>
+              <tr>
+                <th>Net Income</th>
+                {projectionCase.rows.map((row) => (
+                  <td key={row.year}>{estimateValue(formatEstimateMoney(row.netIncome))}</td>
+                ))}
+              </tr>
+              <tr className="projection-assumption-row">
+                <th>NI Growth</th>
+                {projectionCase.rows.map((row) => (
+                  <td key={row.year}>
+                    {row.year === PROJECTION_YEARS[0] ? (
+                      estimateValue(formatPercent(row.netIncomeGrowth))
+                    ) : (
+                      <input
+                        value={getProjectionInputValue(projectionCase.id, "netIncomeGrowth", row.year)}
+                        onChange={(event) => updateProjectionSetting(projectionCase.id, "netIncomeGrowth", row.year, event.target.value)}
+                        inputMode="decimal"
+                        aria-label={`${projectionCase.label} ${row.year} net income growth`}
+                      />
+                    )}
+                  </td>
+                ))}
+              </tr>
+              <tr className="projection-assumption-row">
+                <th>NI Margin</th>
+                {projectionCase.rows.map((row) => (
+                  <td key={row.year}>{estimateValue(formatPercent(row.netIncomeMargin))}</td>
+                ))}
+              </tr>
+              <tr>
+                <th>Shares Outstanding</th>
+                {projectionCase.rows.map((row) => (
+                  <td key={row.year}>
+                    {isNumber(row.shares)
+                      ? row.shares.toLocaleString(undefined, { maximumFractionDigits: 0 })
+                      : estimateValue("N/A")}
+                  </td>
+                ))}
+              </tr>
+              <tr className="projection-assumption-row">
+                <th>Shares Growth</th>
+                {projectionCase.rows.map((row) => (
+                  <td key={row.year}>
+                    {row.year === PROJECTION_YEARS[0] ? (
+                      estimateValue(formatPercent(row.sharesGrowth))
+                    ) : (
+                      <input
+                        value={getProjectionInputValue(projectionCase.id, "sharesGrowth", row.year)}
+                        onChange={(event) => updateProjectionSetting(projectionCase.id, "sharesGrowth", row.year, event.target.value)}
+                        inputMode="decimal"
+                        aria-label={`${projectionCase.label} ${row.year} shares growth`}
+                      />
+                    )}
+                  </td>
+                ))}
+              </tr>
+              <tr>
+                <th>EPS</th>
+                {projectionCase.rows.map((row) => (
+                  <td key={row.year}>{estimateValue(formatEstimateEps(row.eps))}</td>
+                ))}
+              </tr>
+              <tr className="projection-input-row">
+                <th>Low P/E</th>
+                {projectionCase.rows.map((row) => (
+                  <td key={row.year}>
+                    <input
+                      value={getProjectionInputValue(projectionCase.id, "lowPe", row.year)}
+                      onChange={(event) => updateProjectionSetting(projectionCase.id, "lowPe", row.year, event.target.value)}
+                      inputMode="decimal"
+                      aria-label={`${projectionCase.label} ${row.year} low PE`}
+                    />
+                  </td>
+                ))}
+              </tr>
+              <tr className="projection-input-row">
+                <th>High P/E</th>
+                {projectionCase.rows.map((row) => (
+                  <td key={row.year}>
+                    <input
+                      value={getProjectionInputValue(projectionCase.id, "highPe", row.year)}
+                      onChange={(event) => updateProjectionSetting(projectionCase.id, "highPe", row.year, event.target.value)}
+                      inputMode="decimal"
+                      aria-label={`${projectionCase.label} ${row.year} high PE`}
+                    />
+                  </td>
+                ))}
+              </tr>
+              <tr className="projection-output-row">
+                <th>Low Price</th>
+                {projectionCase.rows.map((row) => (
+                  <td key={row.year}>{estimateValue(formatPrice(row.lowPrice))}</td>
+                ))}
+              </tr>
+              <tr className="projection-output-row">
+                <th>High Price</th>
+                {projectionCase.rows.map((row) => (
+                  <td key={row.year}>{estimateValue(formatPrice(row.highPrice))}</td>
+                ))}
+              </tr>
+              <tr className="projection-output-row">
+                <th>Low Return</th>
+                {projectionCase.rows.map((row) => (
+                  <td key={row.year}>{estimateValue(formatPercent(row.lowReturn))}</td>
+                ))}
+              </tr>
+              <tr className="projection-output-row">
+                <th>High Return</th>
+                {projectionCase.rows.map((row) => (
+                  <td key={row.year}>{estimateValue(formatPercent(row.highReturn))}</td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div className="projection-cagr-grid">
+          <div>
+            <span>Low CAGR</span>
+            <strong>{estimateValue(formatPercent(projectionCase.lowCagr))}</strong>
+          </div>
+          <div>
+            <span>High CAGR</span>
+            <strong>{estimateValue(formatPercent(projectionCase.highCagr))}</strong>
+          </div>
+        </div>
+      </div>
+    ))}
   </div>
 </section>
 

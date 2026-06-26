@@ -2453,6 +2453,41 @@ body {
   line-height: 1.2;
 }
 
+.projection-save-note {
+  margin: -8px 0 18px;
+  color: #9ca3af;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.projection-case-stack {
+  display: grid;
+  gap: 28px;
+}
+
+.projection-case {
+  min-width: 0;
+}
+
+.projection-case h3 {
+  margin: 0 0 12px;
+  color: #f9fafb;
+  font-size: 19px;
+  line-height: 1.25;
+}
+
+.projection-case-bull h3 {
+  color: #34d399;
+}
+
+.projection-case-base h3 {
+  color: #60a5fa;
+}
+
+.projection-case-bear h3 {
+  color: #f87171;
+}
+
 .transcript-content {
   max-height: 620px;
   overflow-y: auto;
