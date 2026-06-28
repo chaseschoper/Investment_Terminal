@@ -23,6 +23,7 @@ const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 95;
+const EARNINGS_CALL_VERSION = 2;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -4955,7 +4956,10 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
 
   try {
     const cached = await EarningsCall.findOne({ ticker });
-    if (cached && Date.now() - new Date(cached.updatedAt).getTime() < 12 * 60 * 60 * 1000) {
+    if (
+      cached?.data?.version === EARNINGS_CALL_VERSION &&
+      Date.now() - new Date(cached.updatedAt).getTime() < 12 * 60 * 60 * 1000
+    ) {
       return res.json(cached.data);
     }
 
@@ -4963,29 +4967,26 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
       process.env.PUBLIC_API_URL ||
       `${req.protocol}://${req.get("host")}`;
     const providerErrors = [];
-    const providers = [
+    const transcriptProviders = [
       ["ROIC.ai", () => fetchRoicEarningsCall(ticker)],
       ["Alpha Vantage", () => fetchAlphaVantageEarningsCall(ticker)],
+      ["Finnhub", () => fetchFinnhubEarningsCall(ticker)],
+      ["EarningsCall", () => fetchEarningsCallBiz(ticker, apiBaseUrl)]
+    ];
+    const audioProviders = [
       ["Finnhub", () => fetchFinnhubEarningsCall(ticker)],
       ["Quartr", () => fetchQuartrEarningsCall(ticker)],
       ["EarningsCall", () => fetchEarningsCallBiz(ticker, apiBaseUrl)]
     ];
+    let transcriptData = null;
+    let audioData = null;
 
-    for (const [providerName, fetchProvider] of providers) {
+    for (const [providerName, fetchProvider] of transcriptProviders) {
       try {
         const providerData = await fetchProvider();
         if (providerData?.available && providerData.transcript?.length) {
-          const data = {
-            ...providerData,
-            symbol: ticker,
-            fetchedAt: new Date().toISOString()
-          };
-          await EarningsCall.findOneAndUpdate(
-            { ticker },
-            { ticker, data, updatedAt: new Date() },
-            { upsert: true, new: true }
-          );
-          return res.json(data);
+          transcriptData = providerData;
+          break;
         }
       } catch (err) {
         providerErrors.push({
@@ -4996,6 +4997,44 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
       }
     }
 
+    for (const [providerName, fetchProvider] of audioProviders) {
+      try {
+        const providerData = await fetchProvider();
+        if (providerData?.available && providerData.audioUrl) {
+          audioData = providerData;
+          break;
+        }
+      } catch (err) {
+        providerErrors.push({
+          provider: `${providerName} audio`,
+          code: err.providerCode || err.response?.status || "unavailable"
+        });
+        console.log(`${providerName} earnings audio skipped:`, ticker, err.providerCode || err.response?.status || err.message);
+      }
+    }
+
+    if (transcriptData?.transcript?.length || audioData?.audioUrl) {
+      const data = {
+        ...(transcriptData || audioData),
+        provider: audioData?.audioUrl && transcriptData
+          ? `${transcriptData.provider} transcript + ${audioData.provider} audio`
+          : (transcriptData || audioData).provider,
+        symbol: ticker,
+        audioUrl: audioData?.audioUrl || transcriptData?.audioUrl || null,
+        transcript: transcriptData?.transcript || audioData?.transcript || [],
+        computerReadAudio: false,
+        hasOriginalAudio: Boolean(audioData?.audioUrl || transcriptData?.audioUrl),
+        version: EARNINGS_CALL_VERSION,
+        fetchedAt: new Date().toISOString()
+      };
+      await EarningsCall.findOneAndUpdate(
+        { ticker },
+        { ticker, data, updatedAt: new Date() },
+        { upsert: true, new: true }
+      );
+      return res.json(data);
+    }
+
     return res.json({
       available: false,
       symbol: ticker,
@@ -5003,8 +5042,10 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
       transcript: [],
       audioUrl: null,
       computerReadAudio: false,
+      hasOriginalAudio: false,
+      version: EARNINGS_CALL_VERSION,
       errors: providerErrors,
-      message: "No free native earnings call transcript is available for this ticker yet."
+      message: "No free native earnings call transcript or original audio is available for this ticker yet."
     });
   } catch (err) {
     console.error("EarningsCall native fetch failed:", ticker, err.message);

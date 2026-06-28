@@ -2629,48 +2629,8 @@ return (
             src={earningsCall.audioUrl}
           />
         ) : (
-          <div className="computer-audio-player">
-            <div className="computer-audio-label">
-              Computer-read audio
-            </div>
-            <div className="computer-audio-controls">
-              <button
-                type="button"
-                onClick={playComputerRead}
-                disabled={!earningsCall.transcript?.length || (isSpeechPlaying && !isSpeechPaused)}
-              >
-                Play
-              </button>
-              <button
-                type="button"
-                onClick={pauseComputerRead}
-                disabled={!isSpeechPlaying}
-              >
-                {isSpeechPaused ? "Resume" : "Pause"}
-              </button>
-              <button
-                type="button"
-                onClick={stopComputerRead}
-                disabled={!isSpeechPlaying}
-              >
-                Stop
-              </button>
-              <label className="speech-rate-control">
-                Speed
-                <input
-                  type="range"
-                  min="0.7"
-                  max="1.4"
-                  step="0.1"
-                  value={speechRate}
-                  onChange={(event) => setSpeechRate(Number(event.target.value))}
-                />
-                <span>{speechRate.toFixed(1)}x</span>
-              </label>
-            </div>
-            {speechError && (
-              <div className="computer-audio-error">{speechError}</div>
-            )}
+          <div className="original-audio-missing">
+            Original call audio is not available from the free native sources for this ticker.
           </div>
         )}
 

@@ -2277,6 +2277,16 @@ body {
   margin-top: 10px;
 }
 
+.original-audio-missing {
+  border-top: 1px solid #273244;
+  border-bottom: 1px solid #273244;
+  padding: 16px 0;
+  margin-bottom: 22px;
+  color: #9ca3af;
+  font-size: 14px;
+  font-weight: 700;
+}
+
 .transcript-reader {
   border-top: 1px solid #273244;
   padding-top: 20px;
