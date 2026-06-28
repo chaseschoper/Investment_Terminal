@@ -2622,6 +2622,7 @@ return (
   </div>
 
 </div>
+{comparisonSection}
 {/* REVENUE CHART */}
 
 <div className="chart-section" id="financials">
@@ -3571,8 +3572,6 @@ return (
     ))}
   </div>
 </section>
-
-{comparisonSection}
 
 {/* PORTFOLIO TRACKER */}
 
