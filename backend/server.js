@@ -4601,6 +4601,85 @@ function getAlphaVantageApiKey() {
     .trim();
 }
 
+function getRoicApiKey() {
+  return String(process.env.ROIC_API_KEY || "")
+    .trim()
+    .replace(/^ROIC_API_KEY\s*=\s*/i, "")
+    .replace(/^['"]|['"]$/g, "")
+    .trim();
+}
+
+function splitPlainTranscript(content) {
+  const normalized = String(content || "")
+    .replace(/\r/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  if (!normalized) return [];
+
+  const blocks = normalized
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  if (blocks.length <= 1) {
+    return [{
+      id: "0-transcript",
+      speaker: "Transcript",
+      session: null,
+      text: normalized
+    }];
+  }
+
+  return blocks.map((block, index) => {
+    const lines = block.split("\n").map((line) => line.trim()).filter(Boolean);
+    const firstLine = lines[0] || "";
+    const looksLikeSpeaker =
+      firstLine.length <= 80 &&
+      !/[.!?]$/.test(firstLine) &&
+      /^[A-Za-z][A-Za-z .,'-]+$/.test(firstLine);
+
+    return {
+      id: `${index}-${looksLikeSpeaker ? firstLine : "transcript"}`,
+      speaker: looksLikeSpeaker ? firstLine : "Transcript",
+      session: null,
+      text: looksLikeSpeaker
+        ? lines.slice(1).join(" ").trim()
+        : lines.join(" ").trim()
+    };
+  }).filter((section) => section.text);
+}
+
+async function fetchRoicEarningsCall(ticker) {
+  const apiKey = getRoicApiKey();
+  if (!apiKey) return null;
+
+  const response = await axios.get(
+    `https://api.roic.ai/v2/company/earnings-calls/latest/${encodeURIComponent(ticker)}`,
+    {
+      params: { apikey: apiKey },
+      timeout: 20000
+    }
+  );
+
+  const content = response.data?.content;
+  const transcript = splitPlainTranscript(content);
+  if (!transcript.length) return null;
+
+  return {
+    available: true,
+    provider: "ROIC.ai",
+    title: `${ticker} earnings call transcript`,
+    date: response.data?.date || null,
+    fiscalYear: response.data?.year || null,
+    fiscalPeriod: response.data?.quarter ? `Q${response.data.quarter}` : null,
+    audioUrl: null,
+    transcriptUrl: null,
+    computerReadAudio: true,
+    transcript
+  };
+}
+
 async function fetchAlphaVantageEarningsCall(ticker, knownFiscalPeriod = null) {
   const apiKey = getAlphaVantageApiKey();
   if (!apiKey) return null;
@@ -4875,19 +4954,66 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
   const ticker = req.params.ticker.trim().toUpperCase();
 
   try {
-    const embedUrl = await getEarningsCallEmbedUrl(ticker);
+    const cached = await EarningsCall.findOne({ ticker });
+    if (cached && Date.now() - new Date(cached.updatedAt).getTime() < 12 * 60 * 60 * 1000) {
+      return res.json(cached.data);
+    }
+
+    const apiBaseUrl =
+      process.env.PUBLIC_API_URL ||
+      `${req.protocol}://${req.get("host")}`;
+    const providerErrors = [];
+    const providers = [
+      ["ROIC.ai", () => fetchRoicEarningsCall(ticker)],
+      ["Alpha Vantage", () => fetchAlphaVantageEarningsCall(ticker)],
+      ["Finnhub", () => fetchFinnhubEarningsCall(ticker)],
+      ["Quartr", () => fetchQuartrEarningsCall(ticker)],
+      ["EarningsCall", () => fetchEarningsCallBiz(ticker, apiBaseUrl)]
+    ];
+
+    for (const [providerName, fetchProvider] of providers) {
+      try {
+        const providerData = await fetchProvider();
+        if (providerData?.available && providerData.transcript?.length) {
+          const data = {
+            ...providerData,
+            symbol: ticker,
+            fetchedAt: new Date().toISOString()
+          };
+          await EarningsCall.findOneAndUpdate(
+            { ticker },
+            { ticker, data, updatedAt: new Date() },
+            { upsert: true, new: true }
+          );
+          return res.json(data);
+        }
+      } catch (err) {
+        providerErrors.push({
+          provider: providerName,
+          code: err.providerCode || err.response?.status || "unavailable"
+        });
+        console.log(`${providerName} earnings call skipped:`, ticker, err.providerCode || err.response?.status || err.message);
+      }
+    }
+
     return res.json({
       available: false,
       symbol: ticker,
-      provider: "EarningsCall",
-      embedUrl
+      provider: null,
+      transcript: [],
+      audioUrl: null,
+      computerReadAudio: false,
+      errors: providerErrors,
+      message: "No free native earnings call transcript is available for this ticker yet."
     });
   } catch (err) {
-    console.error("EarningsCall embed failed:", ticker, err.message);
+    console.error("EarningsCall native fetch failed:", ticker, err.message);
     return res.status(500).json({
       available: false,
       symbol: ticker,
-      error: "Earnings call embed unavailable"
+      transcript: [],
+      audioUrl: null,
+      error: "Earnings call transcript unavailable"
     });
   }
 });

@@ -2604,19 +2604,105 @@ return (
   <div className="earnings-call-panel">
     {isEarningsCallLoading ? (
       <div className="earnings-call-empty">Loading earnings calls...</div>
-    ) : earningsCall?.embedUrl ? (
-      <div className="earnings-site-viewport">
-        <iframe
-          className="earnings-site-frame"
-          title={`${ticker} earnings calls`}
-          src={earningsCall.embedUrl}
-          loading="lazy"
-          allow="autoplay; encrypted-media"
-        />
-      </div>
+    ) : earningsCall?.available && earningsCall?.transcript?.length ? (
+      <>
+        <div className="earnings-call-header">
+          <div>
+            <div className="earnings-call-title">
+              {earningsCall.title || `${ticker} earnings call`}
+            </div>
+            <div className="earnings-call-meta">
+              {[earningsCall.fiscalPeriod, earningsCall.fiscalYear, earningsCall.date]
+                .filter(Boolean)
+                .join(" • ")}
+            </div>
+          </div>
+          <div className="earnings-call-provider">
+            {earningsCall.provider}
+          </div>
+        </div>
+
+        {earningsCall.audioUrl ? (
+          <audio
+            className="earnings-audio-player"
+            controls
+            src={earningsCall.audioUrl}
+          />
+        ) : (
+          <div className="computer-audio-player">
+            <div className="computer-audio-label">
+              Computer-read audio
+            </div>
+            <div className="computer-audio-controls">
+              <button
+                type="button"
+                onClick={playComputerRead}
+                disabled={!earningsCall.transcript?.length || (isSpeechPlaying && !isSpeechPaused)}
+              >
+                Play
+              </button>
+              <button
+                type="button"
+                onClick={pauseComputerRead}
+                disabled={!isSpeechPlaying}
+              >
+                {isSpeechPaused ? "Resume" : "Pause"}
+              </button>
+              <button
+                type="button"
+                onClick={stopComputerRead}
+                disabled={!isSpeechPlaying}
+              >
+                Stop
+              </button>
+              <label className="speech-rate-control">
+                Speed
+                <input
+                  type="range"
+                  min="0.7"
+                  max="1.4"
+                  step="0.1"
+                  value={speechRate}
+                  onChange={(event) => setSpeechRate(Number(event.target.value))}
+                />
+                <span>{speechRate.toFixed(1)}x</span>
+              </label>
+            </div>
+            {speechError && (
+              <div className="computer-audio-error">{speechError}</div>
+            )}
+          </div>
+        )}
+
+        <div className="transcript-reader">
+          <input
+            className="transcript-search"
+            value={transcriptSearch}
+            onChange={(event) => setTranscriptSearch(event.target.value)}
+            placeholder="Search transcript"
+          />
+
+          <div className="transcript-content">
+            {filteredTranscript.length ? (
+              filteredTranscript.map((section) => (
+                <div className="transcript-section" key={section.id}>
+                  <div className="transcript-speaker">
+                    {section.speaker}
+                  </div>
+                  <p>{section.text}</p>
+                </div>
+              ))
+            ) : (
+              <div className="earnings-call-empty">
+                No transcript matches that search.
+              </div>
+            )}
+          </div>
+        </div>
+      </>
     ) : (
       <div className="earnings-call-empty">
-        The embedded earnings-call site is temporarily unavailable.
+        {earningsCall?.message || "A free native transcript is not available for this ticker yet."}
       </div>
     )}
   </div>
