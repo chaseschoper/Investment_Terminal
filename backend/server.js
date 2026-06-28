@@ -5025,6 +5025,7 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
         computerReadAudio: false,
         hasOriginalAudio: Boolean(audioData?.audioUrl || transcriptData?.audioUrl),
         version: EARNINGS_CALL_VERSION,
+        errors: providerErrors,
         fetchedAt: new Date().toISOString()
       };
       await EarningsCall.findOneAndUpdate(
@@ -5034,6 +5035,10 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
       );
       return res.json(data);
     }
+
+    const finnhubBlocked = providerErrors.some((error) =>
+      /^Finnhub/i.test(error.provider) && Number(error.code) === 403
+    );
 
     return res.json({
       available: false,
@@ -5045,7 +5050,9 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
       hasOriginalAudio: false,
       version: EARNINGS_CALL_VERSION,
       errors: providerErrors,
-      message: "No free native earnings call transcript or original audio is available for this ticker yet."
+      message: finnhubBlocked
+        ? "Finnhub was tried, but this API key does not include earnings call transcript/audio access."
+        : "No free native earnings call transcript or original audio is available for this ticker yet."
     });
   } catch (err) {
     console.error("EarningsCall native fetch failed:", ticker, err.message);

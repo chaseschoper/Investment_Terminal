@@ -1747,6 +1747,12 @@ const filteredTranscript = (earningsCall?.transcript || []).filter((section) =>
 const selectedEarningsDay = (earnings?.days || []).find(
   (day) => day.date === selectedEarningsDate
 ) || { date: selectedEarningsDate, events: [] };
+const finnhubAudioBlocked = (earningsCall?.errors || []).some((error) =>
+  /^Finnhub/i.test(error.provider || "") && Number(error.code) === 403
+);
+const originalAudioMessage = finnhubAudioBlocked
+  ? "Finnhub was tried, but this API key does not include original earnings call audio access."
+  : "Original call audio is not available from the free native sources for this ticker.";
 const earningsWeekLabel = earnings?.weekStart && earnings?.weekEnd
   ? `${new Date(`${earnings.weekStart}T12:00:00`).toLocaleDateString(undefined, {
       month: "short",
@@ -2630,7 +2636,7 @@ return (
           />
         ) : (
           <div className="original-audio-missing">
-            Original call audio is not available from the free native sources for this ticker.
+            {originalAudioMessage}
           </div>
         )}
 
