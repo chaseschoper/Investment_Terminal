@@ -59,6 +59,52 @@ const formatIndexPrice = (value) =>
     minimumFractionDigits: 2,
   }) : "--";
 
+const STOCK_CHART_RANGES = ["1D", "1W", "1M", "1Y", "YTD", "5Y", "10Y", "MAX"];
+
+const formatStockChartAxisLabel = (value, range) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  if (range === "1D") {
+    return date.toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit"
+    });
+  }
+
+  if (range === "1W" || range === "1M" || range === "YTD") {
+    return date.toLocaleDateString([], {
+      month: "short",
+      day: "numeric"
+    });
+  }
+
+  return date.toLocaleDateString([], {
+    month: "short",
+    year: "2-digit"
+  });
+};
+
+const formatStockChartTooltipLabel = (value, range) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  if (range === "1D" || range === "1W") {
+    return date.toLocaleString([], {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit"
+    });
+  }
+
+  return date.toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+    year: "numeric"
+  });
+};
+
 const getMarketSignal = (indices = []) => {
   if (indices.some((index) => isNumber(index.percentChange) && index.percentChange <= -1.5)) {
     return { label: "Market Selloff", tone: "negative" };
@@ -690,6 +736,21 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [isStockLoading, setIsStockLoading] =
     useState(false);
 
+  const [stockChartRange, setStockChartRange] =
+    useState("1D");
+
+  const [stockChartData, setStockChartData] =
+    useState([]);
+
+  const [stockChartMeta, setStockChartMeta] =
+    useState(null);
+
+  const [isStockChartLoading, setIsStockChartLoading] =
+    useState(false);
+
+  const [stockChartError, setStockChartError] =
+    useState("");
+
   const [aiAnalysis, setAiAnalysis] =
     useState(null);
 
@@ -874,6 +935,58 @@ useEffect(() => {
 
   return () => window.clearInterval(timer);
 }, []);
+
+useEffect(() => {
+  let isActive = true;
+  let refreshTimer;
+
+  const loadPriceHistory = async (showLoading = true) => {
+    if (!ticker) return;
+    if (showLoading) {
+      setIsStockChartLoading(true);
+      setStockChartError("");
+      setStockChartData([]);
+      setStockChartMeta(null);
+    }
+
+    try {
+      const response = await axios.get(
+        `${API_URL}/api/price-history/${ticker}`,
+        {
+          params: { range: stockChartRange },
+          timeout: 12000
+        }
+      );
+
+      if (!isActive) return;
+
+      setStockChartData(response.data.points || []);
+      setStockChartMeta(response.data.latest || null);
+      setStockChartError("");
+    } catch (error) {
+      console.error("Price history failed", error);
+      if (isActive) {
+        setStockChartError("Chart history is temporarily unavailable.");
+      }
+    } finally {
+      if (isActive) {
+        setIsStockChartLoading(false);
+      }
+    }
+  };
+
+  loadPriceHistory(true);
+  refreshTimer = window.setInterval(() => {
+    if (getMarketClock(new Date()).tone === "open") {
+      loadPriceHistory(false);
+    }
+  }, stockChartRange === "1D" ? 30000 : 60000);
+
+  return () => {
+    isActive = false;
+    window.clearInterval(refreshTimer);
+  };
+}, [ticker, stockChartRange]);
 
   /*
     LOAD STOCK WHEN TICKER CHANGES
@@ -1732,6 +1845,210 @@ const displayedMarketIndices = MARKET_INDEX_ORDER.map((item) => ({
   ...(marketIndices.find((index) => index.key === item.key) || {})
 }));
 
+const comparisonSection = (
+  <div className="chart-section" id="comparison">
+
+    <h2 className="section-title">
+      Multi-Stock Comparison
+    </h2>
+  <div className="comparison-controls">
+
+    <input
+      className="portfolio-input"
+      placeholder="Add comparison ticker"
+      onKeyDown={(e) => {
+
+        if (e.key === "Enter") {
+
+          const symbol =
+            e.target.value.toUpperCase();
+
+          if (
+            symbol &&
+            !compareTickers.includes(symbol)
+          ) {
+
+            setCompareTickers([
+              ...compareTickers,
+              symbol,
+            ]);
+
+            e.target.value = "";
+          }
+        }
+      }}
+    />
+
+  </div>
+
+    <div className="comparison-grid">
+
+
+  {compareData.map((stock) => (
+
+    <div
+      key={stock.symbol}
+      className="comparison-card"
+    >
+
+      <button
+        className="remove-position"
+        onClick={() =>
+          setCompareTickers(
+            compareTickers.filter(
+              (t) => t !== stock.symbol
+            )
+          )
+        }
+      >
+        Remove
+      </button>
+
+      <div className="comparison-symbol">
+        {stock.symbol}
+      </div>
+
+      <div className="comparison-name">
+        {stock.name}
+      </div>
+
+      <div className="comparison-price">
+        {formatPrice(stock.price)}
+      </div>
+
+      <div className="comparison-stat">
+        <span>Market Cap</span>
+  <strong>
+    {formatBillions(stock.marketCap)}
+  </strong>
+      </div>
+
+      <div className="comparison-stat">
+        <span>Current P/E</span>
+  <strong>
+    {formatPlain(stock.pe)}
+  </strong>
+      </div>
+
+      <div className="comparison-stat">
+        <span>Forward P/E</span>
+  <strong>
+    {formatPlain(stock.forwardPE)}
+  </strong>
+      </div>
+
+      <div className="comparison-stat">
+        <span>Price-to-Sales</span>
+  <strong>
+    {formatPlain(stock.priceToSales)}
+  </strong>
+      </div>
+
+      <div className="comparison-stat">
+        <span>Price-to-Book</span>
+  <strong>
+    {formatPlain(stock.priceToBook)}
+  </strong>
+      </div>
+
+      <div className="comparison-stat">
+        <span>Revenue Growth</span>
+  <strong>
+    {formatPercent(stock.revenueGrowth)}
+  </strong>
+      </div>
+
+      <div className="comparison-stat">
+        <span>Earnings Growth</span>
+  <strong>
+    {formatPercent(stock.earningsGrowth)}
+  </strong>
+      </div>
+
+      <div className="comparison-stat">
+        <span>{stock.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin"}</span>
+  <strong>
+    {formatPercent(
+      stock.isFinancialCompany
+        ? stock.bankMetrics?.netInterestRevenueMix
+        : stock.grossMargins
+    )}
+  </strong>
+      </div>
+
+      <div className="comparison-stat">
+        <span>{stock.isFinancialCompany ? "Pre-Tax Margin" : "Operating Margin"}</span>
+  <strong>
+    {formatPercent(
+      stock.isFinancialCompany
+        ? stock.bankMetrics?.preTaxMargin
+        : stock.operatingMargins
+    )}
+  </strong>
+      </div>
+
+      <div className="comparison-stat">
+        <span>Profit Margin</span>
+  <strong>
+    {formatPercent(stock.profitMargins)}
+  </strong>
+      </div>
+
+      <div className="comparison-stat">
+        <span>{stock.isFinancialCompany ? "Annual Cash Change" : "Free Cash Flow"}</span>
+  <strong>
+    {formatBillions(
+      stock.isFinancialCompany
+        ? stock.bankMetrics?.annualCashChange
+        : stock.freeCashflow
+    )}
+  </strong>
+      </div>
+
+      <div className="comparison-stat">
+        <span>Price Target</span>
+  <strong>
+    {formatPrice(stock.targetMean)}
+  </strong>
+      </div>
+
+      <div className="comparison-stat">
+        <span>Analyst Rating</span>
+  <strong>
+    {stock.analystRatingText || stock.recommendationKey || "N/A"}
+  </strong>
+      </div>
+
+      <div className="comparison-stat">
+        <span>Dividend Yield</span>
+        <strong>
+          {formatDividendYield(stock.dividendYield)}
+        </strong>
+      </div>
+
+      <div className="comparison-stat">
+        <span>52W High</span>
+        <strong>
+          {formatPrice(stock.fiftyTwoWeekHigh)}
+        </strong>
+      </div>
+
+      <div className="comparison-stat">
+        <span>52W Low</span>
+        <strong>
+          {formatPrice(stock.fiftyTwoWeekLow)}
+        </strong>
+      </div>
+
+    </div>
+
+  ))}
+
+    </div>
+
+  </div>
+);
+
 
  
 
@@ -2011,36 +2328,105 @@ return (
         </div>
         {/* LIVE STOCK CHART */}
 
-<div className="chart-section">
+<div className="chart-section native-stock-chart-section">
 
-  <h2 className="section-title">
-    Live Stock Chart
-  </h2>
+  <div className="stock-chart-header">
+    <div>
+      <h2 className="section-title">
+        MrktRally Price Chart
+      </h2>
+      <div className="stock-chart-meta">
+        <span>{ticker}</span>
+        <strong>{formatPrice(stockChartMeta?.price ?? stockData?.price)}</strong>
+        {isNumber(stockChartMeta?.percentChange) && (
+          <span className={stockChartMeta.percentChange >= 0 ? "stock-chart-change positive-text" : "stock-chart-change negative-text"}>
+            {stockChartMeta.percentChange >= 0 ? "+" : ""}
+            {stockChartMeta.percentChange.toFixed(2)}%
+          </span>
+        )}
+      </div>
+    </div>
 
-  <div
-    style={{
-      background: "#111827",
-      borderRadius: "16px",
-      overflow: "hidden",
-      padding: "10px",
-      marginBottom: "30px",
-    }}
-  >
+    <div className="stock-chart-range-tabs">
+      {STOCK_CHART_RANGES.map((range) => (
+        <button
+          key={range}
+          type="button"
+          className={stockChartRange === range ? "active" : ""}
+          onClick={() => setStockChartRange(range)}
+        >
+          {range}
+        </button>
+      ))}
+    </div>
+  </div>
 
-    <iframe
-      title="TradingView Chart"
-
-      src={`https://s.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=${ticker}&interval=D&hidesidetoolbar=1&symboledit=1&saveimage=0&toolbarbg=111827&studies=[]&theme=dark&style=1&timezone=America/New_York&withdateranges=1&hideideas=1`}
-
-      width="100%"
-      height="600"
-
-      style={{
-        border: "none",
-        borderRadius: "12px",
-      }}
-    />
-
+  <div className="native-stock-chart-card">
+    {isStockChartLoading ? (
+      <StockDataLoading label="Loading price history..." />
+    ) : stockChartData.length ? (
+      <ResponsiveContainer width="100%" height={460}>
+        <LineChart
+          data={stockChartData}
+          margin={{
+            top: 18,
+            right: 24,
+            left: 6,
+            bottom: 12
+          }}
+        >
+          <defs>
+            <linearGradient id="priceLineGradient" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor="#38bdf8" />
+              <stop offset="55%" stopColor="#60a5fa" />
+              <stop offset="100%" stopColor="#34d399" />
+            </linearGradient>
+          </defs>
+          <CartesianGrid stroke="#223049" strokeDasharray="3 3" />
+          <XAxis
+            dataKey="time"
+            tickFormatter={(value) => formatStockChartAxisLabel(value, stockChartRange)}
+            stroke="#8ea0bd"
+            tick={{ fill: "#9ca3af", fontSize: 12 }}
+            minTickGap={28}
+          />
+          <YAxis
+            domain={["auto", "auto"]}
+            tickFormatter={(value) => `$${Number(value).toFixed(value >= 100 ? 0 : 2)}`}
+            stroke="#8ea0bd"
+            tick={{ fill: "#9ca3af", fontSize: 12 }}
+            width={74}
+          />
+          <Tooltip
+            contentStyle={{
+              background: "#0b1220",
+              border: "1px solid #2b3a55",
+              borderRadius: "12px",
+              color: "#f8fafc"
+            }}
+            labelFormatter={(value) => formatStockChartTooltipLabel(value, stockChartRange)}
+            formatter={(value) => [formatPrice(value), "Price"]}
+          />
+          <Line
+            type="monotone"
+            dataKey="price"
+            stroke="url(#priceLineGradient)"
+            strokeWidth={3}
+            dot={false}
+            activeDot={{
+              r: 5,
+              stroke: "#f8fafc",
+              strokeWidth: 2,
+              fill: "#38bdf8"
+            }}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    ) : (
+      <div className="historical-chart-empty">
+        {stockChartError || "No chart history available yet."}
+      </div>
+    )}
   </div>
 
 </div>
@@ -2236,6 +2622,7 @@ return (
   </div>
 
 </div>
+{comparisonSection}
 {/* REVENUE CHART */}
 
 <div className="chart-section" id="financials">
@@ -3558,210 +3945,6 @@ return (
   </div>
 
 </div>
-{/* MULTI STOCK COMPARISON */}
-
-<div className="chart-section" id="comparison">
-
-  <h2 className="section-title">
-    Multi-Stock Comparison
-  </h2>
-<div className="comparison-controls">
-
-  <input
-    className="portfolio-input"
-    placeholder="Add comparison ticker"
-    onKeyDown={(e) => {
-
-      if (e.key === "Enter") {
-
-        const symbol =
-          e.target.value.toUpperCase();
-
-        if (
-          symbol &&
-          !compareTickers.includes(symbol)
-        ) {
-
-          setCompareTickers([
-            ...compareTickers,
-            symbol,
-          ]);
-
-          e.target.value = "";
-        }
-      }
-    }}
-  />
-
-</div>
-
-  <div className="comparison-grid">
-
-
-{compareData.map((stock) => (
-
-  <div
-    key={stock.symbol}
-    className="comparison-card"
-  >
-
-    <button
-      className="remove-position"
-      onClick={() =>
-        setCompareTickers(
-          compareTickers.filter(
-            (t) => t !== stock.symbol
-          )
-        )
-      }
-    >
-      Remove
-    </button>
-
-    <div className="comparison-symbol">
-      {stock.symbol}
-    </div>
-
-    <div className="comparison-name">
-      {stock.name}
-    </div>
-
-    <div className="comparison-price">
-      {formatPrice(stock.price)}
-    </div>
-
-    <div className="comparison-stat">
-      <span>Market Cap</span>
-<strong>
-  {formatBillions(stock.marketCap)}
-</strong>
-    </div>
-
-    <div className="comparison-stat">
-      <span>Current P/E</span>
-<strong>
-  {formatPlain(stock.pe)}
-</strong>
-    </div>
-
-    <div className="comparison-stat">
-      <span>Forward P/E</span>
-<strong>
-  {formatPlain(stock.forwardPE)}
-</strong>
-    </div>
-
-    <div className="comparison-stat">
-      <span>Price-to-Sales</span>
-<strong>
-  {formatPlain(stock.priceToSales)}
-</strong>
-    </div>
-
-    <div className="comparison-stat">
-      <span>Price-to-Book</span>
-<strong>
-  {formatPlain(stock.priceToBook)}
-</strong>
-    </div>
-
-    <div className="comparison-stat">
-      <span>Revenue Growth</span>
-<strong>
-  {formatPercent(stock.revenueGrowth)}
-</strong>
-    </div>
-
-    <div className="comparison-stat">
-      <span>Earnings Growth</span>
-<strong>
-  {formatPercent(stock.earningsGrowth)}
-</strong>
-    </div>
-
-    <div className="comparison-stat">
-      <span>{stock.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin"}</span>
-<strong>
-  {formatPercent(
-    stock.isFinancialCompany
-      ? stock.bankMetrics?.netInterestRevenueMix
-      : stock.grossMargins
-  )}
-</strong>
-    </div>
-
-    <div className="comparison-stat">
-      <span>{stock.isFinancialCompany ? "Pre-Tax Margin" : "Operating Margin"}</span>
-<strong>
-  {formatPercent(
-    stock.isFinancialCompany
-      ? stock.bankMetrics?.preTaxMargin
-      : stock.operatingMargins
-  )}
-</strong>
-    </div>
-
-    <div className="comparison-stat">
-      <span>Profit Margin</span>
-<strong>
-  {formatPercent(stock.profitMargins)}
-</strong>
-    </div>
-
-    <div className="comparison-stat">
-      <span>{stock.isFinancialCompany ? "Annual Cash Change" : "Free Cash Flow"}</span>
-<strong>
-  {formatBillions(
-    stock.isFinancialCompany
-      ? stock.bankMetrics?.annualCashChange
-      : stock.freeCashflow
-  )}
-</strong>
-    </div>
-
-    <div className="comparison-stat">
-      <span>Price Target</span>
-<strong>
-  {formatPrice(stock.targetMean)}
-</strong>
-    </div>
-
-    <div className="comparison-stat">
-      <span>Analyst Rating</span>
-<strong>
-  {stock.analystRatingText || stock.recommendationKey || "N/A"}
-</strong>
-    </div>
-
-    <div className="comparison-stat">
-      <span>Dividend Yield</span>
-      <strong>
-        {formatDividendYield(stock.dividendYield)}
-      </strong>
-    </div>
-
-    <div className="comparison-stat">
-      <span>52W High</span>
-      <strong>
-        {formatPrice(stock.fiftyTwoWeekHigh)}
-      </strong>
-    </div>
-
-    <div className="comparison-stat">
-      <span>52W Low</span>
-      <strong>
-        {formatPrice(stock.fiftyTwoWeekLow)}
-      </strong>
-    </div>
-
-  </div>
-
-))}
-
-  </div>
-
-</div>
-
 {/* NAMED WATCHLISTS */}
 
 <section className="chart-section named-watchlists-section" id="watchlists">

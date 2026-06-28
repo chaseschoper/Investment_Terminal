@@ -21,6 +21,7 @@ const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
+const priceHistoryCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 95;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
@@ -47,6 +48,17 @@ const MARKET_INDICES = [
   { key: "dow", label: "Dow Jones", yahooSymbol: "^DJI", investingPath: "us-30" },
   { key: "nasdaq", label: "Nasdaq", yahooSymbol: "^IXIC", investingPath: "nasdaq-composite" }
 ];
+
+const PRICE_HISTORY_RANGES = {
+  "1D": { range: "1d", interval: "5m", ttl: 20 * 1000 },
+  "1W": { range: "5d", interval: "15m", ttl: 60 * 1000 },
+  "1M": { range: "1mo", interval: "1d", ttl: 5 * 60 * 1000 },
+  "1Y": { range: "1y", interval: "1d", ttl: 5 * 60 * 1000 },
+  YTD: { range: null, interval: "1d", ttl: 5 * 60 * 1000 },
+  "5Y": { range: "5y", interval: "1wk", ttl: 30 * 60 * 1000 },
+  "10Y": { range: "10y", interval: "1mo", ttl: 60 * 60 * 1000 },
+  MAX: { range: "max", interval: "1mo", ttl: 6 * 60 * 60 * 1000 }
+};
 
 const REVENUE_KEY_PRIORITY = {
   annualTotalRevenue: 5,
@@ -3962,6 +3974,117 @@ app.get("/api/market-indices", async (req, res) => {
   }
 
   return res.json(data);
+});
+
+app.get("/api/price-history/:ticker", async (req, res) => {
+  try {
+    const requestedTicker = req.params.ticker.trim().toUpperCase();
+    const ticker = TICKER_ALIASES[requestedTicker] || requestedTicker;
+    const requestedRange = String(req.query.range || "1D").trim().toUpperCase();
+    const rangeConfig = PRICE_HISTORY_RANGES[requestedRange] || PRICE_HISTORY_RANGES["1D"];
+
+    if (!/^[A-Z0-9.-]{1,12}$/.test(ticker)) {
+      return res.status(400).json({ error: "Invalid ticker" });
+    }
+
+    const cacheKey = `${ticker}:${requestedRange}`;
+    const cached = priceHistoryCache.get(cacheKey);
+    if (cached && Date.now() - cached.fetchedAt < rangeConfig.ttl) {
+      return res.json(cached.data);
+    }
+
+    const params = {
+      interval: rangeConfig.interval
+    };
+
+    if (requestedRange === "YTD") {
+      const now = new Date();
+      const startOfYear = Date.UTC(now.getUTCFullYear(), 0, 1, 0, 0, 0);
+      params.period1 = Math.floor(startOfYear / 1000);
+      params.period2 = Math.floor(Date.now() / 1000);
+    } else {
+      params.range = rangeConfig.range;
+    }
+
+    const response = await axios.get(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}`,
+      {
+        params,
+        timeout: 10000
+      }
+    );
+
+    const result = response.data?.chart?.result?.[0];
+    if (!result) {
+      return res.status(404).json({ error: "Price history unavailable" });
+    }
+
+    const timestamps = result.timestamp || [];
+    const quote = result.indicators?.quote?.[0] || {};
+    const adjustedCloses = result.indicators?.adjclose?.[0]?.adjclose || [];
+    const meta = result.meta || {};
+
+    const points = timestamps
+      .map((timestamp, index) => {
+        const price = firstYahooNumber(quote.close?.[index], adjustedCloses[index]);
+        if (price === null) return null;
+        const date = new Date(timestamp * 1000);
+        if (Number.isNaN(date.getTime())) return null;
+        return {
+          time: timestamp * 1000,
+          date: date.toISOString(),
+          price,
+          volume: firstYahooNumber(quote.volume?.[index])
+        };
+      })
+      .filter(Boolean);
+
+    if (!points.length) {
+      return res.status(404).json({ error: "Price history unavailable" });
+    }
+
+    const latestPoint = points[points.length - 1];
+    const latestPrice = firstYahooNumber(meta.regularMarketPrice, latestPoint.price);
+    const rangeStartPrice = points[0]?.price;
+    const previousClose = firstYahooNumber(
+      meta.chartPreviousClose,
+      meta.previousClose,
+      requestedRange === "1D" && points.length > 1 ? points[points.length - 2].price : null,
+      rangeStartPrice
+    );
+    const changeBase = requestedRange === "1D" ? previousClose : rangeStartPrice;
+    const change = latestPrice !== null && changeBase
+      ? latestPrice - changeBase
+      : null;
+    const percentChange = change !== null && changeBase
+      ? (change / changeBase) * 100
+      : null;
+
+    const data = {
+      symbol: requestedTicker,
+      sourceSymbol: ticker,
+      range: requestedRange,
+      interval: rangeConfig.interval,
+      points,
+      latest: {
+        price: latestPrice,
+        change,
+        percentChange,
+        previousClose
+      },
+      updatedAt: new Date().toISOString()
+    };
+
+    priceHistoryCache.set(cacheKey, {
+      fetchedAt: Date.now(),
+      data
+    });
+
+    return res.json(data);
+  } catch (err) {
+    console.log("Price history failed:", req.params.ticker, err.response?.status || err.message);
+    return res.status(502).json({ error: "Price history unavailable" });
+  }
 });
 
 app.get("/api/stock/:ticker", async (req, res) => {
