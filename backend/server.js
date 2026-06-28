@@ -23,7 +23,7 @@ const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 95;
-const EARNINGS_CALL_VERSION = 2;
+const EARNINGS_CALL_VERSION = 3;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -4681,6 +4681,238 @@ async function fetchRoicEarningsCall(ticker) {
   };
 }
 
+const IR_AUDIO_EXTENSIONS = [".mp3", ".m4a", ".aac", ".wav", ".ogg", ".mp4"];
+const IR_AUDIO_EXCLUDED_HOSTS = [
+  "youtube.com",
+  "youtu.be",
+  "vimeo.com",
+  "facebook.com",
+  "twitter.com",
+  "x.com",
+  "linkedin.com"
+];
+
+function isExcludedIrAudioHost(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+    return IR_AUDIO_EXCLUDED_HOSTS.some((excluded) =>
+      host === excluded || host.endsWith(`.${excluded}`)
+    );
+  } catch {
+    return true;
+  }
+}
+
+function isLikelyAudioUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname.toLowerCase();
+    return !isExcludedIrAudioHost(url) &&
+      IR_AUDIO_EXTENSIONS.some((extension) => path.endsWith(extension));
+  } catch {
+    return false;
+  }
+}
+
+function resolvePublicUrl(href, baseUrl) {
+  try {
+    if (!href || href.startsWith("mailto:") || href.startsWith("tel:") || href.startsWith("javascript:")) {
+      return null;
+    }
+    return new URL(href, baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+function getIrCandidateRoots(companyUrl) {
+  try {
+    const parsed = new URL(companyUrl);
+    const hostParts = parsed.hostname.replace(/^www\./, "").split(".");
+    const rootDomain = hostParts.slice(-2).join(".");
+    return [
+      `https://investor.${rootDomain}`,
+      `https://investors.${rootDomain}`,
+      `https://ir.${rootDomain}`,
+      parsed.origin
+    ];
+  } catch {
+    return [];
+  }
+}
+
+function buildIrCandidatePages(companyUrl) {
+  const paths = [
+    "",
+    "/financial-information/earnings-annual-reports",
+    "/financial-information/quarterly-results",
+    "/financials/quarterly-results",
+    "/quarterly-results",
+    "/investors",
+    "/investor-relations",
+    "/investor",
+    "/ir",
+    "/news-events/events-presentations",
+    "/events-and-presentations",
+    "/events-presentations",
+    "/events",
+    "/financials",
+    "/financial-information"
+  ];
+  const pages = new Set();
+  getIrCandidateRoots(companyUrl).forEach((root) => {
+    paths.forEach((path) => {
+      try {
+        pages.add(new URL(path, root).toString());
+      } catch {
+        // Ignore malformed candidate pages.
+      }
+    });
+  });
+  return [...pages].slice(0, 24);
+}
+
+async function fetchHtmlPage(url) {
+  const response = await axios.get(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    },
+    timeout: 6000,
+    maxRedirects: 4,
+    validateStatus: (status) => status >= 200 && status < 400
+  });
+  const contentType = response.headers["content-type"] || "";
+  if (!/html|text/i.test(contentType)) return null;
+  return response.data;
+}
+
+function extractIrAudioLinks(html, pageUrl, ticker) {
+  const $ = cheerio.load(html || "");
+  const links = [];
+  const seen = new Set();
+  const escapedTicker = String(ticker).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const tickerPattern = new RegExp(`\\b${escapedTicker}\\b`, "i");
+
+  $("a[href], audio[src], source[src], video[src]").each((_, element) => {
+    const href = $(element).attr("href") || $(element).attr("src");
+    const resolved = resolvePublicUrl(href, pageUrl);
+    const label = [
+      $(element).text(),
+      $(element).attr("title"),
+      $(element).attr("aria-label"),
+      resolved
+    ].filter(Boolean).join(" ");
+    const labelledAudio = /mp3|m4a|audio|listen/i.test(label);
+    if (
+      !resolved ||
+      seen.has(resolved) ||
+      isExcludedIrAudioHost(resolved) ||
+      (!isLikelyAudioUrl(resolved) && !labelledAudio)
+    ) return;
+    seen.add(resolved);
+    const score =
+      (/earnings|quarter|results|conference|webcast|call|replay/i.test(label) ? 6 : 0) +
+      (/audio|mp3|listen|download/i.test(label) ? 4 : 0) +
+      (tickerPattern.test(label) ? 2 : 0);
+    links.push({
+      audioUrl: resolved,
+      title: $(element).text().trim() || `${ticker} investor relations audio`,
+      score,
+      pageUrl
+    });
+  });
+
+  const directMediaPattern = /https?:\\?\/\\?\/[^"'<>\\\s]+?\.(?:mp3|m4a|aac|wav|ogg|mp4)(?:\?[^"'<>\\\s]*)?/gi;
+  const directMatches = String(html || "").match(directMediaPattern) || [];
+  directMatches.forEach((match) => {
+    const normalized = match.replace(/\\\//g, "/");
+    if (seen.has(normalized) || !isLikelyAudioUrl(normalized)) return;
+    seen.add(normalized);
+    const score =
+      (/earnings|quarter|results|conference|webcast|call|replay/i.test(normalized) ? 6 : 0) +
+      (/audio|mp3|listen|download/i.test(normalized) ? 4 : 0) +
+      (tickerPattern.test(normalized) ? 2 : 0);
+    links.push({
+      audioUrl: normalized,
+      title: `${ticker} investor relations audio`,
+      score,
+      pageUrl
+    });
+  });
+
+  return links;
+}
+
+async function getCompanyInvestorRelationsUrl(ticker) {
+  try {
+    const profile = await getFinnhub(`https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}`);
+    return profile.weburl || null;
+  } catch (err) {
+    console.log("IR website lookup skipped:", ticker, err.response?.status || err.message);
+    return null;
+  }
+}
+
+async function fetchInvestorRelationsAudio(ticker) {
+  const companyUrl = await getCompanyInvestorRelationsUrl(ticker);
+  if (!companyUrl) return null;
+
+  const candidatePages = buildIrCandidatePages(companyUrl);
+  const discoveredPages = new Set(candidatePages);
+  const audioLinks = [];
+
+  for (const pageUrl of candidatePages) {
+    try {
+      const html = await fetchHtmlPage(pageUrl);
+      if (!html) continue;
+      audioLinks.push(...extractIrAudioLinks(html, pageUrl, ticker));
+
+      const $ = cheerio.load(html);
+      $("a[href]").each((_, element) => {
+        if (discoveredPages.size >= 28) return;
+        const label = `${$(element).text()} ${$(element).attr("href") || ""}`;
+        if (!/earnings|quarter|results|webcast|events|presentations|financial/i.test(label)) return;
+        const resolved = resolvePublicUrl($(element).attr("href"), pageUrl);
+        if (resolved && !isExcludedIrAudioHost(resolved)) {
+          discoveredPages.add(resolved);
+        }
+      });
+    } catch (err) {
+      // Many IR sites block generic scraping. Keep trying other official candidates.
+    }
+  }
+
+  for (const pageUrl of [...discoveredPages].slice(candidatePages.length, 28)) {
+    try {
+      const html = await fetchHtmlPage(pageUrl);
+      if (!html) continue;
+      audioLinks.push(...extractIrAudioLinks(html, pageUrl, ticker));
+    } catch {
+      // Keep the IR finder best-effort.
+    }
+  }
+
+  const best = audioLinks
+    .filter((link) => link.score > 0)
+    .sort((a, b) => b.score - a.score)[0];
+
+  if (!best) return null;
+
+  return {
+    available: true,
+    provider: "Investor Relations",
+    title: best.title || `${ticker} investor relations audio`,
+    date: null,
+    fiscalYear: null,
+    fiscalPeriod: null,
+    audioUrl: best.audioUrl,
+    transcriptUrl: null,
+    transcript: [],
+    sourceUrl: best.pageUrl
+  };
+}
+
 async function fetchAlphaVantageEarningsCall(ticker, knownFiscalPeriod = null) {
   const apiKey = getAlphaVantageApiKey();
   if (!apiKey) return null;
@@ -4976,7 +5208,8 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
     const audioProviders = [
       ["Finnhub", () => fetchFinnhubEarningsCall(ticker)],
       ["Quartr", () => fetchQuartrEarningsCall(ticker)],
-      ["EarningsCall", () => fetchEarningsCallBiz(ticker, apiBaseUrl)]
+      ["EarningsCall", () => fetchEarningsCallBiz(ticker, apiBaseUrl)],
+      ["Investor Relations", () => resolveWithin(fetchInvestorRelationsAudio(ticker), 12000, null)]
     ];
     let transcriptData = null;
     let audioData = null;

@@ -2610,7 +2610,7 @@ return (
   <div className="earnings-call-panel">
     {isEarningsCallLoading ? (
       <div className="earnings-call-empty">Loading earnings calls...</div>
-    ) : earningsCall?.available && earningsCall?.transcript?.length ? (
+    ) : earningsCall?.available && (earningsCall?.transcript?.length || earningsCall?.audioUrl) ? (
       <>
         <div className="earnings-call-header">
           <div>
@@ -2640,31 +2640,37 @@ return (
           </div>
         )}
 
-        <div className="transcript-reader">
-          <input
-            className="transcript-search"
-            value={transcriptSearch}
-            onChange={(event) => setTranscriptSearch(event.target.value)}
-            placeholder="Search transcript"
-          />
+        {earningsCall.transcript?.length ? (
+          <div className="transcript-reader">
+            <input
+              className="transcript-search"
+              value={transcriptSearch}
+              onChange={(event) => setTranscriptSearch(event.target.value)}
+              placeholder="Search transcript"
+            />
 
-          <div className="transcript-content">
-            {filteredTranscript.length ? (
-              filteredTranscript.map((section) => (
-                <div className="transcript-section" key={section.id}>
-                  <div className="transcript-speaker">
-                    {section.speaker}
+            <div className="transcript-content">
+              {filteredTranscript.length ? (
+                filteredTranscript.map((section) => (
+                  <div className="transcript-section" key={section.id}>
+                    <div className="transcript-speaker">
+                      {section.speaker}
+                    </div>
+                    <p>{section.text}</p>
                   </div>
-                  <p>{section.text}</p>
+                ))
+              ) : (
+                <div className="earnings-call-empty">
+                  No transcript matches that search.
                 </div>
-              ))
-            ) : (
-              <div className="earnings-call-empty">
-                No transcript matches that search.
-              </div>
-            )}
+              )}
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="earnings-call-empty">
+            Transcript is not available from this investor-relations audio source.
+          </div>
+        )}
       </>
     ) : (
       <div className="earnings-call-empty">
