@@ -23,7 +23,7 @@ const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 95;
-const EARNINGS_CALL_VERSION = 3;
+const EARNINGS_CALL_VERSION = 4;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -5237,6 +5237,12 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
           audioData = providerData;
           break;
         }
+        if (providerName === "Investor Relations") {
+          providerErrors.push({
+            provider: "Investor Relations audio",
+            code: "not_found"
+          });
+        }
       } catch (err) {
         providerErrors.push({
           provider: `${providerName} audio`,
@@ -5272,6 +5278,9 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
     const finnhubBlocked = providerErrors.some((error) =>
       /^Finnhub/i.test(error.provider) && Number(error.code) === 403
     );
+    const investorRelationsChecked = providerErrors.some((error) =>
+      /^Investor Relations/i.test(error.provider)
+    );
 
     return res.json({
       available: false,
@@ -5283,9 +5292,13 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
       hasOriginalAudio: false,
       version: EARNINGS_CALL_VERSION,
       errors: providerErrors,
-      message: finnhubBlocked
-        ? "Finnhub was tried, but this API key does not include earnings call transcript/audio access."
-        : "No free native earnings call transcript or original audio is available for this ticker yet."
+      message: investorRelationsChecked && finnhubBlocked
+        ? "Finnhub audio is blocked on this API key, and no public original audio was found on the company's investor relations pages."
+        : finnhubBlocked
+          ? "Finnhub was tried, but this API key does not include earnings call transcript/audio access."
+          : investorRelationsChecked
+            ? "No public original audio was found on the company's investor relations pages."
+            : "No free native earnings call transcript or original audio is available for this ticker yet."
     });
   } catch (err) {
     console.error("EarningsCall native fetch failed:", ticker, err.message);
