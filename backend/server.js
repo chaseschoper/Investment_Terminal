@@ -23,7 +23,7 @@ const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 95;
-const EARNINGS_CALL_VERSION = 4;
+const EARNINGS_CALL_VERSION = 5;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -4854,7 +4854,26 @@ async function getCompanyInvestorRelationsUrl(ticker) {
   }
 }
 
-async function fetchInvestorRelationsAudio(ticker) {
+function isOfficialInvestorRelationsUrl(url, companyUrl) {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./, "").toLowerCase();
+    const roots = getIrCandidateRoots(companyUrl)
+      .map((root) => new URL(root).hostname.replace(/^www\./, "").toLowerCase());
+    return roots.some((rootHost) =>
+      host === rootHost || host.endsWith(`.${rootHost}`)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function buildEarningsAudioProxyUrl(apiBaseUrl, ticker, audioUrl) {
+  const params = new URLSearchParams({ url: audioUrl });
+  return `${apiBaseUrl}/api/earnings-call/${encodeURIComponent(ticker)}/ir-audio?${params}`;
+}
+
+async function fetchInvestorRelationsAudio(ticker, apiBaseUrl = "") {
   const companyUrl = await getCompanyInvestorRelationsUrl(ticker);
   if (!companyUrl) return null;
 
@@ -4906,7 +4925,10 @@ async function fetchInvestorRelationsAudio(ticker) {
     date: null,
     fiscalYear: null,
     fiscalPeriod: null,
-    audioUrl: best.audioUrl,
+    audioUrl: apiBaseUrl
+      ? buildEarningsAudioProxyUrl(apiBaseUrl, ticker, best.audioUrl)
+      : best.audioUrl,
+    rawAudioUrl: best.audioUrl,
     transcriptUrl: null,
     transcript: [],
     sourceUrl: best.pageUrl
@@ -5183,6 +5205,43 @@ app.get("/api/earnings-call/:ticker/audio", async (req, res) => {
   }
 });
 
+app.get("/api/earnings-call/:ticker/ir-audio", async (req, res) => {
+  const ticker = req.params.ticker.trim().toUpperCase();
+  const audioUrl = String(req.query.url || "");
+
+  if (!/^[A-Z0-9.-]{1,15}$/.test(ticker) || !audioUrl) {
+    return res.status(400).json({ error: "Invalid investor relations audio request" });
+  }
+
+  try {
+    const companyUrl = await getCompanyInvestorRelationsUrl(ticker);
+    if (!companyUrl || !isOfficialInvestorRelationsUrl(audioUrl, companyUrl)) {
+      return res.status(403).json({ error: "Audio URL is not from the company's official investor relations site" });
+    }
+
+    const upstream = await axios.get(audioUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        ...(req.headers.range ? { Range: req.headers.range } : {})
+      },
+      responseType: "stream",
+      timeout: 30000,
+      maxRedirects: 4,
+      validateStatus: (status) => status === 200 || status === 206
+    });
+
+    res.status(upstream.status);
+    for (const header of ["content-type", "content-length", "content-range", "accept-ranges"]) {
+      if (upstream.headers[header]) res.setHeader(header, upstream.headers[header]);
+    }
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    return upstream.data.pipe(res);
+  } catch (err) {
+    console.error("Investor relations audio proxy failed:", ticker, err.response?.status || err.message);
+    return res.status(502).json({ error: "Investor relations audio unavailable" });
+  }
+});
+
 app.get("/api/earnings-call/:ticker", async (req, res) => {
   const ticker = req.params.ticker.trim().toUpperCase();
 
@@ -5209,7 +5268,7 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
       ["Finnhub", () => fetchFinnhubEarningsCall(ticker)],
       ["Quartr", () => fetchQuartrEarningsCall(ticker)],
       ["EarningsCall", () => fetchEarningsCallBiz(ticker, apiBaseUrl)],
-      ["Investor Relations", () => resolveWithin(fetchInvestorRelationsAudio(ticker), 12000, null)]
+      ["Investor Relations", () => resolveWithin(fetchInvestorRelationsAudio(ticker, apiBaseUrl), 12000, null)]
     ];
     let transcriptData = null;
     let audioData = null;

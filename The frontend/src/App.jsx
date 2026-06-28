@@ -1738,28 +1738,18 @@ const estimateValue = (value) =>
   areEstimatesRefreshing && (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
     : stockValue(value);
-const normalizedTranscriptSearch = transcriptSearch.trim().toLowerCase();
+const normalizedTranscriptSearch = transcriptSearch.trim().toLowerCase().replace(/\s+/g, " ");
 const filteredTranscript = (earningsCall?.transcript || []).filter((section) =>
   !normalizedTranscriptSearch ||
-  section.speaker?.toLowerCase().includes(normalizedTranscriptSearch) ||
-  section.text?.toLowerCase().includes(normalizedTranscriptSearch)
+  [
+    section.speaker,
+    section.session,
+    section.text
+  ].join(" ").toLowerCase().replace(/\s+/g, " ").includes(normalizedTranscriptSearch)
 );
 const selectedEarningsDay = (earnings?.days || []).find(
   (day) => day.date === selectedEarningsDate
 ) || { date: selectedEarningsDate, events: [] };
-const finnhubAudioBlocked = (earningsCall?.errors || []).some((error) =>
-  /^Finnhub/i.test(error.provider || "") && Number(error.code) === 403
-);
-const investorRelationsAudioNotFound = (earningsCall?.errors || []).some((error) =>
-  /^Investor Relations/i.test(error.provider || "") && error.code === "not_found"
-);
-const originalAudioMessage = investorRelationsAudioNotFound && finnhubAudioBlocked
-  ? "Finnhub audio is blocked on this API key, and no public original audio was found on the company's investor relations pages."
-  : investorRelationsAudioNotFound
-    ? "No public original audio was found on the company's investor relations pages."
-    : finnhubAudioBlocked
-      ? "Finnhub was tried, but this API key does not include original earnings call audio access."
-      : "Original call audio is not available from the free native sources for this ticker.";
 const earningsWeekLabel = earnings?.weekStart && earnings?.weekEnd
   ? `${new Date(`${earnings.weekStart}T12:00:00`).toLocaleDateString(undefined, {
       month: "short",
@@ -2635,16 +2625,12 @@ return (
           </div>
         </div>
 
-        {earningsCall.audioUrl ? (
+        {earningsCall.audioUrl && (
           <audio
             className="earnings-audio-player"
             controls
             src={earningsCall.audioUrl}
           />
-        ) : (
-          <div className="original-audio-missing">
-            {originalAudioMessage}
-          </div>
         )}
 
         {earningsCall.transcript?.length ? (
@@ -2681,7 +2667,7 @@ return (
       </>
     ) : (
       <div className="earnings-call-empty">
-        {earningsCall?.message || "A free native transcript is not available for this ticker yet."}
+        Earnings call audio and transcript are not available for this ticker yet.
       </div>
     )}
   </div>
