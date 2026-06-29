@@ -23,7 +23,7 @@ const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 110;
+const FINANCIAL_HISTORY_VERSION = 112;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -1564,6 +1564,12 @@ function mergeSupplementalHistoricalFields(baseRows = [], supplementalRows = [])
 }
 
 function removeDuplicateInterimAnnualRows(rows) {
+  const annualRowsByYear = new Map();
+  (rows || [])
+    .filter((row) => row?.year && !row?.isInterim)
+    .forEach((row) => {
+      annualRowsByYear.set(Number(row.year), row);
+    });
   const annualYears = new Set(
     (rows || [])
       .filter((row) => row?.year && !row?.isInterim)
@@ -1579,9 +1585,17 @@ function removeDuplicateInterimAnnualRows(rows) {
   if (!duplicateInterimYears.size) return rows;
 
   return (rows || []).filter(
-    (row) =>
-      !row?.isInterim ||
-      !duplicateInterimYears.has(Number(row.year))
+    (row) => {
+      if (!row?.isInterim || !duplicateInterimYears.has(Number(row.year))) {
+        return true;
+      }
+
+      const source = String(row.source || "");
+      if (/current metric fallback|modeled fallback/i.test(source)) return false;
+
+      const annualSource = String(annualRowsByYear.get(Number(row.year))?.source || "");
+      return !/sec annual filing/i.test(annualSource);
+    }
   );
 }
 
@@ -2655,6 +2669,113 @@ async function fetchFmpIncomeStatementHistory(ticker) {
   return [];
 }
 
+const fmpQuarterNumber = (row = {}) => {
+  const periodMatch = String(row.period || "").match(/Q([1-4])/i);
+  if (periodMatch) return Number(periodMatch[1]);
+
+  const date = new Date(row.date);
+  if (Number.isNaN(date.getTime())) return null;
+  return Math.floor(date.getUTCMonth() / 3) + 1;
+};
+
+async function fetchFmpQuarterlyFinancialHistory(ticker) {
+  if (!process.env.FMP_API_KEY) return [];
+  if (!canUseFmp()) return [];
+
+  try {
+    const [incomeData, cashFlowData] = await Promise.all([
+      getFmpData(ticker, "quarterly income statement", [
+        "/stable/income-statement?symbol={ticker}&period=quarter&limit=8",
+        "/api/v3/income-statement/{ticker}?period=quarter&limit=8"
+      ]),
+      getFmpData(ticker, "quarterly cash flow", [
+        "/stable/cash-flow-statement?symbol={ticker}&period=quarter&limit=8",
+        "/api/v3/cash-flow-statement/{ticker}?period=quarter&limit=8"
+      ])
+    ]);
+    const incomeRows = (Array.isArray(incomeData) ? incomeData : incomeData ? [incomeData] : [])
+      .map((row) => ({
+        ...row,
+        fiscalYear: Number(row.calendarYear || row.fiscalYear || String(row.date || "").slice(0, 4)),
+        fiscalQuarter: fmpQuarterNumber(row)
+      }))
+      .filter((row) => row.fiscalYear && row.fiscalQuarter && row.fiscalQuarter < 4)
+      .sort((a, b) => {
+        const yearDiff = a.fiscalYear - b.fiscalYear;
+        if (yearDiff !== 0) return yearDiff;
+        return a.fiscalQuarter - b.fiscalQuarter;
+      });
+    if (!incomeRows.length) return [];
+
+    const cashByYearQuarter = new Map(
+      (Array.isArray(cashFlowData) ? cashFlowData : cashFlowData ? [cashFlowData] : [])
+        .map((row) => {
+          const fiscalYear = Number(row.calendarYear || row.fiscalYear || String(row.date || "").slice(0, 4));
+          const fiscalQuarter = fmpQuarterNumber(row);
+          return [`${fiscalYear}:${fiscalQuarter}`, row];
+        })
+    );
+    const runningByYear = new Map();
+
+    return incomeRows
+      .map((row) => {
+        const key = row.fiscalYear;
+        const previous = runningByYear.get(key) || {};
+        const cash = cashByYearQuarter.get(`${row.fiscalYear}:${row.fiscalQuarter}`) || {};
+        const addBillions = (field, value) => {
+          const current = toBillions(value);
+          return current !== null ? (previous[field] || 0) + current : previous[field] ?? null;
+        };
+        const next = {
+          revenue: addBillions("revenue", row.revenue),
+          earnings: addBillions("earnings", row.netIncome),
+          grossProfit: addBillions("grossProfit", row.grossProfit),
+          operatingIncome: addBillions("operatingIncome", row.operatingIncome),
+          operatingCashflow: addBillions(
+            "operatingCashflow",
+            cash.operatingCashFlow ??
+              cash.operatingCashflow ??
+              cash.netCashProvidedByOperatingActivities
+          ),
+          freeCashflow: addBillions("freeCashflow", cash.freeCashFlow ?? cash.freeCashflow),
+          eps: (previous.eps || 0) + (toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps) || 0)
+        };
+        runningByYear.set(key, next);
+
+        return {
+          year: row.fiscalYear,
+          period: `${row.fiscalYear} Q${row.fiscalQuarter} YTD`,
+          isInterim: true,
+          ...next,
+          sharesOutstanding: toNumberOrNull(
+            row.weightedAverageShsOutDil ??
+              row.weightedAverageShsOutDiluted ??
+              row.weightedAverageShsOut
+          )
+            ? toNumberOrNull(
+                row.weightedAverageShsOutDil ??
+                  row.weightedAverageShsOutDiluted ??
+                  row.weightedAverageShsOut
+              ) / 1000000
+            : null,
+          source: "FMP quarterly financials"
+        };
+      })
+      .filter((row) =>
+        row.revenue !== null ||
+        row.earnings !== null ||
+        row.eps !== null ||
+        row.operatingCashflow !== null ||
+        row.freeCashflow !== null
+      )
+      .slice(-3);
+  } catch (err) {
+    setFmpCooldown(err, "quarterly financials", ticker);
+    console.log("FMP quarterly financials skipped:", ticker, err.response?.status || err.message);
+    return [];
+  }
+}
+
 const parseStockAnalysisNumber = (value) => {
   const text = String(value || "")
     .replace(/[$,%]/g, "")
@@ -3316,6 +3437,14 @@ async function fetchStockData(ticker) {
       return {};
     }), STOCK_PROVIDER_TIMEOUT_MS, {})
   ]);
+  const hasSecInterimRows = (secAnnualMargins.history || []).some((row) => row?.isInterim);
+  const fmpQuarterlyFinancialData = hasSecInterimRows
+    ? []
+    : await resolveWithin(
+        fetchFmpQuarterlyFinancialHistory(ticker),
+        STOCK_PROVIDER_TIMEOUT_MS,
+        []
+      );
   fmpCashFlow = Array.isArray(fmpCashFlowData)
     ? fmpCashFlowData
     : fmpCashFlowData
@@ -3366,7 +3495,7 @@ async function fetchStockData(ticker) {
   );
   const supplementalAnnualData = mergeHistoricalFinancials(
     mergeHistoricalFinancials(
-      secAnnualMargins.history || [],
+      mergeHistoricalFinancials(secAnnualMargins.history || [], fmpQuarterlyFinancialData),
       stockAnalysisFinancialData
     ),
     fmpCashFlowHistory
