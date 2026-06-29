@@ -23,7 +23,7 @@ const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 96;
+const FINANCIAL_HISTORY_VERSION = 100;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -807,6 +807,71 @@ async function fetchSecAnnualMargins(ticker) {
       : grossProfit?.val ?? (
           costOfRevenue?.val !== undefined ? revenue.val - costOfRevenue.val : null
         );
+    const annualHistoryRows = revenueEntries.slice(-6).map((revenueEntry) => {
+      const yearEnd = revenueEntry.end;
+      const annualNetIncome = latestSecAnnualFact(facts, [
+        "NetIncomeLoss",
+        "ProfitLoss",
+        "NetIncomeLossAvailableToCommonStockholdersBasic"
+      ], yearEnd);
+      const annualGrossProfit = latestSecAnnualFact(facts, ["GrossProfit"], yearEnd);
+      const annualCostOfRevenue = latestSecAnnualFact(facts, [
+        "CostOfGoodsAndServicesSold",
+        "CostOfRevenue"
+      ], yearEnd);
+      const annualOperatingIncome = latestSecAnnualFact(
+        facts,
+        ["OperatingIncomeLoss"],
+        yearEnd
+      );
+      const annualOperatingCashFlow = latestSecAnnualFact(facts, [
+        "NetCashProvidedByUsedInOperatingActivities",
+        "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"
+      ], yearEnd);
+      const annualCapitalExpenditures = latestSecAnnualFact(facts, [
+        "PaymentsToAcquirePropertyPlantAndEquipment",
+        "PaymentsToAcquireProductiveAssets",
+        "PaymentsForAdditionsToPropertyPlantAndEquipment",
+        "PaymentsToAcquirePropertyPlantAndEquipmentAndIntangibleAssets"
+      ], yearEnd);
+      const annualEps = latestSecAnnualFact(facts, [
+        "EarningsPerShareDiluted",
+        "EarningsPerShareBasicAndDiluted",
+        "EarningsPerShareBasic"
+      ], yearEnd);
+      const annualGrossProfitValue = annualGrossProfit?.val ?? (
+        annualCostOfRevenue?.val !== undefined
+          ? revenueEntry.val - annualCostOfRevenue.val
+          : null
+      );
+
+      return {
+        year: Number(revenueEntry.fy || yearEnd.slice(0, 4)),
+        period: String(revenueEntry.fy || yearEnd.slice(0, 4)),
+        isInterim: false,
+        revenue: revenueEntry.val / 1000000000,
+        earnings: annualNetIncome?.val !== undefined
+          ? annualNetIncome.val / 1000000000
+          : null,
+        grossProfit:
+          annualGrossProfitValue !== null && annualGrossProfitValue !== undefined
+            ? annualGrossProfitValue / 1000000000
+            : null,
+        operatingIncome: annualOperatingIncome?.val !== undefined
+          ? annualOperatingIncome.val / 1000000000
+          : null,
+        operatingCashflow: annualOperatingCashFlow?.val !== undefined
+          ? annualOperatingCashFlow.val / 1000000000
+          : null,
+        freeCashflow:
+          annualOperatingCashFlow?.val !== undefined &&
+          annualCapitalExpenditures?.val !== undefined
+            ? (annualOperatingCashFlow.val - Math.abs(annualCapitalExpenditures.val)) / 1000000000
+            : null,
+        eps: annualEps?.val ?? null,
+        source: "SEC annual filing"
+      };
+    });
     const data = {
       fiscalYear: Number(revenue.fy || endDate.slice(0, 4)),
       isFinancialCompany,
@@ -827,31 +892,7 @@ async function fetchSecAnnualMargins(ticker) {
           }
         : null,
       history: [
-        previousRevenue
-          ? {
-              year: Number(previousRevenue.end.slice(0, 4)),
-              revenue: previousRevenue.val / 1000000000,
-              earnings: previousNetIncome?.val !== undefined
-                ? previousNetIncome.val / 1000000000
-                : null,
-              operatingCashflow: latestSecAnnualFact(facts, [
-                "NetCashProvidedByUsedInOperatingActivities",
-                "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"
-              ], previousRevenue.end)?.val / 1000000000,
-              eps: null,
-              source: "SEC annual filing"
-            }
-          : null,
-        {
-          year: Number(endDate.slice(0, 4)),
-          revenue: revenue.val / 1000000000,
-          earnings: netIncome?.val !== undefined ? netIncome.val / 1000000000 : null,
-          operatingCashflow: operatingCashFlow?.val !== undefined
-            ? operatingCashFlow.val / 1000000000
-            : null,
-          eps: null,
-          source: "SEC annual filing"
-        },
+        ...annualHistoryRows,
         ...interimRevenueEntries.map((interimRevenueEntry) => {
           const interimFacts = buildInterimFacts(interimRevenueEntry);
           const interimGrossProfitValue = interimFacts?.grossProfit?.val ?? (
@@ -2116,8 +2157,6 @@ function withGuaranteedAnalystSection(data = {}) {
 }
 
 async function fetchYahooTimeSeriesFinancials(ticker) {
-  if (!canUseYahoo()) return [];
-
   try {
     const period1 = Math.floor(new Date("2016-01-01").getTime() / 1000);
     const period2 = Math.floor(Date.now() / 1000);
@@ -2230,8 +2269,6 @@ async function fetchYahooTimeSeriesFinancials(ticker) {
 }
 
 async function fetchYahooFinancialHistory(ticker) {
-  if (!canUseYahoo()) return [];
-
   const timeSeriesHistory = await fetchYahooTimeSeriesFinancials(ticker);
 
   try {
@@ -2291,8 +2328,6 @@ async function fetchYahooYearEndPrices(ticker) {
   if (cached && Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1000) {
     return cached.data;
   }
-
-  if (!canUseYahoo()) return [];
 
   try {
     const response = await axios.get(
@@ -2356,6 +2391,8 @@ async function fetchFmpIncomeStatementHistory(ticker) {
           year: Number(row.calendarYear || String(row.date || "").slice(0, 4)),
           revenue: toBillions(row.revenue),
           earnings: toBillions(row.netIncome),
+          grossProfit: toBillions(row.grossProfit),
+          operatingIncome: toBillions(row.operatingIncome),
           eps: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
           sharesOutstanding: toNumberOrNull(
             row.weightedAverageShsOutDil ??
