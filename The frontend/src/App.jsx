@@ -887,6 +887,8 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
 
 
 useEffect(() => {
+  let isActive = true;
+  let refreshTimer;
   const symbols = [...new Set([
     ...watchlist,
     ...portfolios.flatMap((item) =>
@@ -895,23 +897,33 @@ useEffect(() => {
     ...namedWatchlists.flatMap((list) => list.symbols || [])
   ].map((symbol) => String(symbol || "").trim().toUpperCase()).filter(Boolean))];
 
-  const refreshPrices = () => {
+  const refreshPrices = async () => {
+    if (!isActive) return;
     loadSavedPrices(symbols);
+    const marketIsOpen = getMarketClock(new Date()).tone === "open";
+    refreshTimer = window.setTimeout(
+      refreshPrices,
+      marketIsOpen ? 30 * 1000 : 2 * 60 * 1000
+    );
   };
 
   refreshPrices();
-  const refreshTimer = window.setInterval(refreshPrices, 60 * 1000);
-  return () => window.clearInterval(refreshTimer);
+  return () => {
+    isActive = false;
+    window.clearTimeout(refreshTimer);
+  };
 }, [watchlist, portfolios, namedWatchlists]);
 
 useEffect(() => {
   let isActive = true;
 
   const loadMarketIndices = async () => {
-    setIsMarketLoading(true);
+    if (!marketIndices.length) {
+      setIsMarketLoading(true);
+    }
     try {
       const response = await axios.get(`${API_URL}/api/market-indices`, {
-        timeout: 8000,
+        timeout: 6000,
       });
       if (isActive) {
         const indices = response.data.indices || [];
@@ -930,7 +942,7 @@ useEffect(() => {
   };
 
   loadMarketIndices();
-  const refreshTimer = window.setInterval(loadMarketIndices, 60 * 1000);
+  const refreshTimer = window.setInterval(loadMarketIndices, 30 * 1000);
   return () => {
     isActive = false;
     window.clearInterval(refreshTimer);
@@ -1378,7 +1390,10 @@ const loadUserData = async () => {
       const response =
         await axios.get(
           `${API_URL}/api/prices`,
-          { params: { symbols: symbols.join(",") } }
+          {
+            params: { symbols: symbols.join(",") },
+            timeout: 7000
+          }
         );
 
       const receivedPrices = response.data?.prices || {};
@@ -1406,16 +1421,16 @@ const loadUserData = async () => {
           !isNumber(receivedDetails[symbol]?.percentChange)
       );
 
-      if (missingSymbols.length && attempt < 40) {
+      if (missingSymbols.length && attempt < 2) {
         window.setTimeout(
           () => loadSavedPrices(missingSymbols, attempt + 1),
-          1000
+          8000
         );
       }
 
     } catch (err) {
-      if (attempt < 6) {
-        window.setTimeout(() => loadSavedPrices(symbols, attempt + 1), 1500);
+      if (attempt < 2) {
+        window.setTimeout(() => loadSavedPrices(symbols, attempt + 1), 8000);
       } else {
         console.error(err);
       }
