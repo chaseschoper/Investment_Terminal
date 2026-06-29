@@ -906,11 +906,11 @@ useEffect(() => {
 
   const refreshPrices = async () => {
     if (!isActive) return;
-    loadSavedPrices(symbols);
     const marketIsOpen = getMarketClock(new Date()).tone === "open";
+    loadSavedPrices(symbols, 0, { live: true });
     refreshTimer = window.setTimeout(
       refreshPrices,
-      marketIsOpen ? 30 * 1000 : 2 * 60 * 1000
+      marketIsOpen ? 20 * 1000 : 2 * 60 * 1000
     );
   };
 
@@ -1389,7 +1389,7 @@ const loadUserData = async () => {
     LOAD PORTFOLIO PRICE
   */
 
-  const loadSavedPrices = async (symbols, attempt = 0) => {
+  const loadSavedPrices = async (symbols, attempt = 0, options = {}) => {
     if (!symbols.length) return;
 
     try {
@@ -1398,7 +1398,10 @@ const loadUserData = async () => {
         await axios.get(
           `${API_URL}/api/prices`,
           {
-            params: { symbols: symbols.join(",") },
+            params: {
+              symbols: symbols.join(","),
+              live: options.live ? "1" : undefined
+            },
             timeout: 7000
           }
         );
@@ -1430,14 +1433,14 @@ const loadUserData = async () => {
 
       if (missingSymbols.length && attempt < 2) {
         window.setTimeout(
-          () => loadSavedPrices(missingSymbols, attempt + 1),
+          () => loadSavedPrices(missingSymbols, attempt + 1, options),
           8000
         );
       }
 
     } catch (err) {
       if (attempt < 2) {
-        window.setTimeout(() => loadSavedPrices(symbols, attempt + 1), 8000);
+        window.setTimeout(() => loadSavedPrices(symbols, attempt + 1, options), 8000);
       } else {
         console.error(err);
       }

@@ -4516,6 +4516,7 @@ app.get("/api/prices", async (req, res) => {
 
   if (!symbols.length) return res.json({ prices: {}, details: {} });
 
+  const wantsLiveQuotes = req.query.live === "1" || req.query.live === "true";
   const prices = {};
   const details = {};
   const savedStocks = await Stock.find({ ticker: { $in: symbols } })
@@ -4611,15 +4612,18 @@ app.get("/api/prices", async (req, res) => {
 
   symbols.forEach(hydrateSavedSymbol);
 
-  const missingPriceSymbols = symbols.filter((symbol) => toNumberOrNull(prices[symbol]) === null);
-  const queue = [...missingPriceSymbols.slice(0, 8)];
-  const workerCount = Math.min(4, queue.length);
-  await Promise.all(Array.from({ length: workerCount }, async () => {
+  const symbolsNeedingLive = symbols.filter((symbol) => {
+    const cached = livePriceCache.get(symbol);
+    return wantsLiveQuotes || toNumberOrNull(prices[symbol]) === null || !cached;
+  });
+  const queue = [...symbolsNeedingLive.slice(0, wantsLiveQuotes ? 16 : 8)];
+  const workerCount = Math.min(wantsLiveQuotes ? 6 : 4, queue.length);
+  await resolveWithin(Promise.all(Array.from({ length: workerCount }, async () => {
     while (queue.length) {
       const symbol = queue.shift();
       await refreshSymbolQuote(symbol);
     }
-  }));
+  })), wantsLiveQuotes ? 5500 : 3200, null);
   symbols.forEach(hydrateSavedSymbol);
 
   const staleSymbols = symbols.filter((symbol) => {
