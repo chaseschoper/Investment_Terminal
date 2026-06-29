@@ -33,6 +33,8 @@ const STOCK_INITIAL_SEC_TIMEOUT_MS = 9000;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
+let yahooCooldownUntil = 0;
+let fmpCooldownUntil = 0;
 let secTickerMapPromise;
 let secTickerMapRetryAfter = 0;
 const TICKER_ALIASES = {
@@ -124,6 +126,25 @@ return res.status(401).json({ error: "Invalid token" });
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const isRateLimitError = (err) => err?.response?.status === 429;
+const isTooManyRequestsError = (err) =>
+  err?.response?.status === 429 ||
+  /too many requests|rate limit/i.test(String(err?.message || "")) ||
+  /too many requests|rate limit/i.test(String(err?.response?.data || ""));
+
+function setYahooCooldown(err, label, ticker) {
+  if (!isTooManyRequestsError(err)) return;
+  yahooCooldownUntil = Math.max(yahooCooldownUntil, Date.now() + 2 * 60 * 1000);
+  console.log(`Yahoo cooldown active after ${label}:`, ticker, err.response?.status || err.message);
+}
+
+function setFmpCooldown(err, label, ticker) {
+  if (!isTooManyRequestsError(err)) return;
+  fmpCooldownUntil = Math.max(fmpCooldownUntil, Date.now() + 90 * 1000);
+  console.log(`FMP cooldown active after ${label}:`, ticker, err.response?.status || err.message);
+}
+
+const canUseYahoo = () => Date.now() >= yahooCooldownUntil;
+const canUseFmp = () => Date.now() >= fmpCooldownUntil;
 
 async function getFinnhub(url) {
   const requestUrl = `${url}&token=${process.env.FINNHUB_API_KEY}`;
@@ -149,6 +170,7 @@ function getFinnhubLogoUrl(ticker) {
 
 async function getFmpData(ticker, label, endpoints) {
   if (!process.env.FMP_API_KEY) return null;
+  if (!canUseFmp()) return null;
 
   for (const endpoint of endpoints) {
     const path = endpoint.replace("{ticker}", ticker);
@@ -162,7 +184,9 @@ async function getFmpData(ticker, label, endpoints) {
       if (Array.isArray(data) && !data.length) continue;
       if (data && typeof data === "object") return data;
     } catch (err) {
+      setFmpCooldown(err, label, ticker);
       console.log(`FMP ${label} endpoint skipped:`, ticker, err.response?.status || err.message);
+      if (!canUseFmp()) return null;
     }
   }
 
@@ -1943,6 +1967,8 @@ function withGuaranteedAnalystSection(data = {}) {
 }
 
 async function fetchYahooTimeSeriesFinancials(ticker) {
+  if (!canUseYahoo()) return [];
+
   try {
     const period1 = Math.floor(new Date("2016-01-01").getTime() / 1000);
     const period2 = Math.floor(Date.now() / 1000);
@@ -2048,12 +2074,15 @@ async function fetchYahooTimeSeriesFinancials(ticker) {
       .filter((row) => row.year)
       .sort((a, b) => a.year - b.year);
   } catch (err) {
+    setYahooCooldown(err, "time-series financials", ticker);
     console.log("Yahoo time-series financials skipped:", ticker, err.message);
     return [];
   }
 }
 
 async function fetchYahooFinancialHistory(ticker) {
+  if (!canUseYahoo()) return [];
+
   const timeSeriesHistory = await fetchYahooTimeSeriesFinancials(ticker);
 
   try {
@@ -2102,6 +2131,7 @@ async function fetchYahooFinancialHistory(ticker) {
       mergeHistoricalFinancials(incomeHistory, earningsHistory)
     );
   } catch (err) {
+    setYahooCooldown(err, "financial history", ticker);
     console.log("Yahoo financial history skipped:", ticker, err.message);
     return timeSeriesHistory;
   }
@@ -2112,6 +2142,8 @@ async function fetchYahooYearEndPrices(ticker) {
   if (cached && Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1000) {
     return cached.data;
   }
+
+  if (!canUseYahoo()) return [];
 
   try {
     const response = await axios.get(
@@ -2150,6 +2182,7 @@ async function fetchYahooYearEndPrices(ticker) {
     yearEndPriceCache.set(ticker, { data, fetchedAt: Date.now() });
     return data;
   } catch (err) {
+    setYahooCooldown(err, "year-end prices", ticker);
     console.log("Yahoo year-end prices skipped:", ticker, err.message);
     return [];
   }
@@ -2157,6 +2190,7 @@ async function fetchYahooYearEndPrices(ticker) {
 
 async function fetchFmpIncomeStatementHistory(ticker) {
   if (!process.env.FMP_API_KEY) return [];
+  if (!canUseFmp()) return [];
 
   const urls = [
     `https://financialmodelingprep.com/stable/income-statement?symbol=${ticker}&period=annual&limit=6&apikey=${process.env.FMP_API_KEY}`,
@@ -2192,7 +2226,9 @@ async function fetchFmpIncomeStatementHistory(ticker) {
 
       if (rows.length) return rows;
     } catch (err) {
+      setFmpCooldown(err, "income statement", ticker);
       console.log("FMP income statement skipped:", ticker, err.message);
+      if (!canUseFmp()) return [];
     }
   }
 
@@ -2200,6 +2236,8 @@ async function fetchFmpIncomeStatementHistory(ticker) {
 }
 
 async function fetchYahooSupplementalData(ticker) {
+  if (!canUseYahoo()) return {};
+
   try {
     const [summary, quoteData, chartData] = await Promise.all([
       yahooFinance
@@ -2213,10 +2251,12 @@ async function fetchYahooSupplementalData(ticker) {
           ]
         })
         .catch((err) => {
+          setYahooCooldown(err, "quote summary", ticker);
           console.log("Yahoo quote summary skipped:", ticker, err.message);
           return {};
         }),
       yahooFinance.quote(ticker).catch((err) => {
+        setYahooCooldown(err, "quote", ticker);
         console.log("Yahoo quote skipped:", ticker, err.message);
         return {};
       }),
@@ -2225,6 +2265,7 @@ async function fetchYahooSupplementalData(ticker) {
         interval: "1d",
         return: "array"
       }).catch((err) => {
+        setYahooCooldown(err, "chart range", ticker);
         console.log("Yahoo chart range skipped:", ticker, err.message);
         return { quotes: [] };
       })
@@ -2357,6 +2398,7 @@ async function fetchYahooSupplementalData(ticker) {
       }
     };
   } catch (err) {
+    setYahooCooldown(err, "supplemental data", ticker);
     console.log("Yahoo supplemental data skipped:", ticker, err.message);
     return {};
   }
@@ -2385,6 +2427,8 @@ const resolveWithin = (promise, ms, fallback = null) =>
   });
 
 async function fetchYahooQuickQuote(ticker) {
+  if (!canUseYahoo()) return {};
+
   try {
     const quoteData = await yahooFinance.quote(ticker);
     return {
@@ -2429,6 +2473,7 @@ async function fetchYahooQuickQuote(ticker) {
       analystRatingText: firstText(quoteData.averageAnalystRating)
     };
   } catch (err) {
+    setYahooCooldown(err, "quick quote", ticker);
     console.log("Yahoo quick quote skipped:", ticker, err.message);
     return {};
   }
@@ -3875,7 +3920,7 @@ app.get("/api/market-indices", async (req, res) => {
           "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
           Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
         },
-        timeout: 8000
+        timeout: 4000
       }
     );
     const $ = cheerio.load(response.data || "");
@@ -3895,6 +3940,8 @@ app.get("/api/market-indices", async (req, res) => {
   };
 
   const fetchYahooChartIndex = async (index) => {
+    if (!canUseYahoo()) return null;
+
     const response = await axios.get(
       `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(index.yahooSymbol)}`,
       {
@@ -3939,6 +3986,8 @@ app.get("/api/market-indices", async (req, res) => {
   };
 
   const fetchYahooIndex = async (index) => {
+    if (!canUseYahoo()) return null;
+
     const quote = await yahooFinance.quote(index.yahooSymbol);
     const indexQuote = buildIndexQuote(
       index,
@@ -3964,6 +4013,9 @@ app.get("/api/market-indices", async (req, res) => {
         const indexQuote = await fetchIndex(index);
         if (indexQuote) return indexQuote;
       } catch (err) {
+        if (/^Yahoo/i.test(label)) {
+          setYahooCooldown(err, `market index ${label}`, index.label);
+        }
         console.log(`Market index ${label} skipped:`, index.label, err.response?.status || err.message);
       }
     }
@@ -3981,6 +4033,10 @@ app.get("/api/market-indices", async (req, res) => {
       fetchedAt: Date.now(),
       data
     });
+  }
+
+  if (!data.indices.length && cached?.data?.indices?.length) {
+    return res.json({ ...cached.data, stale: true });
   }
 
   return res.json(data);
@@ -4001,6 +4057,9 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     const cached = priceHistoryCache.get(cacheKey);
     if (cached && Date.now() - cached.fetchedAt < rangeConfig.ttl) {
       return res.json(cached.data);
+    }
+    if (!canUseYahoo() && cached?.data) {
+      return res.json({ ...cached.data, stale: true });
     }
 
     const params = {
@@ -4092,6 +4151,11 @@ app.get("/api/price-history/:ticker", async (req, res) => {
 
     return res.json(data);
   } catch (err) {
+    setYahooCooldown(err, "price history", req.params.ticker);
+    const cached = priceHistoryCache.get(`${req.params.ticker.trim().toUpperCase()}:${String(req.query.range || "1D").trim().toUpperCase()}`);
+    if (cached?.data) {
+      return res.json({ ...cached.data, stale: true });
+    }
     console.log("Price history failed:", req.params.ticker, err.response?.status || err.message);
     return res.status(502).json({ error: "Price history unavailable" });
   }

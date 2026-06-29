@@ -430,6 +430,7 @@ const DEFAULT_PORTFOLIO = {
   positions: []
 };
 const SAVED_LISTS_STORAGE_KEY = "mrktrally-saved-lists";
+const MARKET_INDICES_STORAGE_KEY = "mrktrally-market-indices";
 const MARKET_INDEX_ORDER = [
   { key: "sp500", label: "S&P 500" },
   { key: "dow", label: "Dow Jones" },
@@ -835,7 +836,14 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
     useState({});
 
   const [marketIndices, setMarketIndices] =
-    useState([]);
+    useState(() => {
+      try {
+        const cached = JSON.parse(localStorage.getItem(MARKET_INDICES_STORAGE_KEY) || "[]");
+        return Array.isArray(cached) ? cached : [];
+      } catch {
+        return [];
+      }
+    });
 
   const [isMarketLoading, setIsMarketLoading] =
     useState(true);
@@ -906,7 +914,11 @@ useEffect(() => {
         timeout: 8000,
       });
       if (isActive) {
-        setMarketIndices(response.data.indices || []);
+        const indices = response.data.indices || [];
+        setMarketIndices(indices);
+        if (indices.length) {
+          localStorage.setItem(MARKET_INDICES_STORAGE_KEY, JSON.stringify(indices));
+        }
       }
     } catch (error) {
       console.error("Market indices failed", error);
@@ -1727,11 +1739,11 @@ const areEstimatesRefreshing =
   isStockRefreshing &&
   stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION;
 const stockValue = (value) =>
-  isStockLoading || (isStockRefreshing && (value === "N/A" || value === null || value === undefined))
+  isStockLoading && !stockData?.symbol
     ? "Loading..."
     : value;
 const estimateValue = (value) =>
-  areEstimatesRefreshing && (value === "N/A" || value === null || value === undefined)
+  isStockLoading && !stockData?.symbol && (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
     : stockValue(value);
 const selectedEarningsDay = (earnings?.days || []).find(
