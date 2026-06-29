@@ -23,7 +23,7 @@ const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 95;
+const FINANCIAL_HISTORY_VERSION = 96;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -1030,16 +1030,69 @@ const normalizeQuotePayload = (quote = {}, fallback = {}) => ({
   o: firstNumber(quote.o, fallback.open)
 });
 
-async function getPrimaryQuote(ticker) {
+async function fetchYahooChartQuote(ticker) {
   try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=5d&interval=1d`;
+    const { data } = await axios.get(url, {
+      timeout: 4000,
+      headers: {
+        "User-Agent": "Mozilla/5.0"
+      }
+    });
+    const result = data?.chart?.result?.[0] || {};
+    const meta = result.meta || {};
+    const quote = result.indicators?.quote?.[0] || {};
+    const closes = (quote.close || []).filter((value) => toNumberOrNull(value) !== null);
+    const price = firstNumber(meta.regularMarketPrice, closes.at(-1));
+    const previousClose = firstNumber(meta.previousClose, meta.chartPreviousClose, closes.at(-2));
+    const change = price !== null && previousClose !== null
+      ? price - previousClose
+      : null;
+    const percentChange = change !== null && previousClose
+      ? (change / previousClose) * 100
+      : null;
+
     return normalizeQuotePayload(
-      await getFinnhub(`https://finnhub.io/api/v1/quote?symbol=${ticker}`)
+      {
+        c: price,
+        d: change,
+        dp: percentChange,
+        pc: previousClose,
+        h: quote.high?.filter((value) => toNumberOrNull(value) !== null).at(-1),
+        l: quote.low?.filter((value) => toNumberOrNull(value) !== null).at(-1),
+        o: quote.open?.filter((value) => toNumberOrNull(value) !== null).at(-1)
+      },
+      {}
     );
   } catch (err) {
-    console.log("Finnhub quote skipped:", ticker, err.response?.status || err.message);
-    const yahooData = await getYahooSupplementalData(ticker);
-    return normalizeQuotePayload({}, yahooData);
+    setYahooCooldown(err, "chart quote", ticker);
+    console.log("Yahoo chart quote skipped:", ticker, err.response?.status || err.message);
+    return {};
   }
+}
+
+async function getPrimaryQuote(ticker, previousData = {}) {
+  const previousQuote = normalizeQuotePayload({}, previousData);
+
+  try {
+    const finnhubQuote = normalizeQuotePayload(
+      await getFinnhub(`https://finnhub.io/api/v1/quote?symbol=${ticker}`),
+      previousData
+    );
+
+    if (finnhubQuote.c) return finnhubQuote;
+  } catch (err) {
+    console.log("Finnhub quote skipped:", ticker, err.response?.status || err.message);
+  }
+
+  const chartQuote = await fetchYahooChartQuote(ticker);
+
+  if (chartQuote.c) {
+    return normalizeQuotePayload(chartQuote, previousData);
+  }
+
+  const yahooData = await getYahooSupplementalData(ticker);
+  return normalizeQuotePayload({}, { ...previousData, ...yahooData }) || previousQuote;
 }
 
 const sanitizeForwardEps = (candidate, historicalFallback) => {
@@ -1887,10 +1940,105 @@ function withGuaranteedAnalystSection(data = {}) {
       source: "Modeled fallback"
     };
   });
-  const guaranteedRevenueData = mergeHistoricalFinancials(
+  const guaranteedRevenueBaseData = mergeHistoricalFinancials(
     revenueRows,
     modeledRevenueData
   );
+  const fallbackHistoryYear = Math.max(
+    latestYear,
+    new Date().getFullYear()
+  );
+  const hasOperatingCashflowHistory = guaranteedRevenueBaseData.some(
+    (row) => toNumberOrNull(row.operatingCashflow) !== null
+  );
+  const hasFreeCashflowHistory = guaranteedRevenueBaseData.some(
+    (row) => toNumberOrNull(row.freeCashflow) !== null
+  );
+  const hasSharesOutstandingHistory = guaranteedRevenueBaseData.some(
+    (row) => toNumberOrNull(row.sharesOutstanding) !== null
+  );
+  const fallbackOperatingCashflow = toNumberOrNull(data.operatingCashflow);
+  const fallbackFreeCashflow = toNumberOrNull(freeCashflow);
+  const fallbackCashflowRows = [];
+
+  if (
+    (!hasOperatingCashflowHistory && fallbackOperatingCashflow !== null) ||
+    (!hasFreeCashflowHistory && fallbackFreeCashflow !== null) ||
+    (!hasSharesOutstandingHistory && sharesOutstanding !== null)
+  ) {
+    fallbackCashflowRows.push({
+      year: fallbackHistoryYear,
+      period: "Current",
+      isInterim: true,
+      operatingCashflow: !hasOperatingCashflowHistory && fallbackOperatingCashflow !== null
+        ? fallbackOperatingCashflow / 1000000000
+        : null,
+      freeCashflow: !hasFreeCashflowHistory && fallbackFreeCashflow !== null
+        ? fallbackFreeCashflow / 1000000000
+        : null,
+      sharesOutstanding: !hasSharesOutstandingHistory && sharesOutstanding !== null
+        ? sharesOutstanding
+        : null,
+      source: "Current metric fallback"
+    });
+  }
+
+  const guaranteedRevenueData = [
+    ...guaranteedRevenueBaseData,
+    ...fallbackCashflowRows
+  ].sort((a, b) => {
+    const yearDiff = Number(a.year) - Number(b.year);
+    if (yearDiff !== 0) return yearDiff;
+    if (Boolean(a.isInterim) !== Boolean(b.isInterim)) {
+      return a.isInterim ? 1 : -1;
+    }
+    return String(a.period || "").localeCompare(String(b.period || ""));
+  });
+  const suppliedMarginHistory = Array.isArray(data.marginHistory)
+    ? data.marginHistory
+    : [];
+  const hasGrossMarginHistory = suppliedMarginHistory.some(
+    (row) => toNumberOrNull(row.grossMargin) !== null
+  );
+  const hasOperatingMarginHistory = suppliedMarginHistory.some(
+    (row) => toNumberOrNull(row.operatingMargin) !== null
+  );
+  const hasProfitMarginHistory = suppliedMarginHistory.some(
+    (row) => toNumberOrNull(row.profitMargin) !== null
+  );
+  const fallbackMarginRows = [];
+
+  const fallbackGrossMargins = toNumberOrNull(grossMargins);
+  const fallbackOperatingMargins = toNumberOrNull(operatingMargins);
+  const fallbackProfitMargins = toNumberOrNull(profitMargins);
+
+  if (
+    (!hasGrossMarginHistory && fallbackGrossMargins !== null) ||
+    (!hasOperatingMarginHistory && fallbackOperatingMargins !== null) ||
+    (!hasProfitMarginHistory && fallbackProfitMargins !== null)
+  ) {
+    fallbackMarginRows.push({
+      year: fallbackHistoryYear,
+      period: "Current",
+      isInterim: true,
+      grossMargin: !hasGrossMarginHistory ? fallbackGrossMargins : null,
+      operatingMargin: !hasOperatingMarginHistory ? fallbackOperatingMargins : null,
+      profitMargin: !hasProfitMarginHistory ? fallbackProfitMargins : null,
+      source: "Current metric fallback"
+    });
+  }
+
+  const guaranteedMarginHistory = [
+    ...suppliedMarginHistory,
+    ...fallbackMarginRows
+  ].sort((a, b) => {
+    const yearDiff = Number(a.year) - Number(b.year);
+    if (yearDiff !== 0) return yearDiff;
+    if (Boolean(a.isInterim) !== Boolean(b.isInterim)) {
+      return a.isInterim ? 1 : -1;
+    }
+    return String(a.period || "").localeCompare(String(b.period || ""));
+  });
   const guaranteedRevenueHistory = (data.revenueHistory || []).some(
     (row) => toNumberOrNull(row.revenue) !== null
   )
@@ -1962,6 +2110,7 @@ function withGuaranteedAnalystSection(data = {}) {
       ? suppliedAnalystEstimates
       : fallbackAnalystEstimates,
     revenueHistory: guaranteedRevenueHistory,
+    marginHistory: guaranteedMarginHistory,
     revenueData: guaranteedRevenueData
   };
 }
@@ -2497,8 +2646,26 @@ async function publishFastStockSnapshot(ticker) {
 }
 
 async function buildFastStockSnapshot(ticker, previousData = {}) {
-  const yahooData = await fetchYahooQuickQuote(ticker);
-  if (!yahooData?.price) return null;
+  const [yahooData, chartQuote] = await Promise.all([
+    resolveWithin(fetchYahooQuickQuote(ticker), 900, {}),
+    resolveWithin(fetchYahooChartQuote(ticker), 1200, {})
+  ]);
+  const chartData = chartQuote?.c
+    ? {
+        price: chartQuote.c,
+        change: chartQuote.d,
+        percentChange: chartQuote.dp,
+        previousClose: chartQuote.pc,
+        high: chartQuote.h,
+        low: chartQuote.l,
+        open: chartQuote.o
+      }
+    : {};
+  const fastData = {
+    ...chartData,
+    ...yahooData
+  };
+  if (!fastData?.price) return null;
 
   const definedValues = (data = {}) => Object.fromEntries(
     Object.entries(data).filter(([, value]) => value !== null && value !== undefined)
@@ -2506,20 +2673,20 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
   const analystEstimates = {
     currentYear: {
       ...(previousData.analystEstimates?.currentYear || {}),
-      ...definedValues(yahooData.analystEstimates?.currentYear)
+      ...definedValues(fastData.analystEstimates?.currentYear)
     },
     nextYear: {
       ...(previousData.analystEstimates?.nextYear || {}),
-      ...definedValues(yahooData.analystEstimates?.nextYear)
+      ...definedValues(fastData.analystEstimates?.nextYear)
     }
   };
   const nextEps = toNumberOrNull(analystEstimates.nextYear.eps);
   return withGuaranteedAnalystSection({
     ...previousData,
-    ...definedValues(yahooData),
+    ...definedValues(fastData),
     forwardPE: firstNumber(
-      yahooData.forwardPE,
-      nextEps > 0 ? yahooData.price / nextEps : null,
+      fastData.forwardPE,
+      nextEps > 0 ? fastData.price / nextEps : null,
       previousData.forwardPE
     ),
     analystEstimates
@@ -2624,7 +2791,7 @@ async function publishChartHistorySnapshot(ticker, previousData = {}, secAnnualM
 async function fetchStockData(ticker) {
   const previousStock = await Stock.findOne({ ticker }).lean().catch(() => null);
   const previousData = previousStock?.data || null;
-  const quotePromise = getPrimaryQuote(ticker);
+  const quotePromise = getPrimaryQuote(ticker, previousData || {});
   const profilePromise = getFinnhub(`https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}`).catch((err) => {
     console.log("Profile skipped:", ticker, err.message);
     return {};
@@ -4299,6 +4466,31 @@ app.get("/api/stock/:ticker", async (req, res) => {
         const fallbackData = stock.data && Object.keys(stock.data).length
           ? stock.data
           : buildMinimalStockSnapshot(ticker);
+        const shouldRetryFailedSnapshot =
+          toNumberOrNull(fallbackData.price) === null;
+
+        if (shouldRetryFailedSnapshot) {
+          const quickData = await getImmediateStockSnapshot(ticker, fallbackData);
+          await Stock.findOneAndUpdate(
+            { ticker },
+            {
+              status: "pending",
+              data: quickData,
+              error: null,
+              updatedAt: new Date()
+            }
+          );
+          startStockFetch(ticker);
+
+          return res.json({
+            ticker: stock.ticker,
+            status: "ready",
+            refreshing: true,
+            ...quickData,
+            updatedAt: new Date()
+          });
+        }
+
         const responseData = withGuaranteedAnalystSection(fallbackData);
         const shouldKeepPolling =
           !hasCompleteChartHistory({ data: responseData }) ||
