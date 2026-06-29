@@ -23,7 +23,7 @@ const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 112;
+const FINANCIAL_HISTORY_VERSION = 113;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -1584,19 +1584,19 @@ function removeDuplicateInterimAnnualRows(rows) {
 
   if (!duplicateInterimYears.size) return rows;
 
-  return (rows || []).filter(
-    (row) => {
-      if (!row?.isInterim || !duplicateInterimYears.has(Number(row.year))) {
-        return true;
-      }
+  return (rows || []).filter((row) => {
+    if (!row?.year || !duplicateInterimYears.has(Number(row.year))) return true;
 
-      const source = String(row.source || "");
+    const source = String(row.source || "");
+    const annualSource = String(annualRowsByYear.get(Number(row.year))?.source || "");
+
+    if (row.isInterim) {
       if (/current metric fallback|modeled fallback/i.test(source)) return false;
-
-      const annualSource = String(annualRowsByYear.get(Number(row.year))?.source || "");
       return !/sec annual filing/i.test(annualSource);
     }
-  );
+
+    return /sec annual filing/i.test(source);
+  });
 }
 
 function getRecentEarningsReleaseAnnualRows(ticker) {
@@ -2115,7 +2115,7 @@ function withGuaranteedAnalystSection(data = {}) {
       .filter((row) => row?.isInterim && row?.period !== "Current")
       .map((row) => Number(row.year))
   );
-  const guaranteedRevenueData = guaranteedRevenueRows
+  const guaranteedRevenueData = removeDuplicateInterimAnnualRows(guaranteedRevenueRows
     .filter((row) =>
       !(
         row?.source === "Current metric fallback" &&
@@ -2124,13 +2124,13 @@ function withGuaranteedAnalystSection(data = {}) {
       )
     )
     .sort((a, b) => {
-    const yearDiff = Number(a.year) - Number(b.year);
-    if (yearDiff !== 0) return yearDiff;
-    if (Boolean(a.isInterim) !== Boolean(b.isInterim)) {
-      return a.isInterim ? 1 : -1;
-    }
-    return String(a.period || "").localeCompare(String(b.period || ""));
-  });
+      const yearDiff = Number(a.year) - Number(b.year);
+      if (yearDiff !== 0) return yearDiff;
+      if (Boolean(a.isInterim) !== Boolean(b.isInterim)) {
+        return a.isInterim ? 1 : -1;
+      }
+      return String(a.period || "").localeCompare(String(b.period || ""));
+    }));
   const suppliedMarginHistory = Array.isArray(data.marginHistory)
     ? data.marginHistory
     : [];
