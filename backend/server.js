@@ -23,7 +23,7 @@ const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 103;
+const FINANCIAL_HISTORY_VERSION = 106;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -2106,6 +2106,29 @@ function withGuaranteedAnalystSection(data = {}) {
   const suppliedMarginHistory = Array.isArray(data.marginHistory)
     ? data.marginHistory
     : [];
+  const latestInterimRevenueForMargins = [...guaranteedRevenueData]
+    .filter((row) => row?.isInterim && toNumberOrNull(row.revenue) !== null)
+    .sort((a, b) => {
+      const yearDiff = Number(a.year) - Number(b.year);
+      if (yearDiff !== 0) return yearDiff;
+      return String(a.period || "").localeCompare(String(b.period || ""));
+    })
+    .at(-1);
+  const latestInterimMarginPeriod =
+    latestInterimRevenueForMargins?.period ||
+    (latestInterimRevenueForMargins ? String(latestInterimRevenueForMargins.year) : null);
+  const hasLatestInterimMarginRow =
+    latestInterimRevenueForMargins &&
+    suppliedMarginHistory.some((row) =>
+      row?.isInterim &&
+      Number(row.year) === Number(latestInterimRevenueForMargins.year) &&
+      (row.period || String(row.year)) === latestInterimMarginPeriod &&
+      (
+        toNumberOrNull(row.grossMargin) !== null ||
+        toNumberOrNull(row.operatingMargin) !== null ||
+        toNumberOrNull(row.profitMargin) !== null
+      )
+    );
   const hasGrossMarginHistory = suppliedMarginHistory.some(
     (row) => toNumberOrNull(row.grossMargin) !== null
   );
@@ -2120,6 +2143,28 @@ function withGuaranteedAnalystSection(data = {}) {
   const fallbackGrossMargins = toNumberOrNull(grossMargins);
   const fallbackOperatingMargins = toNumberOrNull(operatingMargins);
   const fallbackProfitMargins = toNumberOrNull(profitMargins);
+  const interimRevenueForMargin = toNumberOrNull(latestInterimRevenueForMargins?.revenue);
+  const interimMarginPercent = (value) => {
+    const number = toNumberOrNull(value);
+    return number !== null && interimRevenueForMargin
+      ? (number / interimRevenueForMargin) * 100
+      : null;
+  };
+  const interimGrossMargin = interimMarginPercent(latestInterimRevenueForMargins?.grossProfit);
+  const interimOperatingMargin = interimMarginPercent(latestInterimRevenueForMargins?.operatingIncome);
+  const interimProfitMargin = interimMarginPercent(latestInterimRevenueForMargins?.earnings);
+
+  if (latestInterimRevenueForMargins && !hasLatestInterimMarginRow) {
+    fallbackMarginRows.push({
+      year: latestInterimRevenueForMargins.year,
+      period: latestInterimMarginPeriod,
+      isInterim: true,
+      grossMargin: firstNumber(interimGrossMargin, fallbackGrossMargins),
+      operatingMargin: firstNumber(interimOperatingMargin, fallbackOperatingMargins),
+      profitMargin: firstNumber(interimProfitMargin, fallbackProfitMargins),
+      source: latestInterimRevenueForMargins.source || "Current interim fallback"
+    });
+  }
 
   if (
     (!hasGrossMarginHistory && fallbackGrossMargins !== null) ||
@@ -2137,10 +2182,24 @@ function withGuaranteedAnalystSection(data = {}) {
     });
   }
 
-  const guaranteedMarginHistory = [
+  const marginRowsWithFallback = [
     ...suppliedMarginHistory,
     ...fallbackMarginRows
-  ].sort((a, b) => {
+  ];
+  const interimMarginYears = new Set(
+    marginRowsWithFallback
+      .filter((row) => row?.isInterim)
+      .map((row) => Number(row.year))
+  );
+  const guaranteedMarginHistory = marginRowsWithFallback
+    .filter((row) =>
+      !(
+        row?.source === "Modeled fallback" &&
+        !row?.isInterim &&
+        interimMarginYears.has(Number(row.year))
+      )
+    )
+    .sort((a, b) => {
     const yearDiff = Number(a.year) - Number(b.year);
     if (yearDiff !== 0) return yearDiff;
     if (Boolean(a.isInterim) !== Boolean(b.isInterim)) {
@@ -3203,7 +3262,6 @@ async function fetchStockData(ticker) {
     .slice(-7));
   const knownFinancialInstitution = KNOWN_FINANCIAL_INSTITUTIONS.has(ticker);
   const latestRawMarginRow =
-    marginHistory.filter((row) => Number(row.year) <= 2025).at(-1) ||
     marginHistory.at(-1) ||
     {};
   const needsFinancialMarginFallback =
@@ -3236,7 +3294,6 @@ async function fetchStockData(ticker) {
     );
   }
   const latestVisibleMarginRow =
-    marginHistory.filter((row) => Number(row.year) <= 2025).at(-1) ||
     marginHistory.at(-1) ||
     {};
   const yearEndPrices = new Map(
@@ -3263,6 +3320,33 @@ async function fetchStockData(ticker) {
     })
     .filter((row) => row.pe !== null && Math.abs(row.pe) < 1000)
     .slice(-6);
+  const latestInterimPeRow = [...revenueData]
+    .filter((row) =>
+      row?.isInterim &&
+      toNumberOrNull(row.eps) !== null &&
+      toNumberOrNull(row.eps) !== 0
+    )
+    .sort((a, b) => {
+      const yearDiff = Number(a.year) - Number(b.year);
+      if (yearDiff !== 0) return yearDiff;
+      return String(a.period || "").localeCompare(String(b.period || ""));
+    })
+    .at(-1);
+
+  if (latestInterimPeRow && quote?.c) {
+    const interimEps = toNumberOrNull(latestInterimPeRow.eps);
+    historicalPe = [
+      ...historicalPe,
+      {
+        year: latestInterimPeRow.year,
+        period: latestInterimPeRow.period || String(latestInterimPeRow.year),
+        isInterim: true,
+        pe: quote.c / interimEps,
+        price: quote.c,
+        eps: interimEps
+      }
+    ].filter((row) => row.pe !== null && Math.abs(row.pe) < 1000).slice(-7);
+  }
 
   if (!quote || !quote.c || quote.c === 0) {
     throw new Error("No price returned");
@@ -3606,7 +3690,12 @@ async function fetchStockData(ticker) {
     yahooSupplementalData.pe,
     metrics.peNormalizedAnnual
   );
-  if (reportedPE !== null && Number.isFinite(reportedPE) && Math.abs(reportedPE) < 1000) {
+  if (
+    !latestInterimPeRow &&
+    reportedPE !== null &&
+    Number.isFinite(reportedPE) &&
+    Math.abs(reportedPE) < 1000
+  ) {
     historicalPe = [
       ...historicalPe,
       {
