@@ -59,6 +59,14 @@ const formatIndexPrice = (value) =>
     minimumFractionDigits: 2,
   }) : "--";
 
+const chunkSymbols = (symbols, size = 10) => {
+  const chunks = [];
+  for (let index = 0; index < symbols.length; index += size) {
+    chunks.push(symbols.slice(index, index + size));
+  }
+  return chunks;
+};
+
 const STOCK_CHART_RANGES = ["1D", "1W", "1M", "1Y", "YTD", "5Y", "10Y", "MAX"];
 
 const formatStockChartAxisLabel = (value, range) => {
@@ -1393,21 +1401,25 @@ const loadUserData = async () => {
     if (!symbols.length) return;
 
     try {
+      const symbolChunks = chunkSymbols(symbols, options.live ? 8 : 12);
+      const receivedPrices = {};
+      const receivedDetails = {};
 
-      const response =
-        await axios.get(
+      for (const symbolChunk of symbolChunks) {
+        const response = await axios.get(
           `${API_URL}/api/prices`,
           {
             params: {
-              symbols: symbols.join(","),
+              symbols: symbolChunk.join(","),
               live: options.live ? "1" : undefined
             },
-            timeout: 7000
+            timeout: options.live ? 10000 : 7000
           }
         );
+        Object.assign(receivedPrices, response.data?.prices || {});
+        Object.assign(receivedDetails, response.data?.details || {});
+      }
 
-      const receivedPrices = response.data?.prices || {};
-      const receivedDetails = response.data?.details || {};
       setPortfolioPrices((prev) => ({ ...prev, ...receivedPrices }));
       setSavedSymbolDetails((prev) => {
         const next = { ...prev };

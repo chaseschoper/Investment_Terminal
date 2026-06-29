@@ -4616,14 +4616,14 @@ app.get("/api/prices", async (req, res) => {
     const cached = livePriceCache.get(symbol);
     return wantsLiveQuotes || toNumberOrNull(prices[symbol]) === null || !cached;
   });
-  const queue = [...symbolsNeedingLive.slice(0, wantsLiveQuotes ? 16 : 8)];
-  const workerCount = Math.min(wantsLiveQuotes ? 6 : 4, queue.length);
+  const queue = [...symbolsNeedingLive];
+  const workerCount = Math.min(wantsLiveQuotes ? 5 : 4, queue.length);
   await resolveWithin(Promise.all(Array.from({ length: workerCount }, async () => {
     while (queue.length) {
       const symbol = queue.shift();
       await refreshSymbolQuote(symbol);
     }
-  })), wantsLiveQuotes ? 5500 : 3200, null);
+  })), wantsLiveQuotes ? 6500 : 3200, null);
   symbols.forEach(hydrateSavedSymbol);
 
   const staleSymbols = symbols.filter((symbol) => {
