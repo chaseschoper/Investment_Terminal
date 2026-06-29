@@ -1141,8 +1141,8 @@ useEffect(() => {
       setStockData(response.data);
       setIsStockLoading(false);
 
-      if (response.data.refreshing && attempt < 30) {
-        scheduleRetry(1000);
+      if (response.data.refreshing && attempt < 150) {
+        scheduleRetry(attempt < 30 ? 1000 : 2500);
       }
 
       setPortfolioPrices((prev) => ({

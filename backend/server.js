@@ -26,9 +26,10 @@ const priceHistoryCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 95;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
-const STOCK_FAILED_RETRY_MS = 2 * 60 * 1000;
-const STOCK_PROVIDER_TIMEOUT_MS = 5000;
-const STOCK_SLOW_PROVIDER_TIMEOUT_MS = 5500;
+const STOCK_FAILED_RETRY_MS = 30 * 1000;
+const STOCK_PROVIDER_TIMEOUT_MS = 8000;
+const STOCK_SLOW_PROVIDER_TIMEOUT_MS = 10000;
+const STOCK_INITIAL_SEC_TIMEOUT_MS = 9000;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -2595,7 +2596,7 @@ async function fetchStockData(ticker) {
     console.log("Price target skipped:", ticker, err.message);
     return {};
   });
-  const secAnnualMarginsPromise = resolveWithin(fetchSecAnnualMargins(ticker), 4500, {});
+  const secAnnualMarginsPromise = resolveWithin(fetchSecAnnualMargins(ticker), STOCK_INITIAL_SEC_TIMEOUT_MS, {});
 
   const quote = await quotePromise;
   const [profile, metricData, financials, priceTarget] = await Promise.all([
@@ -4228,11 +4229,14 @@ app.get("/api/stock/:ticker", async (req, res) => {
           ? stock.data
           : buildMinimalStockSnapshot(ticker);
         const responseData = withGuaranteedAnalystSection(fallbackData);
+        const shouldKeepPolling =
+          !hasCompleteChartHistory({ data: responseData }) ||
+          !hasCompleteSupplementalData({ data: responseData });
 
         return res.json({
           ticker: stock.ticker,
           status: "ready",
-          refreshing: false,
+          refreshing: shouldKeepPolling,
           ...responseData,
           error: stock.error,
           updatedAt: stock.updatedAt
