@@ -33,6 +33,7 @@ const STOCK_INITIAL_SEC_TIMEOUT_MS = 9000;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
+const activePriceRefreshes = new Set();
 let marketIndexRefreshPromise = null;
 let yahooCooldownUntil = 0;
 let fmpCooldownUntil = 0;
@@ -4522,7 +4523,7 @@ app.get("/api/prices", async (req, res) => {
     .lean();
   const savedBySymbol = new Map(savedStocks.map((stock) => [stock.ticker, stock.data || {}]));
 
-  const refreshSymbolQuote = async (symbol) => {
+  const hydrateSavedSymbol = (symbol) => {
     const savedData = savedBySymbol.get(symbol) || {};
     const savedPrice = toNumberOrNull(savedData.price);
     const savedPreviousClose = toNumberOrNull(savedData.previousClose);
@@ -4537,50 +4538,81 @@ app.get("/api/prices", async (req, res) => {
           ? ((savedPrice - savedPreviousClose) / savedPreviousClose) * 100
           : null
     };
+    if (savedPrice !== null && savedPrice > 0) prices[symbol] = savedPrice;
 
     const cached = livePriceCache.get(symbol);
-    if (cached && Date.now() - cached.fetchedAt < 30 * 1000) {
+    if (cached) {
       prices[symbol] = cached.price;
       details[symbol] = {
         ...details[symbol],
         change: toNumberOrNull(cached.change) ?? details[symbol].change,
         percentChange: toNumberOrNull(cached.percentChange) ?? details[symbol].percentChange
       };
-    } else {
-      try {
-        const quote = await getFinnhub(`https://finnhub.io/api/v1/quote?symbol=${symbol}`);
-        const price = toNumberOrNull(quote?.c);
-        const previousClose = toNumberOrNull(quote?.pc);
-        const change = toNumberOrNull(quote?.d);
-        const providerPercentChange = toNumberOrNull(quote?.dp);
-        const percentChange = providerPercentChange !== null
-          ? providerPercentChange
-          : price !== null && previousClose > 0
-            ? ((price - previousClose) / previousClose) * 100
-            : null;
-        if (price !== null && price > 0) {
-          prices[symbol] = price;
-          livePriceCache.set(symbol, {
-            price,
-            change,
-            percentChange,
-            fetchedAt: Date.now()
-          });
-        }
-        details[symbol] = {
-          ...details[symbol],
-          change: change ?? details[symbol].change,
-          percentChange: percentChange ?? details[symbol].percentChange
-        };
-      } catch (err) {
-        console.log("Saved-symbol price skipped:", symbol, err.response?.status || err.message);
-      }
     }
-
-    if (!prices[symbol] && savedPrice !== null && savedPrice > 0) prices[symbol] = savedPrice;
   };
 
-  const queue = [...symbols];
+  const refreshSymbolQuote = async (symbol) => {
+    const cached = livePriceCache.get(symbol);
+    if (cached && Date.now() - cached.fetchedAt < 45 * 1000) return;
+
+    try {
+      let quote = await resolveWithin(
+        getFinnhub(`https://finnhub.io/api/v1/quote?symbol=${symbol}`),
+        2500,
+        null
+      );
+      if (!quote || toNumberOrNull(quote.c) === null) {
+        quote = await resolveWithin(fetchYahooChartQuote(symbol), 2500, null);
+      }
+      const price = toNumberOrNull(quote?.c);
+      const previousClose = toNumberOrNull(quote?.pc);
+      const change = toNumberOrNull(quote?.d);
+      const providerPercentChange = toNumberOrNull(quote?.dp);
+      const percentChange = providerPercentChange !== null
+        ? providerPercentChange
+        : price !== null && previousClose > 0
+          ? ((price - previousClose) / previousClose) * 100
+          : null;
+      if (price !== null && price > 0) {
+        prices[symbol] = price;
+        livePriceCache.set(symbol, {
+          price,
+          change,
+          percentChange,
+          fetchedAt: Date.now()
+        });
+      }
+      details[symbol] = {
+        ...details[symbol],
+        change: change ?? details[symbol].change,
+        percentChange: percentChange ?? details[symbol].percentChange
+      };
+    } catch (err) {
+      console.log("Saved-symbol price skipped:", symbol, err.response?.status || err.message);
+    }
+  };
+
+  const runBackgroundQuoteRefresh = (refreshSymbols) => {
+    const symbolsToRefresh = refreshSymbols.filter((symbol) => !activePriceRefreshes.has(symbol));
+    if (!symbolsToRefresh.length) return;
+    symbolsToRefresh.forEach((symbol) => activePriceRefreshes.add(symbol));
+
+    const queue = [...symbolsToRefresh];
+    const workerCount = Math.min(2, queue.length);
+    Promise.all(Array.from({ length: workerCount }, async () => {
+      while (queue.length) {
+        const symbol = queue.shift();
+        await refreshSymbolQuote(symbol);
+      }
+    })).finally(() => {
+      symbolsToRefresh.forEach((symbol) => activePriceRefreshes.delete(symbol));
+    });
+  };
+
+  symbols.forEach(hydrateSavedSymbol);
+
+  const missingPriceSymbols = symbols.filter((symbol) => toNumberOrNull(prices[symbol]) === null);
+  const queue = [...missingPriceSymbols.slice(0, 8)];
   const workerCount = Math.min(4, queue.length);
   await Promise.all(Array.from({ length: workerCount }, async () => {
     while (queue.length) {
@@ -4588,6 +4620,13 @@ app.get("/api/prices", async (req, res) => {
       await refreshSymbolQuote(symbol);
     }
   }));
+  symbols.forEach(hydrateSavedSymbol);
+
+  const staleSymbols = symbols.filter((symbol) => {
+    const cached = livePriceCache.get(symbol);
+    return !cached || Date.now() - cached.fetchedAt >= 45 * 1000;
+  });
+  runBackgroundQuoteRefresh(staleSymbols);
 
   res.json({ prices, details });
 });

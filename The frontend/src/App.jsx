@@ -508,6 +508,13 @@ const API_URL =
   "https://investment-terminal-jtng.onrender.com";
 const FINANCIAL_HISTORY_VERSION = 95;
 
+const getDefaultCompanyLogoUrl = (symbol) => {
+  const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
+  return safeSymbol
+    ? `https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/${safeSymbol}.png`
+    : null;
+};
+
 const handleCompanyLogoError = (event, symbol) => {
   const image = event.currentTarget;
   const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
@@ -2133,14 +2140,12 @@ return (
 
             <span className="watch-logo-shell" aria-hidden="true">
               <span className="watch-logo-fallback">{item.slice(0, 1)}</span>
-              {savedSymbolDetails[item]?.logo && (
               <img
                 className="watch-logo"
-                src={savedSymbolDetails[item].logo}
+                src={savedSymbolDetails[item]?.logo || getDefaultCompanyLogoUrl(item)}
                 alt=""
                 onError={(event) => handleCompanyLogoError(event, item)}
               />
-              )}
             </span>
 
             <span className="watch-symbol">
@@ -4108,14 +4113,12 @@ return (
                       <span className="named-watchlist-logo-fallback">
                         {symbol.slice(0, 1)}
                       </span>
-                      {savedSymbolDetails[symbol]?.logo && (
                       <img
                         className="named-watchlist-logo"
-                        src={savedSymbolDetails[symbol].logo}
+                        src={savedSymbolDetails[symbol]?.logo || getDefaultCompanyLogoUrl(symbol)}
                         alt=""
                         onError={(event) => handleCompanyLogoError(event, symbol)}
                       />
-                      )}
                     </span>
                     <strong>{symbol}</strong>
                   </span>
