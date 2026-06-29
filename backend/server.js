@@ -23,7 +23,7 @@ const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 101;
+const FINANCIAL_HISTORY_VERSION = 103;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -1816,7 +1816,12 @@ function withGuaranteedAnalystSection(data = {}) {
   const sortedRevenueRows = [...revenueRows]
     .filter((row) => row?.year)
     .sort((a, b) => a.year - b.year);
+  const realRevenueRows = sortedRevenueRows.filter(
+    (row) => row.source !== "Modeled fallback"
+  );
   const latestRevenueRow =
+    realRevenueRows.filter((row) => !row.isInterim).at(-1) ||
+    realRevenueRows.at(-1) ||
     sortedRevenueRows.filter((row) => !row.isInterim).at(-1) ||
     sortedRevenueRows.at(-1) ||
     {};
@@ -3092,6 +3097,9 @@ async function fetchStockData(ticker) {
     }))
     .filter((row) => row.year)
     .sort((a, b) => a.year - b.year);
+  const previousRealRevenueData = (previousData?.revenueData || []).filter(
+    (row) => row?.source !== "Modeled fallback"
+  );
 
   const reportedAnnualData = mergeHistoricalFinancials(
     getRecentEarningsReleaseAnnualRows(ticker),
@@ -3101,7 +3109,7 @@ async function fetchStockData(ticker) {
         fmpIncomeStatementData,
         mergeHistoricalFinancials(
           finnhubReportedData,
-          mergeHistoricalFinancials(finnhubMetricData, previousData?.revenueData || [])
+          mergeHistoricalFinancials(finnhubMetricData, previousRealRevenueData)
         )
       )
     )
@@ -3117,9 +3125,13 @@ async function fetchStockData(ticker) {
   const revenueHistory = removeDuplicateInterimAnnualRows(finalizeRevenueHistory(
     revenueData
   ));
-  const annualRows = [...revenueData]
+  const annualRowsAll = [...revenueData]
     .filter((row) => row.year && !row.isInterim)
     .sort((a, b) => a.year - b.year);
+  const annualRows =
+    annualRowsAll.filter((row) => row.source !== "Modeled fallback").length
+      ? annualRowsAll.filter((row) => row.source !== "Modeled fallback")
+      : annualRowsAll;
   const latestAnnual = annualRows[annualRows.length - 1] || {};
   const previousAnnual = annualRows[annualRows.length - 2] || {};
   const chartRevenueGrowth = historicalGrowth(revenueData, "revenue");
@@ -3416,7 +3428,9 @@ async function fetchStockData(ticker) {
   const fmpCurrentRevenueEstimate = sanitizeCurrentRevenueEstimate(
     fmpEstimateField(fmpCurrentEstimate, "revenueAvg", "estimatedRevenueAvg")
   );
-  const yahooCurrentRevenueEstimate = yahooCurrentRevenueRaw;
+  const yahooCurrentRevenueEstimate = sanitizeCurrentRevenueEstimate(
+    yahooCurrentRevenueRaw
+  );
   const finnhubCurrentRevenueEstimate = sanitizeCurrentRevenueEstimate(
     normalizeFinnhubMoney(revenueEstimates[0]?.revenueAvg)
   );
@@ -3431,7 +3445,10 @@ async function fetchStockData(ticker) {
     stockAnalysisForecast.nextYearRevenue,
     currentRevenue
   );
-  const yahooNextRevenueEstimate = yahooNextRevenueRaw;
+  const yahooNextRevenueEstimate = sanitizeNextRevenueEstimate(
+    yahooNextRevenueRaw,
+    currentRevenue
+  );
   const fmpNextRevenueEstimate = sanitizeNextRevenueEstimate(
     fmpEstimateField(fmpNextEstimate, "revenueAvg", "estimatedRevenueAvg"),
     currentRevenue
@@ -3880,9 +3897,15 @@ async function fetchStockData(ticker) {
       toNumberOrNull(previousYahooEstimates?.nextYear?.revenue) !== null ||
       toNumberOrNull(previousYahooEstimates?.nextYear?.eps) !== null
     );
+  const previousCurrentRevenueEstimate = preservePreviousYahooEstimates
+    ? sanitizeCurrentRevenueEstimate(previousYahooEstimates.currentYear?.revenue)
+    : null;
+  const previousNextRevenueEstimate = preservePreviousYahooEstimates
+    ? sanitizeNextRevenueEstimate(previousYahooEstimates.nextYear?.revenue, currentRevenueValue)
+    : null;
   const displayedCurrentRevenueValue = preservePreviousYahooEstimates
-    ? previousYahooEstimates.currentYear?.revenue ?? null
-    : yahooCurrentRevenueRaw ?? currentRevenueValue;
+    ? previousCurrentRevenueEstimate ?? currentRevenueValue
+    : yahooCurrentRevenueEstimate ?? currentRevenueValue;
   const displayedCurrentEpsValue = firstNumber(
     preservePreviousYahooEstimates ? previousYahooEstimates.currentYear?.eps : null,
     yahooCurrentEpsRaw,
@@ -3895,8 +3918,8 @@ async function fetchStockData(ticker) {
       ? displayedCurrentEpsValue * modeledSharesOutstanding * 1000000
       : yahooCurrentEarningsValue ?? currentEarningsValue;
   const displayedNextRevenueValue = preservePreviousYahooEstimates
-    ? previousYahooEstimates.nextYear?.revenue ?? null
-    : yahooNextRevenueRaw ?? nextRevenueValue;
+    ? previousNextRevenueEstimate ?? nextRevenueValue
+    : yahooNextRevenueEstimate ?? nextRevenueValue;
   const projectedDisplayedNextEpsValue = estimateNextValue(
     displayedCurrentEpsValue,
     conservativeProjectionRate(earningsGrowthRate, 0.15)
