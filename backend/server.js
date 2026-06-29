@@ -23,7 +23,7 @@ const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 95;
-const EARNINGS_CALL_VERSION = 5;
+const EARNINGS_CALL_VERSION = 6;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -4760,8 +4760,8 @@ function buildIrCandidatePages(companyUrl) {
     "/financial-information"
   ];
   const pages = new Set();
-  getIrCandidateRoots(companyUrl).forEach((root) => {
-    paths.forEach((path) => {
+  paths.forEach((path) => {
+    getIrCandidateRoots(companyUrl).forEach((root) => {
       try {
         pages.add(new URL(path, root).toString());
       } catch {
@@ -4769,7 +4769,7 @@ function buildIrCandidatePages(companyUrl) {
       }
     });
   });
-  return [...pages].slice(0, 24);
+  return [...pages].slice(0, 48);
 }
 
 async function fetchHtmlPage(url) {
@@ -4873,6 +4873,49 @@ function buildEarningsAudioProxyUrl(apiBaseUrl, ticker, audioUrl) {
   return `${apiBaseUrl}/api/earnings-call/${encodeURIComponent(ticker)}/ir-audio?${params}`;
 }
 
+async function classifyInvestorRelationsMedia(candidate) {
+  try {
+    const response = await axios.get(candidate.audioUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        Range: "bytes=0-1023"
+      },
+      responseType: "stream",
+      timeout: 8000,
+      maxRedirects: 4,
+      validateStatus: (status) => status >= 200 && status < 400
+    });
+    response.data.destroy?.();
+    const contentType = String(response.headers["content-type"] || "").toLowerCase();
+
+    if (/audio|mpeg|mp3|mp4|octet-stream/.test(contentType)) {
+      return {
+        ...candidate,
+        mediaKind: "audio",
+        contentType
+      };
+    }
+
+    if (/html|text/.test(contentType)) {
+      return {
+        ...candidate,
+        mediaKind: "webcast",
+        contentType
+      };
+    }
+  } catch (err) {
+    if (isLikelyAudioUrl(candidate.audioUrl)) {
+      return {
+        ...candidate,
+        mediaKind: "audio",
+        contentType: null
+      };
+    }
+  }
+
+  return null;
+}
+
 async function fetchInvestorRelationsAudio(ticker, apiBaseUrl = "") {
   const companyUrl = await getCompanyInvestorRelationsUrl(ticker);
   if (!companyUrl) return null;
@@ -4912,9 +4955,16 @@ async function fetchInvestorRelationsAudio(ticker, apiBaseUrl = "") {
     }
   }
 
-  const best = audioLinks
+  const rankedLinks = audioLinks
     .filter((link) => link.score > 0)
-    .sort((a, b) => b.score - a.score)[0];
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 8);
+
+  let best = null;
+  for (const candidate of rankedLinks) {
+    best = await classifyInvestorRelationsMedia(candidate);
+    if (best) break;
+  }
 
   if (!best) return null;
 
@@ -4925,9 +4975,12 @@ async function fetchInvestorRelationsAudio(ticker, apiBaseUrl = "") {
     date: null,
     fiscalYear: null,
     fiscalPeriod: null,
-    audioUrl: apiBaseUrl
-      ? buildEarningsAudioProxyUrl(apiBaseUrl, ticker, best.audioUrl)
-      : best.audioUrl,
+    audioUrl: best.mediaKind === "audio"
+      ? (apiBaseUrl
+        ? buildEarningsAudioProxyUrl(apiBaseUrl, ticker, best.audioUrl)
+        : best.audioUrl)
+      : null,
+    webcastUrl: best.mediaKind === "webcast" ? best.audioUrl : null,
     rawAudioUrl: best.audioUrl,
     transcriptUrl: null,
     transcript: [],
@@ -5246,17 +5299,21 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
   const ticker = req.params.ticker.trim().toUpperCase();
 
   try {
+    const apiBaseUrl =
+      process.env.PUBLIC_API_URL ||
+      `${req.protocol}://${req.get("host")}`;
     const cached = await EarningsCall.findOne({ ticker });
     if (
       cached?.data?.version === EARNINGS_CALL_VERSION &&
       Date.now() - new Date(cached.updatedAt).getTime() < 12 * 60 * 60 * 1000
     ) {
-      return res.json(cached.data);
+      const cachedData = { ...cached.data };
+      if (cachedData.rawAudioUrl && /\/ir-audio\?/.test(String(cachedData.audioUrl || ""))) {
+        cachedData.audioUrl = buildEarningsAudioProxyUrl(apiBaseUrl, ticker, cachedData.rawAudioUrl);
+      }
+      return res.json(cachedData);
     }
 
-    const apiBaseUrl =
-      process.env.PUBLIC_API_URL ||
-      `${req.protocol}://${req.get("host")}`;
     const providerErrors = [];
     const transcriptProviders = [
       ["ROIC.ai", () => fetchRoicEarningsCall(ticker)],
@@ -5292,7 +5349,7 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
     for (const [providerName, fetchProvider] of audioProviders) {
       try {
         const providerData = await fetchProvider();
-        if (providerData?.available && providerData.audioUrl) {
+        if (providerData?.available && (providerData.audioUrl || providerData.webcastUrl)) {
           audioData = providerData;
           break;
         }
@@ -5311,17 +5368,18 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
       }
     }
 
-    if (transcriptData?.transcript?.length || audioData?.audioUrl) {
+    if (transcriptData?.transcript?.length || audioData?.audioUrl || audioData?.webcastUrl) {
       const data = {
         ...(transcriptData || audioData),
-        provider: audioData?.audioUrl && transcriptData
+        provider: (audioData?.audioUrl || audioData?.webcastUrl) && transcriptData
           ? `${transcriptData.provider} transcript + ${audioData.provider} audio`
           : (transcriptData || audioData).provider,
         symbol: ticker,
         audioUrl: audioData?.audioUrl || transcriptData?.audioUrl || null,
+        webcastUrl: audioData?.webcastUrl || transcriptData?.webcastUrl || null,
         transcript: transcriptData?.transcript || audioData?.transcript || [],
         computerReadAudio: false,
-        hasOriginalAudio: Boolean(audioData?.audioUrl || transcriptData?.audioUrl),
+        hasOriginalAudio: Boolean(audioData?.audioUrl || audioData?.webcastUrl || transcriptData?.audioUrl),
         version: EARNINGS_CALL_VERSION,
         errors: providerErrors,
         fetchedAt: new Date().toISOString()

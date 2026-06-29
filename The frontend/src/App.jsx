@@ -763,9 +763,6 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [isEarningsCallLoading, setIsEarningsCallLoading] =
     useState(false);
 
-  const [transcriptSearch, setTranscriptSearch] =
-    useState("");
-
   const [isSpeechPlaying, setIsSpeechPlaying] =
     useState(false);
 
@@ -1004,7 +1001,6 @@ useEffect(() => {
     setStockData(cachedStock);
     setAiAnalysis(null);
     setEarningsCall(null);
-    setTranscriptSearch("");
     window.speechSynthesis?.cancel();
     setIsSpeechPlaying(false);
     setIsSpeechPaused(false);
@@ -1738,15 +1734,6 @@ const estimateValue = (value) =>
   areEstimatesRefreshing && (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
     : stockValue(value);
-const normalizedTranscriptSearch = transcriptSearch.trim().toLowerCase().replace(/\s+/g, " ");
-const filteredTranscript = (earningsCall?.transcript || []).filter((section) =>
-  !normalizedTranscriptSearch ||
-  [
-    section.speaker,
-    section.session,
-    section.text
-  ].join(" ").toLowerCase().replace(/\s+/g, " ").includes(normalizedTranscriptSearch)
-);
 const selectedEarningsDay = (earnings?.days || []).find(
   (day) => day.date === selectedEarningsDate
 ) || { date: selectedEarningsDate, events: [] };
@@ -2607,7 +2594,7 @@ return (
   <div className="earnings-call-panel">
     {isEarningsCallLoading ? (
       <div className="earnings-call-empty">Loading earnings calls...</div>
-    ) : earningsCall?.available && (earningsCall?.transcript?.length || earningsCall?.audioUrl) ? (
+    ) : earningsCall?.available && (earningsCall?.transcript?.length || earningsCall?.audioUrl || earningsCall?.webcastUrl) ? (
       <>
         <div className="earnings-call-header">
           <div>
@@ -2633,30 +2620,27 @@ return (
           />
         )}
 
+        {!earningsCall.audioUrl && earningsCall.webcastUrl && (
+          <iframe
+            className="earnings-webcast-frame"
+            title={`${ticker} official earnings webcast`}
+            src={earningsCall.webcastUrl}
+            loading="lazy"
+            allow="autoplay; encrypted-media"
+          />
+        )}
+
         {earningsCall.transcript?.length ? (
           <div className="transcript-reader">
-            <input
-              className="transcript-search"
-              value={transcriptSearch}
-              onChange={(event) => setTranscriptSearch(event.target.value)}
-              placeholder="Search transcript"
-            />
-
             <div className="transcript-content">
-              {filteredTranscript.length ? (
-                filteredTranscript.map((section) => (
+              {earningsCall.transcript.map((section) => (
                   <div className="transcript-section" key={section.id}>
                     <div className="transcript-speaker">
                       {section.speaker}
                     </div>
                     <p>{section.text}</p>
                   </div>
-                ))
-              ) : (
-                <div className="earnings-call-empty">
-                  No transcript matches that search.
-                </div>
-              )}
+              ))}
             </div>
           </div>
         ) : (

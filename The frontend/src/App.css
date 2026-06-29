@@ -2215,6 +2215,16 @@ body {
   margin-bottom: 22px;
 }
 
+.earnings-webcast-frame {
+  display: block;
+  width: 100%;
+  height: 520px;
+  border: 1px solid #273244;
+  border-radius: 8px;
+  background: #ffffff;
+  margin-bottom: 22px;
+}
+
 .computer-audio-player {
   border-top: 1px solid #273244;
   border-bottom: 1px solid #273244;
@@ -2290,18 +2300,6 @@ body {
 .transcript-reader {
   border-top: 1px solid #273244;
   padding-top: 20px;
-}
-
-.transcript-search {
-  width: min(100%, 420px);
-  height: 42px;
-  padding: 0 12px;
-  border: 1px solid #374151;
-  border-radius: 6px;
-  background: #0b1117;
-  color: #f9fafb;
-  font-size: 14px;
-  margin-bottom: 18px;
 }
 
 .estimate-growth-grid {
