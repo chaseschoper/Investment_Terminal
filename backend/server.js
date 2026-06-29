@@ -23,7 +23,7 @@ const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 106;
+const FINANCIAL_HISTORY_VERSION = 109;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -2092,10 +2092,24 @@ function withGuaranteedAnalystSection(data = {}) {
     });
   }
 
-  const guaranteedRevenueData = [
+  const guaranteedRevenueRows = [
     ...guaranteedRevenueBaseData,
     ...fallbackCashflowRows
-  ].sort((a, b) => {
+  ];
+  const interimRevenueYears = new Set(
+    guaranteedRevenueRows
+      .filter((row) => row?.isInterim && row?.period !== "Current")
+      .map((row) => Number(row.year))
+  );
+  const guaranteedRevenueData = guaranteedRevenueRows
+    .filter((row) =>
+      !(
+        row?.source === "Current metric fallback" &&
+        row?.period === "Current" &&
+        interimRevenueYears.has(Number(row.year))
+      )
+    )
+    .sort((a, b) => {
     const yearDiff = Number(a.year) - Number(b.year);
     if (yearDiff !== 0) return yearDiff;
     if (Boolean(a.isInterim) !== Boolean(b.isInterim)) {
@@ -2117,17 +2131,12 @@ function withGuaranteedAnalystSection(data = {}) {
   const latestInterimMarginPeriod =
     latestInterimRevenueForMargins?.period ||
     (latestInterimRevenueForMargins ? String(latestInterimRevenueForMargins.year) : null);
-  const hasLatestInterimMarginRow =
+  const latestInterimMarginRow =
     latestInterimRevenueForMargins &&
-    suppliedMarginHistory.some((row) =>
+    suppliedMarginHistory.find((row) =>
       row?.isInterim &&
       Number(row.year) === Number(latestInterimRevenueForMargins.year) &&
-      (row.period || String(row.year)) === latestInterimMarginPeriod &&
-      (
-        toNumberOrNull(row.grossMargin) !== null ||
-        toNumberOrNull(row.operatingMargin) !== null ||
-        toNumberOrNull(row.profitMargin) !== null
-      )
+      (row.period || String(row.year)) === latestInterimMarginPeriod
     );
   const hasGrossMarginHistory = suppliedMarginHistory.some(
     (row) => toNumberOrNull(row.grossMargin) !== null
@@ -2154,14 +2163,28 @@ function withGuaranteedAnalystSection(data = {}) {
   const interimOperatingMargin = interimMarginPercent(latestInterimRevenueForMargins?.operatingIncome);
   const interimProfitMargin = interimMarginPercent(latestInterimRevenueForMargins?.earnings);
 
-  if (latestInterimRevenueForMargins && !hasLatestInterimMarginRow) {
+  const latestInterimNeedsMarginFallback =
+    latestInterimRevenueForMargins &&
+    (
+      (toNumberOrNull(latestInterimMarginRow?.grossMargin) === null && firstNumber(interimGrossMargin, fallbackGrossMargins) !== null) ||
+      (toNumberOrNull(latestInterimMarginRow?.operatingMargin) === null && firstNumber(interimOperatingMargin, fallbackOperatingMargins) !== null) ||
+      (toNumberOrNull(latestInterimMarginRow?.profitMargin) === null && firstNumber(interimProfitMargin, fallbackProfitMargins) !== null)
+    );
+
+  if (latestInterimNeedsMarginFallback) {
     fallbackMarginRows.push({
       year: latestInterimRevenueForMargins.year,
       period: latestInterimMarginPeriod,
       isInterim: true,
-      grossMargin: firstNumber(interimGrossMargin, fallbackGrossMargins),
-      operatingMargin: firstNumber(interimOperatingMargin, fallbackOperatingMargins),
-      profitMargin: firstNumber(interimProfitMargin, fallbackProfitMargins),
+      grossMargin: toNumberOrNull(latestInterimMarginRow?.grossMargin) === null
+        ? firstNumber(interimGrossMargin, fallbackGrossMargins)
+        : null,
+      operatingMargin: toNumberOrNull(latestInterimMarginRow?.operatingMargin) === null
+        ? firstNumber(interimOperatingMargin, fallbackOperatingMargins)
+        : null,
+      profitMargin: toNumberOrNull(latestInterimMarginRow?.profitMargin) === null
+        ? firstNumber(interimProfitMargin, fallbackProfitMargins)
+        : null,
       source: latestInterimRevenueForMargins.source || "Current interim fallback"
     });
   }
@@ -2186,16 +2209,38 @@ function withGuaranteedAnalystSection(data = {}) {
     ...suppliedMarginHistory,
     ...fallbackMarginRows
   ];
+  const mergedMarginRowsByPeriod = new Map();
+  marginRowsWithFallback.forEach((row) => {
+    if (!row?.year) return;
+    const period = row.period || String(row.year);
+    const rowKey = row.isInterim ? `${row.year}:${period}` : `${row.year}:annual`;
+    const existing = mergedMarginRowsByPeriod.get(rowKey) || {};
+    mergedMarginRowsByPeriod.set(rowKey, {
+      year: row.year,
+      period,
+      isInterim: row.isInterim ?? existing.isInterim ?? false,
+      grossMargin: existing.grossMargin ?? row.grossMargin ?? null,
+      operatingMargin: existing.operatingMargin ?? row.operatingMargin ?? null,
+      profitMargin: existing.profitMargin ?? row.profitMargin ?? null,
+      source: existing.source || row.source
+    });
+  });
+  const mergedMarginRows = [...mergedMarginRowsByPeriod.values()];
   const interimMarginYears = new Set(
-    marginRowsWithFallback
+    mergedMarginRows
       .filter((row) => row?.isInterim)
       .map((row) => Number(row.year))
   );
-  const guaranteedMarginHistory = marginRowsWithFallback
+  const guaranteedMarginHistory = mergedMarginRows
     .filter((row) =>
       !(
         row?.source === "Modeled fallback" &&
         !row?.isInterim &&
+        interimMarginYears.has(Number(row.year))
+      ) &&
+      !(
+        row?.source === "Current metric fallback" &&
+        row?.period === "Current" &&
         interimMarginYears.has(Number(row.year))
       )
     )
@@ -2546,6 +2591,86 @@ async function fetchFmpIncomeStatementHistory(ticker) {
   }
 
   return [];
+}
+
+const parseStockAnalysisNumber = (value) => {
+  const text = String(value || "")
+    .replace(/[$,%]/g, "")
+    .replace(/\u2212/g, "-")
+    .trim();
+  if (!text || text === "-" || /^n\/a$/i.test(text)) return null;
+  const multiplier = /\((.*)\)/.test(text) ? -1 : 1;
+  const number = Number(text.replace(/[(),]/g, ""));
+  return Number.isFinite(number) ? number * multiplier : null;
+};
+
+async function fetchStockAnalysisIncomeStatementHistory(ticker) {
+  try {
+    const { data } = await axios.get(
+      `https://stockanalysis.com/stocks/${ticker.toLowerCase()}/financials/income-statement/`,
+      {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        timeout: STOCK_PROVIDER_TIMEOUT_MS
+      }
+    );
+    const $ = cheerio.load(data);
+    const table = $("table").first();
+    if (!table.length) return [];
+
+    const headers = table.find("thead tr").first().find("th").toArray()
+      .slice(1)
+      .map((cell) => ({
+        id: $(cell).attr("id"),
+        text: $(cell).text().trim()
+      }))
+      .filter((header) => header.id && header.id !== "TTM");
+    const valuesByLabel = new Map();
+
+    table.find("tbody tr").each((_, row) => {
+      const cells = $(row).find("td").toArray();
+      const label = $(cells[0]).text().trim().replace(/\s+/g, " ");
+      if (!label) return;
+      valuesByLabel.set(
+        label.toLowerCase(),
+        cells.slice(1).map((cell) => parseStockAnalysisNumber($(cell).text()))
+      );
+    });
+
+    const valuesFor = (...labels) => {
+      for (const label of labels) {
+        const values = valuesByLabel.get(label.toLowerCase());
+        if (values) return values;
+      }
+      return [];
+    };
+    const revenueValues = valuesFor("Revenue");
+    const earningsValues = valuesFor("Net Income");
+    const grossProfitValues = valuesFor("Gross Profit", "Net Interest Income");
+    const operatingIncomeValues = valuesFor("Operating Income", "Pretax Income");
+    const epsValues = valuesFor("EPS (Diluted)", "EPS Diluted", "Diluted EPS");
+
+    return headers
+      .map((header, index) => {
+        const year = Number(String(header.id).slice(0, 4));
+        if (!Number.isFinite(year)) return null;
+
+        return {
+          year,
+          period: String(year),
+          revenue: revenueValues[index + 1] !== undefined ? revenueValues[index + 1] / 1000 : null,
+          earnings: earningsValues[index + 1] !== undefined ? earningsValues[index + 1] / 1000 : null,
+          grossProfit: grossProfitValues[index + 1] !== undefined ? grossProfitValues[index + 1] / 1000 : null,
+          operatingIncome: operatingIncomeValues[index + 1] !== undefined ? operatingIncomeValues[index + 1] / 1000 : null,
+          eps: epsValues[index + 1] ?? null,
+          source: "StockAnalysis financials"
+        };
+      })
+      .filter((row) => row?.year)
+      .sort((a, b) => a.year - b.year);
+  } catch (err) {
+    console.log("StockAnalysis financials skipped:", ticker, err.response?.status || err.message);
+    return [];
+  }
 }
 
 async function fetchYahooSupplementalData(ticker) {
@@ -3087,6 +3212,7 @@ async function fetchStockData(ticker) {
     fmpPriceTargetData,
     fmpAnalystEstimateData,
     fmpRatingData,
+    stockAnalysisFinancialData,
     recommendation,
     epsEstimate,
     revenueEstimate
@@ -3114,6 +3240,7 @@ async function fetchStockData(ticker) {
       "/stable/ratings-snapshot?symbol={ticker}",
       "/api/v3/rating/{ticker}"
     ]), STOCK_PROVIDER_TIMEOUT_MS, null),
+    resolveWithin(fetchStockAnalysisIncomeStatementHistory(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/recommendation?symbol=${ticker}`).catch((err) => {
       console.log("Recommendation skipped:", ticker, err.message);
       return [];
@@ -3157,7 +3284,9 @@ async function fetchStockData(ticker) {
     .filter((row) => row.year)
     .sort((a, b) => a.year - b.year);
   const previousRealRevenueData = (previousData?.revenueData || []).filter(
-    (row) => row?.source !== "Modeled fallback"
+    (row) =>
+      row?.source !== "Modeled fallback" &&
+      row?.source !== "Current metric fallback"
   );
 
   const reportedAnnualData = mergeHistoricalFinancials(
@@ -3174,7 +3303,10 @@ async function fetchStockData(ticker) {
     )
   );
   const supplementalAnnualData = mergeHistoricalFinancials(
-    secAnnualMargins.history || [],
+    mergeHistoricalFinancials(
+      secAnnualMargins.history || [],
+      stockAnalysisFinancialData
+    ),
     fmpCashFlowHistory
   );
   const revenueData = removeDuplicateInterimAnnualRows(finalizeFinancialHistory(
