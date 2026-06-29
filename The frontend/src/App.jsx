@@ -2594,7 +2594,7 @@ return (
   <div className="earnings-call-panel">
     {isEarningsCallLoading ? (
       <div className="earnings-call-empty">Loading earnings calls...</div>
-    ) : earningsCall?.available && (earningsCall?.transcript?.length || earningsCall?.audioUrl || earningsCall?.webcastUrl) ? (
+    ) : earningsCall?.available && (earningsCall?.transcript?.length || earningsCall?.transcriptUrl || earningsCall?.audioUrl || earningsCall?.webcastUrl) ? (
       <>
         <div className="earnings-call-header">
           <div>
@@ -2643,6 +2643,12 @@ return (
               ))}
             </div>
           </div>
+        ) : earningsCall.transcriptUrl ? (
+          <iframe
+            className="transcript-frame"
+            title={`${ticker} earnings call transcript`}
+            src={earningsCall.transcriptUrl}
+          />
         ) : (
           <div className="earnings-call-empty">
             Transcript is not available from this investor-relations audio source.

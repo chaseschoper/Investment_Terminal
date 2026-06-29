@@ -23,7 +23,7 @@ const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 95;
-const EARNINGS_CALL_VERSION = 6;
+const EARNINGS_CALL_VERSION = 8;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -4844,6 +4844,41 @@ function extractIrAudioLinks(html, pageUrl, ticker) {
   return links;
 }
 
+function extractIrTranscriptLinks(html, pageUrl, ticker) {
+  const $ = cheerio.load(html || "");
+  const links = [];
+  const seen = new Set();
+  const escapedTicker = String(ticker).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const tickerPattern = new RegExp(`\\b${escapedTicker}\\b`, "i");
+
+  $("a[href]").each((_, element) => {
+    const href = $(element).attr("href");
+    const resolved = resolvePublicUrl(href, pageUrl);
+    if (!resolved || seen.has(resolved) || isExcludedIrAudioHost(resolved)) return;
+    const label = [
+      $(element).text(),
+      $(element).attr("title"),
+      $(element).attr("aria-label"),
+      resolved
+    ].filter(Boolean).join(" ");
+    if (!/transcript/i.test(label)) return;
+    seen.add(resolved);
+    const score =
+      (/earnings|quarter|results|conference|webcast|call|replay/i.test(label) ? 6 : 0) +
+      (/transcript/i.test(label) ? 5 : 0) +
+      (/pdf|html|webcast_transcript/i.test(label) ? 2 : 0) +
+      (tickerPattern.test(label) ? 2 : 0);
+    links.push({
+      transcriptUrl: resolved,
+      title: $(element).text().trim() || `${ticker} earnings call transcript`,
+      score,
+      pageUrl
+    });
+  });
+
+  return links;
+}
+
 async function getCompanyInvestorRelationsUrl(ticker) {
   try {
     const profile = await getFinnhub(`https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}`);
@@ -4923,12 +4958,14 @@ async function fetchInvestorRelationsAudio(ticker, apiBaseUrl = "") {
   const candidatePages = buildIrCandidatePages(companyUrl);
   const discoveredPages = new Set(candidatePages);
   const audioLinks = [];
+  const transcriptLinks = [];
 
   for (const pageUrl of candidatePages) {
     try {
       const html = await fetchHtmlPage(pageUrl);
       if (!html) continue;
       audioLinks.push(...extractIrAudioLinks(html, pageUrl, ticker));
+      transcriptLinks.push(...extractIrTranscriptLinks(html, pageUrl, ticker));
 
       const $ = cheerio.load(html);
       $("a[href]").each((_, element) => {
@@ -4950,13 +4987,14 @@ async function fetchInvestorRelationsAudio(ticker, apiBaseUrl = "") {
       const html = await fetchHtmlPage(pageUrl);
       if (!html) continue;
       audioLinks.push(...extractIrAudioLinks(html, pageUrl, ticker));
+      transcriptLinks.push(...extractIrTranscriptLinks(html, pageUrl, ticker));
     } catch {
       // Keep the IR finder best-effort.
     }
   }
 
   const rankedLinks = audioLinks
-    .filter((link) => link.score > 0)
+    .filter((link) => link.score >= 6)
     .sort((a, b) => b.score - a.score)
     .slice(0, 8);
 
@@ -4967,6 +5005,9 @@ async function fetchInvestorRelationsAudio(ticker, apiBaseUrl = "") {
   }
 
   if (!best) return null;
+  const transcript = transcriptLinks
+    .filter((link) => link.score > 0)
+    .sort((a, b) => b.score - a.score)[0] || null;
 
   return {
     available: true,
@@ -4982,9 +5023,10 @@ async function fetchInvestorRelationsAudio(ticker, apiBaseUrl = "") {
       : null,
     webcastUrl: best.mediaKind === "webcast" ? best.audioUrl : null,
     rawAudioUrl: best.audioUrl,
-    transcriptUrl: null,
+    transcriptUrl: transcript?.transcriptUrl || null,
     transcript: [],
-    sourceUrl: best.pageUrl
+    sourceUrl: best.pageUrl,
+    transcriptSourceUrl: transcript?.pageUrl || null
   };
 }
 
@@ -5377,6 +5419,7 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
         symbol: ticker,
         audioUrl: audioData?.audioUrl || transcriptData?.audioUrl || null,
         webcastUrl: audioData?.webcastUrl || transcriptData?.webcastUrl || null,
+        transcriptUrl: transcriptData?.transcriptUrl || audioData?.transcriptUrl || null,
         transcript: transcriptData?.transcript || audioData?.transcript || [],
         computerReadAudio: false,
         hasOriginalAudio: Boolean(audioData?.audioUrl || audioData?.webcastUrl || transcriptData?.audioUrl),
