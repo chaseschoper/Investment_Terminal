@@ -1088,12 +1088,14 @@ async function fetchYahooChartQuote(ticker) {
     const closes = (quote.close || []).filter((value) => toNumberOrNull(value) !== null);
     const price = firstNumber(meta.regularMarketPrice, closes.at(-1));
     const previousClose = firstNumber(meta.previousClose, meta.chartPreviousClose, closes.at(-2));
-    const change = price !== null && previousClose !== null
+    const computedChange = price !== null && previousClose !== null
       ? price - previousClose
       : null;
-    const percentChange = change !== null && previousClose
-      ? (change / previousClose) * 100
-      : null;
+    const change = firstFiniteNumber(meta.regularMarketChange, computedChange);
+    const percentChange = firstFiniteNumber(
+      meta.regularMarketChangePercent,
+      change !== null && previousClose ? (change / previousClose) * 100 : null
+    );
 
     return normalizeQuotePayload(
       {
@@ -4572,10 +4574,12 @@ app.get("/api/prices", async (req, res) => {
       const computedChange = price !== null && previousClose > 0
         ? price - previousClose
         : null;
-      const change = computedChange ?? providerChange;
-      const percentChange = computedChange !== null && previousClose > 0
-        ? (computedChange / previousClose) * 100
-        : providerPercentChange;
+      const change = providerChange ?? computedChange;
+      const percentChange = providerPercentChange ?? (
+        computedChange !== null && previousClose > 0
+          ? (computedChange / previousClose) * 100
+          : null
+      );
       if (price !== null && price > 0) {
         prices[symbol] = price;
         livePriceCache.set(symbol, {

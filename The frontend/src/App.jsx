@@ -1405,21 +1405,11 @@ const loadUserData = async () => {
       setSavedSymbolDetails((prev) => {
         const next = { ...prev };
         Object.entries(receivedDetails).forEach(([symbol, detail]) => {
-          const livePrice = receivedPrices[symbol];
-          const liveChange = detail?.change;
-          const calculatedPercent =
-            isNumber(livePrice) &&
-            isNumber(liveChange) &&
-            livePrice - liveChange > 0
-              ? (liveChange / (livePrice - liveChange)) * 100
-              : null;
           next[symbol] = {
             ...prev[symbol],
             ...detail,
-            percentChange: isNumber(calculatedPercent)
-              ? calculatedPercent
-              : isNumber(detail?.percentChange)
-                ? detail.percentChange
+            percentChange: isNumber(detail?.percentChange)
+              ? detail.percentChange
               : prev[symbol]?.percentChange,
             change: isNumber(detail?.change)
               ? detail.change
