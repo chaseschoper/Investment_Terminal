@@ -23,7 +23,7 @@ const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 109;
+const FINANCIAL_HISTORY_VERSION = 110;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -2278,6 +2278,67 @@ function withGuaranteedAnalystSection(data = {}) {
       eps: followingEps
     }
   };
+  const suppliedHistoricalPe = Array.isArray(data.historicalPe)
+    ? data.historicalPe
+    : [];
+  const latestInterimPePeriodRow = [...guaranteedRevenueData]
+    .filter((row) =>
+      row?.isInterim &&
+      toNumberOrNull(row.eps) !== null &&
+      toNumberOrNull(row.eps) !== 0
+    )
+    .sort((a, b) => {
+      const yearDiff = Number(a.year) - Number(b.year);
+      if (yearDiff !== 0) return yearDiff;
+      return String(a.period || "").localeCompare(String(b.period || ""));
+    })
+    .at(-1);
+  const currentMetricPe = toNumberOrNull(pe);
+  const currentPeRow =
+    currentMetricPe !== null &&
+    Number.isFinite(currentMetricPe) &&
+    Math.abs(currentMetricPe) < 1000
+      ? {
+          year: latestInterimPePeriodRow?.year || new Date().getFullYear(),
+          period:
+            latestInterimPePeriodRow?.period ||
+            (latestInterimPePeriodRow
+              ? String(latestInterimPePeriodRow.year)
+              : "Current"),
+          isInterim: Boolean(latestInterimPePeriodRow),
+          isCurrent: !latestInterimPePeriodRow,
+          pe: currentMetricPe,
+          price,
+          eps: firstNumber(trailingEps, latestInterimPePeriodRow?.eps),
+          source: "Current metric P/E"
+        }
+      : null;
+  const guaranteedHistoricalPe = currentPeRow
+    ? [
+        ...suppliedHistoricalPe.filter((row) => {
+          if (!row) return false;
+          const rowPeriod = row.period || String(row.year);
+          const currentPeriod = currentPeRow.period || String(currentPeRow.year);
+          if (row.isCurrent) return false;
+          if (
+            currentPeRow.isInterim &&
+            row.isInterim &&
+            Number(row.year) === Number(currentPeRow.year) &&
+            rowPeriod === currentPeriod
+          ) {
+            return false;
+          }
+          if (!currentPeRow.isInterim && rowPeriod === "Current") return false;
+          return true;
+        }),
+        currentPeRow
+      ]
+        .filter((row) => {
+          const rowPe = toNumberOrNull(row.pe);
+          return rowPe !== null && Number.isFinite(rowPe) && Math.abs(rowPe) < 1000;
+        })
+        .slice(-7)
+    : suppliedHistoricalPe;
   const suppliedCurrentEps = toNumberOrNull(data.analystEstimates?.currentYear?.eps);
   const suppliedNextEps = toNumberOrNull(data.analystEstimates?.nextYear?.eps);
   const currentEpsNeedsRepair =
@@ -2319,6 +2380,7 @@ function withGuaranteedAnalystSection(data = {}) {
     targetMean,
     recommendationKey,
     analystRatingText,
+    historicalPe: guaranteedHistoricalPe,
     analystEstimates: yahooLockedEstimates || hasSuppliedAnalystEstimates
       ? suppliedAnalystEstimates
       : fallbackAnalystEstimates,
