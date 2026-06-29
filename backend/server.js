@@ -23,7 +23,7 @@ const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 100;
+const FINANCIAL_HISTORY_VERSION = 101;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -1498,6 +1498,69 @@ function mergeHistoricalFinancials(primary, fallback) {
     });
 
   return removeDuplicateInterimAnnualRows(mergedRows).slice(-7);
+}
+
+function mergeSupplementalHistoricalFields(baseRows = [], supplementalRows = []) {
+  const rowsByPeriod = new Map();
+  const rowKeyFor = (row) => {
+    const period = row.period || String(row.year);
+    return row.isInterim ? `${row.year}:${period}` : `${row.year}:annual`;
+  };
+
+  baseRows.forEach((row) => {
+    if (!row?.year) return;
+    rowsByPeriod.set(rowKeyFor(row), {
+      ...row,
+      period: row.period || String(row.year),
+      isInterim: Boolean(row.isInterim)
+    });
+  });
+
+  supplementalRows.forEach((row) => {
+    if (!row?.year) return;
+    const rowKey = rowKeyFor(row);
+    const existing = rowsByPeriod.get(rowKey);
+
+    if (!existing) {
+      rowsByPeriod.set(rowKey, {
+        ...row,
+        period: row.period || String(row.year),
+        isInterim: Boolean(row.isInterim)
+      });
+      return;
+    }
+
+    rowsByPeriod.set(rowKey, {
+      ...existing,
+      grossProfit: existing.grossProfit ?? row.grossProfit ?? null,
+      operatingIncome: existing.operatingIncome ?? row.operatingIncome ?? null,
+      operatingCashflow: existing.operatingCashflow ?? row.operatingCashflow ?? null,
+      freeCashflow: existing.freeCashflow ?? row.freeCashflow ?? null,
+      sharesOutstanding: existing.sharesOutstanding ?? row.sharesOutstanding ?? null,
+      source: existing.source || row.source
+    });
+  });
+
+  return removeDuplicateInterimAnnualRows([...rowsByPeriod.values()]
+    .filter((row) =>
+      row.revenue !== null ||
+      row.earnings !== null ||
+      row.eps !== null ||
+      row.grossProfit !== null ||
+      row.operatingIncome !== null ||
+      row.operatingCashflow !== null ||
+      row.freeCashflow !== null ||
+      row.sharesOutstanding !== null
+    )
+    .sort((a, b) => {
+      const yearDiff = Number(a.year) - Number(b.year);
+      if (yearDiff !== 0) return yearDiff;
+      if (Boolean(a.isInterim) !== Boolean(b.isInterim)) {
+        return a.isInterim ? 1 : -1;
+      }
+      return String(a.period || "").localeCompare(String(b.period || ""));
+    }))
+    .slice(-7);
 }
 
 function removeDuplicateInterimAnnualRows(rows) {
@@ -3030,34 +3093,29 @@ async function fetchStockData(ticker) {
     .filter((row) => row.year)
     .sort((a, b) => a.year - b.year);
 
-  const authoritativeAnnualData = mergeHistoricalFinancials(
+  const reportedAnnualData = mergeHistoricalFinancials(
+    getRecentEarningsReleaseAnnualRows(ticker),
     mergeHistoricalFinancials(
-      secAnnualMargins.history || [],
-      getRecentEarningsReleaseAnnualRows(ticker)
-    ),
-    yahooFinancialData
-  );
-  const revenueData = removeDuplicateInterimAnnualRows(finalizeFinancialHistory(
-    mergeHistoricalFinancials(
-      authoritativeAnnualData,
+      yahooFinancialData,
       mergeHistoricalFinancials(
-        fmpCashFlowHistory,
+        fmpIncomeStatementData,
         mergeHistoricalFinancials(
-          fmpIncomeStatementData,
-          mergeHistoricalFinancials(
-            finnhubReportedData,
-            mergeHistoricalFinancials(finnhubMetricData, previousData?.revenueData || [])
-          )
+          finnhubReportedData,
+          mergeHistoricalFinancials(finnhubMetricData, previousData?.revenueData || [])
         )
       )
-    ),
+    )
+  );
+  const supplementalAnnualData = mergeHistoricalFinancials(
+    secAnnualMargins.history || [],
+    fmpCashFlowHistory
+  );
+  const revenueData = removeDuplicateInterimAnnualRows(finalizeFinancialHistory(
+    mergeSupplementalHistoricalFields(reportedAnnualData, supplementalAnnualData),
     sharesOutstanding
   ));
   const revenueHistory = removeDuplicateInterimAnnualRows(finalizeRevenueHistory(
-    mergeHistoricalFinancials(
-      authoritativeAnnualData,
-      mergeHistoricalFinancials(fmpIncomeStatementData, finnhubReportedData)
-    )
+    revenueData
   ));
   const annualRows = [...revenueData]
     .filter((row) => row.year && !row.isInterim)
