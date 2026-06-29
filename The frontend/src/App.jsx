@@ -1400,35 +1400,26 @@ const loadUserData = async () => {
   const loadSavedPrices = async (symbols, attempt = 0, options = {}) => {
     if (!symbols.length) return;
 
-    try {
-      const symbolChunks = chunkSymbols(symbols, options.live ? 8 : 12);
-      const receivedPrices = {};
-      const receivedDetails = {};
-
-      for (const symbolChunk of symbolChunks) {
-        const response = await axios.get(
-          `${API_URL}/api/prices`,
-          {
-            params: {
-              symbols: symbolChunk.join(","),
-              live: options.live ? "1" : undefined
-            },
-            timeout: options.live ? 10000 : 7000
-          }
-        );
-        Object.assign(receivedPrices, response.data?.prices || {});
-        Object.assign(receivedDetails, response.data?.details || {});
-      }
-
+    const applyPricePayload = (receivedPrices = {}, receivedDetails = {}) => {
       setPortfolioPrices((prev) => ({ ...prev, ...receivedPrices }));
       setSavedSymbolDetails((prev) => {
         const next = { ...prev };
         Object.entries(receivedDetails).forEach(([symbol, detail]) => {
+          const livePrice = receivedPrices[symbol];
+          const liveChange = detail?.change;
+          const calculatedPercent =
+            isNumber(livePrice) &&
+            isNumber(liveChange) &&
+            livePrice - liveChange > 0
+              ? (liveChange / (livePrice - liveChange)) * 100
+              : null;
           next[symbol] = {
             ...prev[symbol],
             ...detail,
-            percentChange: isNumber(detail?.percentChange)
-              ? detail.percentChange
+            percentChange: isNumber(calculatedPercent)
+              ? calculatedPercent
+              : isNumber(detail?.percentChange)
+                ? detail.percentChange
               : prev[symbol]?.percentChange,
             change: isNumber(detail?.change)
               ? detail.change
@@ -1437,6 +1428,42 @@ const loadUserData = async () => {
         });
         return next;
       });
+    };
+
+    try {
+      const symbolChunks = chunkSymbols(symbols, options.live ? 8 : 12);
+      const receivedPrices = {};
+      const receivedDetails = {};
+
+      for (const symbolChunk of symbolChunks) {
+        try {
+          const response = await axios.get(
+            `${API_URL}/api/prices`,
+            {
+              params: {
+                symbols: symbolChunk.join(","),
+                live: options.live ? "1" : undefined
+              },
+              timeout: options.live ? 10000 : 7000
+            }
+          );
+          const chunkPrices = response.data?.prices || {};
+          const chunkDetails = response.data?.details || {};
+          Object.assign(receivedPrices, chunkPrices);
+          Object.assign(receivedDetails, chunkDetails);
+          applyPricePayload(chunkPrices, chunkDetails);
+        } catch (chunkError) {
+          if (attempt < 2) {
+            window.setTimeout(
+              () => loadSavedPrices(symbolChunk, attempt + 1, options),
+              5000
+            );
+          } else {
+            console.error(chunkError);
+          }
+        }
+      }
+
       const missingSymbols = symbols.filter(
         (symbol) =>
           !isNumber(receivedPrices[symbol]) ||

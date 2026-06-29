@@ -4567,13 +4567,15 @@ app.get("/api/prices", async (req, res) => {
       }
       const price = toNumberOrNull(quote?.c);
       const previousClose = toNumberOrNull(quote?.pc);
-      const change = toNumberOrNull(quote?.d);
+      const providerChange = toNumberOrNull(quote?.d);
       const providerPercentChange = toNumberOrNull(quote?.dp);
-      const percentChange = providerPercentChange !== null
-        ? providerPercentChange
-        : price !== null && previousClose > 0
-          ? ((price - previousClose) / previousClose) * 100
-          : null;
+      const computedChange = price !== null && previousClose > 0
+        ? price - previousClose
+        : null;
+      const change = computedChange ?? providerChange;
+      const percentChange = computedChange !== null && previousClose > 0
+        ? (computedChange / previousClose) * 100
+        : providerPercentChange;
       if (price !== null && price > 0) {
         prices[symbol] = price;
         livePriceCache.set(symbol, {
