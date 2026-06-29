@@ -1738,12 +1738,13 @@ const isStockRefreshing = stockData?.refreshing === true;
 const areEstimatesRefreshing =
   isStockRefreshing &&
   stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION;
+const isInitialStockLoad = isStockLoading && !stockData?.symbol;
 const stockValue = (value) =>
-  isStockLoading && !stockData?.symbol
+  isInitialStockLoad
     ? "Loading..."
     : value;
 const estimateValue = (value) =>
-  isStockLoading && !stockData?.symbol && (value === "N/A" || value === null || value === undefined)
+  isInitialStockLoad && (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
     : stockValue(value);
 const selectedEarningsDay = (earnings?.days || []).find(
@@ -2899,7 +2900,7 @@ return (
     color="#60a5fa"
     formatter={(value) => `${Number(value).toFixed(1)}x`}
     valueLabel="P/E"
-    loading={isStockLoading || (isStockRefreshing && !historicalPeHistory.length)}
+    loading={isInitialStockLoad}
   />
   <HistoricalLineChart
     title={stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin History"}
@@ -2908,7 +2909,7 @@ return (
     color="#a78bfa"
     formatter={(value) => `${Number(value).toFixed(1)}%`}
     valueLabel={stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin"}
-    loading={isStockLoading || (isStockRefreshing && !grossMarginHistory.length)}
+    loading={isInitialStockLoad}
   />
   <HistoricalLineChart
     title={stockData.isFinancialCompany ? "Pre-Tax Margin History" : "Operating Margin History"}
@@ -2917,7 +2918,7 @@ return (
     color="#f59e0b"
     formatter={(value) => `${Number(value).toFixed(1)}%`}
     valueLabel={stockData.isFinancialCompany ? "Pre-Tax Margin" : "Operating Margin"}
-    loading={isStockLoading || (isStockRefreshing && !operatingMarginHistory.length)}
+    loading={isInitialStockLoad}
   />
   <HistoricalLineChart
     title="Profit Margin History"
@@ -2926,7 +2927,7 @@ return (
     color="#34d399"
     formatter={(value) => `${Number(value).toFixed(1)}%`}
     valueLabel="Profit Margin"
-    loading={isStockLoading || (isStockRefreshing && !profitMarginHistory.length)}
+    loading={isInitialStockLoad}
   />
   <HistoricalLineChart
     title="Operating Cash Flow History"
@@ -2935,7 +2936,7 @@ return (
     color="#22d3ee"
     formatter={formatChartBillions}
     valueLabel="Operating Cash Flow"
-    loading={isStockLoading || (isStockRefreshing && !operatingCashflowHistory.length)}
+    loading={isInitialStockLoad}
   />
   <HistoricalLineChart
     title="Free Cash Flow History"
@@ -2944,7 +2945,7 @@ return (
     color="#14b8a6"
     formatter={formatChartBillions}
     valueLabel="Free Cash Flow"
-    loading={isStockLoading || (isStockRefreshing && !freeCashflowHistory.length)}
+    loading={isInitialStockLoad}
   />
   <HistoricalLineChart
     title="Shares Outstanding History"
@@ -2953,7 +2954,7 @@ return (
     color="#f472b6"
     formatter={formatSharesMillions}
     valueLabel="Shares"
-    loading={isStockLoading || (isStockRefreshing && !sharesOutstandingHistory.length)}
+    loading={isInitialStockLoad}
   />
 </div>
 

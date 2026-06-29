@@ -2840,7 +2840,10 @@ async function fetchStockData(ticker) {
         fmpCashFlowHistory,
         mergeHistoricalFinancials(
           fmpIncomeStatementData,
-          mergeHistoricalFinancials(finnhubReportedData, finnhubMetricData)
+          mergeHistoricalFinancials(
+            finnhubReportedData,
+            mergeHistoricalFinancials(finnhubMetricData, previousData?.revenueData || [])
+          )
         )
       )
     ),
@@ -2892,7 +2895,11 @@ async function fetchStockData(ticker) {
     source: row.source
   }));
   const marginRowsByPeriod = new Map();
-  [...fallbackMarginHistory, ...(secAnnualMargins.marginHistory || [])].forEach((row) => {
+  [
+    ...(previousData?.marginHistory || []),
+    ...fallbackMarginHistory,
+    ...(secAnnualMargins.marginHistory || [])
+  ].forEach((row) => {
     if (!row?.year) return;
     const period = row.period || String(row.year);
     const rowKey = row.isInterim ? `${row.year}:${period}` : `${row.year}:annual`;
