@@ -23,7 +23,7 @@ const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 95;
-const EARNINGS_CALL_VERSION = 8;
+const EARNINGS_CALL_VERSION = 10;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -4528,7 +4528,16 @@ async function fetchFinnhubEarningsCall(ticker) {
     }
   );
   const detail = detailResponse.data || {};
-  if (!detail.audio) return null;
+  const transcript = (detail.transcript || []).map((section, index) => ({
+    id: `${index}-${section.name || "speaker"}`,
+    speaker: section.name || "Speaker",
+    session: section.session || null,
+    text: Array.isArray(section.speech)
+      ? section.speech.join(" ")
+      : String(section.speech || "")
+  })).filter((section) => section.text);
+
+  if (!transcript.length) return null;
 
   return {
     available: true,
@@ -4537,16 +4546,9 @@ async function fetchFinnhubEarningsCall(ticker) {
     date: detail.time || latest.time,
     fiscalYear: detail.year || latest.year,
     fiscalPeriod: detail.quarter ? `Q${detail.quarter}` : null,
-    audioUrl: detail.audio,
+    audioUrl: null,
     transcriptUrl: null,
-    transcript: (detail.transcript || []).map((section, index) => ({
-      id: `${index}-${section.name || "speaker"}`,
-      speaker: section.name || "Speaker",
-      session: section.session || null,
-      text: Array.isArray(section.speech)
-        ? section.speech.join(" ")
-        : String(section.speech || "")
-    })).filter((section) => section.text)
+    transcript
   };
 }
 
@@ -4951,7 +4953,7 @@ async function classifyInvestorRelationsMedia(candidate) {
   return null;
 }
 
-async function fetchInvestorRelationsAudio(ticker, apiBaseUrl = "") {
+async function fetchInvestorRelationsAudio(ticker, apiBaseUrl = "", options = {}) {
   const companyUrl = await getCompanyInvestorRelationsUrl(ticker);
   if (!companyUrl) return null;
 
@@ -4998,34 +5000,54 @@ async function fetchInvestorRelationsAudio(ticker, apiBaseUrl = "") {
     .sort((a, b) => b.score - a.score)
     .slice(0, 8);
 
+  const transcript = transcriptLinks
+    .filter((link) => link.score > 0)
+    .sort((a, b) => b.score - a.score)[0] || null;
+
+  if (options.transcriptOnly) {
+    if (!transcript) return null;
+    return {
+      available: true,
+      provider: "Investor Relations",
+      title: transcript.title || `${ticker} earnings call transcript`,
+      date: null,
+      fiscalYear: null,
+      fiscalPeriod: null,
+      audioUrl: null,
+      webcastUrl: null,
+      rawAudioUrl: null,
+      transcriptUrl: transcript.transcriptUrl,
+      transcript: [],
+      sourceUrl: transcript.pageUrl,
+      transcriptSourceUrl: transcript.pageUrl
+    };
+  }
+
   let best = null;
   for (const candidate of rankedLinks) {
     best = await classifyInvestorRelationsMedia(candidate);
     if (best) break;
   }
 
-  if (!best) return null;
-  const transcript = transcriptLinks
-    .filter((link) => link.score > 0)
-    .sort((a, b) => b.score - a.score)[0] || null;
+  if (!best && !transcript) return null;
 
   return {
     available: true,
     provider: "Investor Relations",
-    title: best.title || `${ticker} investor relations audio`,
+    title: best?.title || transcript?.title || `${ticker} earnings call transcript`,
     date: null,
     fiscalYear: null,
     fiscalPeriod: null,
-    audioUrl: best.mediaKind === "audio"
+    audioUrl: best?.mediaKind === "audio"
       ? (apiBaseUrl
         ? buildEarningsAudioProxyUrl(apiBaseUrl, ticker, best.audioUrl)
         : best.audioUrl)
       : null,
-    webcastUrl: best.mediaKind === "webcast" ? best.audioUrl : null,
-    rawAudioUrl: best.audioUrl,
+    webcastUrl: best?.mediaKind === "webcast" ? best.audioUrl : null,
+    rawAudioUrl: best?.audioUrl || null,
     transcriptUrl: transcript?.transcriptUrl || null,
     transcript: [],
-    sourceUrl: best.pageUrl,
+    sourceUrl: best?.pageUrl || transcript?.pageUrl || null,
     transcriptSourceUrl: transcript?.pageUrl || null
   };
 }
@@ -5361,21 +5383,15 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
       ["ROIC.ai", () => fetchRoicEarningsCall(ticker)],
       ["Alpha Vantage", () => fetchAlphaVantageEarningsCall(ticker)],
       ["Finnhub", () => fetchFinnhubEarningsCall(ticker)],
-      ["EarningsCall", () => fetchEarningsCallBiz(ticker, apiBaseUrl)]
-    ];
-    const audioProviders = [
-      ["Finnhub", () => fetchFinnhubEarningsCall(ticker)],
-      ["Quartr", () => fetchQuartrEarningsCall(ticker)],
       ["EarningsCall", () => fetchEarningsCallBiz(ticker, apiBaseUrl)],
-      ["Investor Relations", () => resolveWithin(fetchInvestorRelationsAudio(ticker, apiBaseUrl), 12000, null)]
+      ["Investor Relations", () => resolveWithin(fetchInvestorRelationsAudio(ticker, apiBaseUrl, { transcriptOnly: true }), 12000, null)]
     ];
     let transcriptData = null;
-    let audioData = null;
 
     for (const [providerName, fetchProvider] of transcriptProviders) {
       try {
         const providerData = await fetchProvider();
-        if (providerData?.available && providerData.transcript?.length) {
+        if (providerData?.available && (providerData.transcript?.length || providerData.transcriptUrl)) {
           transcriptData = providerData;
           break;
         }
@@ -5388,41 +5404,18 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
       }
     }
 
-    for (const [providerName, fetchProvider] of audioProviders) {
-      try {
-        const providerData = await fetchProvider();
-        if (providerData?.available && (providerData.audioUrl || providerData.webcastUrl)) {
-          audioData = providerData;
-          break;
-        }
-        if (providerName === "Investor Relations") {
-          providerErrors.push({
-            provider: "Investor Relations audio",
-            code: "not_found"
-          });
-        }
-      } catch (err) {
-        providerErrors.push({
-          provider: `${providerName} audio`,
-          code: err.providerCode || err.response?.status || "unavailable"
-        });
-        console.log(`${providerName} earnings audio skipped:`, ticker, err.providerCode || err.response?.status || err.message);
-      }
-    }
-
-    if (transcriptData?.transcript?.length || audioData?.audioUrl || audioData?.webcastUrl) {
+    if (transcriptData?.transcript?.length || transcriptData?.transcriptUrl) {
       const data = {
-        ...(transcriptData || audioData),
-        provider: (audioData?.audioUrl || audioData?.webcastUrl) && transcriptData
-          ? `${transcriptData.provider} transcript + ${audioData.provider} audio`
-          : (transcriptData || audioData).provider,
+        ...transcriptData,
+        provider: transcriptData.provider,
         symbol: ticker,
-        audioUrl: audioData?.audioUrl || transcriptData?.audioUrl || null,
-        webcastUrl: audioData?.webcastUrl || transcriptData?.webcastUrl || null,
-        transcriptUrl: transcriptData?.transcriptUrl || audioData?.transcriptUrl || null,
-        transcript: transcriptData?.transcript || audioData?.transcript || [],
+        audioUrl: null,
+        webcastUrl: null,
+        rawAudioUrl: null,
+        transcriptUrl: transcriptData.transcriptUrl || null,
+        transcript: transcriptData.transcript || [],
         computerReadAudio: false,
-        hasOriginalAudio: Boolean(audioData?.audioUrl || audioData?.webcastUrl || transcriptData?.audioUrl),
+        hasOriginalAudio: false,
         version: EARNINGS_CALL_VERSION,
         errors: providerErrors,
         fetchedAt: new Date().toISOString()
@@ -5435,13 +5428,6 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
       return res.json(data);
     }
 
-    const finnhubBlocked = providerErrors.some((error) =>
-      /^Finnhub/i.test(error.provider) && Number(error.code) === 403
-    );
-    const investorRelationsChecked = providerErrors.some((error) =>
-      /^Investor Relations/i.test(error.provider)
-    );
-
     return res.json({
       available: false,
       symbol: ticker,
@@ -5452,13 +5438,7 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
       hasOriginalAudio: false,
       version: EARNINGS_CALL_VERSION,
       errors: providerErrors,
-      message: investorRelationsChecked && finnhubBlocked
-        ? "Finnhub audio is blocked on this API key, and no public original audio was found on the company's investor relations pages."
-        : finnhubBlocked
-          ? "Finnhub was tried, but this API key does not include earnings call transcript/audio access."
-          : investorRelationsChecked
-            ? "No public original audio was found on the company's investor relations pages."
-            : "No free native earnings call transcript or original audio is available for this ticker yet."
+      message: "Earnings call transcript is not available for this ticker yet."
     });
   } catch (err) {
     console.error("EarningsCall native fetch failed:", ticker, err.message);

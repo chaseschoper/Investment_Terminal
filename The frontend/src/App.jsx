@@ -2172,7 +2172,7 @@ return (
       <a href="#comparison">Compare</a>
       <a href="#projections">Projections</a>
       <a href="#ai-analysis">AI Analysis</a>
-      <a href="#earnings-calls">Earnings Calls</a>
+      <a href="#earnings-calls">Transcript</a>
       <a href="#portfolio">Portfolio</a>
       <a href="#watchlists">Watchlists</a>
       <a href="#earnings-calendar">Calendar</a>
@@ -2588,13 +2588,13 @@ return (
 <div className="chart-section research-section earnings-call-section" id="earnings-calls">
 
   <h2 className="section-title">
-    Earnings Call Audio & Transcript
+    Earnings Call Transcript
   </h2>
 
   <div className="earnings-call-panel">
     {isEarningsCallLoading ? (
       <div className="earnings-call-empty">Loading earnings calls...</div>
-    ) : earningsCall?.available && (earningsCall?.transcript?.length || earningsCall?.transcriptUrl || earningsCall?.audioUrl || earningsCall?.webcastUrl) ? (
+    ) : earningsCall?.available && (earningsCall?.transcript?.length || earningsCall?.transcriptUrl) ? (
       <>
         <div className="earnings-call-header">
           <div>
@@ -2611,24 +2611,6 @@ return (
             {earningsCall.provider}
           </div>
         </div>
-
-        {earningsCall.audioUrl && (
-          <audio
-            className="earnings-audio-player"
-            controls
-            src={earningsCall.audioUrl}
-          />
-        )}
-
-        {!earningsCall.audioUrl && earningsCall.webcastUrl && (
-          <iframe
-            className="earnings-webcast-frame"
-            title={`${ticker} official earnings webcast`}
-            src={earningsCall.webcastUrl}
-            loading="lazy"
-            allow="autoplay; encrypted-media"
-          />
-        )}
 
         {earningsCall.transcript?.length ? (
           <div className="transcript-reader">
@@ -2651,13 +2633,13 @@ return (
           />
         ) : (
           <div className="earnings-call-empty">
-            Transcript is not available from this investor-relations audio source.
+            Transcript is not available for this ticker yet.
           </div>
         )}
       </>
     ) : (
       <div className="earnings-call-empty">
-        Earnings call audio and transcript are not available for this ticker yet.
+        Earnings call transcript is not available for this ticker yet.
       </div>
     )}
   </div>
