@@ -1523,31 +1523,69 @@ const earningsHistory =
 
 const epsHistory =
   buildChartRows(financialHistory, "eps");
+const currentChartYear = new Date().getFullYear();
+const currentPoint = (key, value, transform = (item) => item) =>
+  isNumber(value)
+    ? [{
+        year: currentChartYear,
+        period: "Current",
+        isInterim: true,
+        isCurrent: true,
+        [key]: transform(value),
+      }]
+    : [];
+const chartRowsWithCurrentFallback = (rows, key, value, transform) =>
+  rows.length ? rows : currentPoint(key, value, transform);
 const operatingCashflowHistory =
-  buildChartRows(financialHistory, "operatingCashflow");
+  chartRowsWithCurrentFallback(
+    buildChartRows(financialHistory, "operatingCashflow"),
+    "operatingCashflow",
+    stockData?.operatingCashflow,
+    (value) => value / 1e9
+  );
 const freeCashflowHistory =
-  buildChartRows(financialHistory, "freeCashflow");
+  chartRowsWithCurrentFallback(
+    buildChartRows(financialHistory, "freeCashflow"),
+    "freeCashflow",
+    stockData?.freeCashflow,
+    (value) => value / 1e9
+  );
 const sharesOutstandingHistory =
-  buildChartRows(financialHistory, "sharesOutstanding");
-const historicalPeHistory = (stockData?.historicalPe || [])
+  chartRowsWithCurrentFallback(
+    buildChartRows(financialHistory, "sharesOutstanding"),
+    "sharesOutstanding",
+    stockData?.sharesOutstanding
+  );
+const historicalPeHistoryBase = (stockData?.historicalPe || [])
   .map((row) => ({ ...row, period: row.period || String(row.year) }))
   .filter((row) =>
     row?.year &&
     (row.isInterim || row.isCurrent || row.year <= new Date().getFullYear()) &&
     isNumber(row.pe)
   );
+const historicalPeHistory =
+  chartRowsWithCurrentFallback(historicalPeHistoryBase, "pe", stockData?.pe);
 const annualMarginHistory = (stockData?.marginHistory || [])
   .map((row) => ({ ...row, period: row.period || String(row.year) }))
   .filter((row) =>
     row?.year &&
     (row.isInterim || row.year <= new Date().getFullYear())
   );
-const grossMarginHistory = annualMarginHistory
-  .filter((row) => isNumber(row.grossMargin));
-const operatingMarginHistory = annualMarginHistory
-  .filter((row) => isNumber(row.operatingMargin));
-const profitMarginHistory = annualMarginHistory
-  .filter((row) => isNumber(row.profitMargin));
+const grossMarginHistory = chartRowsWithCurrentFallback(
+  annualMarginHistory.filter((row) => isNumber(row.grossMargin)),
+  "grossMargin",
+  stockData?.grossMargins
+);
+const operatingMarginHistory = chartRowsWithCurrentFallback(
+  annualMarginHistory.filter((row) => isNumber(row.operatingMargin)),
+  "operatingMargin",
+  stockData?.operatingMargins
+);
+const profitMarginHistory = chartRowsWithCurrentFallback(
+  annualMarginHistory.filter((row) => isNumber(row.profitMargin)),
+  "profitMargin",
+  stockData?.profitMargins
+);
 
 const estimateFromHistoryYear = (year, fallback = {}) => {
   const row = financialHistory.find(
