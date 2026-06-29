@@ -23,6 +23,7 @@
     "mongoose": "^9.6.3",
     "node": "^26.3.0",
     "openai": "^6.42.0",
+    "pdf-parse": "^2.4.5",
     "server.js": "^1.0.0",
     "yahoo-finance2": "^2.11.3"
   }

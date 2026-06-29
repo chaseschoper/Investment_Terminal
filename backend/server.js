@@ -7,6 +7,7 @@ const axios = require("axios");
 const cheerio = require("cheerio");
 const mongoose = require("mongoose");
 const yahooFinance = require("yahoo-finance2").default;
+const { PDFParse } = require("pdf-parse");
 
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -23,8 +24,11 @@ const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 95;
-const EARNINGS_CALL_VERSION = 11;
+const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
+const STOCK_FAILED_RETRY_MS = 2 * 60 * 1000;
+const STOCK_PROVIDER_TIMEOUT_MS = 5000;
+const STOCK_SLOW_PROVIDER_TIMEOUT_MS = 5500;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
@@ -34,6 +38,9 @@ const TICKER_ALIASES = {
   ZILLOW: "Z",
   SALESFORCE: "CRM",
   NIKE: "NKE"
+};
+const KNOWN_COMPANY_WEBSITES = {
+  TXN: "https://www.ti.com"
 };
 const KNOWN_FINANCIAL_INSTITUTIONS = new Set([
   "BAC",
@@ -2588,7 +2595,7 @@ async function fetchStockData(ticker) {
     console.log("Price target skipped:", ticker, err.message);
     return {};
   });
-  const secAnnualMarginsPromise = resolveWithin(fetchSecAnnualMargins(ticker), 14000, {});
+  const secAnnualMarginsPromise = resolveWithin(fetchSecAnnualMargins(ticker), 4500, {});
 
   const quote = await quotePromise;
   const [profile, metricData, financials, priceTarget] = await Promise.all([
@@ -2707,41 +2714,41 @@ async function fetchStockData(ticker) {
     epsEstimate,
     revenueEstimate
   ] = await Promise.all([
-    resolveWithin(fetchYahooFinancialHistory(ticker), 8000, []),
-    resolveWithin(fetchFmpIncomeStatementHistory(ticker), 8000, []),
-    resolveWithin(getYahooSupplementalData(ticker), 6500, {}),
-    resolveWithin(fetchYahooYearEndPrices(ticker), 6500, []),
-    resolveWithin(fetchNasdaqData(ticker), 6500, {}),
-    resolveWithin(fetchStockAnalysisForecast(ticker), 6500, {}),
+    resolveWithin(fetchYahooFinancialHistory(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, []),
+    resolveWithin(fetchFmpIncomeStatementHistory(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, []),
+    resolveWithin(getYahooSupplementalData(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
+    resolveWithin(fetchYahooYearEndPrices(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
+    resolveWithin(fetchNasdaqData(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
+    resolveWithin(fetchStockAnalysisForecast(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
     earlySecAnnualMargins,
     resolveWithin(getFmpData(ticker, "cash flow", [
       "/stable/cash-flow-statement?symbol={ticker}&period=annual&limit=6",
       "/api/v3/cash-flow-statement/{ticker}?period=annual&limit=6"
-    ]), 6500, null),
+    ]), STOCK_PROVIDER_TIMEOUT_MS, null),
     resolveWithin(getFmpData(ticker, "price target", [
       "/stable/price-target-consensus?symbol={ticker}",
       "/api/v4/price-target-consensus?symbol={ticker}"
-    ]), 6500, null),
+    ]), STOCK_PROVIDER_TIMEOUT_MS, null),
     resolveWithin(getFmpData(ticker, "analyst estimates", [
       "/stable/analyst-estimates?symbol={ticker}&period=annual&limit=3",
       "/api/v3/analyst-estimates/{ticker}?period=annual&limit=3"
-    ]), 6500, null),
+    ]), STOCK_PROVIDER_TIMEOUT_MS, null),
     resolveWithin(getFmpData(ticker, "rating", [
       "/stable/ratings-snapshot?symbol={ticker}",
       "/api/v3/rating/{ticker}"
-    ]), 6500, null),
+    ]), STOCK_PROVIDER_TIMEOUT_MS, null),
     resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/recommendation?symbol=${ticker}`).catch((err) => {
       console.log("Recommendation skipped:", ticker, err.message);
       return [];
-    }), 6500, []),
+    }), STOCK_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/eps-estimate?symbol=${ticker}&freq=annual`).catch((err) => {
       console.log("EPS estimate skipped:", ticker, err.message);
       return {};
-    }), 6500, {}),
+    }), STOCK_PROVIDER_TIMEOUT_MS, {}),
     resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/revenue-estimate?symbol=${ticker}&freq=annual`).catch((err) => {
       console.log("Revenue estimate skipped:", ticker, err.message);
       return {};
-    }), 6500, {})
+    }), STOCK_PROVIDER_TIMEOUT_MS, {})
   ]);
   fmpCashFlow = Array.isArray(fmpCashFlowData)
     ? fmpCashFlowData
@@ -4212,6 +4219,26 @@ app.get("/api/stock/:ticker", async (req, res) => {
     }
 
     if (stock.status === "failed") {
+      const updatedAt = stock.updatedAt ? new Date(stock.updatedAt) : null;
+      const failedRecently =
+        updatedAt && Date.now() - updatedAt.getTime() < STOCK_FAILED_RETRY_MS;
+
+      if (failedRecently) {
+        const fallbackData = stock.data && Object.keys(stock.data).length
+          ? stock.data
+          : buildMinimalStockSnapshot(ticker);
+        const responseData = withGuaranteedAnalystSection(fallbackData);
+
+        return res.json({
+          ticker: stock.ticker,
+          status: "ready",
+          refreshing: false,
+          ...responseData,
+          error: stock.error,
+          updatedAt: stock.updatedAt
+        });
+      }
+
       await Stock.findOneAndUpdate(
         { ticker },
         {
@@ -4655,6 +4682,57 @@ function splitPlainTranscript(content) {
   }).filter((section) => section.text);
 }
 
+async function extractPdfText(buffer) {
+  const parser = new PDFParse({ data: buffer });
+  try {
+    const result = await parser.getText();
+    return result?.text || "";
+  } finally {
+    await parser.destroy().catch(() => {});
+  }
+}
+
+function stripHtmlToText(html) {
+  const $ = cheerio.load(html || "");
+  $("script, style, nav, header, footer, iframe, noscript").remove();
+  return $("body").text().replace(/\s+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+async function fetchTranscriptSectionsFromUrl(transcriptUrl) {
+  if (!transcriptUrl) return [];
+
+  const response = await axios.get(transcriptUrl, {
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      Accept: "application/pdf,text/html,text/plain,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    },
+    responseType: "arraybuffer",
+    timeout: 12000,
+    maxRedirects: 4,
+    validateStatus: (status) => status >= 200 && status < 400
+  });
+
+  const contentType = String(response.headers["content-type"] || "").toLowerCase();
+  const buffer = Buffer.from(response.data);
+  const looksLikePdf =
+    contentType.includes("pdf") ||
+    transcriptUrl.toLowerCase().includes(".pdf") ||
+    buffer.subarray(0, 4).toString() === "%PDF";
+
+  const text = looksLikePdf
+    ? await extractPdfText(buffer)
+    : /html|xml/i.test(contentType)
+      ? stripHtmlToText(buffer.toString("utf8"))
+      : buffer.toString("utf8");
+
+  return splitPlainTranscript(text)
+    .filter((section) =>
+      section.text.length > 40 &&
+      !/^(table of contents|safe harbor|copyright)$/i.test(section.text.trim())
+    )
+    .slice(0, 160);
+}
+
 async function fetchRoicEarningsCall(ticker) {
   const apiKey = getRoicApiKey();
   if (!apiKey) return null;
@@ -4764,8 +4842,8 @@ function buildIrCandidatePages(companyUrl) {
     "/financial-information"
   ];
   const pages = new Set();
-  paths.forEach((path) => {
-    getIrCandidateRoots(companyUrl).forEach((root) => {
+  getIrCandidateRoots(companyUrl).forEach((root) => {
+    paths.forEach((path) => {
       try {
         pages.add(new URL(path, root).toString());
       } catch {
@@ -4859,19 +4937,41 @@ function extractIrTranscriptLinks(html, pageUrl, ticker) {
     const href = $(element).attr("href");
     const resolved = resolvePublicUrl(href, pageUrl);
     if (!resolved || seen.has(resolved) || isExcludedIrAudioHost(resolved)) return;
-    const label = [
+    const parsedResolved = new URL(resolved);
+    const parsedPage = new URL(pageUrl);
+    if (
+      parsedResolved.origin === parsedPage.origin &&
+      parsedResolved.pathname === parsedPage.pathname &&
+      parsedResolved.hash
+    ) return;
+    const contextText = $(element)
+      .closest("tr, li, article, section")
+      .text()
+      .trim()
+      .replace(/\s+/g, " ");
+    const directLabel = [
       $(element).text(),
       $(element).attr("title"),
       $(element).attr("aria-label"),
       resolved
     ].filter(Boolean).join(" ");
-    if (!/transcript/i.test(label)) return;
+    if (!/transcript/i.test(directLabel)) return;
+    const label = [
+      directLabel,
+      contextText,
+    ].filter(Boolean).join(" ");
     seen.add(resolved);
+    const currentYear = new Date().getFullYear();
+    const orderBonus = Math.max(0, 40 - links.length);
     const score =
       (/earnings|quarter|results|conference|webcast|call|replay/i.test(label) ? 6 : 0) +
       (/transcript/i.test(label) ? 5 : 0) +
       (/pdf|html|webcast_transcript/i.test(label) ? 2 : 0) +
-      (tickerPattern.test(label) ? 2 : 0);
+      (tickerPattern.test(label) ? 2 : 0) +
+      (new RegExp(`\\b${currentYear}\\b`).test(label) ? 5 : 0) +
+      (new RegExp(`\\b${currentYear - 1}\\b`).test(label) ? 3 : 0) +
+      (new RegExp(`\\b${currentYear + 1}\\b`).test(label) ? 2 : 0) +
+      orderBonus;
     links.push({
       transcriptUrl: resolved,
       title: $(element).text().trim() || `${ticker} earnings call transcript`,
@@ -4884,6 +4984,10 @@ function extractIrTranscriptLinks(html, pageUrl, ticker) {
 }
 
 async function getCompanyInvestorRelationsUrl(ticker) {
+  if (KNOWN_COMPANY_WEBSITES[ticker]) {
+    return KNOWN_COMPANY_WEBSITES[ticker];
+  }
+
   try {
     const profile = await getFinnhub(`https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}`);
     return profile.weburl || null;
@@ -5013,6 +5117,11 @@ async function fetchInvestorRelationsAudio(ticker, apiBaseUrl = "", options = {}
 
   if (options.transcriptOnly) {
     if (!transcript) return null;
+    const transcriptSections = await fetchTranscriptSectionsFromUrl(transcript.transcriptUrl)
+      .catch((err) => {
+        console.log("IR transcript text extraction skipped:", ticker, err.response?.status || err.message);
+        return [];
+      });
     return {
       available: true,
       provider: "Investor Relations",
@@ -5024,7 +5133,7 @@ async function fetchInvestorRelationsAudio(ticker, apiBaseUrl = "", options = {}
       webcastUrl: null,
       rawAudioUrl: null,
       transcriptUrl: transcript.transcriptUrl,
-      transcript: [],
+      transcript: transcriptSections,
       sourceUrl: transcript.pageUrl,
       transcriptSourceUrl: transcript.pageUrl
     };
@@ -5433,12 +5542,39 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
     }
 
     const providerErrors = [];
+    const cachedTranscriptUrl =
+      cached?.data?.rawTranscriptUrl ||
+      (/\/transcript-file\?/.test(String(cached?.data?.transcriptUrl || ""))
+        ? null
+        : cached?.data?.transcriptUrl);
+    const cachedTranscriptProvider = ["Cached transcript", async () => {
+        if (!cached?.data?.transcript?.length && !cachedTranscriptUrl) return null;
+        const transcript = cached?.data?.transcript?.length
+          ? cached.data.transcript
+          : await fetchTranscriptSectionsFromUrl(cachedTranscriptUrl).catch((err) => {
+            console.log("Cached transcript extraction skipped:", ticker, err.response?.status || err.message);
+            return [];
+          });
+        if (!transcript.length && !cachedTranscriptUrl) return null;
+        return {
+          available: true,
+          provider: cached.data.provider || "Investor Relations",
+          title: cached.data.title || `${ticker} earnings call transcript`,
+          date: cached.data.date || null,
+          fiscalYear: cached.data.fiscalYear || null,
+          fiscalPeriod: cached.data.fiscalPeriod || null,
+          transcriptUrl: cachedTranscriptUrl || null,
+          transcript,
+          transcriptSourceUrl: cached.data.transcriptSourceUrl || null
+        };
+      }];
     const transcriptProviders = [
       ["ROIC.ai", () => fetchRoicEarningsCall(ticker)],
       ["Alpha Vantage", () => fetchAlphaVantageEarningsCall(ticker)],
       ["Finnhub", () => fetchFinnhubEarningsCall(ticker)],
       ["EarningsCall", () => fetchEarningsCallBiz(ticker, apiBaseUrl)],
-      ["Investor Relations", () => resolveWithin(fetchInvestorRelationsAudio(ticker, apiBaseUrl, { transcriptOnly: true }), 12000, null)]
+      ["Investor Relations", () => resolveWithin(fetchInvestorRelationsAudio(ticker, apiBaseUrl, { transcriptOnly: true }), 12000, null)],
+      cachedTranscriptProvider
     ];
     let transcriptData = null;
 
