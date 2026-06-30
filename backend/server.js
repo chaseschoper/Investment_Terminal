@@ -23,7 +23,7 @@ const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 113;
+const FINANCIAL_HISTORY_VERSION = 114;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -1739,14 +1739,26 @@ function removeDuplicateInterimAnnualRows(rows) {
 
     if (row.isInterim) {
       if (/current metric fallback|modeled fallback/i.test(source)) return false;
-      return !/sec annual filing/i.test(annualSource);
+      return !/sec annual filing|earnings release/i.test(annualSource);
     }
 
-    return /sec annual filing/i.test(source);
+    return /sec annual filing|earnings release/i.test(source);
   });
 }
 
 function getRecentEarningsReleaseAnnualRows(ticker) {
+  if (ticker === "NKE") {
+    return [{
+      year: 2026,
+      period: "2026",
+      isInterim: false,
+      revenue: 46.4,
+      earnings: 3.1,
+      eps: 2.1,
+      source: "Nike FY2026 earnings release"
+    }];
+  }
+
   if (ticker !== "FDX") return [];
 
   return [{
