@@ -5,6 +5,8 @@ const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
 const cheerio = require("cheerio");
+const https = require("https");
+const zlib = require("zlib");
 const mongoose = require("mongoose");
 const yahooFinance = require("yahoo-finance2").default;
 const { PDFParse } = require("pdf-parse");
@@ -23,7 +25,7 @@ const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 116;
+const FINANCIAL_HISTORY_VERSION = 117;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -38,6 +40,7 @@ let marketIndexRefreshPromise = null;
 let yahooCooldownUntil = 0;
 let yahooQuoteSummaryCooldownUntil = 0;
 let yahooEarningsTrendCooldownUntil = 0;
+let yahooAnalysisPageCooldownUntil = 0;
 let fmpCooldownUntil = 0;
 let secTickerMapPromise;
 let secTickerMapRetryAfter = 0;
@@ -162,6 +165,12 @@ function setYahooEarningsTrendCooldown(err, label, ticker) {
   console.log(`Yahoo earnings trend cooldown active after ${label}:`, ticker, err.response?.status || err.message);
 }
 
+function setYahooAnalysisPageCooldown(err, label, ticker) {
+  if (!isTooManyRequestsError(err)) return;
+  yahooAnalysisPageCooldownUntil = Math.max(yahooAnalysisPageCooldownUntil, Date.now() + 2 * 60 * 1000);
+  console.log(`Yahoo analysis page cooldown active after ${label}:`, ticker, err.response?.status || err.message);
+}
+
 function setFmpCooldown(err, label, ticker) {
   if (!isTooManyRequestsError(err)) return;
   fmpCooldownUntil = Math.max(fmpCooldownUntil, Date.now() + 90 * 1000);
@@ -171,6 +180,7 @@ function setFmpCooldown(err, label, ticker) {
 const canUseYahoo = () => Date.now() >= yahooCooldownUntil;
 const canUseYahooQuoteSummary = () => Date.now() >= yahooQuoteSummaryCooldownUntil;
 const canUseYahooEarningsTrend = () => Date.now() >= yahooEarningsTrendCooldownUntil;
+const canUseYahooAnalysisPage = () => Date.now() >= yahooAnalysisPageCooldownUntil;
 const canUseFmp = () => Date.now() >= fmpCooldownUntil;
 
 async function getFinnhub(url) {
@@ -3053,6 +3063,124 @@ const estimateFromYahooTrend = (trend = {}) => ({
   eps: firstYahooNumber(trend?.earningsEstimate?.avg)
 });
 
+const parseYahooAnalysisNumber = (value, { money = false } = {}) => {
+  const text = String(value || "").trim().replace(/,/g, "");
+  if (!text || text === "--" || /^N\/A$/i.test(text)) return null;
+  const negative = /^\(.+\)$/.test(text) || text.startsWith("-");
+  const normalized = text.replace(/[$%()]/g, "").replace(/^-/, "");
+  const suffix = normalized.match(/[KMBT]$/i)?.[0]?.toUpperCase();
+  const number = Number(normalized.replace(/[KMBT]$/i, ""));
+  if (!Number.isFinite(number)) return null;
+  const multiplier = money
+    ? suffix === "T"
+      ? 1000000000000
+      : suffix === "B"
+        ? 1000000000
+        : suffix === "M"
+          ? 1000000
+          : suffix === "K"
+            ? 1000
+            : 1
+    : 1;
+  return (negative ? -1 : 1) * number * multiplier;
+};
+
+const extractYahooAnalysisAverageRow = ($, sectionTestId, { money = false } = {}) => {
+  const section = $(`section[data-testid="${sectionTestId}"]`);
+  if (!section.length) return null;
+
+  const row = section.find('tr[data-testid="data-table-v2-row"]').filter((_, element) => {
+    const label = $(element).find('td[data-testid-cell="label"]').text().trim();
+    return /^Avg\. Estimate$/i.test(label);
+  }).first();
+
+  if (!row.length) return null;
+
+  return {
+    currentYear: parseYahooAnalysisNumber(row.find('td[data-testid-cell="0y"]').text(), { money }),
+    nextYear: parseYahooAnalysisNumber(row.find('td[data-testid-cell="+1y"]').text(), { money })
+  };
+};
+
+const fetchYahooAnalysisPageHtml = (ticker) =>
+  new Promise((resolve, reject) => {
+    const url = new URL(`https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}/analysis/`);
+    url.searchParams.set("guccounter", "1");
+
+    const req = https.get(url, {
+      maxHeaderSize: 512 * 1024,
+      timeout: 9000,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1"
+      }
+    }, (res) => {
+      const chunks = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("end", () => {
+        const body = Buffer.concat(chunks);
+        const finish = (err, output) => {
+          if (err) return reject(err);
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            const error = new Error(`Yahoo analysis page HTTP ${res.statusCode}`);
+            error.response = { status: res.statusCode, data: output.toString("utf8").slice(0, 500) };
+            return reject(error);
+          }
+          resolve(output.toString("utf8"));
+        };
+
+        const encoding = String(res.headers["content-encoding"] || "").toLowerCase();
+        if (encoding.includes("br")) return zlib.brotliDecompress(body, finish);
+        if (encoding.includes("gzip")) return zlib.gunzip(body, finish);
+        if (encoding.includes("deflate")) return zlib.inflate(body, finish);
+        return finish(null, body);
+      });
+    });
+
+    req.on("timeout", () => {
+      req.destroy(new Error("Yahoo analysis page timeout"));
+    });
+    req.on("error", reject);
+  });
+
+async function fetchYahooAnalysisPageEstimates(ticker) {
+  if (!canUseYahooAnalysisPage()) return null;
+
+  try {
+    const html = await fetchYahooAnalysisPageHtml(ticker);
+    const $ = cheerio.load(html);
+    const revenue = extractYahooAnalysisAverageRow($, "revenueEstimate", { money: true });
+    const eps = extractYahooAnalysisAverageRow($, "earningsEstimate");
+    if (!revenue && !eps) return null;
+
+    return {
+      currentYear: {
+        revenue: revenue?.currentYear ?? null,
+        earnings: null,
+        eps: eps?.currentYear ?? null
+      },
+      nextYear: {
+        revenue: revenue?.nextYear ?? null,
+        earnings: null,
+        eps: eps?.nextYear ?? null
+      }
+    };
+  } catch (err) {
+    setYahooAnalysisPageCooldown(err, "analysis page", ticker);
+    console.log("Yahoo analysis page skipped:", ticker, err.response?.status || err.message);
+    return null;
+  }
+}
+
 async function fetchYahooEarningsTrendEstimates(ticker) {
   if (!canUseYahooEarningsTrend()) return null;
 
@@ -3076,7 +3204,8 @@ async function fetchYahooEarningsTrendEstimates(ticker) {
 
 async function fetchYahooSupplementalData(ticker) {
   try {
-    const [earningsTrendEstimates, summary, quoteData, chartData] = await Promise.all([
+    const [analysisPageEstimates, earningsTrendEstimates, summary, quoteData, chartData] = await Promise.all([
+      fetchYahooAnalysisPageEstimates(ticker),
       fetchYahooEarningsTrendEstimates(ticker),
       canUseYahooQuoteSummary()
         ? yahooFinance
@@ -3149,7 +3278,7 @@ async function fetchYahooSupplementalData(ticker) {
       .sort((a, b) => a.year - b.year);
 
     const { currentYear, nextYear } = selectYahooAnnualEstimateTrends(trends);
-    const analystEstimates = earningsTrendEstimates || {
+    const analystEstimates = analysisPageEstimates || earningsTrendEstimates || {
       currentYear: estimateFromYahooTrend(currentYear),
       nextYear: estimateFromYahooTrend(nextYear)
     };
