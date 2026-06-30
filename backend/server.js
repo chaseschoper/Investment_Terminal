@@ -3911,7 +3911,6 @@ async function fetchStockData(ticker) {
   const sanitizeNextRevenueEstimate = (candidate, baselineRevenue) => {
     const estimate = sanitizeNearTermRevenueEstimate(candidate, baselineRevenue);
     if (estimate === null) return null;
-    if (baselineRevenue && estimate < baselineRevenue * 1.03) return null;
     return estimate;
   };
   const currentEarningsBase = firstNumber(
@@ -4447,6 +4446,12 @@ async function fetchStockData(ticker) {
     yahooCurrentEpsRaw !== null ||
     yahooNextRevenueRaw !== null ||
     yahooNextEpsRaw !== null;
+  const hasYahooCurrentEstimateValues =
+    yahooCurrentRevenueRaw !== null ||
+    yahooCurrentEpsRaw !== null;
+  const hasYahooNextEstimateValues =
+    yahooNextRevenueRaw !== null ||
+    yahooNextEpsRaw !== null;
   const previousYahooEstimates =
     previousData?.analystEstimatesSource === "Yahoo Finance"
       ? previousData.analystEstimates
@@ -4582,6 +4587,15 @@ async function fetchStockData(ticker) {
     analystEstimatesSource: hasYahooEstimateValues || preservePreviousYahooEstimates
       ? "Yahoo Finance"
       : "Fallback estimate",
+    analystEstimatesSources: {
+      currentYear: hasYahooCurrentEstimateValues || preservePreviousYahooEstimates
+        ? "Yahoo Finance"
+        : "Fallback estimate",
+      nextYear: hasYahooNextEstimateValues || preservePreviousYahooEstimates
+        ? "Yahoo Finance"
+        : "Fallback estimate",
+      followingYear: "Fallback estimate"
+    },
     analystEstimates: {
       currentYear: {
         revenue: displayedCurrentRevenueValue,
