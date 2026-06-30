@@ -1138,10 +1138,85 @@ function buildYahooExtendedHoursQuote(quoteData = {}) {
   };
 }
 
+function buildYahooChartExtendedHoursQuote(result = {}) {
+  const meta = result.meta || {};
+  const timestamps = result.timestamp || [];
+  const quote = result.indicators?.quote?.[0] || {};
+  const periods = meta.currentTradingPeriod || {};
+  const regularClose = firstNumber(meta.regularMarketPrice);
+  const previousClose = firstNumber(meta.previousClose, meta.chartPreviousClose);
+
+  const buildSession = (periodKey, label, comparisonPrice) => {
+    const period = periods[periodKey];
+    if (!period?.start || !period?.end) return null;
+
+    const points = timestamps
+      .map((timestamp, index) => ({
+        timestamp,
+        price: toNumberOrNull(quote.close?.[index])
+      }))
+      .filter((point) =>
+        point.price !== null &&
+        point.timestamp >= period.start &&
+        point.timestamp <= period.end
+      );
+
+    const latestPoint = points.at(-1);
+    if (!latestPoint) return null;
+
+    const change = comparisonPrice !== null
+      ? latestPoint.price - comparisonPrice
+      : null;
+    const percentChange = change !== null && comparisonPrice > 0
+      ? (change / comparisonPrice) * 100
+      : null;
+
+    return {
+      label,
+      price: latestPoint.price,
+      change,
+      percentChange,
+      previousClose: comparisonPrice,
+      timestamp: latestPoint.timestamp * 1000
+    };
+  };
+
+  const preMarket = buildSession("pre", "Pre-market", previousClose);
+  const afterHours = buildSession("post", "After hours", regularClose || previousClose);
+  const marketState = String(meta.marketState || "").toUpperCase();
+  const activeSession = /PRE/.test(marketState) && preMarket
+    ? "preMarket"
+    : (/POST|CLOSED|POSTPOST/.test(marketState) && afterHours) || afterHours
+      ? "afterHours"
+      : preMarket
+        ? "preMarket"
+        : null;
+  const active = activeSession === "preMarket"
+    ? preMarket
+    : activeSession === "afterHours"
+      ? afterHours
+      : null;
+
+  if (!preMarket && !afterHours) return null;
+
+  return {
+    marketState: marketState || null,
+    preMarket,
+    afterHours,
+    activeSession,
+    active
+  };
+}
+
 async function fetchYahooChartQuote(ticker) {
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=1d&interval=1m`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}`;
     const { data } = await axios.get(url, {
+      params: {
+        range: "1d",
+        interval: "1m",
+        includePrePost: "true"
+      },
       timeout: 4000,
       headers: {
         "User-Agent": "Mozilla/5.0"
@@ -1162,7 +1237,8 @@ async function fetchYahooChartQuote(ticker) {
       change !== null && previousClose ? (change / previousClose) * 100 : null
     );
 
-    return normalizeQuotePayload(
+    return {
+      ...normalizeQuotePayload(
       {
         c: price,
         d: change,
@@ -1173,7 +1249,9 @@ async function fetchYahooChartQuote(ticker) {
         o: quote.open?.filter((value) => toNumberOrNull(value) !== null).at(-1)
       },
       {}
-    );
+      ),
+      extendedHours: buildYahooChartExtendedHoursQuote(result)
+    };
   } catch (err) {
     setYahooCooldown(err, "chart quote", ticker);
     console.log("Yahoo chart quote skipped:", ticker, err.response?.status || err.message);
@@ -3198,6 +3276,7 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
         price: chartQuote.c,
         change: chartQuote.d,
         percentChange: chartQuote.dp,
+        extendedHours: chartQuote.extendedHours || null,
         previousClose: chartQuote.pc,
         high: chartQuote.h,
         low: chartQuote.l,
@@ -4638,6 +4717,9 @@ app.get("/api/prices", async (req, res) => {
       let extendedHours = quickData?.extendedHours || null;
       if (!quote || toNumberOrNull(quote.c) === null || toNumberOrNull(quote.dp) === null) {
         const yahooChartQuote = await resolveWithin(fetchYahooChartQuote(symbol), 2500, null);
+        if (!extendedHours && yahooChartQuote?.extendedHours) {
+          extendedHours = yahooChartQuote.extendedHours;
+        }
         quote = normalizeQuotePayload(quote || {}, {
           price: yahooChartQuote?.c,
           change: yahooChartQuote?.d,
