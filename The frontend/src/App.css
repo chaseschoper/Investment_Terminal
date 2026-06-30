@@ -323,8 +323,9 @@ body {
   position: relative;
   min-height: 100vh;
   background:
-    radial-gradient(circle at 8% 18%, rgba(191, 10, 48, 0.08), transparent 25%),
-    radial-gradient(circle at 92% 34%, rgba(59, 130, 246, 0.1), transparent 24%),
+    radial-gradient(circle at 8% 18%, rgba(191, 10, 48, 0.12), transparent 28%),
+    radial-gradient(circle at 92% 34%, rgba(59, 130, 246, 0.14), transparent 27%),
+    radial-gradient(circle at 50% 78%, rgba(255, 255, 255, 0.05), transparent 32%),
     #0b0f14;
 }
 
@@ -335,10 +336,55 @@ body {
   z-index: 0;
   pointer-events: none;
   background-image:
-    radial-gradient(circle, rgba(255, 255, 255, 0.16) 0 1px, transparent 1px),
+    radial-gradient(circle at 13% 22%, rgba(255, 255, 255, 0.78) 0 2px, transparent 3px),
+    radial-gradient(circle at 13% 22%, rgba(248, 113, 113, 0.42) 0 3px, transparent 24px),
+    repeating-conic-gradient(from 0deg at 13% 22%, transparent 0 7deg, rgba(248, 113, 113, 0.22) 7deg 9deg, transparent 9deg 22deg),
+    radial-gradient(circle at 88% 62%, rgba(255, 255, 255, 0.68) 0 2px, transparent 3px),
+    radial-gradient(circle at 88% 62%, rgba(96, 165, 250, 0.42) 0 3px, transparent 28px),
+    repeating-conic-gradient(from 11deg at 88% 62%, transparent 0 8deg, rgba(96, 165, 250, 0.24) 8deg 10deg, transparent 10deg 23deg),
+    radial-gradient(circle at 30% 86%, rgba(255, 255, 255, 0.68) 0 2px, transparent 3px),
+    radial-gradient(circle at 30% 86%, rgba(255, 255, 255, 0.18) 0 3px, transparent 22px),
+    repeating-conic-gradient(from 18deg at 30% 86%, transparent 0 9deg, rgba(255, 255, 255, 0.16) 9deg 11deg, transparent 11deg 26deg),
+    radial-gradient(circle, rgba(255, 255, 255, 0.18) 0 1px, transparent 1px),
     linear-gradient(90deg, rgba(191, 10, 48, 0.05), transparent 38%, rgba(59, 130, 246, 0.06));
-  background-size: 88px 88px, 100% 100%;
-  opacity: 0.55;
+  background-size:
+    100% 100%,
+    100% 100%,
+    100% 100%,
+    100% 100%,
+    100% 100%,
+    100% 100%,
+    100% 100%,
+    100% 100%,
+    100% 100%,
+    84px 84px,
+    100% 100%;
+  opacity: 0.62;
+}
+
+.app::after {
+  content: "";
+  position: fixed;
+  inset: auto -12vw 8vh auto;
+  z-index: 0;
+  width: min(720px, 70vw);
+  height: min(420px, 48vw);
+  pointer-events: none;
+  border-radius: 45% 0 0 45%;
+  background:
+    linear-gradient(115deg, rgba(0, 40, 104, 0.34) 0 23%, transparent 23%),
+    repeating-linear-gradient(
+      178deg,
+      rgba(191, 10, 48, 0.26) 0 14px,
+      rgba(191, 10, 48, 0.26) 14px 28px,
+      rgba(255, 255, 255, 0.14) 28px 42px,
+      rgba(255, 255, 255, 0.14) 42px 56px
+    );
+  filter: blur(0.2px);
+  opacity: 0.5;
+  transform: rotate(-8deg) skewX(-8deg);
+  -webkit-mask-image: radial-gradient(ellipse at center, #000 0 48%, transparent 74%);
+  mask-image: radial-gradient(ellipse at center, #000 0 48%, transparent 74%);
 }
 
 .app > * {
