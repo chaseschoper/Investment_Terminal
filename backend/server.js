@@ -23,7 +23,7 @@ const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 114;
+const FINANCIAL_HISTORY_VERSION = 115;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -1904,7 +1904,7 @@ function hasCompleteSupplementalData(stock) {
   const requiresIndustrialMetrics = !data.isFinancialCompany;
   const currentYear = data.analystEstimates?.currentYear || {};
   const nextYear = data.analystEstimates?.nextYear || {};
-  const followingYear = data.analystEstimates?.followingYear || {};
+  const usesYahooEstimates = data.analystEstimatesSource === "Yahoo Finance";
 
   return (
     (!requiresIndustrialMetrics || toNumberOrNull(data.freeCashflow) !== null) &&
@@ -1919,10 +1919,15 @@ function hasCompleteSupplementalData(stock) {
     toNumberOrNull(data.fiftyTwoWeekHigh) !== null &&
     toNumberOrNull(data.fiftyTwoWeekLow) !== null &&
     ["buy", "hold", "sell"].includes(data.recommendationKey) &&
-    toNumberOrNull(currentYear.revenue) !== null &&
-    toNumberOrNull(currentYear.eps) !== null &&
-    toNumberOrNull(nextYear.revenue) !== null &&
-    toNumberOrNull(nextYear.eps) !== null
+    (
+      usesYahooEstimates ||
+      (
+        toNumberOrNull(currentYear.revenue) !== null &&
+        toNumberOrNull(currentYear.eps) !== null &&
+        toNumberOrNull(nextYear.revenue) !== null &&
+        toNumberOrNull(nextYear.eps) !== null
+      )
+    )
   );
 }
 
@@ -1975,14 +1980,7 @@ function withGuaranteedAnalystSection(data = {}) {
     toNumberOrNull(data.analystEstimates?.currentYear?.eps) !== null &&
     toNumberOrNull(data.analystEstimates?.nextYear?.revenue) !== null &&
     toNumberOrNull(data.analystEstimates?.nextYear?.eps) !== null;
-  const yahooLockedEstimates =
-    data.analystEstimatesSource === "Yahoo Finance" &&
-    (
-      toNumberOrNull(data.analystEstimates?.currentYear?.revenue) !== null ||
-      toNumberOrNull(data.analystEstimates?.currentYear?.eps) !== null ||
-      toNumberOrNull(data.analystEstimates?.nextYear?.revenue) !== null ||
-      toNumberOrNull(data.analystEstimates?.nextYear?.eps) !== null
-    );
+  const yahooLockedEstimates = data.analystEstimatesSource === "Yahoo Finance";
   const isFinancialCompany = data.isFinancialCompany === true;
   const price = toNumberOrNull(data.price);
   const revenueRows = Array.isArray(data.revenueData) ? data.revenueData : [];
@@ -2522,7 +2520,9 @@ function withGuaranteedAnalystSection(data = {}) {
       suppliedCurrentEps < consensusCurrentYearEps * 0.75 ||
       (suppliedNextEps !== null && suppliedCurrentEps > suppliedNextEps * 1.25)
     );
-  const suppliedAnalystEstimates = currentEpsNeedsRepair
+  const suppliedAnalystEstimates = yahooLockedEstimates
+    ? data.analystEstimates
+    : currentEpsNeedsRepair
     ? {
         ...(data.analystEstimates || {}),
         currentYear: {
@@ -4458,80 +4458,12 @@ async function fetchStockData(ticker) {
       }
     : null;
 
-  const hasYahooEstimateValues =
-    yahooCurrentRevenueRaw !== null ||
-    yahooCurrentEpsRaw !== null ||
-    yahooNextRevenueRaw !== null ||
-    yahooNextEpsRaw !== null;
-  const hasYahooCurrentEstimateValues =
-    yahooCurrentRevenueRaw !== null ||
-    yahooCurrentEpsRaw !== null;
-  const hasYahooNextEstimateValues =
-    yahooNextRevenueRaw !== null ||
-    yahooNextEpsRaw !== null;
-  const previousYahooEstimates =
-    previousData?.analystEstimatesSource === "Yahoo Finance"
-      ? previousData.analystEstimates
-      : null;
-  const preservePreviousYahooEstimates =
-    !hasYahooEstimateValues &&
-    (
-      toNumberOrNull(previousYahooEstimates?.currentYear?.revenue) !== null ||
-      toNumberOrNull(previousYahooEstimates?.currentYear?.eps) !== null ||
-      toNumberOrNull(previousYahooEstimates?.nextYear?.revenue) !== null ||
-      toNumberOrNull(previousYahooEstimates?.nextYear?.eps) !== null
-    );
-  const previousCurrentRevenueEstimate = preservePreviousYahooEstimates
-    ? sanitizeCurrentRevenueEstimate(previousYahooEstimates.currentYear?.revenue)
-    : null;
-  const previousNextRevenueEstimate = preservePreviousYahooEstimates
-    ? sanitizeNextRevenueEstimate(previousYahooEstimates.nextYear?.revenue, currentRevenueValue)
-    : null;
-  const displayedCurrentRevenueValue = preservePreviousYahooEstimates
-    ? previousCurrentRevenueEstimate ?? currentRevenueValue
-    : yahooCurrentRevenueEstimate ?? currentRevenueValue;
-  const displayedCurrentEpsValue = firstNumber(
-    preservePreviousYahooEstimates ? previousYahooEstimates.currentYear?.eps : null,
-    yahooCurrentEpsRaw,
-    currentEpsValue
-  );
-  const displayedCurrentEarningsValue =
-    preservePreviousYahooEstimates && previousYahooEstimates.currentYear?.earnings !== undefined
-      ? previousYahooEstimates.currentYear.earnings
-      : displayedCurrentEpsValue !== null && modeledSharesOutstanding
-      ? displayedCurrentEpsValue * modeledSharesOutstanding * 1000000
-      : yahooCurrentEarningsValue ?? currentEarningsValue;
-  const displayedNextRevenueValue = preservePreviousYahooEstimates
-    ? previousNextRevenueEstimate ?? nextRevenueValue
-    : yahooNextRevenueEstimate ?? nextRevenueValue;
-  const projectedDisplayedNextEpsValue = estimateNextValue(
-    displayedCurrentEpsValue,
-    conservativeProjectionRate(earningsGrowthRate, 0.15)
-  );
-  const displayedNextEpsFallback =
-    nextEpsValue !== null &&
-    (
-      yahooNextEpsRaw !== null ||
-      displayedCurrentEpsValue === null ||
-      nextEpsValue >= displayedCurrentEpsValue * 0.55
-    )
-      ? nextEpsValue
-      : null;
-  const displayedNextEpsValue = firstNumber(
-    preservePreviousYahooEstimates ? previousYahooEstimates.nextYear?.eps : null,
-    yahooNextEpsRaw,
-    stockAnalysisForecast.nextYearEps,
-    displayedNextEpsFallback,
-    projectedDisplayedNextEpsValue,
-    displayedFollowingEpsValue,
-    followingEpsValue,
-  );
-  const displayedNextEarningsValue =
-    preservePreviousYahooEstimates && previousYahooEstimates.nextYear?.earnings !== undefined
-      ? previousYahooEstimates.nextYear.earnings
-      : displayedNextEpsValue !== null && modeledSharesOutstanding
-      ? displayedNextEpsValue * modeledSharesOutstanding * 1000000
-      : yahooNextEarningsValue ?? nextEarningsValue;
+  const displayedCurrentRevenueValue = yahooCurrentRevenueEstimate;
+  const displayedCurrentEpsValue = yahooCurrentEpsRaw;
+  const displayedCurrentEarningsValue = yahooCurrentEarningsValue;
+  const displayedNextRevenueValue = yahooNextRevenueEstimate;
+  const displayedNextEpsValue = yahooNextEpsRaw;
+  const displayedNextEarningsValue = yahooNextEarningsValue;
 
   const data = preserveBankMargins(withGuaranteedAnalystSection({
     isFinancialCompany,
@@ -4601,17 +4533,11 @@ async function fetchStockData(ticker) {
     targetMean,
     recommendationKey,
     analystRatingText,
-    analystEstimatesSource: hasYahooEstimateValues || preservePreviousYahooEstimates
-      ? "Yahoo Finance"
-      : "Fallback estimate",
+    analystEstimatesSource: "Yahoo Finance",
     analystEstimatesSources: {
-      currentYear: hasYahooCurrentEstimateValues || preservePreviousYahooEstimates
-        ? "Yahoo Finance"
-        : "Fallback estimate",
-      nextYear: hasYahooNextEstimateValues || preservePreviousYahooEstimates
-        ? "Yahoo Finance"
-        : "Fallback estimate",
-      followingYear: "Fallback estimate"
+      currentYear: "Yahoo Finance",
+      nextYear: "Yahoo Finance",
+      followingYear: "Yahoo Finance"
     },
     analystEstimates: {
       currentYear: {
@@ -4625,9 +4551,9 @@ async function fetchStockData(ticker) {
         eps: displayedNextEpsValue
       },
       followingYear: {
-        revenue: followingRevenueValue,
-        earnings: followingEarningsValue,
-        eps: displayedFollowingEpsValue
+        revenue: null,
+        earnings: null,
+        eps: null
       }
     },
     financialHistoryVersion: FINANCIAL_HISTORY_VERSION,

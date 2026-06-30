@@ -1853,7 +1853,6 @@ const currentYearEstimate =
   stockData?.analystEstimates?.currentYear || {};
 const nextYearSource =
   stockData?.analystEstimates?.nextYear || {};
-const estimateSources = stockData?.analystEstimatesSources || {};
 const nextYearEstimate = {
   revenue: isNumber(nextYearSource.revenue) ? nextYearSource.revenue : null,
   earnings: isNumber(nextYearSource.earnings) ? nextYearSource.earnings : null,
@@ -3626,9 +3625,6 @@ return (
       <h3 className="text-lg font-semibold mb-3">
         Current Year
       </h3>
-      <p style={{ color: "#9ca3af", fontSize: "12px", marginTop: "-6px", marginBottom: "12px" }}>
-        {estimateSources.currentYear || stockData?.analystEstimatesSource || "Estimate source unavailable"}
-      </p>
 
       <div className="space-y-2">
 
@@ -3700,9 +3696,6 @@ return (
       <h3 className="text-lg font-semibold mb-3">
         Next Year
       </h3>
-      <p style={{ color: "#9ca3af", fontSize: "12px", marginTop: "-6px", marginBottom: "12px" }}>
-        {estimateSources.nextYear || stockData?.analystEstimatesSource || "Estimate source unavailable"}
-      </p>
 
       <div className="space-y-2">
 
