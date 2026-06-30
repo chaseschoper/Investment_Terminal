@@ -4556,7 +4556,8 @@ app.get("/api/prices", async (req, res) => {
 
   const refreshSymbolQuote = async (symbol) => {
     const cached = livePriceCache.get(symbol);
-    if (cached && Date.now() - cached.fetchedAt < 45 * 1000) return;
+    const cachedHasPercent = toNumberOrNull(cached?.percentChange) !== null;
+    if (cached && cachedHasPercent && Date.now() - cached.fetchedAt < 45 * 1000) return;
 
     try {
       let quote = await resolveWithin(
@@ -4564,8 +4565,21 @@ app.get("/api/prices", async (req, res) => {
         2500,
         null
       );
-      if (!quote || toNumberOrNull(quote.c) === null) {
-        quote = await resolveWithin(fetchYahooChartQuote(symbol), 2500, null);
+      if (
+        !quote ||
+        toNumberOrNull(quote.c) === null ||
+        toNumberOrNull(quote.dp) === null
+      ) {
+        const yahooQuote = await resolveWithin(fetchYahooChartQuote(symbol), 2500, null);
+        quote = normalizeQuotePayload(yahooQuote || {}, {
+          price: quote?.c,
+          change: quote?.d,
+          percentChange: quote?.dp,
+          previousClose: quote?.pc,
+          high: quote?.h,
+          low: quote?.l,
+          open: quote?.o
+        });
       }
       const price = toNumberOrNull(quote?.c);
       const previousClose = toNumberOrNull(quote?.pc);
@@ -4620,7 +4634,12 @@ app.get("/api/prices", async (req, res) => {
 
   const symbolsNeedingLive = symbols.filter((symbol) => {
     const cached = livePriceCache.get(symbol);
-    return wantsLiveQuotes || toNumberOrNull(prices[symbol]) === null || !cached;
+    return (
+      wantsLiveQuotes ||
+      toNumberOrNull(prices[symbol]) === null ||
+      !cached ||
+      toNumberOrNull(cached.percentChange) === null
+    );
   });
   const queue = [...symbolsNeedingLive];
   const workerCount = Math.min(wantsLiveQuotes ? 5 : 4, queue.length);
@@ -4634,7 +4653,11 @@ app.get("/api/prices", async (req, res) => {
 
   const staleSymbols = symbols.filter((symbol) => {
     const cached = livePriceCache.get(symbol);
-    return !cached || Date.now() - cached.fetchedAt >= 45 * 1000;
+    return (
+      !cached ||
+      toNumberOrNull(cached.percentChange) === null ||
+      Date.now() - cached.fetchedAt >= 45 * 1000
+    );
   });
   runBackgroundQuoteRefresh(staleSymbols);
 

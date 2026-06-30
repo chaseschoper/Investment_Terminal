@@ -1463,7 +1463,7 @@ const loadUserData = async () => {
       if (missingSymbols.length && attempt < 2) {
         window.setTimeout(
           () => loadSavedPrices(missingSymbols, attempt + 1, options),
-          8000
+          4000
         );
       }
 
