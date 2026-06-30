@@ -613,6 +613,171 @@ body {
   border-color: rgba(96, 165, 250, 0.24);
 }
 
+.market-event-toast {
+  position: fixed;
+  top: max(92px, env(safe-area-inset-top, 0px) + 20px);
+  left: 50%;
+  z-index: 10000;
+  width: min(460px, calc(100vw - 28px));
+  min-height: 112px;
+  display: grid;
+  grid-template-columns: 72px 1fr 34px;
+  align-items: center;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid rgba(96, 165, 250, 0.34);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 12% 20%, rgba(255, 255, 255, 0.14), transparent 30%),
+    linear-gradient(135deg, rgba(17, 24, 39, 0.98), rgba(7, 12, 20, 0.98));
+  box-shadow: 0 24px 90px rgba(0, 0, 0, 0.48), 0 0 38px rgba(96, 165, 250, 0.18);
+  transform: translateX(-50%);
+  animation: marketEventEnter 0.7s cubic-bezier(.2, .9, .24, 1.18), marketEventFloat 2.4s ease-in-out 0.7s infinite;
+}
+
+.market-event-toast.open {
+  border-color: rgba(52, 211, 153, 0.44);
+  box-shadow: 0 24px 90px rgba(0, 0, 0, 0.48), 0 0 42px rgba(52, 211, 153, 0.22);
+}
+
+.market-event-toast.close {
+  border-color: rgba(96, 165, 250, 0.44);
+}
+
+.market-event-toast.warning {
+  border-color: rgba(250, 204, 21, 0.5);
+  box-shadow: 0 24px 90px rgba(0, 0, 0, 0.48), 0 0 42px rgba(250, 204, 21, 0.18);
+}
+
+.market-event-toast.urgent {
+  border-color: rgba(248, 113, 113, 0.54);
+  box-shadow: 0 24px 90px rgba(0, 0, 0, 0.48), 0 0 42px rgba(248, 113, 113, 0.22);
+}
+
+.market-event-burst {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle, #ffffff 0 9px, rgba(96, 165, 250, 0.55) 10px 18px, transparent 19px),
+    radial-gradient(circle, rgba(20, 184, 166, 0.28), transparent 58%);
+  animation: marketBurstPulse 1.4s ease-in-out infinite;
+}
+
+.market-event-toast.warning .market-event-burst,
+.market-event-toast.urgent .market-event-burst {
+  background:
+    radial-gradient(circle, #ffffff 0 9px, rgba(250, 204, 21, 0.7) 10px 18px, transparent 19px),
+    radial-gradient(circle, rgba(248, 113, 113, 0.3), transparent 58%);
+}
+
+.market-event-burst span {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 42px;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, #60a5fa, transparent);
+  transform-origin: left center;
+  animation: marketBurstRay 1.4s ease-in-out infinite;
+}
+
+.market-event-burst span:nth-child(1) { transform: rotate(0deg); }
+.market-event-burst span:nth-child(2) { transform: rotate(60deg); }
+.market-event-burst span:nth-child(3) { transform: rotate(120deg); }
+.market-event-burst span:nth-child(4) { transform: rotate(180deg); }
+.market-event-burst span:nth-child(5) { transform: rotate(240deg); }
+.market-event-burst span:nth-child(6) { transform: rotate(300deg); }
+
+.market-event-kicker {
+  display: block;
+  color: #93c5fd;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.market-event-content strong {
+  display: block;
+  margin-top: 4px;
+  color: #ffffff;
+  font-size: 24px;
+  line-height: 1.12;
+}
+
+.market-event-content p {
+  margin: 7px 0 0;
+  color: #cbd5e1;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.market-event-close {
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.7);
+  color: #e5e7eb;
+  cursor: pointer;
+}
+
+.market-event-close:hover,
+.market-event-close:focus-visible {
+  border-color: rgba(255, 255, 255, 0.55);
+  color: #ffffff;
+  outline: none;
+}
+
+@keyframes marketEventEnter {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -24px) scale(0.92);
+  }
+  65% {
+    opacity: 1;
+    transform: translate(-50%, 6px) scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+@keyframes marketEventFloat {
+  0%, 100% {
+    transform: translate(-50%, 0);
+  }
+  50% {
+    transform: translate(-50%, -5px);
+  }
+}
+
+@keyframes marketBurstPulse {
+  0%, 100% {
+    transform: scale(0.96);
+    opacity: 0.92;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 1;
+  }
+}
+
+@keyframes marketBurstRay {
+  0%, 100% {
+    opacity: 0.42;
+    width: 32px;
+  }
+  50% {
+    opacity: 0.95;
+    width: 48px;
+  }
+}
+
 .market-index-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(132px, 1fr));

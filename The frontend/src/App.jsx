@@ -320,6 +320,61 @@ const getMarketClock = (now = new Date()) => {
   };
 };
 
+const getMarketEventSnapshot = (now = new Date()) => {
+  const parts = getEasternParts(now);
+  const open = getEasternDateAsUtc({ ...parts, hour: 9, minute: 30, second: 0 });
+  const close = getEasternDateAsUtc({ ...parts, hour: 16, minute: 0, second: 0 });
+  const isTradingDay = isWeekdayMarketSession(parts);
+  const sessionKey = `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+
+  if (!isTradingDay) {
+    return { status: "closed", sessionKey, secondsToOpen: null, secondsToClose: null };
+  }
+
+  if (now < open) {
+    return {
+      status: "preopen",
+      sessionKey,
+      secondsToOpen: Math.ceil((open.getTime() - now.getTime()) / 1000),
+      secondsToClose: null
+    };
+  }
+
+  if (now < close) {
+    return {
+      status: "open",
+      sessionKey,
+      secondsToOpen: 0,
+      secondsToClose: Math.ceil((close.getTime() - now.getTime()) / 1000)
+    };
+  }
+
+  return { status: "closed", sessionKey, secondsToOpen: null, secondsToClose: 0 };
+};
+
+const MARKET_EVENT_TOASTS = {
+  open: {
+    title: "Market Open",
+    message: "The trading day is live.",
+    tone: "open"
+  },
+  close: {
+    title: "Market Closed",
+    message: "The closing bell has hit.",
+    tone: "close"
+  },
+  oneHour: {
+    title: "1 hour left to go",
+    message: "One hour remains in the trading day.",
+    tone: "warning"
+  },
+  twoMinutes: {
+    title: "2 minutes to go",
+    message: "The closing bell is almost here.",
+    tone: "urgent"
+  }
+};
+
 const formatChartBillions = (value) => {
   if (!isNumber(value)) return "N/A";
 
@@ -616,11 +671,14 @@ function App() {
   const latestComparisonRequest = useRef(0);
   const latestAiRequest = useRef(0);
   const latestEarningsCallRequest = useRef(0);
+  const previousMarketEventRef = useRef(null);
+  const firedMarketEventsRef = useRef(new Set());
   const speechQueueRef = useRef([]);
   const speechIndexRef = useRef(0);
   const speechUtteranceRef = useRef(null);
   const [showAuth, setShowAuth] = useState(false);
   const [authPrompt, setAuthPrompt] = useState("");
+  const [marketEventToast, setMarketEventToast] = useState(null);
 const [isLogin, setIsLogin] = useState(true);
 
 const [username, setUsername] = useState("");
@@ -1007,6 +1065,57 @@ useEffect(() => {
 
   return () => window.clearInterval(timer);
 }, []);
+
+useEffect(() => {
+  const currentSnapshot = getMarketEventSnapshot(marketClockNow);
+  const previousSnapshot = previousMarketEventRef.current;
+  previousMarketEventRef.current = currentSnapshot;
+
+  if (!previousSnapshot) return;
+
+  const showMarketEvent = (eventKey) => {
+    const eventId = `${currentSnapshot.sessionKey}-${eventKey}`;
+    if (firedMarketEventsRef.current.has(eventId)) return;
+    firedMarketEventsRef.current.add(eventId);
+    setMarketEventToast({
+      id: `${eventId}-${Date.now()}`,
+      ...MARKET_EVENT_TOASTS[eventKey]
+    });
+  };
+
+  if (previousSnapshot.status !== "open" && currentSnapshot.status === "open") {
+    showMarketEvent("open");
+  }
+
+  if (previousSnapshot.status === "open" && currentSnapshot.status === "closed") {
+    showMarketEvent("close");
+  }
+
+  if (currentSnapshot.status === "open") {
+    if (
+      previousSnapshot.secondsToClose > 60 * 60 &&
+      currentSnapshot.secondsToClose <= 60 * 60
+    ) {
+      showMarketEvent("oneHour");
+    }
+
+    if (
+      previousSnapshot.secondsToClose > 2 * 60 &&
+      currentSnapshot.secondsToClose <= 2 * 60
+    ) {
+      showMarketEvent("twoMinutes");
+    }
+  }
+}, [marketClockNow]);
+
+useEffect(() => {
+  if (!marketEventToast) return undefined;
+  const timer = window.setTimeout(() => {
+    setMarketEventToast(null);
+  }, 8500);
+
+  return () => window.clearTimeout(timer);
+}, [marketEventToast]);
 
 useEffect(() => {
   let isActive = true;
@@ -2194,6 +2303,32 @@ const comparisonSection = (
 return (
 
   <div className="app">
+
+    {marketEventToast && (
+      <div className={`market-event-toast ${marketEventToast.tone}`} role="status" aria-live="polite">
+        <div className="market-event-burst" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+          <span />
+          <span />
+          <span />
+        </div>
+        <div className="market-event-content">
+          <span className="market-event-kicker">MrktRally alert</span>
+          <strong>{marketEventToast.title}</strong>
+          <p>{marketEventToast.message}</p>
+        </div>
+        <button
+          type="button"
+          className="market-event-close"
+          aria-label="Dismiss market alert"
+          onClick={() => setMarketEventToast(null)}
+        >
+          ×
+        </button>
+      </div>
+    )}
 
     {/* TOP WATCHLIST BAR */}
 
