@@ -1035,13 +1035,25 @@ useEffect(() => {
     }
     try {
       const response = await axios.get(`${API_URL}/api/market-indices`, {
-        timeout: 6000,
+        timeout: 4200,
       });
       if (isActive) {
         const indices = response.data.indices || [];
-        setMarketIndices(indices);
         if (indices.length) {
-          localStorage.setItem(MARKET_INDICES_STORAGE_KEY, JSON.stringify(indices));
+          setMarketIndices((previous) => {
+            const mergedByKey = new Map((previous || []).map((index) => [index.key, index]));
+            indices.forEach((index) => {
+              mergedByKey.set(index.key, {
+                ...(mergedByKey.get(index.key) || {}),
+                ...index
+              });
+            });
+            const merged = MARKET_INDEX_ORDER
+              .map((item) => mergedByKey.get(item.key))
+              .filter(Boolean);
+            localStorage.setItem(MARKET_INDICES_STORAGE_KEY, JSON.stringify(merged));
+            return merged;
+          });
         }
       }
     } catch (error) {

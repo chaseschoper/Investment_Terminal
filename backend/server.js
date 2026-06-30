@@ -4754,6 +4754,7 @@ app.get("/api/market-indices", async (req, res) => {
   const cachedAge = cached ? Date.now() - cached.fetchedAt : Infinity;
   const freshCacheMs = 45 * 1000;
   const staleCacheMs = 30 * 60 * 1000;
+  const cachedByKey = new Map((cached?.data?.indices || []).map((index) => [index.key, index]));
 
   const buildIndexQuote = (index, symbol, price, change, percentChange, source, extra = {}) => {
     const priceValue = toNumberOrNull(price);
@@ -4928,45 +4929,59 @@ app.get("/api/market-indices", async (req, res) => {
     };
   };
 
-  const fetchFreshIndices = async () => {
-    const indices = await Promise.all(MARKET_INDICES.map(async (index) => {
-      const sources = [
-        ["Yahoo chart", fetchYahooChartIndex],
-        ["Yahoo quote", fetchYahooIndex],
-        ["Investing.com", fetchInvestingIndex]
-      ];
-
-      let indexQuote = null;
-      for (const [label, fetchIndex] of sources) {
-        try {
-          indexQuote = await fetchIndex(index);
-          if (indexQuote) break;
-        } catch (err) {
+  const fetchBestIndexQuote = async (index) => {
+    const sources = [
+      ["Yahoo chart", fetchYahooChartIndex],
+      ["Yahoo quote", fetchYahooIndex],
+      ["Investing.com", fetchInvestingIndex]
+    ];
+    const attempts = sources.map(([label, fetchIndex]) =>
+      resolveWithin(Promise.resolve()
+        .then(() => fetchIndex(index))
+        .then((indexQuote) => {
+          if (!indexQuote) throw new Error(`Missing ${index.label} ${label} quote`);
+          return indexQuote;
+        })
+        .catch((err) => {
           if (/^Yahoo/i.test(label)) {
             setYahooCooldown(err, `market index ${label}`, index.label);
           }
           console.log(`Market index ${label} skipped:`, index.label, err.response?.status || err.message);
-        }
-      }
+          return null;
+        }), label === "Investing.com" ? 2600 : 2200, null)
+    );
 
-      if (!indexQuote) return null;
+    const settled = await Promise.all(attempts);
+    return settled.find(Boolean) || null;
+  };
+
+  const fetchFreshIndices = async () => {
+    const indices = await Promise.all(MARKET_INDICES.map(async (index) => {
+      let indexQuote = await fetchBestIndexQuote(index);
+
+      if (!indexQuote) return cachedByKey.get(index.key) || null;
 
       try {
-        const futures = await fetchYahooFuture(index);
-        return futures ? { ...indexQuote, futures } : indexQuote;
+        const futures = await resolveWithin(fetchYahooFuture(index), 1400, null);
+        return futures
+          ? { ...indexQuote, futures }
+          : { ...indexQuote, futures: cachedByKey.get(index.key)?.futures || null };
       } catch (err) {
         setYahooCooldown(err, "market index futures", index.label);
         console.log("Market index futures skipped:", index.label, err.response?.status || err.message);
-        return indexQuote;
+        return { ...indexQuote, futures: cachedByKey.get(index.key)?.futures || null };
       }
     }));
 
+    const mergedIndices = MARKET_INDICES.map((index) =>
+      indices.find((item) => item?.key === index.key) || cachedByKey.get(index.key)
+    ).filter(Boolean);
     const data = {
-      indices: indices.filter(Boolean),
+      indices: mergedIndices,
       updatedAt: new Date().toISOString()
     };
 
-    if (data.indices.length) {
+    if (data.indices.length === MARKET_INDICES.length) {
       marketIndexCache.set("latest", {
         fetchedAt: Date.now(),
         data
