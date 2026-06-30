@@ -67,9 +67,9 @@ const KNOWN_FINANCIAL_INSTITUTIONS = new Set([
 ]);
 
 const MARKET_INDICES = [
-  { key: "sp500", label: "S&P 500", yahooSymbol: "^GSPC", investingPath: "us-spx-500" },
-  { key: "dow", label: "Dow Jones", yahooSymbol: "^DJI", investingPath: "us-30" },
-  { key: "nasdaq", label: "Nasdaq", yahooSymbol: "^IXIC", investingPath: "nasdaq-composite" }
+  { key: "sp500", label: "S&P 500", yahooSymbol: "^GSPC", futuresSymbol: "ES=F", investingPath: "us-spx-500" },
+  { key: "dow", label: "Dow Jones", yahooSymbol: "^DJI", futuresSymbol: "YM=F", investingPath: "us-30" },
+  { key: "nasdaq", label: "Nasdaq", yahooSymbol: "^IXIC", futuresSymbol: "NQ=F", investingPath: "nasdaq-composite" }
 ];
 
 const PRICE_HISTORY_RANGES = {
@@ -1081,6 +1081,62 @@ const normalizeQuotePayload = (quote = {}, fallback = {}) => ({
   l: firstNumber(quote.l, fallback.low),
   o: firstNumber(quote.o, fallback.open)
 });
+
+function buildYahooExtendedHoursQuote(quoteData = {}) {
+  const previousClose = firstYahooNumber(
+    quoteData.regularMarketPreviousClose,
+    quoteData.postMarketPreviousClose,
+    quoteData.preMarketPreviousClose
+  );
+
+  const buildSession = (prefix, label) => {
+    const price = firstYahooNumber(quoteData[`${prefix}Price`]);
+    if (price === null) return null;
+    const suppliedChange = firstFiniteNumber(quoteData[`${prefix}Change`]);
+    const change = suppliedChange ?? (
+      previousClose !== null ? price - previousClose : null
+    );
+    const percentChange = firstFiniteNumber(
+      quoteData[`${prefix}ChangePercent`],
+      change !== null && previousClose > 0 ? (change / previousClose) * 100 : null
+    );
+    return {
+      label,
+      price,
+      change,
+      percentChange,
+      previousClose
+    };
+  };
+
+  const preMarket = buildSession("preMarket", "Pre-market");
+  const afterHours = buildSession("postMarket", "After hours");
+  const marketState = String(quoteData.marketState || "").toUpperCase();
+  const activeSession = /PRE/.test(marketState) && preMarket
+    ? "preMarket"
+    : /POST|CLOSED|POSTPOST/.test(marketState) && afterHours
+      ? "afterHours"
+      : preMarket
+        ? "preMarket"
+        : afterHours
+          ? "afterHours"
+          : null;
+  const active = activeSession === "preMarket"
+    ? preMarket
+    : activeSession === "afterHours"
+      ? afterHours
+      : null;
+
+  if (!preMarket && !afterHours) return null;
+
+  return {
+    marketState: marketState || null,
+    preMarket,
+    afterHours,
+    activeSession,
+    active
+  };
+}
 
 async function fetchYahooChartQuote(ticker) {
   try {
@@ -2956,6 +3012,7 @@ async function fetchYahooSupplementalData(ticker) {
       price: firstYahooNumber(quoteData.regularMarketPrice),
       change: firstFiniteNumber(quoteData.regularMarketChange),
       percentChange: firstFiniteNumber(quoteData.regularMarketChangePercent),
+      extendedHours: buildYahooExtendedHoursQuote(quoteData),
       previousClose: firstYahooNumber(quoteData.regularMarketPreviousClose),
       high: firstYahooNumber(quoteData.regularMarketDayHigh),
       low: firstYahooNumber(quoteData.regularMarketDayLow),
@@ -3071,6 +3128,7 @@ async function fetchYahooQuickQuote(ticker) {
       price: firstYahooNumber(quoteData.regularMarketPrice),
       change: firstFiniteNumber(quoteData.regularMarketChange),
       percentChange: firstFiniteNumber(quoteData.regularMarketChangePercent),
+      extendedHours: buildYahooExtendedHoursQuote(quoteData),
       previousClose: firstYahooNumber(quoteData.regularMarketPreviousClose),
       high: firstYahooNumber(quoteData.regularMarketDayHigh),
       low: firstYahooNumber(quoteData.regularMarketDayLow),
@@ -4385,6 +4443,7 @@ async function fetchStockData(ticker) {
     price: quote.c,
     change: quote.d,
     percentChange: quote.dp,
+    extendedHours: yahooSupplementalData.extendedHours || null,
     previousClose: quote.pc,
     high: quote.h,
     low: quote.l,
@@ -4531,7 +4590,7 @@ app.get("/api/prices", async (req, res) => {
   const prices = {};
   const details = {};
   const savedStocks = await Stock.find({ ticker: { $in: symbols } })
-    .select("ticker data.price data.change data.percentChange data.previousClose data.logo data.name")
+    .select("ticker data.price data.change data.percentChange data.previousClose data.extendedHours data.logo data.name")
     .lean();
   const savedBySymbol = new Map(savedStocks.map((stock) => [stock.ticker, stock.data || {}]));
 
@@ -4544,6 +4603,7 @@ app.get("/api/prices", async (req, res) => {
       name: savedData.name || symbol,
       logo: savedData.logo || getFinnhubLogoUrl(symbol),
       change: toNumberOrNull(savedData.change),
+      extendedHours: savedData.extendedHours || null,
       percentChange: !wantsLiveQuotes && savedPercentChange !== null
         ? savedPercentChange
         : !wantsLiveQuotes && savedPrice !== null && savedPreviousClose > 0
@@ -4558,6 +4618,7 @@ app.get("/api/prices", async (req, res) => {
       details[symbol] = {
         ...details[symbol],
         change: toNumberOrNull(cached.change) ?? details[symbol].change,
+        extendedHours: cached.extendedHours || details[symbol].extendedHours,
         percentChange: toNumberOrNull(cached.percentChange) ?? details[symbol].percentChange
       };
     }
@@ -4569,10 +4630,12 @@ app.get("/api/prices", async (req, res) => {
     if (cached && cachedHasPercent && Date.now() - cached.fetchedAt < 45 * 1000) return;
 
     try {
+      const quickData = await resolveWithin(fetchYahooQuickQuote(symbol), 2500, null) || {};
       let quote = normalizeQuotePayload(
         {},
-        await resolveWithin(fetchYahooQuickQuote(symbol), 2500, null) || {}
+        quickData || {}
       );
+      let extendedHours = quickData?.extendedHours || null;
       if (!quote || toNumberOrNull(quote.c) === null || toNumberOrNull(quote.dp) === null) {
         const yahooChartQuote = await resolveWithin(fetchYahooChartQuote(symbol), 2500, null);
         quote = normalizeQuotePayload(quote || {}, {
@@ -4620,12 +4683,14 @@ app.get("/api/prices", async (req, res) => {
           price,
           change,
           percentChange,
+          extendedHours,
           fetchedAt: Date.now()
         });
       }
       details[symbol] = {
         ...details[symbol],
         change: change ?? details[symbol].change,
+        extendedHours: extendedHours || details[symbol].extendedHours,
         percentChange: percentChange ?? details[symbol].percentChange
       };
     } catch (err) {
@@ -4690,7 +4755,7 @@ app.get("/api/market-indices", async (req, res) => {
   const freshCacheMs = 45 * 1000;
   const staleCacheMs = 30 * 60 * 1000;
 
-  const buildIndexQuote = (index, symbol, price, change, percentChange, source) => {
+  const buildIndexQuote = (index, symbol, price, change, percentChange, source, extra = {}) => {
     const priceValue = toNumberOrNull(price);
     const changeValue = toNumberOrNull(change);
     const percentValue = toNumberOrNull(percentChange);
@@ -4702,7 +4767,8 @@ app.get("/api/market-indices", async (req, res) => {
       price: priceValue,
       change: changeValue,
       percentChange: percentValue,
-      source
+      source,
+      ...extra
     };
   };
 
@@ -4811,6 +4877,57 @@ app.get("/api/market-indices", async (req, res) => {
     return indexQuote;
   };
 
+  const fetchYahooFuture = async (index) => {
+    if (!canUseYahoo() || !index.futuresSymbol) return null;
+
+    const quote = await resolveWithin(
+      yahooFinance.quote(index.futuresSymbol).catch(() => null),
+      2500,
+      null
+    );
+    let price = firstYahooNumber(quote?.regularMarketPrice);
+    let change = firstFiniteNumber(quote?.regularMarketChange);
+    let percentChange = firstFiniteNumber(quote?.regularMarketChangePercent);
+    let marketState = quote?.marketState || null;
+
+    if (price === null) {
+      const chartResponse = await axios.get(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(index.futuresSymbol)}`,
+        {
+          params: { interval: "5m", range: "1d" },
+          headers: {
+            "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
+            Accept: "application/json,text/plain,*/*"
+          },
+          timeout: 3500
+        }
+      );
+      const result = chartResponse.data?.chart?.result?.[0];
+      const meta = result?.meta || {};
+      const closes = result?.indicators?.quote?.[0]?.close || [];
+      price = firstFiniteNumber(
+        meta.regularMarketPrice,
+        [...closes].reverse().find((value) => toNumberOrNull(value) !== null)
+      );
+      const previousClose = firstFiniteNumber(meta.chartPreviousClose, meta.previousClose);
+      change = price !== null && previousClose !== null ? price - previousClose : null;
+      percentChange = change !== null && previousClose > 0 ? (change / previousClose) * 100 : null;
+      marketState = meta.marketState || marketState;
+    }
+
+    if (price === null) return null;
+
+    return {
+      symbol: index.futuresSymbol,
+      label: `${index.label} futures`,
+      price,
+      change,
+      percentChange,
+      marketState,
+      source: "Yahoo Futures"
+    };
+  };
+
   const fetchFreshIndices = async () => {
     const indices = await Promise.all(MARKET_INDICES.map(async (index) => {
       const sources = [
@@ -4819,10 +4936,11 @@ app.get("/api/market-indices", async (req, res) => {
         ["Investing.com", fetchInvestingIndex]
       ];
 
+      let indexQuote = null;
       for (const [label, fetchIndex] of sources) {
         try {
-          const indexQuote = await fetchIndex(index);
-          if (indexQuote) return indexQuote;
+          indexQuote = await fetchIndex(index);
+          if (indexQuote) break;
         } catch (err) {
           if (/^Yahoo/i.test(label)) {
             setYahooCooldown(err, `market index ${label}`, index.label);
@@ -4831,7 +4949,16 @@ app.get("/api/market-indices", async (req, res) => {
         }
       }
 
-      return null;
+      if (!indexQuote) return null;
+
+      try {
+        const futures = await fetchYahooFuture(index);
+        return futures ? { ...indexQuote, futures } : indexQuote;
+      } catch (err) {
+        setYahooCooldown(err, "market index futures", index.label);
+        console.log("Market index futures skipped:", index.label, err.response?.status || err.message);
+        return indexQuote;
+      }
     }));
 
     const data = {

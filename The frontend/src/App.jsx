@@ -81,6 +81,9 @@ const formatIndexPrice = (value) =>
     minimumFractionDigits: 2,
   }) : "--";
 
+const formatSignedPercent = (value) =>
+  isNumber(value) ? `${value > 0 ? "+" : ""}${value.toFixed(2)}%` : "--";
+
 const chunkSymbols = (symbols, size = 10) => {
   const chunks = [];
   for (let index = 0; index < symbols.length; index += size) {
@@ -2088,6 +2091,8 @@ const pauseComputerRead = () => {
 
 const marketSignal = getMarketSignal(marketIndices);
 const marketClock = getMarketClock(marketClockNow);
+const showExtendedMarketData = marketClock.tone !== "open";
+const activeExtendedHours = stockData?.extendedHours?.active || null;
 const displayedMarketIndices = MARKET_INDEX_ORDER.map((item) => ({
   ...item,
   ...(marketIndices.find((index) => index.key === item.key) || {})
@@ -2592,6 +2597,20 @@ return (
                 : "--"}
             </div>
 
+            {showExtendedMarketData && activeExtendedHours && (
+              <div className="extended-hours-quote">
+                <span>{activeExtendedHours.label}</span>
+                <strong>{formatPrice(activeExtendedHours.price)}</strong>
+                <em className={
+                  activeExtendedHours.percentChange >= 0
+                    ? "positive-text"
+                    : "negative-text"
+                }>
+                  {formatSignedPercent(activeExtendedHours.percentChange)}
+                </em>
+              </div>
+            )}
+
             <div className="stock-change">
               {stockData.symbol}
             </div>
@@ -2625,6 +2644,19 @@ return (
                       ? `${index.percentChange > 0 ? "+" : ""}${index.percentChange.toFixed(2)}%`
                       : isMarketLoading ? "Loading" : "--"}
                   </span>
+                  {showExtendedMarketData && index.futures && (
+                    <span className="market-index-futures">
+                      <span>Futures</span>
+                      <strong>{formatIndexPrice(index.futures.price)}</strong>
+                      <em className={
+                        index.futures.percentChange >= 0
+                          ? "positive-text"
+                          : "negative-text"
+                      }>
+                        {formatSignedPercent(index.futures.percentChange)}
+                      </em>
+                    </span>
+                  )}
                 </div>
               ))}
           </div>
