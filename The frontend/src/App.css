@@ -168,25 +168,52 @@ body {
 }
 
 .holiday-flag {
+  position: relative;
   width: 28px;
   height: 18px;
-  display: grid;
   overflow: hidden;
   border-radius: 3px;
   border: 1px solid rgba(255, 255, 255, 0.55);
-  background: #ffffff;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      #bf0a30 0 2px,
+      #ffffff 2px 4px
+    );
 }
 
-.holiday-flag span:nth-child(1) {
+.holiday-flag::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 12px;
+  height: 10px;
   background: #002868;
 }
 
-.holiday-flag span:nth-child(2) {
+.holiday-flag::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 1.5px;
+  height: 1.5px;
+  border-radius: 999px;
   background: #ffffff;
+  box-shadow:
+    4px 0 #ffffff,
+    8px 0 #ffffff,
+    2px 3px #ffffff,
+    6px 3px #ffffff,
+    10px 3px #ffffff,
+    0 6px #ffffff,
+    4px 6px #ffffff,
+    8px 6px #ffffff;
 }
 
-.holiday-flag span:nth-child(3) {
-  background: #bf0a30;
+.holiday-flag span {
+  display: none;
 }
 
 .holiday-star-row {
@@ -293,8 +320,30 @@ body {
 }
 
 .app {
+  position: relative;
   min-height: 100vh;
-  background: #0b0f14;
+  background:
+    radial-gradient(circle at 8% 18%, rgba(191, 10, 48, 0.08), transparent 25%),
+    radial-gradient(circle at 92% 34%, rgba(59, 130, 246, 0.1), transparent 24%),
+    #0b0f14;
+}
+
+.app::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle, rgba(255, 255, 255, 0.16) 0 1px, transparent 1px),
+    linear-gradient(90deg, rgba(191, 10, 48, 0.05), transparent 38%, rgba(59, 130, 246, 0.06));
+  background-size: 88px 88px, 100% 100%;
+  opacity: 0.55;
+}
+
+.app > * {
+  position: relative;
+  z-index: 1;
 }
 
 .layout {
@@ -349,6 +398,9 @@ body {
   flex-wrap: wrap;
   gap: 12px;
   margin: 36px auto 30px;
+  padding-top: 14px;
+  border-top: 2px solid transparent;
+  border-image: linear-gradient(90deg, #bf0a30, #ffffff, #2563eb) 1;
 }
 
 .search {
@@ -433,6 +485,13 @@ body {
   justify-content: flex-end;
   gap: 14px;
   margin: -12px auto 28px;
+  padding: 12px;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  border-radius: 10px;
+  background:
+    linear-gradient(90deg, rgba(191, 10, 48, 0.09), rgba(255, 255, 255, 0.02), rgba(37, 99, 235, 0.09)),
+    rgba(7, 12, 20, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .market-signal {
@@ -448,6 +507,7 @@ body {
   font-weight: 900;
   text-align: center;
   text-transform: uppercase;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.05);
 }
 
 .market-signal.positive {
@@ -466,6 +526,7 @@ body {
   border: 1px solid #273244;
   border-radius: 8px;
   background: #111827;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.05);
 }
 
 .market-countdown span,
@@ -508,6 +569,7 @@ body {
   border: 1px solid #273244;
   border-radius: 8px;
   background: #111827;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.05);
 }
 
 .market-index-card.rally {
@@ -587,10 +649,30 @@ body {
 /* CARDS */
 
 .card {
+  position: relative;
+  overflow: hidden;
   background: #111827;
   border: 1px solid #1f2937;
   border-radius: 18px;
   padding: 22px;
+}
+
+.card::before,
+.chart-box::before,
+.ai-card::before,
+.comparison-card::before,
+.portfolio-visual-panel::before,
+.named-watchlist-card::before,
+.earnings-card::before {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 0;
+  height: 3px;
+  border-radius: 0 0 999px 999px;
+  background: linear-gradient(90deg, #bf0a30 0 30%, rgba(255, 255, 255, 0.9) 30% 64%, #2563eb 64% 100%);
+  opacity: 0.72;
 }
 
 .card-title {
@@ -611,11 +693,25 @@ body {
 }
 
 .section-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
   font-size: 26px;
   margin-bottom: 18px;
 }
 
+.section-title::after {
+  content: "";
+  width: clamp(58px, 12vw, 150px);
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #bf0a30 0 30%, rgba(255, 255, 255, 0.92) 30% 64%, #2563eb 64% 100%);
+  opacity: 0.72;
+}
+
 .chart-box {
+  position: relative;
+  overflow: hidden;
   background: #111827;
   border: 1px solid #1f2937;
   border-radius: 18px;
@@ -1248,6 +1344,8 @@ body {
 }
 
 .earnings-card {
+  position: relative;
+  overflow: hidden;
   background: #111827;
   border-radius: 16px;
   padding: 24px;
@@ -1515,6 +1613,8 @@ body {
 }
 
 .ai-card {
+  position: relative;
+  overflow: hidden;
   background: #111827;
   border-radius: 16px;
   padding: 24px;
@@ -1591,6 +1691,8 @@ body {
 }
 
 .comparison-card {
+  position: relative;
+  overflow: hidden;
 
   background: #111827;
 
@@ -1652,7 +1754,9 @@ body {
 
 .top-watchlist {
   width: 100%;
-  background: #0f172a;
+  background:
+    linear-gradient(90deg, rgba(191, 10, 48, 0.1), transparent 30%, rgba(37, 99, 235, 0.11)),
+    #0f172a;
   border-bottom: 1px solid #1f2937;
   padding: 10px 20px;
   min-height: 68px;
@@ -1663,6 +1767,17 @@ body {
   position: sticky;
   top: 0;
   z-index: 100;
+}
+
+.top-watchlist::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: linear-gradient(90deg, #bf0a30 0 28%, rgba(255, 255, 255, 0.8) 28% 60%, #2563eb 60% 100%);
+  opacity: 0.72;
 }
 
 .watchlist-label {
@@ -1717,8 +1832,10 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: #111827;
-  border: 1px solid #1f2937;
+  background:
+    linear-gradient(135deg, rgba(191, 10, 48, 0.06), rgba(37, 99, 235, 0.06)),
+    #111827;
+  border: 1px solid rgba(96, 165, 250, 0.2);
   padding: 10px 14px;
   border-radius: 8px;
   cursor: pointer;
@@ -1824,8 +1941,10 @@ body {
   align-items: center;
   gap: 6px;
   padding: 6px 20px;
-  border-bottom: 1px solid #1f2937;
-  background: #0b1117;
+  border-bottom: 1px solid rgba(31, 41, 55, 0.9);
+  background:
+    linear-gradient(90deg, rgba(191, 10, 48, 0.08), transparent 35%, rgba(37, 99, 235, 0.08)),
+    #0b1117;
   overflow-x: auto;
   position: sticky;
   top: 68px;
@@ -1833,11 +1952,24 @@ body {
   scrollbar-width: none;
 }
 
+.section-tabs::before {
+  content: "";
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  top: 0;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #bf0a30 0 30%, rgba(255, 255, 255, 0.82) 30% 64%, #2563eb 64% 100%);
+  opacity: 0.55;
+}
+
 .section-tabs::-webkit-scrollbar {
   display: none;
 }
 
 .section-tabs a {
+  position: relative;
   min-height: 32px;
   display: inline-flex;
   align-items: center;
@@ -1852,7 +1984,7 @@ body {
 
 .section-tabs a:hover,
 .section-tabs a:focus-visible {
-  background: #172033;
+  background: linear-gradient(135deg, rgba(191, 10, 48, 0.18), rgba(37, 99, 235, 0.18)), #172033;
   color: #f9fafb;
   outline: none;
 }
@@ -1875,6 +2007,8 @@ body {
 }
 
 .portfolio-visual-panel {
+  position: relative;
+  overflow: hidden;
   min-width: 0;
   border: 1px solid #1f2937;
   border-radius: 8px;
@@ -1986,6 +2120,8 @@ body {
 }
 
 .named-watchlist-card {
+  position: relative;
+  overflow: hidden;
   min-width: 0;
   padding: 18px;
   border: 1px solid #273244;
