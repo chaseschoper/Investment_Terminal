@@ -336,15 +336,19 @@ body {
   z-index: 0;
   pointer-events: none;
   background-image:
-    radial-gradient(circle at 13% 22%, rgba(255, 255, 255, 0.78) 0 2px, transparent 3px),
-    radial-gradient(circle at 13% 22%, rgba(248, 113, 113, 0.42) 0 3px, transparent 24px),
-    repeating-conic-gradient(from 0deg at 13% 22%, transparent 0 7deg, rgba(248, 113, 113, 0.22) 7deg 9deg, transparent 9deg 22deg),
-    radial-gradient(circle at 88% 62%, rgba(255, 255, 255, 0.68) 0 2px, transparent 3px),
-    radial-gradient(circle at 88% 62%, rgba(96, 165, 250, 0.42) 0 3px, transparent 28px),
-    repeating-conic-gradient(from 11deg at 88% 62%, transparent 0 8deg, rgba(96, 165, 250, 0.24) 8deg 10deg, transparent 10deg 23deg),
-    radial-gradient(circle at 30% 86%, rgba(255, 255, 255, 0.68) 0 2px, transparent 3px),
-    radial-gradient(circle at 30% 86%, rgba(255, 255, 255, 0.18) 0 3px, transparent 22px),
-    repeating-conic-gradient(from 18deg at 30% 86%, transparent 0 9deg, rgba(255, 255, 255, 0.16) 9deg 11deg, transparent 11deg 26deg),
+    radial-gradient(circle at 13% 22%, rgba(255, 255, 255, 0.95) 0 2px, rgba(248, 113, 113, 0.55) 3px 5px, transparent 7px),
+    radial-gradient(circle at 13% 22%, transparent 0 26px, rgba(248, 113, 113, 0.35) 27px 29px, transparent 31px 52px, rgba(255, 255, 255, 0.18) 53px 55px, transparent 58px),
+    repeating-conic-gradient(from 4deg at 13% 22%, transparent 0 7deg, rgba(248, 113, 113, 0.34) 7deg 8deg, transparent 8deg 18deg, rgba(255, 255, 255, 0.2) 18deg 19deg, transparent 19deg 27deg),
+    radial-gradient(circle at 19% 16%, rgba(255, 255, 255, 0.42) 0 1px, transparent 3px),
+    radial-gradient(circle at 8% 31%, rgba(248, 113, 113, 0.36) 0 1px, transparent 4px),
+    radial-gradient(circle at 88% 62%, rgba(255, 255, 255, 0.9) 0 2px, rgba(96, 165, 250, 0.56) 3px 5px, transparent 7px),
+    radial-gradient(circle at 88% 62%, transparent 0 30px, rgba(96, 165, 250, 0.36) 31px 33px, transparent 35px 60px, rgba(255, 255, 255, 0.18) 61px 63px, transparent 66px),
+    repeating-conic-gradient(from 13deg at 88% 62%, transparent 0 8deg, rgba(96, 165, 250, 0.35) 8deg 9deg, transparent 9deg 19deg, rgba(255, 255, 255, 0.2) 19deg 20deg, transparent 20deg 29deg),
+    radial-gradient(circle at 82% 72%, rgba(255, 255, 255, 0.4) 0 1px, transparent 4px),
+    radial-gradient(circle at 94% 51%, rgba(96, 165, 250, 0.38) 0 1px, transparent 4px),
+    radial-gradient(circle at 30% 86%, rgba(255, 255, 255, 0.88) 0 2px, rgba(255, 255, 255, 0.32) 3px 5px, transparent 7px),
+    radial-gradient(circle at 30% 86%, transparent 0 24px, rgba(255, 255, 255, 0.24) 25px 27px, transparent 29px 48px, rgba(248, 113, 113, 0.18) 49px 51px, transparent 54px),
+    repeating-conic-gradient(from 18deg at 30% 86%, transparent 0 9deg, rgba(255, 255, 255, 0.22) 9deg 10deg, transparent 10deg 21deg),
     radial-gradient(circle, rgba(255, 255, 255, 0.18) 0 1px, transparent 1px),
     linear-gradient(90deg, rgba(191, 10, 48, 0.05), transparent 38%, rgba(59, 130, 246, 0.06));
   background-size:
@@ -357,34 +361,53 @@ body {
     100% 100%,
     100% 100%,
     100% 100%,
+    100% 100%,
+    100% 100%,
+    100% 100%,
+    100% 100%,
     84px 84px,
     100% 100%;
-  opacity: 0.62;
+  opacity: 0.7;
 }
 
 .app::after {
   content: "";
   position: fixed;
-  inset: auto -12vw 8vh auto;
+  inset: auto -10vw 4vh auto;
   z-index: 0;
-  width: min(720px, 70vw);
-  height: min(420px, 48vw);
+  width: min(820px, 78vw);
+  height: min(470px, 52vw);
   pointer-events: none;
   border-radius: 45% 0 0 45%;
   background:
-    linear-gradient(115deg, rgba(0, 40, 104, 0.34) 0 23%, transparent 23%),
+    radial-gradient(circle at 10% 19%, rgba(255, 255, 255, 0.72) 0 1px, transparent 2px),
+    radial-gradient(circle at 16% 23%, rgba(255, 255, 255, 0.72) 0 1px, transparent 2px),
+    radial-gradient(circle at 22% 19%, rgba(255, 255, 255, 0.72) 0 1px, transparent 2px),
+    radial-gradient(circle at 28% 23%, rgba(255, 255, 255, 0.72) 0 1px, transparent 2px),
+    radial-gradient(circle at 12% 31%, rgba(255, 255, 255, 0.72) 0 1px, transparent 2px),
+    radial-gradient(circle at 18% 35%, rgba(255, 255, 255, 0.72) 0 1px, transparent 2px),
+    radial-gradient(circle at 24% 31%, rgba(255, 255, 255, 0.72) 0 1px, transparent 2px),
+    linear-gradient(110deg, rgba(0, 40, 104, 0.44) 0 34%, transparent 34%),
+    linear-gradient(172deg, rgba(255, 255, 255, 0.12), transparent 36%, rgba(0, 0, 0, 0.18) 63%, transparent),
     repeating-linear-gradient(
-      178deg,
-      rgba(191, 10, 48, 0.26) 0 14px,
-      rgba(191, 10, 48, 0.26) 14px 28px,
-      rgba(255, 255, 255, 0.14) 28px 42px,
-      rgba(255, 255, 255, 0.14) 42px 56px
+      176deg,
+      rgba(191, 10, 48, 0.3) 0 15px,
+      rgba(191, 10, 48, 0.3) 15px 30px,
+      rgba(255, 255, 255, 0.16) 30px 45px,
+      rgba(255, 255, 255, 0.16) 45px 60px
     );
-  filter: blur(0.2px);
-  opacity: 0.5;
-  transform: rotate(-8deg) skewX(-8deg);
-  -webkit-mask-image: radial-gradient(ellipse at center, #000 0 48%, transparent 74%);
-  mask-image: radial-gradient(ellipse at center, #000 0 48%, transparent 74%);
+  filter: blur(0.15px);
+  opacity: 0.58;
+  transform: rotate(-7deg) skewX(-9deg);
+  box-shadow: inset 34px 0 70px rgba(255, 255, 255, 0.08), inset -48px 0 90px rgba(0, 0, 0, 0.2);
+  -webkit-mask-image:
+    radial-gradient(ellipse at center, #000 0 54%, transparent 78%),
+    repeating-radial-gradient(ellipse at 35% 50%, #000 0 24px, rgba(0, 0, 0, 0.78) 25px 48px);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    radial-gradient(ellipse at center, #000 0 54%, transparent 78%),
+    repeating-radial-gradient(ellipse at 35% 50%, #000 0 24px, rgba(0, 0, 0, 0.78) 25px 48px);
+  mask-composite: intersect;
 }
 
 .app > * {
