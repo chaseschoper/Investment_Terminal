@@ -620,6 +620,7 @@ function App() {
   const speechIndexRef = useRef(0);
   const speechUtteranceRef = useRef(null);
   const [showAuth, setShowAuth] = useState(false);
+  const [authPrompt, setAuthPrompt] = useState("");
 const [isLogin, setIsLogin] = useState(true);
 
 const [username, setUsername] = useState("");
@@ -637,7 +638,16 @@ const handleSignOut = () => {
   setActivePortfolioId(DEFAULT_PORTFOLIO.id);
   setNamedWatchlists([]);
   setSavedProjections({});
+  setAuthPrompt("");
   setShowAuth(false);
+};
+
+const requireAuth = (message = "Log in or sign up to save this.") => {
+  if (user) return true;
+  setAuthPrompt(message);
+  setIsLogin(true);
+  setShowAuth(true);
+  return false;
 };
 
 const handleAuth = async () => {
@@ -689,6 +699,7 @@ const handleAuth = async () => {
         : "Account created"
     );
 setShowAuth(false);
+setAuthPrompt("");
 
 await loadUserData();
 
@@ -2259,6 +2270,12 @@ return (
           className="watchlist-add-input"
           placeholder="+ Add"
           value={newTicker}
+          onFocus={(event) => {
+            if (!user) {
+              event.currentTarget.blur();
+              requireAuth("Log in or sign up to add stocks to your watchlist.");
+            }
+          }}
           onChange={(e) =>
             setNewTicker(
               e.target.value.toUpperCase()
@@ -2270,6 +2287,9 @@ return (
               e.key === "Enter" &&
               newTicker
             ) {
+              if (!requireAuth("Log in or sign up to add stocks to your watchlist.")) {
+                return;
+              }
 
               if (
                 !watchlist.includes(
@@ -2292,7 +2312,14 @@ return (
 
       <button
         className={`auth-top-button ${user ? "signout" : ""}`}
-        onClick={() => user ? handleSignOut() : setShowAuth(true)}
+        onClick={() => {
+          if (user) {
+            handleSignOut();
+            return;
+          }
+          setAuthPrompt("");
+          setShowAuth(true);
+        }}
         title={user ? `Sign out ${user.username}` : "Login or create an account"}
       >
         {user ? `Sign Out (${user.username})` : "Login / Signup"}
@@ -3781,6 +3808,9 @@ return (
       className="portfolio-create"
       onSubmit={(event) => {
         event.preventDefault();
+        if (!requireAuth("Log in or sign up to create and save portfolios.")) {
+          return;
+        }
         const name = newPortfolioName.trim();
         if (!name || portfolios.length >= 20) return;
         const id = globalThis.crypto?.randomUUID?.() || `portfolio-${Date.now()}`;
@@ -3791,6 +3821,12 @@ return (
     >
       <input
         value={newPortfolioName}
+        onFocus={(event) => {
+          if (!user) {
+            event.currentTarget.blur();
+            requireAuth("Log in or sign up to create and save portfolios.");
+          }
+        }}
         onChange={(event) => setNewPortfolioName(event.target.value)}
         placeholder="New portfolio name"
         maxLength={60}
@@ -3851,6 +3887,12 @@ return (
     className="portfolio-input"
     placeholder="Ticker"
     value={portfolioTicker}
+    onFocus={(event) => {
+      if (!user) {
+        event.currentTarget.blur();
+        requireAuth("Log in or sign up to add stocks to your portfolio.");
+      }
+    }}
     onChange={(e) =>
       setPortfolioTicker(
         e.target.value.toUpperCase()
@@ -3862,6 +3904,12 @@ return (
     className="portfolio-input"
     placeholder="Shares"
     value={portfolioShares}
+    onFocus={(event) => {
+      if (!user) {
+        event.currentTarget.blur();
+        requireAuth("Log in or sign up to add stocks to your portfolio.");
+      }
+    }}
     onChange={(e) =>
       setPortfolioShares(
         e.target.value
@@ -3873,6 +3921,12 @@ return (
     className="portfolio-input"
     placeholder="Avg Cost"
     value={portfolioCost}
+    onFocus={(event) => {
+      if (!user) {
+        event.currentTarget.blur();
+        requireAuth("Log in or sign up to add stocks to your portfolio.");
+      }
+    }}
     onChange={(e) =>
       setPortfolioCost(
         e.target.value
@@ -3883,6 +3937,9 @@ return (
   <button
   className="portfolio-btn"
   onClick={async () => {
+    if (!requireAuth("Log in or sign up to add stocks to your portfolio.")) {
+      return;
+    }
 
     const shares = Number(portfolioShares);
     const avgCost = Number(portfolioCost);
@@ -4150,6 +4207,9 @@ return (
       className="named-watchlist-create"
       onSubmit={(event) => {
         event.preventDefault();
+        if (!requireAuth("Log in or sign up to create and save watchlists.")) {
+          return;
+        }
         const name = newWatchlistName.trim();
         if (!name) return;
         const id = globalThis.crypto?.randomUUID?.() || `watchlist-${Date.now()}`;
@@ -4159,6 +4219,12 @@ return (
     >
       <input
         value={newWatchlistName}
+        onFocus={(event) => {
+          if (!user) {
+            event.currentTarget.blur();
+            requireAuth("Log in or sign up to create and save watchlists.");
+          }
+        }}
         onChange={(event) => setNewWatchlistName(event.target.value)}
         placeholder="New watchlist name"
         maxLength={60}
@@ -4265,6 +4331,9 @@ return (
             className="named-watchlist-add"
             onSubmit={(event) => {
               event.preventDefault();
+              if (!requireAuth("Log in or sign up to add stocks to your watchlists.")) {
+                return;
+              }
               const symbol = String(namedTickerInputs[list.id] || "").trim().toUpperCase();
               if (!symbol || !/^[A-Z0-9.-]{1,10}$/.test(symbol)) return;
               setNamedWatchlists((lists) => lists.map((item) =>
@@ -4277,6 +4346,12 @@ return (
           >
             <input
               value={namedTickerInputs[list.id] || ""}
+              onFocus={(event) => {
+                if (!user) {
+                  event.currentTarget.blur();
+                  requireAuth("Log in or sign up to add stocks to your watchlists.");
+                }
+              }}
               onChange={(event) => setNamedTickerInputs((inputs) => ({
                 ...inputs,
                 [list.id]: event.target.value.toUpperCase()
@@ -4429,6 +4504,12 @@ return (
           : "Create Account"}
       </h2>
 
+      {authPrompt && (
+        <div className="auth-required-message">
+          {authPrompt}
+        </div>
+      )}
+
       {!isLogin && (
         <input
           placeholder="Username"
@@ -4463,13 +4544,10 @@ return (
       </button>
 
       <p
+        className="auth-switch"
         onClick={() =>
           setIsLogin(!isLogin)
         }
-        style={{
-          cursor: "pointer",
-          marginTop: "10px",
-        }}
       >
         {isLogin
           ? "Need an account? Sign up"
@@ -4477,9 +4555,11 @@ return (
       </p>
 
       <button
-        onClick={() =>
-          setShowAuth(false)
-        }
+        className="auth-secondary-button"
+        onClick={() => {
+          setShowAuth(false);
+          setAuthPrompt("");
+        }}
       >
         Close
       </button>
