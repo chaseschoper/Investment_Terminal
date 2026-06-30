@@ -23,7 +23,7 @@ const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 115;
+const FINANCIAL_HISTORY_VERSION = 116;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -37,6 +37,7 @@ const activePriceRefreshes = new Set();
 let marketIndexRefreshPromise = null;
 let yahooCooldownUntil = 0;
 let yahooQuoteSummaryCooldownUntil = 0;
+let yahooEarningsTrendCooldownUntil = 0;
 let fmpCooldownUntil = 0;
 let secTickerMapPromise;
 let secTickerMapRetryAfter = 0;
@@ -155,6 +156,12 @@ function setYahooQuoteSummaryCooldown(err, label, ticker) {
   console.log(`Yahoo quote summary cooldown active after ${label}:`, ticker, err.response?.status || err.message);
 }
 
+function setYahooEarningsTrendCooldown(err, label, ticker) {
+  if (!isTooManyRequestsError(err)) return;
+  yahooEarningsTrendCooldownUntil = Math.max(yahooEarningsTrendCooldownUntil, Date.now() + 2 * 60 * 1000);
+  console.log(`Yahoo earnings trend cooldown active after ${label}:`, ticker, err.response?.status || err.message);
+}
+
 function setFmpCooldown(err, label, ticker) {
   if (!isTooManyRequestsError(err)) return;
   fmpCooldownUntil = Math.max(fmpCooldownUntil, Date.now() + 90 * 1000);
@@ -163,6 +170,7 @@ function setFmpCooldown(err, label, ticker) {
 
 const canUseYahoo = () => Date.now() >= yahooCooldownUntil;
 const canUseYahooQuoteSummary = () => Date.now() >= yahooQuoteSummaryCooldownUntil;
+const canUseYahooEarningsTrend = () => Date.now() >= yahooEarningsTrendCooldownUntil;
 const canUseFmp = () => Date.now() >= fmpCooldownUntil;
 
 async function getFinnhub(url) {
@@ -3023,9 +3031,53 @@ async function fetchStockAnalysisIncomeStatementHistory(ticker) {
   }
 }
 
+const selectYahooAnnualEstimateTrends = (trends = []) => {
+  const annualEstimateTrends = trends.filter((item) =>
+    /y$/i.test(String(item?.period || ""))
+  );
+  const currentYear =
+    trends.find((item) => item.period === "0y") ||
+    annualEstimateTrends[0] ||
+    {};
+  const nextYear =
+    trends.find((item) => item.period === "+1y") ||
+    annualEstimateTrends.find((item) => item !== currentYear) ||
+    {};
+
+  return { currentYear, nextYear };
+};
+
+const estimateFromYahooTrend = (trend = {}) => ({
+  revenue: firstYahooNumber(trend?.revenueEstimate?.avg),
+  earnings: null,
+  eps: firstYahooNumber(trend?.earningsEstimate?.avg)
+});
+
+async function fetchYahooEarningsTrendEstimates(ticker) {
+  if (!canUseYahooEarningsTrend()) return null;
+
+  try {
+    const summary = await yahooFinance.quoteSummary(ticker, {
+      modules: ["earningsTrend"]
+    });
+    const trends = summary?.earningsTrend?.trend || [];
+    const { currentYear, nextYear } = selectYahooAnnualEstimateTrends(trends);
+
+    return {
+      currentYear: estimateFromYahooTrend(currentYear),
+      nextYear: estimateFromYahooTrend(nextYear)
+    };
+  } catch (err) {
+    setYahooEarningsTrendCooldown(err, "earnings trend", ticker);
+    console.log("Yahoo earnings trend skipped:", ticker, err.message);
+    return null;
+  }
+}
+
 async function fetchYahooSupplementalData(ticker) {
   try {
-    const [summary, quoteData, chartData] = await Promise.all([
+    const [earningsTrendEstimates, summary, quoteData, chartData] = await Promise.all([
+      fetchYahooEarningsTrendEstimates(ticker),
       canUseYahooQuoteSummary()
         ? yahooFinance
             .quoteSummary(ticker, {
@@ -3033,7 +3085,6 @@ async function fetchYahooSupplementalData(ticker) {
                 "financialData",
                 "defaultKeyStatistics",
                 "summaryDetail",
-                "earningsTrend",
                 "recommendationTrend"
               ]
             })
@@ -3097,23 +3148,11 @@ async function fetchYahooSupplementalData(ticker) {
       .map(({ year, close }) => ({ year, close }))
       .sort((a, b) => a.year - b.year);
 
-    const annualEstimateTrends = trends.filter((item) =>
-      /y$/i.test(String(item?.period || ""))
-    );
-    const currentYear =
-      trends.find((item) => item.period === "0y") ||
-      annualEstimateTrends[0] ||
-      {};
-    const nextYear =
-      trends.find((item) => item.period === "+1y") ||
-      annualEstimateTrends.find((item) => item !== currentYear) ||
-      {};
-
-    const estimateFromTrend = (trend) => ({
-      revenue: firstYahooNumber(trend?.revenueEstimate?.avg),
-      earnings: null,
-      eps: firstYahooNumber(trend?.earningsEstimate?.avg)
-    });
+    const { currentYear, nextYear } = selectYahooAnnualEstimateTrends(trends);
+    const analystEstimates = earningsTrendEstimates || {
+      currentYear: estimateFromYahooTrend(currentYear),
+      nextYear: estimateFromYahooTrend(nextYear)
+    };
 
     return {
       name: quoteData.longName || quoteData.shortName || ticker,
@@ -3192,10 +3231,7 @@ async function fetchYahooSupplementalData(ticker) {
       ),
       recommendationMean: firstYahooNumber(financialData.recommendationMean),
       recommendationTrend,
-      analystEstimates: {
-        currentYear: estimateFromTrend(currentYear),
-        nextYear: estimateFromTrend(nextYear)
-      }
+      analystEstimates
     };
   } catch (err) {
     setYahooCooldown(err, "supplemental data", ticker);
@@ -4014,6 +4050,10 @@ async function fetchStockData(ticker) {
   const yahooNextRevenueRaw = normalizeStatementDollars(yahooNextEstimate.revenue);
   const yahooCurrentEpsRaw = toNumberOrNull(yahooCurrentEstimate.eps);
   const yahooNextEpsRaw = toNumberOrNull(yahooNextEstimate.eps);
+  const previousYahooEstimates =
+    previousData?.analystEstimatesSource === "Yahoo Finance"
+      ? previousData.analystEstimates
+      : null;
   const stockAnalysisRevenueEstimate = sanitizeCurrentRevenueEstimate(
     stockAnalysisForecast.currentYearRevenue
   );
@@ -4472,12 +4512,12 @@ async function fetchStockData(ticker) {
       }
     : null;
 
-  const displayedCurrentRevenueValue = yahooCurrentRevenueEstimate;
-  const displayedCurrentEpsValue = yahooCurrentEpsRaw;
-  const displayedCurrentEarningsValue = yahooCurrentEarningsValue;
-  const displayedNextRevenueValue = yahooNextRevenueEstimate;
-  const displayedNextEpsValue = yahooNextEpsRaw;
-  const displayedNextEarningsValue = yahooNextEarningsValue;
+  const displayedCurrentRevenueValue = yahooCurrentRevenueEstimate ?? previousYahooEstimates?.currentYear?.revenue ?? null;
+  const displayedCurrentEpsValue = yahooCurrentEpsRaw ?? previousYahooEstimates?.currentYear?.eps ?? null;
+  const displayedCurrentEarningsValue = yahooCurrentEarningsValue ?? previousYahooEstimates?.currentYear?.earnings ?? null;
+  const displayedNextRevenueValue = yahooNextRevenueEstimate ?? previousYahooEstimates?.nextYear?.revenue ?? null;
+  const displayedNextEpsValue = yahooNextEpsRaw ?? previousYahooEstimates?.nextYear?.eps ?? null;
+  const displayedNextEarningsValue = yahooNextEarningsValue ?? previousYahooEstimates?.nextYear?.earnings ?? null;
 
   const data = preserveBankMargins(withGuaranteedAnalystSection({
     isFinancialCompany,
