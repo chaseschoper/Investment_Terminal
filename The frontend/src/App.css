@@ -26,12 +26,16 @@ body {
 }
 
 .welcome-hero {
+  position: relative;
+  overflow: hidden;
   min-height: clamp(380px, 54vh, 540px);
   display: flex;
   align-items: center;
   padding: 64px clamp(24px, 7vw, 112px);
   background-color: rgba(5, 10, 14, 0.42);
-  background-image: url("/mrktrally-hero.png");
+  background-image:
+    linear-gradient(105deg, rgba(10, 26, 58, 0.72), rgba(5, 10, 14, 0.18) 46%, rgba(125, 17, 32, 0.24)),
+    url("/mrktrally-hero.png");
   background-blend-mode: multiply;
   background-size: cover;
   background-position: center;
@@ -39,7 +43,37 @@ body {
   scroll-margin-top: 114px;
 }
 
+.welcome-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      112deg,
+      rgba(255, 255, 255, 0.08) 0 1px,
+      transparent 1px 34px
+    ),
+    linear-gradient(90deg, rgba(191, 10, 48, 0.26), transparent 34%, rgba(0, 40, 104, 0.26));
+  opacity: 0.7;
+}
+
+.welcome-hero::after {
+  content: "";
+  position: absolute;
+  right: clamp(18px, 5vw, 78px);
+  bottom: 26px;
+  width: min(520px, 46vw);
+  height: 8px;
+  pointer-events: none;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #bf0a30 0 32%, #ffffff 32% 66%, #3b82f6 66% 100%);
+  box-shadow: 0 0 26px rgba(59, 130, 246, 0.28);
+}
+
 .welcome-hero-content {
+  position: relative;
+  z-index: 1;
   width: min(1180px, 100%);
 }
 
@@ -74,12 +108,15 @@ body {
   width: clamp(132px, 16vw, 220px);
   height: clamp(132px, 16vw, 220px);
   flex: 0 0 auto;
-  border: 1px solid rgba(94, 234, 212, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.36);
   border-radius: 8px;
-  background: rgba(8, 16, 24, 0.68);
+  background:
+    linear-gradient(135deg, rgba(191, 10, 48, 0.22), rgba(8, 16, 24, 0.78), rgba(59, 130, 246, 0.22));
   object-fit: contain;
   padding: clamp(14px, 2vw, 24px);
-  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.36);
+  box-shadow:
+    0 18px 38px rgba(0, 0, 0, 0.36),
+    0 0 0 4px rgba(255, 255, 255, 0.04);
 }
 
 .welcome-hero p {
@@ -109,6 +146,118 @@ body {
 .welcome-action:focus-visible {
   background: #0f766e;
   outline: none;
+}
+
+.holiday-badge {
+  width: fit-content;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 0 13px;
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  border-radius: 6px;
+  background: rgba(10, 17, 31, 0.72);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
+}
+
+.holiday-flag {
+  width: 28px;
+  height: 18px;
+  display: grid;
+  overflow: hidden;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  background: #ffffff;
+}
+
+.holiday-flag span:nth-child(1) {
+  background: #002868;
+}
+
+.holiday-flag span:nth-child(2) {
+  background: #ffffff;
+}
+
+.holiday-flag span:nth-child(3) {
+  background: #bf0a30;
+}
+
+.holiday-star-row {
+  display: flex;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.holiday-star-row span {
+  width: 10px;
+  height: 10px;
+  display: block;
+  clip-path: polygon(50% 0, 61% 34%, 98% 34%, 68% 55%, 79% 91%, 50% 69%, 21% 91%, 32% 55%, 2% 34%, 39% 34%);
+  background: #ffffff;
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.52);
+}
+
+.holiday-star-row span:nth-child(odd) {
+  background: #60a5fa;
+}
+
+.holiday-star-row span:nth-child(3) {
+  background: #f87171;
+}
+
+.holiday-firework {
+  position: absolute;
+  z-index: 1;
+  width: 92px;
+  height: 92px;
+  pointer-events: none;
+  opacity: 0.78;
+}
+
+.holiday-firework-left {
+  left: clamp(18px, 4vw, 70px);
+  top: 34px;
+}
+
+.holiday-firework-right {
+  right: clamp(24px, 7vw, 120px);
+  top: 48px;
+  transform: scale(0.82);
+}
+
+.holiday-firework span {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 76px;
+  height: 2px;
+  transform-origin: left center;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0), #ffffff, rgba(248, 113, 113, 0));
+}
+
+.holiday-firework span:nth-child(1) {
+  transform: rotate(0deg);
+}
+
+.holiday-firework span:nth-child(2) {
+  transform: rotate(45deg);
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0), #60a5fa, rgba(96, 165, 250, 0));
+}
+
+.holiday-firework span:nth-child(3) {
+  transform: rotate(90deg);
+}
+
+.holiday-firework span:nth-child(4) {
+  transform: rotate(135deg);
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0), #f87171, rgba(248, 113, 113, 0));
 }
 
 .research-section {
@@ -1997,6 +2146,14 @@ body {
     background-position: 62% center;
   }
 
+  .welcome-hero::after {
+    left: 20px;
+    right: auto;
+    bottom: 16px;
+    width: min(260px, calc(100vw - 40px));
+    height: 6px;
+  }
+
   .main > :not(.welcome-hero) {
     width: min(calc(100% - 24px), 1500px);
   }
@@ -2014,6 +2171,37 @@ body {
     width: 88px;
     height: 88px;
     padding: 10px;
+  }
+
+  .holiday-badge {
+    min-height: 32px;
+    margin-bottom: 12px;
+    font-size: 11px;
+  }
+
+  .holiday-star-row {
+    gap: 9px;
+    margin-top: 14px;
+  }
+
+  .holiday-firework {
+    width: 62px;
+    height: 62px;
+    opacity: 0.48;
+  }
+
+  .holiday-firework span {
+    width: 48px;
+  }
+
+  .holiday-firework-left {
+    left: 14px;
+    top: 18px;
+  }
+
+  .holiday-firework-right {
+    right: 18px;
+    top: 28px;
   }
 
   .welcome-hero p {
