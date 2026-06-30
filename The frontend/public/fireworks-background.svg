@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" role="img" aria-label="Fireworks background">
+  <defs>
+    <filter id="softGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="3.5" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="1.4 0 0 0 0 0 1.2 0 0 0 0 0 1.8 0 0 0 0 0 .82 0" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="hotGlow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="2 0 0 0 0 0 1.45 0 0 0 0 0 .65 0 0 0 0 0 .95 0" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <radialGradient id="goldCore" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#fff8c7"/>
+      <stop offset=".28" stop-color="#ffd166"/>
+      <stop offset=".62" stop-color="#ff4d4d"/>
+      <stop offset="1" stop-color="#ff4d4d" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="redTrail" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#fff9c4"/>
+      <stop offset=".2" stop-color="#ffb703"/>
+      <stop offset=".52" stop-color="#ff3864"/>
+      <stop offset="1" stop-color="#ff3864" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="blueTrail" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#eef6ff"/>
+      <stop offset=".22" stop-color="#8cc8ff"/>
+      <stop offset=".62" stop-color="#2f6bff"/>
+      <stop offset="1" stop-color="#2f6bff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="whiteTrail" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset=".5" stop-color="#d9e9ff"/>
+      <stop offset="1" stop-color="#d9e9ff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="goldTrail" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset=".22" stop-color="#ffe477"/>
+      <stop offset=".58" stop-color="#ff9f1c"/>
+      <stop offset="1" stop-color="#ff9f1c" stop-opacity="0"/>
+    </linearGradient>
+    <style>
+      .trail { fill: none; stroke-linecap: round; stroke-width: 3.2; filter: url(#softGlow); opacity: .92; }
+      .thin { stroke-width: 1.7; opacity: .78; }
+      .hot { filter: url(#hotGlow); }
+      .spark { filter: url(#softGlow); opacity: .9; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1000" fill="none"/>
+
+  <g opacity=".96">
+    <g transform="translate(920 690)" class="hot">
+      <circle r="78" fill="url(#goldCore)" opacity=".75"/>
+      <path class="trail" stroke="url(#goldTrail)" d="M0 0 C-60 -115 -130 -210 -240 -290"/>
+      <path class="trail" stroke="url(#goldTrail)" d="M0 0 C-14 -145 -48 -266 -120 -385"/>
+      <path class="trail" stroke="url(#redTrail)" d="M0 0 C74 -146 148 -268 258 -365"/>
+      <path class="trail" stroke="url(#goldTrail)" d="M0 0 C116 -88 205 -178 305 -310"/>
+      <path class="trail" stroke="url(#whiteTrail)" d="M0 0 C-128 -68 -245 -108 -402 -128"/>
+      <path class="trail" stroke="url(#blueTrail)" d="M0 0 C-165 -18 -298 -38 -452 -110"/>
+      <path class="trail" stroke="url(#redTrail)" d="M0 0 C154 5 296 -26 455 -96"/>
+      <path class="trail" stroke="url(#goldTrail)" d="M0 0 C129 58 228 118 350 225"/>
+      <path class="trail" stroke="url(#whiteTrail)" d="M0 0 C46 112 82 206 100 326"/>
+      <path class="trail" stroke="url(#redTrail)" d="M0 0 C-76 102 -151 186 -285 270"/>
+      <path class="trail thin" stroke="url(#blueTrail)" d="M0 0 C42 -124 57 -250 40 -386"/>
+      <path class="trail thin" stroke="url(#redTrail)" d="M0 0 C-104 -94 -203 -181 -347 -226"/>
+      <path class="trail thin" stroke="url(#whiteTrail)" d="M0 0 C98 -23 218 -78 370 -185"/>
+      <path class="trail thin" stroke="url(#goldTrail)" d="M0 0 C-35 118 -94 230 -200 346"/>
+      <path class="trail thin" stroke="url(#blueTrail)" d="M0 0 C174 38 320 81 468 162"/>
+    </g>
+
+    <g transform="translate(430 430) rotate(-14)">
+      <circle r="54" fill="url(#goldCore)" opacity=".7"/>
+      <path class="trail" stroke="url(#redTrail)" d="M0 0 C-42 -110 -88 -206 -185 -285"/>
+      <path class="trail" stroke="url(#blueTrail)" d="M0 0 C42 -112 98 -206 188 -305"/>
+      <path class="trail" stroke="url(#redTrail)" d="M0 0 C112 -38 220 -70 345 -156"/>
+      <path class="trail" stroke="url(#whiteTrail)" d="M0 0 C-118 -26 -232 -51 -365 -112"/>
+      <path class="trail" stroke="url(#blueTrail)" d="M0 0 C-126 34 -230 79 -355 162"/>
+      <path class="trail" stroke="url(#goldTrail)" d="M0 0 C78 78 155 150 260 226"/>
+      <path class="trail thin" stroke="url(#redTrail)" d="M0 0 C18 -130 4 -240 -58 -345"/>
+      <path class="trail thin" stroke="url(#blueTrail)" d="M0 0 C126 -6 252 -32 388 -104"/>
+      <path class="trail thin" stroke="url(#whiteTrail)" d="M0 0 C-77 94 -160 175 -294 232"/>
+      <path class="trail thin" stroke="url(#goldTrail)" d="M0 0 C-146 -8 -278 -4 -430 52"/>
+    </g>
+
+    <g transform="translate(1110 245) rotate(10)">
+      <circle r="42" fill="url(#goldCore)" opacity=".6"/>
+      <path class="trail" stroke="url(#blueTrail)" d="M0 0 C-18 -105 -35 -208 -112 -300"/>
+      <path class="trail" stroke="url(#whiteTrail)" d="M0 0 C58 -104 133 -185 250 -250"/>
+      <path class="trail" stroke="url(#blueTrail)" d="M0 0 C112 -32 224 -44 345 -20"/>
+      <path class="trail" stroke="url(#redTrail)" d="M0 0 C-94 -66 -205 -98 -338 -112"/>
+      <path class="trail" stroke="url(#whiteTrail)" d="M0 0 C-112 4 -230 20 -340 84"/>
+      <path class="trail" stroke="url(#blueTrail)" d="M0 0 C74 74 152 138 265 192"/>
+      <path class="trail thin" stroke="url(#redTrail)" d="M0 0 C25 -142 72 -255 178 -344"/>
+      <path class="trail thin" stroke="url(#whiteTrail)" d="M0 0 C-52 112 -119 212 -226 310"/>
+      <path class="trail thin" stroke="url(#blueTrail)" d="M0 0 C142 30 268 70 390 154"/>
+    </g>
+
+    <g transform="translate(1280 525) rotate(18)">
+      <circle r="46" fill="url(#goldCore)" opacity=".62"/>
+      <path class="trail" stroke="url(#goldTrail)" d="M0 0 C-86 -82 -170 -134 -290 -166"/>
+      <path class="trail" stroke="url(#redTrail)" d="M0 0 C32 -106 78 -193 170 -278"/>
+      <path class="trail" stroke="url(#blueTrail)" d="M0 0 C110 -50 210 -88 342 -110"/>
+      <path class="trail" stroke="url(#goldTrail)" d="M0 0 C118 38 214 96 310 190"/>
+      <path class="trail" stroke="url(#whiteTrail)" d="M0 0 C-42 108 -92 202 -188 288"/>
+      <path class="trail thin" stroke="url(#redTrail)" d="M0 0 C-116 10 -232 38 -365 116"/>
+      <path class="trail thin" stroke="url(#blueTrail)" d="M0 0 C72 100 120 204 134 326"/>
+      <path class="trail thin" stroke="url(#whiteTrail)" d="M0 0 C-8 -126 -38 -232 -112 -336"/>
+    </g>
+
+    <g transform="translate(520 730) rotate(-8)">
+      <circle r="35" fill="url(#goldCore)" opacity=".65"/>
+      <path class="trail" stroke="url(#redTrail)" d="M0 0 C-70 -76 -142 -130 -240 -168"/>
+      <path class="trail" stroke="url(#blueTrail)" d="M0 0 C-18 -108 -20 -205 30 -312"/>
+      <path class="trail" stroke="url(#goldTrail)" d="M0 0 C94 -62 176 -128 252 -228"/>
+      <path class="trail" stroke="url(#whiteTrail)" d="M0 0 C112 2 214 34 318 106"/>
+      <path class="trail thin" stroke="url(#redTrail)" d="M0 0 C-118 44 -224 98 -315 180"/>
+      <path class="trail thin" stroke="url(#goldTrail)" d="M0 0 C42 90 68 178 64 284"/>
+    </g>
+  </g>
+
+  <g class="spark">
+    <circle cx="246" cy="258" r="2.4" fill="#ff6b6b"/>
+    <circle cx="326" cy="174" r="1.8" fill="#9cc9ff"/>
+    <circle cx="740" cy="310" r="2" fill="#ffffff"/>
+    <circle cx="1014" cy="124" r="2.6" fill="#ffce5c"/>
+    <circle cx="1348" cy="322" r="2.3" fill="#ff5c7a"/>
+    <circle cx="1450" cy="654" r="2.8" fill="#ffffff"/>
+    <circle cx="1115" cy="825" r="2" fill="#83b7ff"/>
+    <circle cx="700" cy="820" r="2.2" fill="#ff6b6b"/>
+    <circle cx="320" cy="862" r="2" fill="#ffe477"/>
+    <circle cx="95" cy="520" r="1.8" fill="#ffffff"/>
+  </g>
+</svg>
