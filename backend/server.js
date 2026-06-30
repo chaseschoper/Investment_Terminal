@@ -3254,14 +3254,19 @@ async function publishFastStockSnapshot(ticker) {
   const quickData = await buildFastStockSnapshot(ticker, stock?.data || {});
   if (!quickData) return;
 
+  const update = {
+    ticker,
+    status: stock?.status === "ready" ? "ready" : "pending",
+    data: quickData
+  };
+
+  if (stock?.status !== "ready") {
+    update.updatedAt = new Date();
+  }
+
   await Stock.findOneAndUpdate(
     { ticker, ...(stock?.updatedAt ? { updatedAt: stock.updatedAt } : {}) },
-    {
-      ticker,
-      status: stock?.status === "ready" ? "ready" : "pending",
-      data: quickData,
-      updatedAt: new Date()
-    },
+    update,
     { upsert: true }
   );
 }
@@ -5349,12 +5354,11 @@ app.get("/api/stock/:ticker", async (req, res) => {
       if (isStale) {
         startStockFetch(ticker);
         const responseData = withGuaranteedAnalystSection(stock.data);
-        const shouldPollForFreshData = isOutdated || isIncomplete;
 
         return res.json({
           ticker: stock.ticker,
           status: "ready",
-          refreshing: shouldPollForFreshData,
+          refreshing: true,
           ...responseData,
           error: stock.error,
           updatedAt: stock.updatedAt
