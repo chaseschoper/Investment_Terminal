@@ -84,6 +84,16 @@ const formatIndexPrice = (value) =>
 const formatSignedPercent = (value) =>
   isNumber(value) ? `${value > 0 ? "+" : ""}${value.toFixed(2)}%` : "--";
 
+const getExtendedHoursQuote = (...sources) => {
+  for (const source of sources) {
+    const extendedHours = source?.extendedHours;
+    const quote = extendedHours?.active || extendedHours?.afterHours || extendedHours?.preMarket;
+    if (isNumber(quote?.price)) return quote;
+  }
+
+  return null;
+};
+
 const chunkSymbols = (symbols, size = 10) => {
   const chunks = [];
   for (let index = 0; index < symbols.length; index += size) {
@@ -1206,7 +1216,7 @@ useEffect(() => {
     setIsSpeechPaused(false);
     setSpeechError("");
     setIsStockLoading(!cachedStock);
-    loadSavedPrices([ticker]);
+    loadSavedPrices([ticker], 0, { live: true });
     loadStock(ticker, 0, requestId);
 
   }, [ticker]);
@@ -2104,7 +2114,10 @@ const pauseComputerRead = () => {
 const marketSignal = getMarketSignal(marketIndices);
 const marketClock = getMarketClock(marketClockNow);
 const showExtendedMarketData = marketClock.tone !== "open";
-const activeExtendedHours = stockData?.extendedHours?.active || null;
+const activeExtendedHours = getExtendedHoursQuote(
+  stockData,
+  savedSymbolDetails[ticker]
+);
 const displayedMarketIndices = MARKET_INDEX_ORDER.map((item) => ({
   ...item,
   ...(marketIndices.find((index) => index.key === item.key) || {})
@@ -2609,7 +2622,7 @@ return (
                 : "--"}
             </div>
 
-            {showExtendedMarketData && activeExtendedHours && (
+            {activeExtendedHours && (
               <div className="extended-hours-quote">
                 <span>{activeExtendedHours.label}</span>
                 <strong>{formatPrice(activeExtendedHours.price)}</strong>
