@@ -44,6 +44,15 @@ const TICKER_ALIASES = {
   SALESFORCE: "CRM",
   NIKE: "NKE"
 };
+
+function parseRequestedEarningsPeriod(query = {}) {
+  const rawYear = Number(query.year);
+  const rawQuarter = String(query.quarter || "").toUpperCase().replace(/^Q/, "");
+  const quarter = Number(rawQuarter);
+  if (!Number.isInteger(rawYear) || rawYear < 1990 || rawYear > 2100) return null;
+  if (!Number.isInteger(quarter) || quarter < 1 || quarter > 4) return null;
+  return { year: rawYear, quarter };
+}
 const KNOWN_COMPANY_WEBSITES = {
   TXN: "https://www.ti.com"
 };
@@ -5459,7 +5468,7 @@ async function fetchQuartrEarningsCall(ticker) {
   };
 }
 
-async function fetchFinnhubEarningsCall(ticker) {
+async function fetchFinnhubEarningsCall(ticker, requestedPeriod = null) {
   if (!process.env.FINNHUB_API_KEY) return null;
   const listResponse = await axios.get(
     "https://finnhub.io/api/v1/stock/transcripts/list",
@@ -5470,10 +5479,17 @@ async function fetchFinnhubEarningsCall(ticker) {
   );
   const items = listResponse.data?.transcripts || listResponse.data || [];
   if (!Array.isArray(items) || !items.length) return null;
-  const latest = [...items].sort((a, b) =>
+  const sortedItems = [...items].sort((a, b) =>
     new Date(b.time || `${b.year}-${b.quarter || 1}`) -
     new Date(a.time || `${a.year}-${a.quarter || 1}`)
-  )[0];
+  );
+  const latest = requestedPeriod
+    ? sortedItems.find((item) =>
+        Number(item.year) === requestedPeriod.year &&
+        Number(item.quarter) === requestedPeriod.quarter
+      )
+    : sortedItems[0];
+  if (!latest) return null;
   const detailResponse = await axios.get(
     "https://finnhub.io/api/v1/stock/transcripts",
     {
@@ -6093,25 +6109,30 @@ async function fetchInvestorRelationsAudio(ticker, apiBaseUrl = "", options = {}
   };
 }
 
-async function fetchAlphaVantageEarningsCall(ticker, knownFiscalPeriod = null) {
+async function fetchAlphaVantageEarningsCall(ticker, knownFiscalPeriod = null, requestedPeriod = null) {
   const apiKey = getAlphaVantageApiKey();
   if (!apiKey) return null;
-  const fiscalPeriod = knownFiscalPeriod || await getLatestSecFiscalPeriod(ticker);
-  const now = new Date();
-  const currentQuarter = Math.floor(now.getUTCMonth() / 3) + 1;
-  const fallbackQuarter = currentQuarter === 1 ? 4 : currentQuarter - 1;
-  const fallbackYear = currentQuarter === 1 ? now.getUTCFullYear() - 1 : now.getUTCFullYear();
-  const startingYear = fiscalPeriod?.year || fallbackYear;
-  const startingQuarter = fiscalPeriod?.quarter || fallbackQuarter;
-  const periods = Array.from({ length: 2 }, (_, index) => {
-    const zeroBasedQuarter = startingQuarter - 1 - index;
-    return {
-      year: startingYear + Math.floor(zeroBasedQuarter / 4),
-      quarter: ((zeroBasedQuarter % 4) + 4) % 4 + 1
-    };
-  });
+  const buildFallbackPeriods = async () => {
+    const fiscalPeriod = knownFiscalPeriod || await getLatestSecFiscalPeriod(ticker);
+    const now = new Date();
+    const currentQuarter = Math.floor(now.getUTCMonth() / 3) + 1;
+    const fallbackQuarter = currentQuarter === 1 ? 4 : currentQuarter - 1;
+    const fallbackYear = currentQuarter === 1 ? now.getUTCFullYear() - 1 : now.getUTCFullYear();
+    const startingYear = fiscalPeriod?.year || fallbackYear;
+    const startingQuarter = fiscalPeriod?.quarter || fallbackQuarter;
+    return Array.from({ length: 2 }, (_, index) => {
+      const zeroBasedQuarter = startingQuarter - 1 - index;
+      return {
+        year: startingYear + Math.floor(zeroBasedQuarter / 4),
+        quarter: ((zeroBasedQuarter % 4) + 4) % 4 + 1
+      };
+    });
+  };
+  const periodsToTry = requestedPeriod
+    ? [requestedPeriod]
+    : await buildFallbackPeriods();
 
-  for (const { year, quarter } of periods) {
+  for (const { year, quarter } of periodsToTry) {
     const period = `${year}Q${quarter}`;
     const response = await axios.get("https://www.alphavantage.co/query", {
       params: {
@@ -6166,7 +6187,7 @@ async function fetchAlphaVantageEarningsCall(ticker, knownFiscalPeriod = null) {
 
   const providerError = new Error("Alpha Vantage transcript unavailable");
   providerError.providerCode = "alpha_quarter_unavailable";
-  providerError.fiscalPeriod = periods.map(({ year, quarter }) => `${year}Q${quarter}`).join(" through ");
+  providerError.fiscalPeriod = periodsToTry.map(({ year, quarter }) => `${year}Q${quarter}`).join(" through ");
   throw providerError;
 }
 
@@ -6229,7 +6250,7 @@ async function getEarningsCallEmbedUrl(ticker) {
     : "https://earningscall.biz/";
 }
 
-async function fetchEarningsCallBiz(ticker, apiBaseUrl) {
+async function fetchEarningsCallBiz(ticker, apiBaseUrl, requestedPeriod = null) {
   if (!process.env.EARNINGSCALL_API_KEY) return null;
 
   const quote = await yahooFinance.quote(ticker).catch(() => ({}));
@@ -6251,12 +6272,18 @@ async function fetchEarningsCallBiz(ticker, apiBaseUrl) {
         timeout: 15000
       });
       const events = Array.isArray(response.data?.events) ? response.data.events : [];
-      const latest = events
+      const sortedEvents = events
         .filter((event) => event.is_published !== false)
         .sort((a, b) =>
           new Date(b.conference_date || `${b.year}-${b.quarter}`) -
           new Date(a.conference_date || `${a.year}-${a.quarter}`)
-        )[0];
+        );
+      const latest = requestedPeriod
+        ? sortedEvents.find((event) =>
+            Number(event.year) === requestedPeriod.year &&
+            Number(event.quarter) === requestedPeriod.quarter
+          )
+        : sortedEvents[0];
       if (latest) {
         eventData = { ...latest, companyName: response.data?.company_name };
         exchange = candidate;
@@ -6446,6 +6473,8 @@ app.get("/api/earnings-call/:ticker/transcript-file", async (req, res) => {
 
 app.get("/api/earnings-call/:ticker", async (req, res) => {
   const ticker = req.params.ticker.trim().toUpperCase();
+  const requestedPeriod = parseRequestedEarningsPeriod(req.query);
+  const isSpecificPeriodRequest = Boolean(requestedPeriod);
 
   try {
     const apiBaseUrl =
@@ -6453,6 +6482,7 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
       `${req.protocol}://${req.get("host")}`;
     const cached = await EarningsCall.findOne({ ticker });
     if (
+      !isSpecificPeriodRequest &&
       cached?.data?.version === EARNINGS_CALL_VERSION &&
       Date.now() - new Date(cached.updatedAt).getTime() < 12 * 60 * 60 * 1000
     ) {
@@ -6494,12 +6524,16 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
         };
       }];
     const transcriptProviders = [
-      ["ROIC.ai", () => fetchRoicEarningsCall(ticker)],
-      ["Alpha Vantage", () => fetchAlphaVantageEarningsCall(ticker)],
-      ["Finnhub", () => fetchFinnhubEarningsCall(ticker)],
-      ["EarningsCall", () => fetchEarningsCallBiz(ticker, apiBaseUrl)],
-      ["Investor Relations", () => resolveWithin(fetchInvestorRelationsAudio(ticker, apiBaseUrl, { transcriptOnly: true }), 12000, null)],
-      cachedTranscriptProvider
+      ...(isSpecificPeriodRequest ? [] : [["ROIC.ai", () => fetchRoicEarningsCall(ticker)]]),
+      ["Alpha Vantage", () => fetchAlphaVantageEarningsCall(ticker, null, requestedPeriod)],
+      ["Finnhub", () => fetchFinnhubEarningsCall(ticker, requestedPeriod)],
+      ["EarningsCall", () => fetchEarningsCallBiz(ticker, apiBaseUrl, requestedPeriod)],
+      ...(isSpecificPeriodRequest
+        ? []
+        : [
+            ["Investor Relations", () => resolveWithin(fetchInvestorRelationsAudio(ticker, apiBaseUrl, { transcriptOnly: true }), 12000, null)],
+            cachedTranscriptProvider
+          ])
     ];
     let transcriptData = null;
 
@@ -6538,11 +6572,13 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
         errors: providerErrors,
         fetchedAt: new Date().toISOString()
       };
-      await EarningsCall.findOneAndUpdate(
-        { ticker },
-        { ticker, data, updatedAt: new Date() },
-        { upsert: true, new: true }
-      );
+      if (!isSpecificPeriodRequest) {
+        await EarningsCall.findOneAndUpdate(
+          { ticker },
+          { ticker, data, updatedAt: new Date() },
+          { upsert: true, new: true }
+        );
+      }
       return res.json(data);
     }
 
@@ -6556,7 +6592,12 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
       hasOriginalAudio: false,
       version: EARNINGS_CALL_VERSION,
       errors: providerErrors,
-      message: "Earnings call transcript is not available for this ticker yet."
+      requestedPeriod: requestedPeriod
+        ? `${requestedPeriod.year} Q${requestedPeriod.quarter}`
+        : null,
+      message: requestedPeriod
+        ? `Earnings call transcript is not available for ${ticker} ${requestedPeriod.year} Q${requestedPeriod.quarter}.`
+        : "Earnings call transcript is not available for this ticker yet."
     });
   } catch (err) {
     console.error("EarningsCall native fetch failed:", ticker, err.message);

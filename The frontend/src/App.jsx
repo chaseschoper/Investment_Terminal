@@ -34,6 +34,28 @@ const isNumber = (value) =>
 const formatPercent = (value) =>
   isNumber(value) ? `${value.toFixed(1)}%` : "N/A";
 
+const buildTranscriptPeriodOptions = () => {
+  const now = new Date();
+  const currentQuarter = Math.floor(now.getMonth() / 3) + 1;
+  const latestReportedQuarter = currentQuarter === 1 ? 4 : currentQuarter - 1;
+  const latestReportedYear = currentQuarter === 1 ? now.getFullYear() - 1 : now.getFullYear();
+
+  return [
+    { value: "latest", label: "Latest call", year: null, quarter: null },
+    ...Array.from({ length: 20 }, (_, index) => {
+      const zeroBasedQuarter = latestReportedQuarter - 1 - index;
+      const year = latestReportedYear + Math.floor(zeroBasedQuarter / 4);
+      const quarter = ((zeroBasedQuarter % 4) + 4) % 4 + 1;
+      return {
+        value: `${year}-Q${quarter}`,
+        label: `${year} Q${quarter}`,
+        year,
+        quarter
+      };
+    })
+  ];
+};
+
 const formatDividendYield = (value) =>
   isNumber(value) ? `${(Math.abs(value) > 1 ? value : value * 100).toFixed(2)}%` : "N/A";
 
@@ -776,6 +798,9 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [earningsCall, setEarningsCall] =
     useState(null);
 
+  const [selectedTranscriptPeriod, setSelectedTranscriptPeriod] =
+    useState("latest");
+
   const [isEarningsCallLoading, setIsEarningsCallLoading] =
     useState(false);
 
@@ -1040,6 +1065,7 @@ useEffect(() => {
     setStockData(cachedStock);
     setAiAnalysis(null);
     setEarningsCall(null);
+    setSelectedTranscriptPeriod("latest");
     window.speechSynthesis?.cancel();
     setIsSpeechPlaying(false);
     setIsSpeechPaused(false);
@@ -1063,9 +1089,15 @@ useEffect(() => {
   useEffect(() => {
     if (!loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
     const requestId = ++latestEarningsCallRequest.current;
+    const periodOptions = buildTranscriptPeriodOptions();
+    const selectedPeriod = periodOptions.find((period) => period.value === selectedTranscriptPeriod);
     setIsEarningsCallLoading(true);
 
-    axios.get(`${API_URL}/api/earnings-call/${ticker}`)
+    axios.get(`${API_URL}/api/earnings-call/${ticker}`, {
+      params: selectedPeriod?.year && selectedPeriod?.quarter
+        ? { year: selectedPeriod.year, quarter: selectedPeriod.quarter }
+        : undefined
+    })
       .then((response) => {
         if (requestId === latestEarningsCallRequest.current) {
           setEarningsCall(response.data);
@@ -1082,7 +1114,7 @@ useEffect(() => {
           setIsEarningsCallLoading(false);
         }
       });
-  }, [ticker, loadedStockSymbol, isStockLoading]);
+  }, [ticker, loadedStockSymbol, isStockLoading, selectedTranscriptPeriod]);
 
   useEffect(() => {
     if (!stockData?.price || stockData.symbol !== ticker) return;
@@ -1867,6 +1899,7 @@ const totalPortfolioValue = portfolioAllocationData.reduce(
   (total, position) => total + position.value,
   0
 );
+const transcriptPeriodOptions = buildTranscriptPeriodOptions();
 
 const stopComputerRead = () => {
   window.speechSynthesis?.cancel();
@@ -2710,6 +2743,27 @@ return (
   </h2>
 
   <div className="earnings-call-panel">
+    <div className="transcript-toolbar">
+      <label htmlFor="transcript-period">
+        Quarter
+      </label>
+      <select
+        id="transcript-period"
+        value={selectedTranscriptPeriod}
+        onChange={(event) => {
+          stopComputerRead();
+          setEarningsCall(null);
+          setSelectedTranscriptPeriod(event.target.value);
+        }}
+      >
+        {transcriptPeriodOptions.map((period) => (
+          <option key={period.value} value={period.value}>
+            {period.label}
+          </option>
+        ))}
+      </select>
+    </div>
+
     {isEarningsCallLoading ? (
       <div className="earnings-call-empty">Loading earnings calls...</div>
     ) : earningsCall?.available && (earningsCall?.transcript?.length || earningsCall?.transcriptUrl) ? (
@@ -2757,7 +2811,7 @@ return (
       </>
     ) : (
       <div className="earnings-call-empty">
-        Earnings call transcript is not available for this ticker yet.
+        {earningsCall?.message || "Earnings call transcript is not available for this ticker yet."}
       </div>
     )}
   </div>
