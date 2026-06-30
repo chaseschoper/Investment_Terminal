@@ -1075,7 +1075,7 @@ const normalizeQuotePayload = (quote = {}, fallback = {}) => ({
 
 async function fetchYahooChartQuote(ticker) {
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=5d&interval=1d`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=1d&interval=1m`;
     const { data } = await axios.get(url, {
       timeout: 4000,
       headers: {
@@ -4535,9 +4535,9 @@ app.get("/api/prices", async (req, res) => {
       name: savedData.name || symbol,
       logo: savedData.logo || getFinnhubLogoUrl(symbol),
       change: toNumberOrNull(savedData.change),
-      percentChange: savedPercentChange !== null
+      percentChange: !wantsLiveQuotes && savedPercentChange !== null
         ? savedPercentChange
-        : savedPrice !== null && savedPreviousClose > 0
+        : !wantsLiveQuotes && savedPrice !== null && savedPreviousClose > 0
           ? ((savedPrice - savedPreviousClose) / savedPreviousClose) * 100
           : null
     };
@@ -4560,25 +4560,36 @@ app.get("/api/prices", async (req, res) => {
     if (cached && cachedHasPercent && Date.now() - cached.fetchedAt < 45 * 1000) return;
 
     try {
-      let quote = await resolveWithin(
-        getFinnhub(`https://finnhub.io/api/v1/quote?symbol=${symbol}`),
-        2500,
-        null
+      let quote = normalizeQuotePayload(
+        {},
+        await resolveWithin(fetchYahooQuickQuote(symbol), 2500, null) || {}
       );
-      if (
-        !quote ||
-        toNumberOrNull(quote.c) === null ||
-        toNumberOrNull(quote.dp) === null
-      ) {
-        const yahooQuote = await resolveWithin(fetchYahooChartQuote(symbol), 2500, null);
-        quote = normalizeQuotePayload(yahooQuote || {}, {
-          price: quote?.c,
-          change: quote?.d,
-          percentChange: quote?.dp,
-          previousClose: quote?.pc,
-          high: quote?.h,
-          low: quote?.l,
-          open: quote?.o
+      if (!quote || toNumberOrNull(quote.c) === null || toNumberOrNull(quote.dp) === null) {
+        const yahooChartQuote = await resolveWithin(fetchYahooChartQuote(symbol), 2500, null);
+        quote = normalizeQuotePayload(quote || {}, {
+          price: yahooChartQuote?.c,
+          change: yahooChartQuote?.d,
+          percentChange: yahooChartQuote?.dp,
+          previousClose: yahooChartQuote?.pc,
+          high: yahooChartQuote?.h,
+          low: yahooChartQuote?.l,
+          open: yahooChartQuote?.o
+        });
+      }
+      if (!quote || toNumberOrNull(quote.c) === null || toNumberOrNull(quote.dp) === null) {
+        const finnhubQuote = await resolveWithin(
+          getFinnhub(`https://finnhub.io/api/v1/quote?symbol=${symbol}`),
+          2500,
+          null
+        );
+        quote = normalizeQuotePayload(quote || {}, {
+          price: finnhubQuote?.c,
+          change: finnhubQuote?.d,
+          percentChange: finnhubQuote?.dp,
+          previousClose: finnhubQuote?.pc,
+          high: finnhubQuote?.h,
+          low: finnhubQuote?.l,
+          open: finnhubQuote?.o
         });
       }
       const price = toNumberOrNull(quote?.c);
