@@ -36,6 +36,7 @@ const livePriceCache = new Map();
 const activePriceRefreshes = new Set();
 let marketIndexRefreshPromise = null;
 let yahooCooldownUntil = 0;
+let yahooQuoteSummaryCooldownUntil = 0;
 let fmpCooldownUntil = 0;
 let secTickerMapPromise;
 let secTickerMapRetryAfter = 0;
@@ -148,6 +149,12 @@ function setYahooCooldown(err, label, ticker) {
   console.log(`Yahoo cooldown active after ${label}:`, ticker, err.response?.status || err.message);
 }
 
+function setYahooQuoteSummaryCooldown(err, label, ticker) {
+  if (!isTooManyRequestsError(err)) return;
+  yahooQuoteSummaryCooldownUntil = Math.max(yahooQuoteSummaryCooldownUntil, Date.now() + 2 * 60 * 1000);
+  console.log(`Yahoo quote summary cooldown active after ${label}:`, ticker, err.response?.status || err.message);
+}
+
 function setFmpCooldown(err, label, ticker) {
   if (!isTooManyRequestsError(err)) return;
   fmpCooldownUntil = Math.max(fmpCooldownUntil, Date.now() + 90 * 1000);
@@ -155,6 +162,7 @@ function setFmpCooldown(err, label, ticker) {
 }
 
 const canUseYahoo = () => Date.now() >= yahooCooldownUntil;
+const canUseYahooQuoteSummary = () => Date.now() >= yahooQuoteSummaryCooldownUntil;
 const canUseFmp = () => Date.now() >= fmpCooldownUntil;
 
 async function getFinnhub(url) {
@@ -3016,39 +3024,43 @@ async function fetchStockAnalysisIncomeStatementHistory(ticker) {
 }
 
 async function fetchYahooSupplementalData(ticker) {
-  if (!canUseYahoo()) return {};
-
   try {
     const [summary, quoteData, chartData] = await Promise.all([
-      yahooFinance
-        .quoteSummary(ticker, {
-          modules: [
-            "financialData",
-            "defaultKeyStatistics",
-            "summaryDetail",
-            "earningsTrend",
-            "recommendationTrend"
-          ]
-        })
-        .catch((err) => {
-          setYahooCooldown(err, "quote summary", ticker);
-          console.log("Yahoo quote summary skipped:", ticker, err.message);
-          return {};
-        }),
-      yahooFinance.quote(ticker).catch((err) => {
-        setYahooCooldown(err, "quote", ticker);
-        console.log("Yahoo quote skipped:", ticker, err.message);
-        return {};
-      }),
-      yahooFinance.chart(ticker, {
-        period1: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000),
-        interval: "1d",
-        return: "array"
-      }).catch((err) => {
-        setYahooCooldown(err, "chart range", ticker);
-        console.log("Yahoo chart range skipped:", ticker, err.message);
-        return { quotes: [] };
-      })
+      canUseYahooQuoteSummary()
+        ? yahooFinance
+            .quoteSummary(ticker, {
+              modules: [
+                "financialData",
+                "defaultKeyStatistics",
+                "summaryDetail",
+                "earningsTrend",
+                "recommendationTrend"
+              ]
+            })
+            .catch((err) => {
+              setYahooQuoteSummaryCooldown(err, "quote summary", ticker);
+              console.log("Yahoo quote summary skipped:", ticker, err.message);
+              return {};
+            })
+        : Promise.resolve({}),
+      canUseYahoo()
+        ? yahooFinance.quote(ticker).catch((err) => {
+            setYahooCooldown(err, "quote", ticker);
+            console.log("Yahoo quote skipped:", ticker, err.message);
+            return {};
+          })
+        : Promise.resolve({}),
+      canUseYahoo()
+        ? yahooFinance.chart(ticker, {
+            period1: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000),
+            interval: "1d",
+            return: "array"
+          }).catch((err) => {
+            setYahooCooldown(err, "chart range", ticker);
+            console.log("Yahoo chart range skipped:", ticker, err.message);
+            return { quotes: [] };
+          })
+        : Promise.resolve({ quotes: [] })
     ]);
 
     const financialData = summary?.financialData || {};
@@ -3085,10 +3097,17 @@ async function fetchYahooSupplementalData(ticker) {
       .map(({ year, close }) => ({ year, close }))
       .sort((a, b) => a.year - b.year);
 
+    const annualEstimateTrends = trends.filter((item) =>
+      /y$/i.test(String(item?.period || ""))
+    );
     const currentYear =
-      trends.find((item) => item.period === "0y") || {};
+      trends.find((item) => item.period === "0y") ||
+      annualEstimateTrends[0] ||
+      {};
     const nextYear =
-      trends.find((item) => item.period === "+1y") || {};
+      trends.find((item) => item.period === "+1y") ||
+      annualEstimateTrends.find((item) => item !== currentYear) ||
+      {};
 
     const estimateFromTrend = (trend) => ({
       revenue: firstYahooNumber(trend?.revenueEstimate?.avg),
@@ -4001,9 +4020,7 @@ async function fetchStockData(ticker) {
   const fmpCurrentRevenueEstimate = sanitizeCurrentRevenueEstimate(
     fmpEstimateField(fmpCurrentEstimate, "revenueAvg", "estimatedRevenueAvg")
   );
-  const yahooCurrentRevenueEstimate = sanitizeCurrentRevenueEstimate(
-    yahooCurrentRevenueRaw
-  );
+  const yahooCurrentRevenueEstimate = yahooCurrentRevenueRaw;
   const finnhubCurrentRevenueEstimate = sanitizeCurrentRevenueEstimate(
     normalizeFinnhubMoney(revenueEstimates[0]?.revenueAvg)
   );
@@ -4018,10 +4035,7 @@ async function fetchStockData(ticker) {
     stockAnalysisForecast.nextYearRevenue,
     currentRevenue
   );
-  const yahooNextRevenueEstimate = sanitizeNextRevenueEstimate(
-    yahooNextRevenueRaw,
-    currentRevenue
-  );
+  const yahooNextRevenueEstimate = yahooNextRevenueRaw;
   const fmpNextRevenueEstimate = sanitizeNextRevenueEstimate(
     fmpEstimateField(fmpNextEstimate, "revenueAvg", "estimatedRevenueAvg"),
     currentRevenue
