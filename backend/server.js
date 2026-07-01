@@ -25,7 +25,7 @@ const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 118;
+const FINANCIAL_HISTORY_VERSION = 119;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -1115,28 +1115,25 @@ function buildYahooExtendedHoursQuote(quoteData = {}) {
     quoteData.preMarketPreviousClose
   );
 
-  const buildSession = (prefix, label) => {
+  const buildSession = (prefix, label, comparisonPrice) => {
     const price = firstYahooNumber(quoteData[`${prefix}Price`]);
     if (price === null) return null;
-    const suppliedChange = firstFiniteNumber(quoteData[`${prefix}Change`]);
-    const change = suppliedChange ?? (
-      previousClose !== null ? price - previousClose : null
-    );
-    const percentChange = firstFiniteNumber(
-      quoteData[`${prefix}ChangePercent`],
-      change !== null && previousClose > 0 ? (change / previousClose) * 100 : null
-    );
+    const change = comparisonPrice !== null ? price - comparisonPrice : null;
+    const percentChange = change !== null && comparisonPrice > 0
+      ? (change / comparisonPrice) * 100
+      : null;
     return {
       label,
       price,
       change,
       percentChange,
-      previousClose
+      previousClose: comparisonPrice
     };
   };
 
-  const preMarket = buildSession("preMarket", "Pre-market");
-  const afterHours = buildSession("postMarket", "After hours");
+  const regularClose = firstYahooNumber(quoteData.regularMarketPrice, previousClose);
+  const preMarket = buildSession("preMarket", "Pre-market", previousClose);
+  const afterHours = buildSession("postMarket", "After hours", regularClose);
   const marketState = String(quoteData.marketState || "").toUpperCase();
   const activeSession = /PRE/.test(marketState) && preMarket
     ? "preMarket"
@@ -1169,8 +1166,22 @@ function buildYahooChartExtendedHoursQuote(result = {}) {
   const timestamps = result.timestamp || [];
   const quote = result.indicators?.quote?.[0] || {};
   const periods = meta.currentTradingPeriod || {};
-  const regularClose = firstNumber(meta.regularMarketPrice);
   const previousClose = firstNumber(meta.previousClose, meta.chartPreviousClose);
+  const regularPeriod = periods.regular || {};
+  const regularSessionClose = timestamps
+    .map((timestamp, index) => ({
+      timestamp,
+      price: toNumberOrNull(quote.close?.[index])
+    }))
+    .filter((point) =>
+      point.price !== null &&
+      regularPeriod.start &&
+      regularPeriod.end &&
+      point.timestamp >= regularPeriod.start &&
+      point.timestamp <= regularPeriod.end
+    )
+    .at(-1)?.price;
+  const regularClose = firstNumber(regularSessionClose, meta.regularMarketPrice, previousClose);
 
   const buildSession = (periodKey, label, comparisonPrice) => {
     const period = periods[periodKey];
