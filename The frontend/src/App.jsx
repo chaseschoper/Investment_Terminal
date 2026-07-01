@@ -2580,6 +2580,7 @@ return (
       <a href="#portfolio">Portfolio</a>
       <a href="#watchlists">Watchlists</a>
       <a href="#earnings-calendar">Calendar</a>
+      <a href="#mr-rally">Mr. Rally</a>
     </nav>
 
     {/* MAIN */}
