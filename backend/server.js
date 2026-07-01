@@ -49,9 +49,45 @@ let fmpCooldownUntil = 0;
 let secTickerMapPromise;
 let secTickerMapRetryAfter = 0;
 const TICKER_ALIASES = {
+  ADVANCEDMICRODEVICES: "AMD",
+  ALPHABET: "GOOGL",
+  AMAZON: "AMZN",
+  APPLE: "AAPL",
+  CARNIVAL: "CCL",
+  COSTCO: "COST",
+  FEDEX: "FDX",
+  GOOGLE: "GOOGL",
+  HOMEDEPOT: "HD",
+  MCDONALDS: "MCD",
+  META: "META",
+  MICROSOFT: "MSFT",
+  NVIDIA: "NVDA",
   ZILLOW: "Z",
   SALESFORCE: "CRM",
-  NIKE: "NKE"
+  NIKE: "NKE",
+  TESLA: "TSLA",
+  WALMART: "WMT"
+};
+
+const COMPANY_NAME_ALIASES = {
+  "advanced micro devices": "AMD",
+  "alphabet": "GOOGL",
+  "amazon": "AMZN",
+  "apple": "AAPL",
+  "carnival": "CCL",
+  "costco": "COST",
+  "fedex": "FDX",
+  "google": "GOOGL",
+  "home depot": "HD",
+  "mcdonalds": "MCD",
+  "mcdonald's": "MCD",
+  "meta": "META",
+  "microsoft": "MSFT",
+  "nike": "NKE",
+  "nvidia": "NVDA",
+  "salesforce": "CRM",
+  "tesla": "TSLA",
+  "walmart": "WMT"
 };
 
 function parseRequestedEarningsPeriod(query = {}) {
@@ -5986,6 +6022,123 @@ const extractStockSymbolsFromQuestion = (message = "", fallbackTicker = "") => {
   return [...symbols].slice(0, 5);
 };
 
+const escapeRegex = (value = "") => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const normalizeCompanyName = (value = "") =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/['’]s\b/g, "")
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+
+const MR_RALLY_COMPANY_STOP_WORDS = new Set([
+  "a", "about", "all", "also", "am", "an", "and", "any", "are", "at", "balance",
+  "be", "biggest", "book", "by", "can", "cash", "catalyst", "catalysts", "change",
+  "company", "compare", "could", "current", "debt", "did", "do", "does", "earnings",
+  "equity", "estimate", "estimates", "for", "forward", "free", "from", "give", "gross",
+  "has", "have", "how", "income", "is", "it", "long", "margin", "margins", "market",
+  "me", "much", "net", "next", "of", "on", "operating", "p", "pe", "price", "profit",
+  "ratio", "revenue", "risk", "risks", "sales", "say", "sheet", "short", "stock",
+  "stocks", "target", "tell", "term", "the", "their", "them", "this", "to", "total",
+  "valuation", "what", "whats", "with", "year"
+]);
+
+const buildCompanySearchPhrase = (message = "") => {
+  const normalized = normalizeCompanyName(message);
+  const tokens = normalized
+    .split(" ")
+    .filter((token) => token.length > 1 && !MR_RALLY_COMPANY_STOP_WORDS.has(token));
+
+  return tokens.slice(0, 6).join(" ");
+};
+
+const addResolvedSymbol = (symbols, value) => {
+  const symbol = String(value || "").trim().toUpperCase();
+  if (/^[A-Z][A-Z0-9.-]{0,11}$/.test(symbol)) {
+    symbols.add(TICKER_ALIASES[symbol] || symbol);
+  }
+};
+
+async function resolveSymbolsFromCompanyName(message = "") {
+  const symbols = new Set();
+  const normalizedMessage = normalizeCompanyName(message);
+
+  Object.entries(COMPANY_NAME_ALIASES).forEach(([name, symbol]) => {
+    const normalizedName = normalizeCompanyName(name);
+    if (normalizedName && new RegExp(`(^| )${escapeRegex(normalizedName)}( |$)`).test(normalizedMessage)) {
+      addResolvedSymbol(symbols, symbol);
+    }
+  });
+
+  const searchPhrase = buildCompanySearchPhrase(message);
+  if (!searchPhrase) return [...symbols].slice(0, 5);
+
+  try {
+    const phraseRegex = new RegExp(escapeRegex(searchPhrase), "i");
+    const cachedMatches = await Stock.find({
+      $or: [
+        { ticker: phraseRegex },
+        { "data.symbol": phraseRegex },
+        { "data.name": phraseRegex },
+        { "data.longName": phraseRegex },
+        { "data.shortName": phraseRegex }
+      ]
+    })
+      .select("ticker data.symbol data.name data.longName data.shortName")
+      .limit(5)
+      .lean();
+
+    cachedMatches.forEach((stock) => {
+      const symbol = String(stock?.ticker || stock?.data?.symbol || "");
+      if (!symbol.includes(".")) addResolvedSymbol(symbols, symbol);
+    });
+  } catch (err) {
+    console.log("Mr. Rally company-name cache lookup skipped:", err.message);
+  }
+
+  if (symbols.size) return [...symbols].slice(0, 5);
+
+  try {
+    const { data } = await axios.get("https://query1.finance.yahoo.com/v1/finance/search", {
+      params: {
+        q: searchPhrase,
+        quotesCount: 6,
+        newsCount: 0,
+        listsCount: 0
+      },
+      timeout: 8000,
+      headers: YAHOO_CHART_HEADERS
+    });
+
+    const searchTokens = searchPhrase.split(" ").filter((token) => token.length > 1);
+    (data?.quotes || [])
+      .filter((quote) => quote?.quoteType === "EQUITY")
+      .filter((quote) => /^[A-Z][A-Z0-9-]{0,11}$/.test(String(quote?.symbol || "")))
+      .filter((quote) => {
+        const label = normalizeCompanyName(`${quote.shortname || ""} ${quote.longname || ""}`);
+        return !searchTokens.length || searchTokens.some((token) => label.includes(token));
+      })
+      .slice(0, 5)
+      .forEach((quote) => addResolvedSymbol(symbols, quote.symbol));
+  } catch (err) {
+    console.log("Mr. Rally Yahoo company-name lookup skipped:", err.message);
+  }
+
+  return [...symbols].slice(0, 5);
+}
+
+async function resolveMrRallySymbols(message = "", fallbackTicker = "") {
+  const explicitSymbols = extractStockSymbolsFromQuestion(message);
+  if (explicitSymbols.length) return explicitSymbols;
+
+  const companySymbols = await resolveSymbolsFromCompanyName(message);
+  if (companySymbols.length) return companySymbols;
+
+  return extractStockSymbolsFromQuestion("", fallbackTicker);
+}
+
 async function getMrRallyStockContext(ticker, intent = {}) {
   const requestedTicker = String(ticker || "").trim().toUpperCase();
   const symbol = TICKER_ALIASES[requestedTicker] || requestedTicker;
@@ -6167,7 +6320,7 @@ app.post("/api/mr-rally-chat", async (req, res) => {
       return res.status(400).json({ error: "Ask Mr. Rally a question first." });
     }
 
-    const symbols = extractStockSymbolsFromQuestion(message, currentTicker);
+    const symbols = await resolveMrRallySymbols(message, currentTicker);
     const contexts = (await Promise.all(symbols.map((symbol) =>
       getMrRallyStockContext(symbol, intent)
     ))).filter(Boolean);
