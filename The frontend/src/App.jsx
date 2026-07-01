@@ -2202,9 +2202,12 @@ const sendMrRallyMessage = async (event) => {
 const mrRallySection = (
   <section className="chart-section mr-rally-section" id="mr-rally">
     <div className="mr-rally-heading">
-      <div>
-        <h2 className="section-title">Mr. Rally</h2>
-        <p>Ask anything about stocks. Mr. Rally starts with this site’s data and reaches outside only when the data is missing.</p>
+      <div className="mr-rally-brand">
+        <img src="/mr-rally-mascot.png" alt="Mr. Rally" />
+        <div>
+          <h2 className="section-title">Mr. Rally</h2>
+          <p>Ask about valuation, estimates, debt, margins, risks, or any ticker. Mr. Rally answers the question directly and reaches outside only when MrktRally does not have the data.</p>
+        </div>
       </div>
       <span className="mr-rally-status">{isMrRallyLoading ? "Thinking" : "Ready"}</span>
     </div>
@@ -2213,28 +2216,31 @@ const mrRallySection = (
       <div className="mr-rally-messages" aria-live="polite">
         {mrRallyMessages.map((message, index) => (
           <div
-            className={`mr-rally-message ${message.role}`}
-            key={`${message.role}-${index}`}
-          >
-            <span>{message.role === "user" ? "You" : "Mr. Rally"}</span>
-            <p>{message.content}</p>
-          </div>
-        ))}
-        {isMrRallyLoading && (
-          <div className="mr-rally-message assistant">
-            <span>Mr. Rally</span>
-            <p>Checking the data...</p>
-          </div>
-        )}
+          className={`mr-rally-message ${message.role}`}
+          key={`${message.role}-${index}`}
+        >
+          <span>
+            {message.role === "assistant" && <img src="/mr-rally-mascot.png" alt="" />}
+            {message.role === "user" ? "You" : "Mr. Rally"}
+          </span>
+          <p>{message.content}</p>
+        </div>
+      ))}
+      {isMrRallyLoading && (
+        <div className="mr-rally-message assistant">
+          <span><img src="/mr-rally-mascot.png" alt="" />Mr. Rally</span>
+          <p>Checking the data...</p>
+        </div>
+      )}
       </div>
 
       <form className="mr-rally-form" onSubmit={sendMrRallyMessage}>
         <textarea
-          value={mrRallyInput}
-          onChange={(event) => setMrRallyInput(event.target.value)}
-          placeholder={`Ask about ${ticker}, compare two tickers, or ask what looks risky...`}
-          rows={3}
-        />
+        value={mrRallyInput}
+        onChange={(event) => setMrRallyInput(event.target.value)}
+        placeholder={`Try: What is ${ticker}'s forward P/E? How much debt does HD have? What are AMD's biggest risks?`}
+        rows={3}
+      />
         <button type="submit" disabled={!mrRallyInput.trim() || isMrRallyLoading}>
           Ask Mr. Rally
         </button>

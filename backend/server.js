@@ -5643,6 +5643,187 @@ const analysisMoney = (value) => {
   return `${sign}$${absolute.toFixed(0)}`;
 };
 
+const yahooRawNumber = (value) => toNumberOrNull(
+  value && typeof value === "object" && "raw" in value ? value.raw : value
+);
+
+const firstYahooRawNumber = (...values) => {
+  for (const value of values) {
+    const number = yahooRawNumber(value);
+    if (number !== null) return number;
+  }
+  return null;
+};
+
+const getQuestionIntent = (question = "") => {
+  const text = String(question || "").toLowerCase();
+  return {
+    debt: /\b(debt|leverage|liabilit|balance sheet|borrowings?|cash|equity|current ratio)\b/.test(text),
+    forwardPe: /\b(forward\s*p\/?e|forward\s*pe|forward\s*multiple)\b/.test(text),
+    pe: /\b(p\/?e|pe ratio|earnings multiple)\b/.test(text),
+    valuation: /\b(valuation|expensive|cheap|multiple|price to sales|p\/s|p\/b|price to book)\b/.test(text),
+    estimates: /\b(estimate|consensus|forecast|next year|current year|eps|revenue)\b/.test(text),
+    risk: /\b(risk|risks|bear|downside|concern|worry)\b/.test(text),
+    catalyst: /\b(catalyst|bull|upside|positive|why buy|growth)\b/.test(text),
+    margins: /\b(margin|profitability|gross|operating margin|profit margin)\b/.test(text),
+    cashFlow: /\b(free cash flow|fcf|cash flow)\b/.test(text),
+    target: /\b(price target|target|upside)\b/.test(text)
+  };
+};
+
+async function fetchExternalFinancialContext(ticker, intent = {}) {
+  if (!intent.debt && !intent.valuation && !intent.cashFlow) return null;
+  const buildFromYahooTimeSeries = async () => {
+    const typeList = [
+      "quarterlyTotalDebt",
+      "quarterlyCashAndCashEquivalents",
+      "quarterlyLongTermDebt",
+      "quarterlyCurrentDebt",
+      "quarterlyTotalLiabilitiesNetMinorityInterest",
+      "quarterlyTotalAssets",
+      "quarterlyStockholdersEquity",
+      "annualTotalDebt",
+      "annualCashAndCashEquivalents",
+      "annualLongTermDebt",
+      "annualCurrentDebt",
+      "annualTotalLiabilitiesNetMinorityInterest",
+      "annualTotalAssets",
+      "annualStockholdersEquity"
+    ];
+    const period1 = Math.floor(Date.UTC(new Date().getUTCFullYear() - 6, 0, 1) / 1000);
+    const period2 = Math.floor(Date.now() / 1000);
+    const { data } = await axios.get(
+      `https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${encodeURIComponent(ticker)}`,
+      {
+        params: {
+          type: typeList.join(","),
+          period1,
+          period2
+        },
+        timeout: 10000,
+        headers: YAHOO_CHART_HEADERS
+      }
+    );
+    const readLatest = (field) => {
+      const row = data?.timeseries?.result?.find((item) => Array.isArray(item?.[field]));
+      const latest = row?.[field]
+        ?.filter((item) => item?.reportedValue?.raw !== undefined)
+        ?.sort((a, b) => String(a.asOfDate).localeCompare(String(b.asOfDate)))
+        ?.at(-1);
+      return {
+        value: latest ? firstYahooRawNumber(latest.reportedValue) : null,
+        asOf: latest?.asOfDate || null
+      };
+    };
+    const totalDebt = readLatest("quarterlyTotalDebt");
+    const annualTotalDebt = readLatest("annualTotalDebt");
+    const cash = readLatest("quarterlyCashAndCashEquivalents");
+    const annualCash = readLatest("annualCashAndCashEquivalents");
+    const longTermDebt = readLatest("quarterlyLongTermDebt");
+    const annualLongTermDebt = readLatest("annualLongTermDebt");
+    const currentDebt = readLatest("quarterlyCurrentDebt");
+    const annualCurrentDebt = readLatest("annualCurrentDebt");
+    const liabilities = readLatest("quarterlyTotalLiabilitiesNetMinorityInterest");
+    const assets = readLatest("quarterlyTotalAssets");
+    const equity = readLatest("quarterlyStockholdersEquity");
+    const resolvedDebt = firstFiniteNumber(totalDebt.value, annualTotalDebt.value, longTermDebt.value, annualLongTermDebt.value);
+    const resolvedCash = firstFiniteNumber(cash.value, annualCash.value);
+    return {
+      source: "Yahoo Finance external balance-sheet data",
+      asOf: totalDebt.asOf || annualTotalDebt.asOf || longTermDebt.asOf || annualLongTermDebt.asOf || cash.asOf || annualCash.asOf || null,
+      balanceSheet: {
+        cash: resolvedCash,
+        totalDebt: resolvedDebt,
+        netDebt: resolvedDebt !== null && resolvedCash !== null ? resolvedDebt - resolvedCash : null,
+        longTermDebt: firstFiniteNumber(longTermDebt.value, annualLongTermDebt.value),
+        currentDebt: firstFiniteNumber(currentDebt.value, annualCurrentDebt.value),
+        totalLiabilities: liabilities.value,
+        totalAssets: assets.value,
+        equity: equity.value,
+        debtToEquity: resolvedDebt !== null && equity.value ? (resolvedDebt / equity.value) * 100 : null,
+        currentRatio: null
+      },
+      valuation: {}
+    };
+  };
+
+  try {
+    const summary = await yahooFinance.quoteSummary(ticker, {
+      modules: [
+        "financialData",
+        "balanceSheetHistory",
+        "balanceSheetHistoryQuarterly",
+        "defaultKeyStatistics"
+      ]
+    });
+    const financialData = summary?.financialData || {};
+    const keyStats = summary?.defaultKeyStatistics || {};
+    const annualSheet = summary?.balanceSheetHistory?.balanceSheetStatements?.[0] || {};
+    const quarterlySheet = summary?.balanceSheetHistoryQuarterly?.balanceSheetStatements?.[0] || {};
+    const sheet = quarterlySheet && Object.keys(quarterlySheet).length ? quarterlySheet : annualSheet;
+
+    const cash = firstYahooRawNumber(
+      financialData.totalCash,
+      sheet.cash,
+      sheet.cashAndCashEquivalents,
+      sheet.cashCashEquivalentsAndShortTermInvestments
+    );
+    const totalDebt = firstYahooRawNumber(
+      financialData.totalDebt,
+      sheet.totalDebt,
+      sheet.longTermDebtAndCapitalLeaseObligation,
+      sheet.longTermDebt,
+      sheet.shortLongTermDebtTotal
+    );
+    const longTermDebt = firstYahooRawNumber(
+      sheet.longTermDebt,
+      sheet.longTermDebtAndCapitalLeaseObligation
+    );
+    const currentDebt = firstYahooRawNumber(
+      sheet.shortLongTermDebt,
+      sheet.currentDebt,
+      sheet.currentDebtAndCapitalLeaseObligation
+    );
+    const totalLiabilities = firstYahooRawNumber(sheet.totalLiab, sheet.totalLiabilitiesNetMinorityInterest);
+    const totalAssets = firstYahooRawNumber(sheet.totalAssets);
+    const equity = firstYahooRawNumber(sheet.totalStockholderEquity, sheet.stockholdersEquity);
+    const netDebt = totalDebt !== null && cash !== null ? totalDebt - cash : null;
+
+    const summaryContext = {
+      source: "Yahoo Finance external financial data",
+      asOf: sheet.endDate ? new Date(firstYahooRawNumber(sheet.endDate) * 1000).toISOString().slice(0, 10) : null,
+      balanceSheet: {
+        cash,
+        totalDebt,
+        netDebt,
+        longTermDebt,
+        currentDebt,
+        totalLiabilities,
+        totalAssets,
+        equity,
+        debtToEquity: firstYahooRawNumber(financialData.debtToEquity),
+        currentRatio: firstYahooRawNumber(financialData.currentRatio)
+      },
+      valuation: {
+        enterpriseValue: firstYahooRawNumber(keyStats.enterpriseValue),
+        trailingEps: firstYahooRawNumber(keyStats.trailingEps),
+        forwardEps: firstYahooRawNumber(keyStats.forwardEps)
+      }
+    };
+    if (summaryContext.balanceSheet.totalDebt !== null || summaryContext.balanceSheet.cash !== null) {
+      return summaryContext;
+    }
+    return await buildFromYahooTimeSeries();
+  } catch (err) {
+    try {
+      return await buildFromYahooTimeSeries();
+    } catch (fallbackErr) {
+      console.log("Mr. Rally external financials skipped:", ticker, fallbackErr.message);
+      return null;
+    }
+  }
+}
+
 function buildResearchAnalysis(stock) {
   const data = withGuaranteedAnalystSection(stock.data || {});
   const history = [...(data.revenueData || [])]
@@ -5805,7 +5986,7 @@ const extractStockSymbolsFromQuestion = (message = "", fallbackTicker = "") => {
   return [...symbols].slice(0, 5);
 };
 
-async function getMrRallyStockContext(ticker) {
+async function getMrRallyStockContext(ticker, intent = {}) {
   const requestedTicker = String(ticker || "").trim().toUpperCase();
   const symbol = TICKER_ALIASES[requestedTicker] || requestedTicker;
   if (!/^[A-Z0-9.-]{1,12}$/.test(symbol)) return null;
@@ -5847,6 +6028,7 @@ async function getMrRallyStockContext(ticker) {
 
   const data = withGuaranteedAnalystSection(stock.data || {});
   const analysis = buildResearchAnalysis(stock);
+  const externalFinancials = await fetchExternalFinancialContext(symbol, intent);
   const history = [...(data.revenueData || [])]
     .filter((row) => row?.year)
     .sort((a, b) => a.year - b.year)
@@ -5880,11 +6062,13 @@ async function getMrRallyStockContext(ticker) {
     catalysts: analysis.stockAnalysis.catalysts,
     risks: analysis.stockAnalysis.risks,
     scenarios: analysis.stockAnalysis.scenarios,
+    externalFinancials,
     updatedAt: stock.updatedAt
   };
 }
 
 const buildMrRallyFallbackAnswer = (question, contexts) => {
+  const intent = getQuestionIntent(question);
   const usable = contexts.filter((item) => item && !item.error);
   if (!usable.length) {
     return "I could not find enough reliable stock data for that question yet. Try asking with a specific ticker, like AMD, NKE, or FDX.";
@@ -5894,15 +6078,74 @@ const buildMrRallyFallbackAnswer = (question, contexts) => {
     const estimates = item.analystEstimates || {};
     const currentYear = estimates.currentYear || {};
     const nextYear = estimates.nextYear || {};
-    const lines = [
-      `${item.symbol}: ${item.name}`,
-      `Price: ${analysisMoney(item.price)}${item.percentChange !== null && item.percentChange !== undefined ? ` (${round(item.percentChange, 2)}%)` : ""}.`,
-      `Valuation: P/E ${round(item.pe, 1) ?? "N/A"}, forward P/E ${round(item.forwardPE, 1) ?? "N/A"}, price-to-sales ${round(item.priceToSales, 1) ?? "N/A"}.`,
-      `Current-year estimate: revenue ${analysisMoney(currentYear.revenue)}, EPS ${currentYear.eps !== null && currentYear.eps !== undefined ? `$${round(currentYear.eps, 2)}` : "N/A"}.`,
-      `Next-year estimate: revenue ${analysisMoney(nextYear.revenue)}, EPS ${nextYear.eps !== null && nextYear.eps !== undefined ? `$${round(nextYear.eps, 2)}` : "N/A"}.`
-    ];
-    if (item.risks?.length) lines.push(`Risks: ${item.risks.join(" ")}`);
-    if (item.catalysts?.length) lines.push(`Catalysts: ${item.catalysts.slice(0, 3).join(" ")}`);
+    const externalBalance = item.externalFinancials?.balanceSheet || {};
+    const lines = [`${item.symbol}: ${item.name}`];
+
+    if (intent.forwardPe) {
+      lines.push(`Forward P/E is ${round(item.forwardPE, 2) ?? "N/A"}x.`);
+      return lines.join("\n");
+    }
+
+    if (intent.debt) {
+      lines.push(`Total debt: ${analysisMoney(externalBalance.totalDebt)}.`);
+      lines.push(`Cash: ${analysisMoney(externalBalance.cash)}.`);
+      lines.push(`Net debt: ${analysisMoney(externalBalance.netDebt)}.`);
+      if (externalBalance.longTermDebt !== null && externalBalance.longTermDebt !== undefined) {
+        lines.push(`Long-term debt: ${analysisMoney(externalBalance.longTermDebt)}.`);
+      }
+      if (externalBalance.currentDebt !== null && externalBalance.currentDebt !== undefined) {
+        lines.push(`Current debt: ${analysisMoney(externalBalance.currentDebt)}.`);
+      }
+      if (externalBalance.debtToEquity !== null && externalBalance.debtToEquity !== undefined) {
+        lines.push(`Debt-to-equity: ${round(externalBalance.debtToEquity, 2)}.`);
+      }
+      lines.push(`Source: ${item.externalFinancials?.source || "external balance-sheet data"}.`);
+      return lines.join("\n");
+    }
+
+    if (intent.risk) {
+      lines.push(item.risks?.length ? item.risks.join("\n") : "I do not see enough risk data for this stock yet.");
+      return lines.join("\n");
+    }
+
+    if (intent.catalyst) {
+      lines.push(item.catalysts?.length ? item.catalysts.join("\n") : "I do not see enough catalyst data for this stock yet.");
+      return lines.join("\n");
+    }
+
+    if (intent.estimates) {
+      lines.push(`Current-year estimate: revenue ${analysisMoney(currentYear.revenue)}, EPS ${currentYear.eps !== null && currentYear.eps !== undefined ? `$${round(currentYear.eps, 2)}` : "N/A"}.`);
+      lines.push(`Next-year estimate: revenue ${analysisMoney(nextYear.revenue)}, EPS ${nextYear.eps !== null && nextYear.eps !== undefined ? `$${round(nextYear.eps, 2)}` : "N/A"}.`);
+      return lines.join("\n");
+    }
+
+    if (intent.margins) {
+      lines.push(`Gross margin: ${round(item.margins?.gross, 2) ?? "N/A"}%.`);
+      lines.push(`Operating margin: ${round(item.margins?.operating, 2) ?? "N/A"}%.`);
+      lines.push(`Profit margin: ${round(item.margins?.profit, 2) ?? "N/A"}%.`);
+      return lines.join("\n");
+    }
+
+    if (intent.cashFlow) {
+      lines.push(`Free cash flow: ${analysisMoney(item.freeCashflow)}.`);
+      return lines.join("\n");
+    }
+
+    if (intent.target) {
+      const upside = item.price && item.targetMean ? ((item.targetMean - item.price) / item.price) * 100 : null;
+      lines.push(`Consensus price target: ${analysisMoney(item.targetMean)}${upside !== null ? `, or ${round(upside, 2)}% from the current price` : ""}.`);
+      return lines.join("\n");
+    }
+
+    if (intent.valuation || intent.pe) {
+      lines.push(`P/E: ${round(item.pe, 2) ?? "N/A"}x.`);
+      lines.push(`Forward P/E: ${round(item.forwardPE, 2) ?? "N/A"}x.`);
+      lines.push(`Price-to-sales: ${round(item.priceToSales, 2) ?? "N/A"}x.`);
+      lines.push(`Price-to-book: ${round(item.priceToBook, 2) ?? "N/A"}x.`);
+      return lines.join("\n");
+    }
+
+    lines.push(`Price: ${analysisMoney(item.price)}${item.percentChange !== null && item.percentChange !== undefined ? ` (${round(item.percentChange, 2)}%)` : ""}.`);
     if (item.verdict?.summary) lines.push(item.verdict.summary);
     return lines.join("\n");
   }).join("\n\n");
@@ -5912,6 +6155,7 @@ app.post("/api/mr-rally-chat", async (req, res) => {
   try {
     const message = String(req.body?.message || "").trim();
     const currentTicker = String(req.body?.ticker || "").trim().toUpperCase();
+    const intent = getQuestionIntent(message);
     const history = Array.isArray(req.body?.history)
       ? req.body.history.slice(-6).map((item) => ({
           role: item.role === "user" ? "user" : "assistant",
@@ -5924,13 +6168,17 @@ app.post("/api/mr-rally-chat", async (req, res) => {
     }
 
     const symbols = extractStockSymbolsFromQuestion(message, currentTicker);
-    const contexts = (await Promise.all(symbols.map(getMrRallyStockContext))).filter(Boolean);
+    const contexts = (await Promise.all(symbols.map((symbol) =>
+      getMrRallyStockContext(symbol, intent)
+    ))).filter(Boolean);
 
     if (!openai) {
       return res.json({
         answer: buildMrRallyFallbackAnswer(message, contexts),
         symbols: contexts.map((item) => item.symbol),
-        sources: contexts.map((item) => item.source)
+        sources: [...new Set(contexts.flatMap((item) =>
+          [item.source, item.externalFinancials?.source].filter(Boolean)
+        ))]
       });
     }
 
@@ -5952,7 +6200,7 @@ app.post("/api/mr-rally-chat", async (req, res) => {
         },
         {
           role: "user",
-          content: `Current page ticker: ${currentTicker || "none"}\nConversation:\n${JSON.stringify(history)}\nStock data:\n${JSON.stringify(contexts)}\nQuestion: ${message}`
+          content: `Current page ticker: ${currentTicker || "none"}\nQuestion intent:\n${JSON.stringify(intent)}\nConversation:\n${JSON.stringify(history)}\nStock data:\n${JSON.stringify(contexts)}\nQuestion: ${message}`
         }
       ]
     });
@@ -5960,7 +6208,9 @@ app.post("/api/mr-rally-chat", async (req, res) => {
     return res.json({
       answer: completion.choices?.[0]?.message?.content?.trim() || buildMrRallyFallbackAnswer(message, contexts),
       symbols: contexts.map((item) => item.symbol),
-      sources: contexts.map((item) => item.source)
+      sources: [...new Set(contexts.flatMap((item) =>
+        [item.source, item.externalFinancials?.source].filter(Boolean)
+      ))]
     });
   } catch (err) {
     console.error("Mr. Rally chat failed:", err.message);

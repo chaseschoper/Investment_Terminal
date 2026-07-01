@@ -2290,9 +2290,27 @@ body {
 .mr-rally-heading {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
+  gap: 22px;
+  margin-bottom: 22px;
+}
+
+.mr-rally-brand {
+  display: flex;
+  align-items: center;
   gap: 18px;
-  margin-bottom: 18px;
+}
+
+.mr-rally-brand > img {
+  width: 92px;
+  height: 92px;
+  object-fit: contain;
+  flex: 0 0 auto;
+  border-radius: 22px;
+  background: radial-gradient(circle at 35% 25%, rgba(59, 130, 246, 0.34), rgba(2, 6, 23, 0.5));
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.38),
+    0 0 0 1px rgba(96, 165, 250, 0.24);
 }
 
 .mr-rally-heading p {
@@ -2316,13 +2334,31 @@ body {
 }
 
 .mr-rally-chat {
-  background: rgba(15, 23, 42, 0.88);
-  border: 1px solid rgba(59, 130, 246, 0.24);
-  border-radius: 18px;
+  position: relative;
+  background:
+    linear-gradient(135deg, rgba(37, 99, 235, 0.14), transparent 34%),
+    linear-gradient(315deg, rgba(191, 10, 48, 0.12), transparent 42%),
+    rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  border-radius: 22px;
   overflow: hidden;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
+}
+
+.mr-rally-chat::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 42px 42px;
+  opacity: 0.18;
 }
 
 .mr-rally-messages {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -2335,25 +2371,36 @@ body {
 .mr-rally-message {
   max-width: min(820px, 92%);
   padding: 16px 18px;
-  border-radius: 14px;
+  border-radius: 16px;
   border: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(17, 24, 39, 0.92);
+  background: rgba(8, 13, 24, 0.86);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.18);
 }
 
 .mr-rally-message.user {
   align-self: flex-end;
-  background: rgba(37, 99, 235, 0.2);
+  background: rgba(37, 99, 235, 0.24);
   border-color: rgba(96, 165, 250, 0.32);
 }
 
 .mr-rally-message span {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 8px;
   color: #93c5fd;
   font-size: 12px;
   font-weight: 900;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+}
+
+.mr-rally-message span img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  border-radius: 9px;
+  background: rgba(2, 6, 23, 0.6);
 }
 
 .mr-rally-message p {
@@ -2364,6 +2411,7 @@ body {
 }
 
 .mr-rally-form {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 14px;
@@ -2377,10 +2425,10 @@ body {
   resize: vertical;
   min-height: 76px;
   max-height: 180px;
-  background: #0b1220;
+  background: rgba(7, 13, 25, 0.94);
   color: #f8fafc;
-  border: 1px solid #26344f;
-  border-radius: 12px;
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  border-radius: 14px;
   padding: 14px 16px;
   font: inherit;
   outline: none;
@@ -2393,13 +2441,14 @@ body {
 
 .mr-rally-form button {
   align-self: stretch;
-  background: #2563eb;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8 54%, #bf0a30);
   color: #fff;
   border: none;
-  border-radius: 12px;
+  border-radius: 14px;
   padding: 0 22px;
   font-weight: 900;
   cursor: pointer;
+  box-shadow: 0 14px 28px rgba(37, 99, 235, 0.28);
 }
 
 .mr-rally-form button:disabled {
