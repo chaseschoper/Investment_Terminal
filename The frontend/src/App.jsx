@@ -893,6 +893,20 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [isAiLoading, setIsAiLoading] =
     useState(false);
 
+  const [mrRallyMessages, setMrRallyMessages] =
+    useState([
+      {
+        role: "assistant",
+        content: "Ask me about a stock, valuation, earnings, estimates, margins, or risks. I’ll start with MrktRally’s data and look outside only when we don’t have enough."
+      }
+    ]);
+
+  const [mrRallyInput, setMrRallyInput] =
+    useState("");
+
+  const [isMrRallyLoading, setIsMrRallyLoading] =
+    useState(false);
+
   const [earningsCall, setEarningsCall] =
     useState(null);
 
@@ -2139,6 +2153,51 @@ const displayedMarketIndices = MARKET_INDEX_ORDER.map((item) => ({
   ...item,
   ...(marketIndices.find((index) => index.key === item.key) || {})
 }));
+
+const sendMrRallyMessage = async (event) => {
+  event.preventDefault();
+  const message = mrRallyInput.trim();
+  if (!message || isMrRallyLoading) return;
+
+  const outgoingMessages = [
+    ...mrRallyMessages,
+    { role: "user", content: message }
+  ];
+  setMrRallyMessages(outgoingMessages);
+  setMrRallyInput("");
+  setIsMrRallyLoading(true);
+
+  try {
+    const response = await axios.post(
+      `${API_URL}/api/mr-rally-chat`,
+      {
+        message,
+        ticker,
+        history: mrRallyMessages
+      },
+      { timeout: 30000 }
+    );
+
+    setMrRallyMessages([
+      ...outgoingMessages,
+      {
+        role: "assistant",
+        content: response.data.answer || "I could not find enough reliable data to answer that yet."
+      }
+    ]);
+  } catch (error) {
+    console.error("Mr. Rally chat failed", error);
+    setMrRallyMessages([
+      ...outgoingMessages,
+      {
+        role: "assistant",
+        content: "I’m having trouble reaching the stock data right now. Try again in a moment."
+      }
+    ]);
+  } finally {
+    setIsMrRallyLoading(false);
+  }
+};
 
 const comparisonSection = (
   <div className="chart-section" id="comparison">
@@ -4697,6 +4756,51 @@ return (
 
 
 </div>
+
+
+{/* MR. RALLY CHAT */}
+
+<section className="chart-section mr-rally-section" id="mr-rally">
+  <div className="mr-rally-heading">
+    <div>
+      <h2 className="section-title">Mr. Rally</h2>
+      <p>Ask anything about stocks. Mr. Rally starts with this site’s data and reaches outside only when the data is missing.</p>
+    </div>
+    <span className="mr-rally-status">{isMrRallyLoading ? "Thinking" : "Ready"}</span>
+  </div>
+
+  <div className="mr-rally-chat">
+    <div className="mr-rally-messages" aria-live="polite">
+      {mrRallyMessages.map((message, index) => (
+        <div
+          className={`mr-rally-message ${message.role}`}
+          key={`${message.role}-${index}`}
+        >
+          <span>{message.role === "user" ? "You" : "Mr. Rally"}</span>
+          <p>{message.content}</p>
+        </div>
+      ))}
+      {isMrRallyLoading && (
+        <div className="mr-rally-message assistant">
+          <span>Mr. Rally</span>
+          <p>Checking the data...</p>
+        </div>
+      )}
+    </div>
+
+    <form className="mr-rally-form" onSubmit={sendMrRallyMessage}>
+      <textarea
+        value={mrRallyInput}
+        onChange={(event) => setMrRallyInput(event.target.value)}
+        placeholder={`Ask about ${ticker}, compare two tickers, or ask what looks risky...`}
+        rows={3}
+      />
+      <button type="submit" disabled={!mrRallyInput.trim() || isMrRallyLoading}>
+        Ask Mr. Rally
+      </button>
+    </form>
+  </div>
+</section>
 
 
 {/* AUTH POPUP */}

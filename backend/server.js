@@ -9,6 +9,7 @@ const https = require("https");
 const zlib = require("zlib");
 const mongoose = require("mongoose");
 const yahooFinance = require("yahoo-finance2").default;
+const OpenAI = require("openai");
 const { PDFParse } = require("pdf-parse");
 
 const bcrypt = require("bcryptjs");
@@ -19,6 +20,9 @@ const User = require("./models/User");
 const EarningsCall = require("./models/EarningsCall");
 
 const app = express();
+const openai = process.env.OPENAI_API_KEY
+  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null;
 const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
@@ -5779,6 +5783,190 @@ function buildResearchAnalysis(stock) {
     }
   };
 }
+
+const extractStockSymbolsFromQuestion = (message = "", fallbackTicker = "") => {
+  const ignored = new Set([
+    "A", "AI", "API", "CEO", "CFO", "DCF", "EPS", "ETF", "FCF", "FY", "GAAP",
+    "GDP", "IPO", "MR", "PE", "PS", "Q", "SEC", "TTM", "US", "USD", "YOY"
+  ]);
+  const symbols = new Set();
+  const add = (value) => {
+    const symbol = String(value || "").trim().toUpperCase();
+    if (/^[A-Z][A-Z0-9.-]{0,9}$/.test(symbol) && !ignored.has(symbol)) {
+      symbols.add(TICKER_ALIASES[symbol] || symbol);
+    }
+  };
+
+  String(message || "").match(/\$?[A-Z][A-Z0-9.-]{0,9}\b/g)?.forEach((match) =>
+    add(match.replace(/^\$/, ""))
+  );
+  if (!symbols.size) add(fallbackTicker);
+
+  return [...symbols].slice(0, 5);
+};
+
+async function getMrRallyStockContext(ticker) {
+  const requestedTicker = String(ticker || "").trim().toUpperCase();
+  const symbol = TICKER_ALIASES[requestedTicker] || requestedTicker;
+  if (!/^[A-Z0-9.-]{1,12}$/.test(symbol)) return null;
+
+  let stock = await Stock.findOne({ ticker: symbol });
+  const needsRefresh = !stock || stock.status !== "ready" || needsFinancialHistoryRefresh(stock);
+
+  if (needsRefresh) {
+    try {
+      await resolveWithin(fetchStockData(symbol), 18000, null);
+      stock = await Stock.findOne({ ticker: symbol });
+    } catch (err) {
+      console.log("Mr. Rally stock refresh skipped:", symbol, err.message);
+    }
+  }
+
+  if (!stock?.data) {
+    try {
+      const quickData = await getImmediateStockSnapshot(symbol, {});
+      return {
+        symbol,
+        name: quickData.name || symbol,
+        source: "external market quote",
+        price: quickData.price,
+        change: quickData.change,
+        percentChange: quickData.percentChange,
+        previousClose: quickData.previousClose,
+        availableData: ["quote"]
+      };
+    } catch (err) {
+      return {
+        symbol,
+        name: symbol,
+        source: "unavailable",
+        error: "No reliable data was available for this ticker."
+      };
+    }
+  }
+
+  const data = withGuaranteedAnalystSection(stock.data || {});
+  const analysis = buildResearchAnalysis(stock);
+  const history = [...(data.revenueData || [])]
+    .filter((row) => row?.year)
+    .sort((a, b) => a.year - b.year)
+    .slice(-6);
+
+  return {
+    symbol: data.symbol || symbol,
+    name: data.name || symbol,
+    source: "MrktRally website data",
+    price: data.price,
+    change: data.change,
+    percentChange: data.percentChange,
+    previousClose: data.previousClose,
+    marketCap: data.marketCap,
+    pe: data.pe,
+    forwardPE: data.forwardPE,
+    priceToSales: data.priceToSales,
+    priceToBook: data.priceToBook,
+    targetMean: data.targetMean,
+    recommendationKey: data.recommendationKey,
+    analystRatingText: data.analystRatingText,
+    margins: {
+      gross: data.grossMargins,
+      operating: data.operatingMargins,
+      profit: data.profitMargins
+    },
+    freeCashflow: data.freeCashflow,
+    analystEstimates: data.analystEstimates,
+    history,
+    verdict: analysis.verdict,
+    catalysts: analysis.stockAnalysis.catalysts,
+    risks: analysis.stockAnalysis.risks,
+    scenarios: analysis.stockAnalysis.scenarios,
+    updatedAt: stock.updatedAt
+  };
+}
+
+const buildMrRallyFallbackAnswer = (question, contexts) => {
+  const usable = contexts.filter((item) => item && !item.error);
+  if (!usable.length) {
+    return "I could not find enough reliable stock data for that question yet. Try asking with a specific ticker, like AMD, NKE, or FDX.";
+  }
+
+  return usable.map((item) => {
+    const estimates = item.analystEstimates || {};
+    const currentYear = estimates.currentYear || {};
+    const nextYear = estimates.nextYear || {};
+    const lines = [
+      `${item.symbol}: ${item.name}`,
+      `Price: ${analysisMoney(item.price)}${item.percentChange !== null && item.percentChange !== undefined ? ` (${round(item.percentChange, 2)}%)` : ""}.`,
+      `Valuation: P/E ${round(item.pe, 1) ?? "N/A"}, forward P/E ${round(item.forwardPE, 1) ?? "N/A"}, price-to-sales ${round(item.priceToSales, 1) ?? "N/A"}.`,
+      `Current-year estimate: revenue ${analysisMoney(currentYear.revenue)}, EPS ${currentYear.eps !== null && currentYear.eps !== undefined ? `$${round(currentYear.eps, 2)}` : "N/A"}.`,
+      `Next-year estimate: revenue ${analysisMoney(nextYear.revenue)}, EPS ${nextYear.eps !== null && nextYear.eps !== undefined ? `$${round(nextYear.eps, 2)}` : "N/A"}.`
+    ];
+    if (item.risks?.length) lines.push(`Risks: ${item.risks.join(" ")}`);
+    if (item.catalysts?.length) lines.push(`Catalysts: ${item.catalysts.slice(0, 3).join(" ")}`);
+    if (item.verdict?.summary) lines.push(item.verdict.summary);
+    return lines.join("\n");
+  }).join("\n\n");
+};
+
+app.post("/api/mr-rally-chat", async (req, res) => {
+  try {
+    const message = String(req.body?.message || "").trim();
+    const currentTicker = String(req.body?.ticker || "").trim().toUpperCase();
+    const history = Array.isArray(req.body?.history)
+      ? req.body.history.slice(-6).map((item) => ({
+          role: item.role === "user" ? "user" : "assistant",
+          content: String(item.content || "").slice(0, 1200)
+        }))
+      : [];
+
+    if (!message) {
+      return res.status(400).json({ error: "Ask Mr. Rally a question first." });
+    }
+
+    const symbols = extractStockSymbolsFromQuestion(message, currentTicker);
+    const contexts = (await Promise.all(symbols.map(getMrRallyStockContext))).filter(Boolean);
+
+    if (!openai) {
+      return res.json({
+        answer: buildMrRallyFallbackAnswer(message, contexts),
+        symbols: contexts.map((item) => item.symbol),
+        sources: contexts.map((item) => item.source)
+      });
+    }
+
+    const completion = await openai.chat.completions.create({
+      model: process.env.MR_RALLY_MODEL || "gpt-4.1-mini",
+      temperature: 0.25,
+      max_tokens: 650,
+      messages: [
+        {
+          role: "system",
+          content: [
+            "You are Mr. Rally, a concise stock research chatbot inside MrktRally.",
+            "Use the provided MrktRally website data first.",
+            "If a field says external market quote, you may use it only to fill missing website quote data.",
+            "Do not invent numbers. If data is missing, say what is missing.",
+            "This is research information, not personalized financial advice.",
+            "Answer in plain English with a short, useful structure."
+          ].join(" ")
+        },
+        {
+          role: "user",
+          content: `Current page ticker: ${currentTicker || "none"}\nConversation:\n${JSON.stringify(history)}\nStock data:\n${JSON.stringify(contexts)}\nQuestion: ${message}`
+        }
+      ]
+    });
+
+    return res.json({
+      answer: completion.choices?.[0]?.message?.content?.trim() || buildMrRallyFallbackAnswer(message, contexts),
+      symbols: contexts.map((item) => item.symbol),
+      sources: contexts.map((item) => item.source)
+    });
+  } catch (err) {
+    console.error("Mr. Rally chat failed:", err.message);
+    return res.status(500).json({ error: "Mr. Rally is temporarily unavailable." });
+  }
+});
 
 app.get("/api/ai-analysis/:ticker", async (req, res) => {
 try {
