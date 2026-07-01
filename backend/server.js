@@ -1132,7 +1132,7 @@ function buildYahooExtendedHoursQuote(quoteData = {}) {
   };
 
   const regularClose = firstYahooNumber(quoteData.regularMarketPrice, previousClose);
-  const preMarket = buildSession("preMarket", "Pre-market", previousClose);
+  const preMarket = buildSession("preMarket", "Pre-market", regularClose);
   const afterHours = buildSession("postMarket", "After hours", regularClose);
   const marketState = String(quoteData.marketState || "").toUpperCase();
   const activeSession = /PRE/.test(marketState) && preMarket
@@ -1218,7 +1218,7 @@ function buildYahooChartExtendedHoursQuote(result = {}) {
     };
   };
 
-  const preMarket = buildSession("pre", "Pre-market", previousClose);
+  const preMarket = buildSession("pre", "Pre-market", regularClose || previousClose);
   const afterHours = buildSession("post", "After hours", regularClose || previousClose);
   const marketState = String(meta.marketState || "").toUpperCase();
   const activeSession = /PRE/.test(marketState) && preMarket
