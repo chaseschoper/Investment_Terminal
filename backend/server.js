@@ -25,7 +25,7 @@ const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 117;
+const FINANCIAL_HISTORY_VERSION = 118;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -1930,7 +1930,12 @@ function hasCompleteSupplementalData(stock) {
   const requiresIndustrialMetrics = !data.isFinancialCompany;
   const currentYear = data.analystEstimates?.currentYear || {};
   const nextYear = data.analystEstimates?.nextYear || {};
-  const usesYahooEstimates = data.analystEstimatesSource === "Yahoo Finance";
+  const hasCompleteYahooEstimates =
+    data.analystEstimatesSource === "Yahoo Finance" &&
+    toNumberOrNull(currentYear.revenue) !== null &&
+    toNumberOrNull(currentYear.eps) !== null &&
+    toNumberOrNull(nextYear.revenue) !== null &&
+    toNumberOrNull(nextYear.eps) !== null;
 
   return (
     (!requiresIndustrialMetrics || toNumberOrNull(data.freeCashflow) !== null) &&
@@ -1945,15 +1950,7 @@ function hasCompleteSupplementalData(stock) {
     toNumberOrNull(data.fiftyTwoWeekHigh) !== null &&
     toNumberOrNull(data.fiftyTwoWeekLow) !== null &&
     ["buy", "hold", "sell"].includes(data.recommendationKey) &&
-    (
-      usesYahooEstimates ||
-      (
-        toNumberOrNull(currentYear.revenue) !== null &&
-        toNumberOrNull(currentYear.eps) !== null &&
-        toNumberOrNull(nextYear.revenue) !== null &&
-        toNumberOrNull(nextYear.eps) !== null
-      )
-    )
+    hasCompleteYahooEstimates
   );
 }
 
