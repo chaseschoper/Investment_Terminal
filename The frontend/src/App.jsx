@@ -2713,7 +2713,7 @@ return (
       </h2>
       <div className="stock-chart-meta">
         <span>{ticker}</span>
-        <strong>{formatPrice(stockChartMeta?.price ?? stockData?.price)}</strong>
+        <strong>{formatPrice(stockData?.price ?? stockChartMeta?.price)}</strong>
         {isNumber(stockChartMeta?.percentChange) && (
           <span className={stockChartMeta.percentChange >= 0 ? "stock-chart-change positive-text" : "stock-chart-change negative-text"}>
             {stockChartMeta.percentChange >= 0 ? "+" : ""}
