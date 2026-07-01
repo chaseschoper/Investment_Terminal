@@ -2134,6 +2134,7 @@ const activeExtendedHours = getExtendedHoursQuote(
   stockData,
   savedSymbolDetails[ticker]
 );
+const displayedStockPrice = stockChartMeta?.price ?? stockData?.price;
 const displayedMarketIndices = MARKET_INDEX_ORDER.map((item) => ({
   ...item,
   ...(marketIndices.find((index) => index.key === item.key) || {})
@@ -2633,8 +2634,8 @@ return (
             </div>
 
             <div className="stock-price">
-              {isNumber(stockData.price)
-                ? `$${stockData.price.toFixed(2)}`
+              {isNumber(displayedStockPrice)
+                ? `$${displayedStockPrice.toFixed(2)}`
                 : "--"}
             </div>
 
@@ -2713,7 +2714,7 @@ return (
       </h2>
       <div className="stock-chart-meta">
         <span>{ticker}</span>
-        <strong>{formatPrice(stockData?.price ?? stockChartMeta?.price)}</strong>
+        <strong>{formatPrice(displayedStockPrice)}</strong>
         {isNumber(stockChartMeta?.percentChange) && (
           <span className={stockChartMeta.percentChange >= 0 ? "stock-chart-change positive-text" : "stock-chart-change negative-text"}>
             {stockChartMeta.percentChange >= 0 ? "+" : ""}
