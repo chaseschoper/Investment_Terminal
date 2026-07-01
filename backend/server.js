@@ -88,6 +88,12 @@ const PRICE_HISTORY_RANGES = {
   MAX: { range: "max", interval: "1mo", ttl: 6 * 60 * 60 * 1000 }
 };
 
+const YAHOO_CHART_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Accept": "application/json,text/plain,*/*",
+  "Accept-Language": "en-US,en;q=0.9"
+};
+
 const REVENUE_KEY_PRIORITY = {
   annualTotalRevenue: 5,
   annualOperatingRevenue: 4,
@@ -5278,6 +5284,9 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     const params = {
       interval: rangeConfig.interval
     };
+    if (requestedRange === "1D") {
+      params.includePrePost = "true";
+    }
 
     if (requestedRange === "YTD") {
       const now = new Date();
@@ -5292,7 +5301,8 @@ app.get("/api/price-history/:ticker", async (req, res) => {
       `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}`,
       {
         params,
-        timeout: 10000
+        timeout: 10000,
+        headers: YAHOO_CHART_HEADERS
       }
     );
 
