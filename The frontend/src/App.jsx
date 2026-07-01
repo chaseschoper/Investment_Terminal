@@ -2638,7 +2638,7 @@ return (
                 : "--"}
             </div>
 
-            {activeExtendedHours && (
+            {showExtendedMarketData && activeExtendedHours && (
               <div className="extended-hours-quote">
                 <span>{activeExtendedHours.label}</span>
                 <strong>{formatPrice(activeExtendedHours.price)}</strong>
