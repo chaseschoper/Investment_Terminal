@@ -88,7 +88,23 @@ const getExtendedHoursQuote = (...sources) => {
   for (const source of sources) {
     const extendedHours = source?.extendedHours;
     const quote = extendedHours?.active || extendedHours?.afterHours || extendedHours?.preMarket;
-    if (isNumber(quote?.price)) return quote;
+    if (isNumber(quote?.price)) {
+      const previousClose = isNumber(quote.previousClose)
+        ? quote.previousClose
+        : null;
+      const change = previousClose
+        ? quote.price - previousClose
+        : quote.change;
+      const percentChange = previousClose
+        ? (change / previousClose) * 100
+        : quote.percentChange;
+
+      return {
+        ...quote,
+        change,
+        percentChange,
+      };
+    }
   }
 
   return null;
