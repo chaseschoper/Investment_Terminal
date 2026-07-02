@@ -101,6 +101,7 @@ const COMPANY_NAME_ALIASES = {
   "nike": "NKE",
   "nvidia": "NVDA",
   "salesforce": "CRM",
+  "snowflake": "SNOW",
   "tesla": "TSLA",
   "walmart": "WMT"
 };
@@ -5756,7 +5757,7 @@ const getQuestionIntent = (question = "") => {
     estimates: /\b(estimate|consensus|forecast|next year|current year|eps|revenue)\b/.test(text),
     risk: /\b(risk|risks|bear|downside|concern|worry)\b/.test(text),
     catalyst: /\b(catalyst|bull|upside|positive|why buy|growth)\b/.test(text),
-    margins: /\b(margin|profitability|gross|operating margin|profit margin)\b/.test(text),
+    margins: /\b(margins?|profitability|gross|operating margins?|profit margins?)\b/.test(text),
     cashFlow: /\b(free cash flow|fcf|cash flow)\b/.test(text),
     target: /\b(price target|target|upside)\b/.test(text),
     statementLineItem,
@@ -6548,7 +6549,7 @@ const MR_RALLY_COMPANY_STOP_WORDS = new Set([
   "company", "compare", "could", "current", "debt", "did", "do", "does", "earnings",
   "equity", "estimate", "estimates", "for", "forward", "free", "from", "give", "gross",
   "has", "have", "how", "income", "is", "it", "long", "margin", "margins", "market",
-  "me", "much", "net", "next", "of", "on", "operating", "p", "pe", "price", "profit",
+  "its", "me", "much", "net", "next", "of", "on", "operating", "p", "pe", "price", "profit",
   "ratio", "revenue", "risk", "risks", "sales", "say", "sheet", "short", "stock",
   "stocks", "target", "tell", "term", "the", "their", "them", "this", "to", "total",
   "valuation", "what", "whats", "with", "year"
@@ -6663,16 +6664,54 @@ async function resolveSymbolsFromCompanyName(message = "") {
   return [...symbols].slice(0, 5);
 }
 
-async function resolveMrRallySymbols(message = "", fallbackTicker = "", intent = {}) {
+async function resolveMrRallyHistorySymbols(history = []) {
+  const recentUserMessages = [...(history || [])]
+    .reverse()
+    .filter((item) => item?.role === "user")
+    .map((item) => item?.content || "")
+    .filter(Boolean)
+    .slice(0, 6);
+  const recentAssistantMessages = [...(history || [])]
+    .reverse()
+    .filter((item) => item?.role !== "user")
+    .map((item) => item?.content || "")
+    .filter(Boolean)
+    .slice(0, 4);
+
+  for (const content of recentUserMessages) {
+    const explicitSymbols = extractStockSymbolsFromQuestion(content);
+    if (explicitSymbols.length) return explicitSymbols;
+
+    const companySymbols = await resolveWithin(
+      resolveSymbolsFromCompanyName(content),
+      MR_RALLY_COMPANY_LOOKUP_TIMEOUT_MS,
+      []
+    );
+    if (companySymbols.length) return companySymbols;
+  }
+
+  for (const content of recentAssistantMessages) {
+    const explicitSymbols = extractStockSymbolsFromQuestion(content);
+    if (explicitSymbols.length) return explicitSymbols;
+  }
+
+  return [];
+}
+
+async function resolveMrRallySymbols(message = "", fallbackTicker = "", intent = {}, historySymbols = []) {
   const explicitSymbols = extractStockSymbolsFromQuestion(message);
   if (explicitSymbols.length) return explicitSymbols;
 
   const normalizedMessage = normalizeCompanyName(message);
   if (
-    fallbackTicker &&
-    /\b(this company|this stock|current company|current stock)\b/.test(normalizedMessage)
+    historySymbols.length &&
+    /\b(this company|this stock|that company|that stock|same company|same stock|the company|the stock|it|its|they|them|their)\b/.test(normalizedMessage)
   ) {
-    return extractStockSymbolsFromQuestion("", fallbackTicker);
+    return historySymbols;
+  }
+
+  if (historySymbols.length && shouldUseCurrentTickerForMrRally(message, intent)) {
+    return historySymbols;
   }
 
   const companySymbols = await resolveWithin(
@@ -7221,7 +7260,8 @@ app.post("/api/mr-rally-chat", async (req, res) => {
       return res.status(400).json({ error: "Ask Mr. Rally a question first." });
     }
 
-    const symbols = await resolveMrRallySymbols(message, currentTicker, intent);
+    const historySymbols = await resolveMrRallyHistorySymbols(history);
+    const symbols = await resolveMrRallySymbols(message, currentTicker, intent, historySymbols);
     const contexts = (await Promise.all(symbols.map((symbol) =>
       getMrRallyStockContext(symbol, intent)
     ))).filter(Boolean);
@@ -7229,7 +7269,7 @@ app.post("/api/mr-rally-chat", async (req, res) => {
     const answer = await resolveWithin(
       buildMrRallyAiAnswer({
         message,
-        currentTicker,
+        currentTicker: historySymbols.length ? historySymbols[0] : currentTicker,
         intent,
         history,
         contexts
