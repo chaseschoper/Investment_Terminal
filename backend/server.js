@@ -33,10 +33,18 @@ const priceHistoryCache = new Map();
 const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
+const mrRallyCompanyLookupCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 121;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
+const MR_RALLY_COMPANY_LOOKUP_TIMEOUT_MS = 2500;
+const MR_RALLY_STOCK_REFRESH_TIMEOUT_MS = 1200;
+const MR_RALLY_EXTERNAL_FINANCIAL_TIMEOUT_MS = 3000;
+const MR_RALLY_EXTERNAL_METRIC_TIMEOUT_MS = 2500;
+const MR_RALLY_EXTERNAL_STATEMENT_TIMEOUT_MS = 3500;
+const MR_RALLY_WEB_CONTEXT_TIMEOUT_MS = 3500;
+const MR_RALLY_AI_TIMEOUT_MS = 12000;
 const STOCK_PROVIDER_TIMEOUT_MS = 8000;
 const STOCK_SLOW_PROVIDER_TIMEOUT_MS = 10000;
 const STOCK_INITIAL_SEC_TIMEOUT_MS = 9000;
@@ -6577,6 +6585,12 @@ async function resolveSymbolsFromCompanyName(message = "") {
   const searchPhrase = buildCompanySearchPhrase(message);
   if (!searchPhrase) return [...symbols].slice(0, 5);
 
+  const cachedLookup = mrRallyCompanyLookupCache.get(searchPhrase);
+  if (cachedLookup && Date.now() - cachedLookup.createdAt < 30 * 60 * 1000) {
+    cachedLookup.symbols.forEach((symbol) => addResolvedSymbol(symbols, symbol));
+    return [...symbols].slice(0, 5);
+  }
+
   try {
     const phraseRegex = new RegExp(escapeRegex(searchPhrase), "i");
     const cachedMatches = await Stock.find({
@@ -6600,7 +6614,14 @@ async function resolveSymbolsFromCompanyName(message = "") {
     console.log("Mr. Rally company-name cache lookup skipped:", err.message);
   }
 
-  if (symbols.size) return [...symbols].slice(0, 5);
+  if (symbols.size) {
+    const resolvedSymbols = [...symbols].slice(0, 5);
+    mrRallyCompanyLookupCache.set(searchPhrase, {
+      createdAt: Date.now(),
+      symbols: resolvedSymbols
+    });
+    return resolvedSymbols;
+  }
 
   try {
     const { data } = await axios.get("https://query1.finance.yahoo.com/v1/finance/search", {
@@ -6610,7 +6631,7 @@ async function resolveSymbolsFromCompanyName(message = "") {
         newsCount: 0,
         listsCount: 0
       },
-      timeout: 8000,
+      timeout: MR_RALLY_COMPANY_LOOKUP_TIMEOUT_MS,
       headers: YAHOO_CHART_HEADERS
     });
 
@@ -6628,7 +6649,12 @@ async function resolveSymbolsFromCompanyName(message = "") {
     console.log("Mr. Rally Yahoo company-name lookup skipped:", err.message);
   }
 
-  return [...symbols].slice(0, 5);
+  const resolvedSymbols = [...symbols].slice(0, 5);
+  mrRallyCompanyLookupCache.set(searchPhrase, {
+    createdAt: Date.now(),
+    symbols: resolvedSymbols
+  });
+  return resolvedSymbols;
 }
 
 async function resolveMrRallySymbols(message = "", fallbackTicker = "") {
@@ -6651,7 +6677,8 @@ async function getMrRallyStockContext(ticker, intent = {}) {
 
   if (needsRefresh) {
     try {
-      await resolveWithin(fetchStockData(symbol), 9000, null);
+      startStockFetch(symbol);
+      await resolveWithin(getImmediateStockSnapshot(symbol, {}), MR_RALLY_STOCK_REFRESH_TIMEOUT_MS, null);
       stock = await Stock.findOne({ ticker: symbol });
     } catch (err) {
       console.log("Mr. Rally stock refresh skipped:", symbol, err.message);
@@ -6684,10 +6711,10 @@ async function getMrRallyStockContext(ticker, intent = {}) {
   const data = withGuaranteedAnalystSection(stock.data || {});
   const analysis = buildResearchAnalysis(stock);
   const [externalFinancials, externalMetrics, externalStatements, externalWebContext] = await Promise.all([
-    resolveWithin(fetchExternalFinancialContext(symbol, intent), 5500, null),
-    resolveWithin(fetchExternalMetricContext(symbol, intent), 4500, null),
-    resolveWithin(fetchExternalStatementContext(symbol, intent, intent.question || ""), 7500, null),
-    resolveWithin(fetchMrRallyWebContext(symbol, intent, intent.question || ""), 14000, null)
+    resolveWithin(fetchExternalFinancialContext(symbol, intent), MR_RALLY_EXTERNAL_FINANCIAL_TIMEOUT_MS, null),
+    resolveWithin(fetchExternalMetricContext(symbol, intent), MR_RALLY_EXTERNAL_METRIC_TIMEOUT_MS, null),
+    resolveWithin(fetchExternalStatementContext(symbol, intent, intent.question || ""), MR_RALLY_EXTERNAL_STATEMENT_TIMEOUT_MS, null),
+    resolveWithin(fetchMrRallyWebContext(symbol, intent, intent.question || ""), MR_RALLY_WEB_CONTEXT_TIMEOUT_MS, null)
   ]);
   const history = [...(data.revenueData || [])]
     .filter((row) => row?.year)
@@ -6963,33 +6990,40 @@ function buildMrRallyAiPrompt({ message, currentTicker, intent, history, context
 }
 
 async function buildMrRallyOpenAiAnswer({ message, currentTicker, intent, history, contexts }) {
+  const canUseLiveWeb = Boolean(intent.currentEvents || intent.earningsCall);
   const { instructions, userInput } = buildMrRallyAiPrompt({
     message,
     currentTicker,
     intent,
     history,
     contexts,
-    canUseLiveWeb: true
+    canUseLiveWeb
   });
 
   try {
-    const response = await openai.responses.create({
+    const responseOptions = {
       model: process.env.MR_RALLY_MODEL || "gpt-4.1-mini",
       instructions,
       input: userInput,
-      tools: [
+      max_output_tokens: 700,
+      temperature: 0.35
+    };
+    if (canUseLiveWeb) {
+      responseOptions.tools = [
         {
           type: "web_search_preview",
-          search_context_size: "medium",
+          search_context_size: "low",
           user_location: {
             type: "approximate",
             country: "US"
           }
         }
-      ],
-      tool_choice: "auto",
-      max_output_tokens: 900,
-      temperature: 0.45
+      ];
+      responseOptions.tool_choice = "auto";
+    }
+
+    const response = await openai.responses.create({
+      ...responseOptions
     });
 
     const answer = readOpenAIText(response);
@@ -7000,8 +7034,8 @@ async function buildMrRallyOpenAiAnswer({ message, currentTicker, intent, histor
 
   const completion = await openai.chat.completions.create({
     model: process.env.MR_RALLY_MODEL || "gpt-4.1-mini",
-    temperature: 0.45,
-    max_tokens: 850,
+    temperature: 0.35,
+    max_tokens: 700,
     messages: [
       { role: "system", content: instructions },
       { role: "user", content: userInput }
@@ -7012,13 +7046,14 @@ async function buildMrRallyOpenAiAnswer({ message, currentTicker, intent, histor
 }
 
 async function buildMrRallyGeminiAnswer({ message, currentTicker, intent, history, contexts }) {
+  const canUseLiveWeb = Boolean(intent.currentEvents || intent.earningsCall);
   const { instructions, userInput } = buildMrRallyAiPrompt({
     message,
     currentTicker,
     intent,
     history,
     contexts,
-    canUseLiveWeb: true
+    canUseLiveWeb
   });
 
   const model = process.env.MR_RALLY_GEMINI_MODEL || "gemini-2.5-flash";
@@ -7033,13 +7068,15 @@ async function buildMrRallyGeminiAnswer({ message, currentTicker, intent, histor
         }
       ],
       generationConfig: {
-        temperature: 0.45,
-        maxOutputTokens: 900
-      },
-      tools: [
-        { google_search: {} }
-      ]
+        temperature: 0.35,
+        maxOutputTokens: 700
+      }
     };
+  if (canUseLiveWeb) {
+    requestBody.tools = [
+      { google_search: {} }
+    ];
+  }
 
   try {
     const { data } = await axios.post(
@@ -7047,7 +7084,7 @@ async function buildMrRallyGeminiAnswer({ message, currentTicker, intent, histor
       requestBody,
       {
         params: { key: geminiApiKey },
-        timeout: 30000
+        timeout: MR_RALLY_AI_TIMEOUT_MS
       }
     );
 
@@ -7066,7 +7103,7 @@ async function buildMrRallyGeminiAnswer({ message, currentTicker, intent, histor
     },
     {
       params: { key: geminiApiKey },
-      timeout: 30000
+      timeout: MR_RALLY_AI_TIMEOUT_MS
     }
   );
 
@@ -7116,13 +7153,17 @@ app.post("/api/mr-rally-chat", async (req, res) => {
       getMrRallyStockContext(symbol, intent)
     ))).filter(Boolean);
 
-    const answer = await buildMrRallyAiAnswer({
-      message,
-      currentTicker,
-      intent,
-      history,
-      contexts
-    });
+    const answer = await resolveWithin(
+      buildMrRallyAiAnswer({
+        message,
+        currentTicker,
+        intent,
+        history,
+        contexts
+      }),
+      MR_RALLY_AI_TIMEOUT_MS + 1000,
+      null
+    ) || buildMrRallyFallbackAnswer(message, contexts);
 
     return res.json({
       answer,
