@@ -2187,11 +2187,19 @@ const sendMrRallyMessage = async (event) => {
     ]);
   } catch (error) {
     console.error("Mr. Rally chat failed", error);
+    const status = error.response?.status;
+    const backendMessage = error.response?.data?.error;
+    const timeoutMessage = error.code === "ECONNABORTED"
+      ? "Mr. Rally took too long to answer. Try a shorter question or ask again."
+      : null;
+    const failureMessage = backendMessage
+      || timeoutMessage
+      || (status ? `Mr. Rally request failed with status ${status}.` : "I’m having trouble reaching the stock data right now. Try again in a moment.");
     setMrRallyMessages([
       ...outgoingMessages,
       {
         role: "assistant",
-        content: "I’m having trouble reaching the stock data right now. Try again in a moment."
+        content: failureMessage
       }
     ]);
   } finally {

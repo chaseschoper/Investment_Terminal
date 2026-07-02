@@ -6468,11 +6468,21 @@ async function buildMrRallyGeminiAnswer({ message, currentTicker, intent, histor
 
 async function buildMrRallyAiAnswer({ message, currentTicker, intent, history, contexts }) {
   if (openai) {
-    return buildMrRallyOpenAiAnswer({ message, currentTicker, intent, history, contexts });
+    try {
+      return await buildMrRallyOpenAiAnswer({ message, currentTicker, intent, history, contexts });
+    } catch (err) {
+      console.log("Mr. Rally OpenAI answer skipped:", err.message);
+    }
   }
 
   if (geminiApiKey) {
-    return buildMrRallyGeminiAnswer({ message, currentTicker, intent, history, contexts });
+    try {
+      return await buildMrRallyGeminiAnswer({ message, currentTicker, intent, history, contexts });
+    } catch (err) {
+      const status = err.response?.status ? ` (${err.response.status})` : "";
+      const detail = err.response?.data?.error?.message || err.message;
+      console.log(`Mr. Rally Gemini answer skipped${status}:`, detail);
+    }
   }
 
   return buildMrRallyFallbackAnswer(message, contexts);
