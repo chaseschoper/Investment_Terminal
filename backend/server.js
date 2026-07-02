@@ -24,6 +24,7 @@ const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
   : null;
 const geminiApiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || "";
+const groqApiKey = process.env.GROQ_API_KEY || "";
 const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
@@ -7137,7 +7138,52 @@ async function buildMrRallyGeminiAnswer({ message, currentTicker, intent, histor
   return readGeminiText(data) || buildMrRallyFallbackAnswer(message, contexts);
 }
 
+async function buildMrRallyGroqAnswer({ message, currentTicker, intent, history, contexts }) {
+  const { instructions, userInput } = buildMrRallyAiPrompt({
+    message,
+    currentTicker,
+    intent,
+    history,
+    contexts,
+    canUseLiveWeb: false
+  });
+
+  const model = process.env.MR_RALLY_GROQ_MODEL || "llama-3.3-70b-versatile";
+  const { data } = await axios.post(
+    "https://api.groq.com/openai/v1/chat/completions",
+    {
+      model,
+      temperature: 0.35,
+      max_tokens: 650,
+      messages: [
+        { role: "system", content: instructions },
+        { role: "user", content: userInput }
+      ]
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${groqApiKey}`,
+        "Content-Type": "application/json"
+      },
+      timeout: 9000
+    }
+  );
+
+  return data?.choices?.[0]?.message?.content?.trim() || "";
+}
+
 async function buildMrRallyAiAnswer({ message, currentTicker, intent, history, contexts }) {
+  if (groqApiKey) {
+    try {
+      const groqAnswer = await buildMrRallyGroqAnswer({ message, currentTicker, intent, history, contexts });
+      if (groqAnswer) return groqAnswer;
+    } catch (err) {
+      const status = err.response?.status ? ` (${err.response.status})` : "";
+      const detail = err.response?.data?.error?.message || err.message;
+      console.log(`Mr. Rally Groq answer skipped${status}:`, detail);
+    }
+  }
+
   if (geminiApiKey) {
     try {
       return await buildMrRallyGeminiAnswer({ message, currentTicker, intent, history, contexts });
