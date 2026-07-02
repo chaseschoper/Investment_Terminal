@@ -5748,7 +5748,6 @@ const getQuestionIntent = (question = "") => {
   const text = String(question || "").toLowerCase();
   const statementLineItem = /\b(sg&a|sga|selling general|selling, general|g&a|general and administrative|admin expense|administrative expense|r&d|research and development|cogs|cost of goods|cost of revenue|operating expense|opex|operating income|interest expense|tax expense|depreciation|amortization)\b/.test(text);
   const earningsCall = /\b(earnings call|conference call|call highlights?|transcript|management said|ceo said|cfo said|q&a|yesterday|today|latest call|most recent call)\b/.test(text);
-  const companyFacts = /\b(ceo|cfo|coo|chief executive|chief financial|founder|founded|headquarters|headquartered|employees|management|chairman|president|who runs|what does|business model)\b/.test(text);
   return {
     debt: /\b(debt|leverage|liabilit|balance sheet|borrowings?|cash|equity|current ratio)\b/.test(text),
     dividend: /\b(dividend|yield|payout)\b/.test(text),
@@ -5764,7 +5763,6 @@ const getQuestionIntent = (question = "") => {
     target: /\b(price target|target|upside)\b/.test(text),
     statementLineItem,
     earningsCall,
-    companyFacts,
     currentEvents: earningsCall || /\b(today|yesterday|latest|most recent|news|reported|just reported)\b/.test(text)
   };
 };
@@ -6663,14 +6661,6 @@ async function resolveMrRallySymbols(message = "", fallbackTicker = "") {
   const explicitSymbols = extractStockSymbolsFromQuestion(message);
   if (explicitSymbols.length) return explicitSymbols;
 
-  const normalizedMessage = normalizeCompanyName(message);
-  if (
-    fallbackTicker &&
-    /\b(this company|this stock|current company|current stock)\b/.test(normalizedMessage)
-  ) {
-    return extractStockSymbolsFromQuestion("", fallbackTicker);
-  }
-
   const companySymbols = await resolveSymbolsFromCompanyName(message);
   if (companySymbols.length) return companySymbols;
 
@@ -6981,7 +6971,6 @@ function buildMrRallyAiPrompt({ message, currentTicker, intent, history, context
     canUseLiveWeb
       ? "If MrktRally does not have the requested data, use web search/current public sources to answer."
       : "If MrktRally does not have the requested data, answer from the model's general knowledge only when appropriate and clearly say when current market data is not available.",
-    "For basic company facts like CEO, founder, headquarters, or what the business does, answer naturally and use current public sources when search is available.",
     "When public web or transcript context is provided, use it to answer current earnings-call, news, and management-commentary questions instead of saying the data is unavailable.",
     "Do not pretend missing MrktRally data exists. If outside data fills the gap, say so briefly.",
     "For factual market data, be clear about the period or date when that matters.",
@@ -7001,7 +6990,7 @@ function buildMrRallyAiPrompt({ message, currentTicker, intent, history, context
 }
 
 async function buildMrRallyOpenAiAnswer({ message, currentTicker, intent, history, contexts }) {
-  const canUseLiveWeb = Boolean(intent.currentEvents || intent.earningsCall || intent.companyFacts);
+  const canUseLiveWeb = Boolean(intent.currentEvents || intent.earningsCall);
   const { instructions, userInput } = buildMrRallyAiPrompt({
     message,
     currentTicker,
@@ -7057,7 +7046,7 @@ async function buildMrRallyOpenAiAnswer({ message, currentTicker, intent, histor
 }
 
 async function buildMrRallyGeminiAnswer({ message, currentTicker, intent, history, contexts }) {
-  const canUseLiveWeb = Boolean(intent.currentEvents || intent.earningsCall || intent.companyFacts);
+  const canUseLiveWeb = Boolean(intent.currentEvents || intent.earningsCall);
   const { instructions, userInput } = buildMrRallyAiPrompt({
     message,
     currentTicker,
@@ -7122,18 +7111,25 @@ async function buildMrRallyGeminiAnswer({ message, currentTicker, intent, histor
 }
 
 async function buildMrRallyAiAnswer({ message, currentTicker, intent, history, contexts }) {
-  if (!geminiApiKey) {
-    return "Gemini is not configured for Mr. Rally yet. Add GEMINI_API_KEY or GOOGLE_AI_API_KEY in Render so I can answer this like a real chat bot instead of using the backup stock template.";
+  if (openai) {
+    try {
+      return await buildMrRallyOpenAiAnswer({ message, currentTicker, intent, history, contexts });
+    } catch (err) {
+      console.log("Mr. Rally OpenAI answer skipped:", err.message);
+    }
   }
 
-  try {
-    return await buildMrRallyGeminiAnswer({ message, currentTicker, intent, history, contexts });
-  } catch (err) {
-    const status = err.response?.status ? ` (${err.response.status})` : "";
-    const detail = err.response?.data?.error?.message || err.message;
-    console.log(`Mr. Rally Gemini answer failed${status}:`, detail);
-    return "Gemini had trouble answering that just now. Try again in a moment.";
+  if (geminiApiKey) {
+    try {
+      return await buildMrRallyGeminiAnswer({ message, currentTicker, intent, history, contexts });
+    } catch (err) {
+      const status = err.response?.status ? ` (${err.response.status})` : "";
+      const detail = err.response?.data?.error?.message || err.message;
+      console.log(`Mr. Rally Gemini answer skipped${status}:`, detail);
+    }
   }
+
+  return buildMrRallyFallbackAnswer(message, contexts);
 }
 
 app.post("/api/mr-rally-chat", async (req, res) => {
@@ -7167,7 +7163,7 @@ app.post("/api/mr-rally-chat", async (req, res) => {
       }),
       MR_RALLY_AI_TIMEOUT_MS + 1000,
       null
-    ) || "Gemini took too long to answer that. Try again in a moment.";
+    ) || buildMrRallyFallbackAnswer(message, contexts);
 
     return res.json({
       answer,
