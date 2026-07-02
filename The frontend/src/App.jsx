@@ -472,6 +472,44 @@ const mergeChartRows = (rows, key) => {
   });
 };
 
+const CHART_STABLE_FIELDS = [
+  "revenueData",
+  "revenueHistory",
+  "marginHistory",
+  "historicalPe",
+  "analystEstimates"
+];
+
+const hasStableChartData = (stock = {}) =>
+  (Array.isArray(stock.revenueData) && stock.revenueData.length > 0) ||
+  (Array.isArray(stock.revenueHistory) && stock.revenueHistory.length > 0);
+
+const stabilizeRefreshingStockData = (previous, incoming) => {
+  if (
+    !previous ||
+    !incoming?.refreshing ||
+    String(previous.ticker || previous.symbol || "").toUpperCase() !==
+      String(incoming.ticker || incoming.symbol || "").toUpperCase() ||
+    !hasStableChartData(previous)
+  ) {
+    return incoming;
+  }
+
+  const stable = { ...incoming };
+  CHART_STABLE_FIELDS.forEach((field) => {
+    if (previous[field] !== undefined && previous[field] !== null) {
+      stable[field] = previous[field];
+    }
+  });
+  stable.financialHistoryVersion =
+    previous.financialHistoryVersion ?? incoming.financialHistoryVersion;
+  stable.hasInterimHistory =
+    previous.hasInterimHistory ?? incoming.hasInterimHistory;
+  stable.latestInterimPeriod =
+    previous.latestInterimPeriod ?? incoming.latestInterimPeriod;
+  return stable;
+};
+
 const splitForSpeech = (text, maxLength = 1200) => {
   const sentences = String(text || "").match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [];
   const chunks = [];
@@ -1408,8 +1446,12 @@ useEffect(() => {
         return;
       }
 
-      stockMemoryCacheRef.current.set(symbol, response.data);
-      setStockData(response.data);
+      const previousStock =
+        stockMemoryCacheRef.current.get(symbol) ||
+        (stockData?.symbol === symbol || stockData?.ticker === symbol ? stockData : null);
+      const stableResponse = stabilizeRefreshingStockData(previousStock, response.data);
+      stockMemoryCacheRef.current.set(symbol, stableResponse);
+      setStockData(stableResponse);
       setIsStockLoading(false);
       firstStockLoadSettled.current = true;
 
@@ -1419,7 +1461,7 @@ useEffect(() => {
 
       setPortfolioPrices((prev) => ({
         ...prev,
-        [symbol]: response.data.price,
+        [symbol]: stableResponse.price,
       }));
 
     } catch (error) {
