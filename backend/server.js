@@ -30,6 +30,7 @@ const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
+const mrRallyExternalMetricCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 119;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
@@ -55,6 +56,7 @@ const TICKER_ALIASES = {
   AMAZON: "AMZN",
   APPLE: "AAPL",
   CARNIVAL: "CCL",
+  CELSIUS: "CELH",
   COSTCO: "COST",
   FEDEX: "FDX",
   GOOGLE: "GOOGL",
@@ -76,6 +78,8 @@ const COMPANY_NAME_ALIASES = {
   "amazon": "AMZN",
   "apple": "AAPL",
   "carnival": "CCL",
+  "celsius": "CELH",
+  "celsius holdings": "CELH",
   "costco": "COST",
   "fedex": "FDX",
   "google": "GOOGL",
@@ -5696,9 +5700,11 @@ const getQuestionIntent = (question = "") => {
   const text = String(question || "").toLowerCase();
   return {
     debt: /\b(debt|leverage|liabilit|balance sheet|borrowings?|cash|equity|current ratio)\b/.test(text),
+    dividend: /\b(dividend|yield|payout)\b/.test(text),
     forwardPe: /\b(forward\s*p\/?e|forward\s*pe|forward\s*multiple)\b/.test(text),
+    peg: /\b(peg|price\/earnings to growth|price earnings to growth)\b/.test(text),
     pe: /\b(p\/?e|pe ratio|earnings multiple)\b/.test(text),
-    valuation: /\b(valuation|expensive|cheap|multiple|price to sales|p\/s|p\/b|price to book)\b/.test(text),
+    valuation: /\b(valuation|expensive|cheap|multiple|price to sales|p\/s|p\/b|price to book|peg)\b/.test(text),
     estimates: /\b(estimate|consensus|forecast|next year|current year|eps|revenue)\b/.test(text),
     risk: /\b(risk|risks|bear|downside|concern|worry)\b/.test(text),
     catalyst: /\b(catalyst|bull|upside|positive|why buy|growth)\b/.test(text),
@@ -5709,7 +5715,7 @@ const getQuestionIntent = (question = "") => {
 };
 
 async function fetchExternalFinancialContext(ticker, intent = {}) {
-  if (!intent.debt && !intent.valuation && !intent.cashFlow) return null;
+  if (!intent.debt && !intent.cashFlow) return null;
   const buildFromYahooTimeSeries = async () => {
     const typeList = [
       "quarterlyTotalDebt",
@@ -5861,6 +5867,157 @@ async function fetchExternalFinancialContext(ticker, intent = {}) {
   }
 }
 
+async function fetchExternalMetricContext(ticker, intent = {}) {
+  const needsMetrics = intent.peg || intent.valuation || intent.pe || intent.forwardPe || intent.dividend || intent.target;
+  if (!needsMetrics) return null;
+
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol) return null;
+
+  const cacheKey = `${symbol}:${[
+    intent.peg ? "peg" : "",
+    intent.valuation ? "valuation" : "",
+    intent.pe ? "pe" : "",
+    intent.forwardPe ? "forwardPe" : "",
+    intent.dividend ? "dividend" : "",
+    intent.target ? "target" : ""
+  ].filter(Boolean).join(",")}`;
+  const cached = mrRallyExternalMetricCache.get(cacheKey);
+  if (cached && Date.now() - cached.createdAt < 10 * 60 * 1000) return cached.value;
+
+  const mergeValuation = (base, next = {}) => ({
+    pegRatio: firstFiniteNumber(base.pegRatio, next.pegRatio, next.trailingPegRatio),
+    trailingPegRatio: firstFiniteNumber(base.trailingPegRatio, next.trailingPegRatio, next.pegRatio),
+    trailingPE: firstFiniteNumber(base.trailingPE, next.trailingPE, next.peRatioTTM, next.peRatio),
+    forwardPE: firstFiniteNumber(base.forwardPE, next.forwardPE),
+    priceToSales: firstFiniteNumber(base.priceToSales, next.priceToSales, next.priceToSalesRatioTTM),
+    priceToBook: firstFiniteNumber(base.priceToBook, next.priceToBook, next.priceToBookRatioTTM),
+    enterpriseValue: firstFiniteNumber(base.enterpriseValue, next.enterpriseValue),
+    beta: firstFiniteNumber(base.beta, next.beta),
+    dividendYield: firstFiniteNumber(base.dividendYield, next.dividendYield, next.dividendYielTTM, next.dividendYieldTTM),
+    payoutRatio: firstFiniteNumber(base.payoutRatio, next.payoutRatio, next.payoutRatioTTM),
+    analystTarget: firstFiniteNumber(base.analystTarget, next.analystTarget)
+  });
+
+  let metricContext = {
+    source: "",
+    valuation: {}
+  };
+
+  if (canUseYahooQuoteSummary()) {
+    try {
+      const summary = await yahooFinance.quoteSummary(symbol, {
+        modules: ["defaultKeyStatistics", "financialData", "summaryDetail"]
+      });
+      const keyStats = summary?.defaultKeyStatistics || {};
+      const financialData = summary?.financialData || {};
+      const detail = summary?.summaryDetail || {};
+      metricContext = {
+        source: "Yahoo Finance external valuation data",
+        valuation: mergeValuation(metricContext.valuation, {
+          pegRatio: firstYahooRawNumber(keyStats.pegRatio, keyStats.trailingPegRatio),
+          trailingPegRatio: firstYahooRawNumber(keyStats.trailingPegRatio),
+          trailingPE: firstYahooRawNumber(detail.trailingPE),
+          forwardPE: firstYahooRawNumber(keyStats.forwardPE, financialData.forwardPE),
+          priceToSales: firstYahooRawNumber(detail.priceToSalesTrailing12Months),
+          priceToBook: firstYahooRawNumber(keyStats.priceToBook),
+          enterpriseValue: firstYahooRawNumber(keyStats.enterpriseValue),
+          beta: firstYahooRawNumber(keyStats.beta),
+          dividendYield: firstYahooRawNumber(detail.dividendYield),
+          payoutRatio: firstYahooRawNumber(detail.payoutRatio),
+          analystTarget: firstYahooRawNumber(financialData.targetMeanPrice)
+        })
+      };
+    } catch (err) {
+      setYahooQuoteSummaryCooldown(err, "Mr. Rally valuation metrics", symbol);
+      console.log("Mr. Rally Yahoo valuation metrics skipped:", symbol, err.response?.status || err.message);
+    }
+  }
+
+  const hasRequestedYahooMetric =
+    (intent.peg && metricContext.valuation.pegRatio !== null && metricContext.valuation.pegRatio !== undefined) ||
+    (intent.dividend && metricContext.valuation.dividendYield !== null && metricContext.valuation.dividendYield !== undefined) ||
+    (intent.forwardPe && metricContext.valuation.forwardPE !== null && metricContext.valuation.forwardPE !== undefined);
+
+  if (!hasRequestedYahooMetric && process.env.FINNHUB_API_KEY) {
+    try {
+      const { data } = await axios.get("https://finnhub.io/api/v1/stock/metric", {
+        params: {
+          symbol,
+          metric: "all",
+          token: process.env.FINNHUB_API_KEY
+        },
+        timeout: 4500
+      });
+      const metrics = data?.metric || {};
+      const valuation = mergeValuation(metricContext.valuation, {
+        pegRatio: firstFiniteNumber(metrics.forwardPEG, metrics.pegTTM),
+        trailingPegRatio: firstFiniteNumber(metrics.pegTTM),
+        trailingPE: firstFiniteNumber(metrics.peTTM, metrics.peBasicExclExtraTTM, metrics.peInclExtraTTM),
+        forwardPE: firstFiniteNumber(metrics.forwardPE),
+        priceToSales: firstFiniteNumber(metrics.psTTM),
+        priceToBook: firstFiniteNumber(metrics.pbQuarterly, metrics.pbAnnual),
+        dividendYield: firstFiniteNumber(metrics.currentDividendYieldTTM, metrics.dividendYieldIndicatedAnnual),
+        beta: firstFiniteNumber(metrics.beta)
+      });
+      if (Object.values(valuation).some((value) => value !== null && value !== undefined)) {
+        metricContext = {
+          source: metricContext.source
+            ? `${metricContext.source}; Finnhub external valuation metrics`
+            : "Finnhub external valuation metrics",
+          valuation
+        };
+      }
+    } catch (err) {
+      console.log("Mr. Rally Finnhub valuation metrics skipped:", symbol, err.response?.status || err.message);
+    }
+  }
+
+  const hasRequestedProviderMetric =
+    (intent.peg && metricContext.valuation.pegRatio !== null && metricContext.valuation.pegRatio !== undefined) ||
+    (intent.dividend && metricContext.valuation.dividendYield !== null && metricContext.valuation.dividendYield !== undefined) ||
+    (intent.forwardPe && metricContext.valuation.forwardPE !== null && metricContext.valuation.forwardPE !== undefined);
+
+  if (!hasRequestedProviderMetric && canUseFmp()) {
+    const fmpRatios = await getFmpData(symbol, "Mr. Rally valuation ratios", [
+      `/stable/ratios-ttm?symbol=${encodeURIComponent(symbol)}`,
+      `/api/v3/ratios-ttm/${encodeURIComponent(symbol)}`
+    ]);
+    const fmpMetrics = await getFmpData(symbol, "Mr. Rally key metrics", [
+      `/stable/key-metrics-ttm?symbol=${encodeURIComponent(symbol)}`,
+      `/api/v3/key-metrics-ttm/${encodeURIComponent(symbol)}`
+    ]);
+    const ratioRow = Array.isArray(fmpRatios) ? fmpRatios[0] : fmpRatios;
+    const metricRow = Array.isArray(fmpMetrics) ? fmpMetrics[0] : fmpMetrics;
+    const valuation = mergeValuation(metricContext.valuation, {
+      pegRatio: firstFiniteNumber(ratioRow?.pegRatioTTM, ratioRow?.pegRatio, metricRow?.pegRatioTTM, metricRow?.pegRatio),
+      trailingPE: firstFiniteNumber(ratioRow?.priceEarningsRatioTTM, ratioRow?.peRatioTTM, metricRow?.peRatioTTM),
+      priceToSales: firstFiniteNumber(ratioRow?.priceToSalesRatioTTM, metricRow?.priceToSalesRatioTTM),
+      priceToBook: firstFiniteNumber(ratioRow?.priceToBookRatioTTM, metricRow?.pbRatioTTM),
+      dividendYield: firstFiniteNumber(ratioRow?.dividendYielTTM, ratioRow?.dividendYieldTTM, metricRow?.dividendYieldTTM),
+      payoutRatio: firstFiniteNumber(ratioRow?.payoutRatioTTM, metricRow?.payoutRatioTTM),
+      enterpriseValue: firstFiniteNumber(metricRow?.enterpriseValueTTM, metricRow?.enterpriseValue),
+      beta: firstFiniteNumber(metricRow?.beta)
+    });
+    if (Object.values(valuation).some((value) => value !== null && value !== undefined)) {
+      metricContext = {
+        source: metricContext.source
+          ? `${metricContext.source}; FMP external valuation data`
+          : "FMP external valuation data",
+        valuation
+      };
+    }
+  }
+
+  if (!Object.values(metricContext.valuation).some((value) => value !== null && value !== undefined)) {
+    mrRallyExternalMetricCache.set(cacheKey, { createdAt: Date.now(), value: null });
+    return null;
+  }
+
+  mrRallyExternalMetricCache.set(cacheKey, { createdAt: Date.now(), value: metricContext });
+  return metricContext;
+}
+
 function buildResearchAnalysis(stock) {
   const data = withGuaranteedAnalystSection(stock.data || {});
   const history = [...(data.revenueData || [])]
@@ -6005,7 +6162,7 @@ function buildResearchAnalysis(stock) {
 const extractStockSymbolsFromQuestion = (message = "", fallbackTicker = "") => {
   const ignored = new Set([
     "A", "AI", "API", "CEO", "CFO", "DCF", "EPS", "ETF", "FCF", "FY", "GAAP",
-    "GDP", "IPO", "MR", "PE", "PS", "Q", "SEC", "TTM", "US", "USD", "YOY"
+    "GDP", "IPO", "MR", "PE", "PEG", "PS", "Q", "SEC", "TTM", "US", "USD", "YOY"
   ]);
   const symbols = new Set();
   const add = (value) => {
@@ -6148,11 +6305,11 @@ async function getMrRallyStockContext(ticker, intent = {}) {
   if (!/^[A-Z0-9.-]{1,12}$/.test(symbol)) return null;
 
   let stock = await Stock.findOne({ ticker: symbol });
-  const needsRefresh = !stock || stock.status !== "ready" || needsFinancialHistoryRefresh(stock);
+  const needsRefresh = !stock;
 
   if (needsRefresh) {
     try {
-      await resolveWithin(fetchStockData(symbol), 18000, null);
+      await resolveWithin(fetchStockData(symbol), 9000, null);
       stock = await Stock.findOne({ ticker: symbol });
     } catch (err) {
       console.log("Mr. Rally stock refresh skipped:", symbol, err.message);
@@ -6184,7 +6341,10 @@ async function getMrRallyStockContext(ticker, intent = {}) {
 
   const data = withGuaranteedAnalystSection(stock.data || {});
   const analysis = buildResearchAnalysis(stock);
-  const externalFinancials = await fetchExternalFinancialContext(symbol, intent);
+  const [externalFinancials, externalMetrics] = await Promise.all([
+    resolveWithin(fetchExternalFinancialContext(symbol, intent), 5500, null),
+    resolveWithin(fetchExternalMetricContext(symbol, intent), 4500, null)
+  ]);
   const history = [...(data.revenueData || [])]
     .filter((row) => row?.year)
     .sort((a, b) => a.year - b.year)
@@ -6203,6 +6363,7 @@ async function getMrRallyStockContext(ticker, intent = {}) {
     forwardPE: data.forwardPE,
     priceToSales: data.priceToSales,
     priceToBook: data.priceToBook,
+    pegRatio: data.pegRatio,
     targetMean: data.targetMean,
     recommendationKey: data.recommendationKey,
     analystRatingText: data.analystRatingText,
@@ -6219,6 +6380,7 @@ async function getMrRallyStockContext(ticker, intent = {}) {
     risks: analysis.stockAnalysis.risks,
     scenarios: analysis.stockAnalysis.scenarios,
     externalFinancials,
+    externalMetrics,
     updatedAt: stock.updatedAt
   };
 }
@@ -6235,10 +6397,21 @@ const buildMrRallyFallbackAnswer = (question, contexts) => {
     const currentYear = estimates.currentYear || {};
     const nextYear = estimates.nextYear || {};
     const externalBalance = item.externalFinancials?.balanceSheet || {};
+    const externalValuation = item.externalMetrics?.valuation || {};
     const lines = [`${item.symbol}: ${item.name}`];
 
+    if (intent.peg) {
+      const pegRatio = firstFiniteNumber(item.pegRatio, externalValuation.pegRatio, externalValuation.trailingPegRatio);
+      lines.push(`PEG ratio is ${pegRatio !== null ? `${round(pegRatio, 2)}x` : "N/A"}.`);
+      if (item.externalMetrics?.source && (item.pegRatio === null || item.pegRatio === undefined)) {
+        lines.push(`Source: ${item.externalMetrics.source}.`);
+      }
+      return lines.join("\n");
+    }
+
     if (intent.forwardPe) {
-      lines.push(`Forward P/E is ${round(item.forwardPE, 2) ?? "N/A"}x.`);
+      const forwardPe = firstFiniteNumber(item.forwardPE, externalValuation.forwardPE);
+      lines.push(`Forward P/E is ${forwardPe !== null ? `${round(forwardPe, 2)}x` : "N/A"}.`);
       return lines.join("\n");
     }
 
@@ -6288,16 +6461,18 @@ const buildMrRallyFallbackAnswer = (question, contexts) => {
     }
 
     if (intent.target) {
-      const upside = item.price && item.targetMean ? ((item.targetMean - item.price) / item.price) * 100 : null;
-      lines.push(`Consensus price target: ${analysisMoney(item.targetMean)}${upside !== null ? `, or ${round(upside, 2)}% from the current price` : ""}.`);
+      const targetMean = firstFiniteNumber(item.targetMean, externalValuation.analystTarget);
+      const upside = item.price && targetMean ? ((targetMean - item.price) / item.price) * 100 : null;
+      lines.push(`Consensus price target: ${analysisMoney(targetMean)}${upside !== null ? `, or ${round(upside, 2)}% from the current price` : ""}.`);
       return lines.join("\n");
     }
 
     if (intent.valuation || intent.pe) {
-      lines.push(`P/E: ${round(item.pe, 2) ?? "N/A"}x.`);
-      lines.push(`Forward P/E: ${round(item.forwardPE, 2) ?? "N/A"}x.`);
-      lines.push(`Price-to-sales: ${round(item.priceToSales, 2) ?? "N/A"}x.`);
-      lines.push(`Price-to-book: ${round(item.priceToBook, 2) ?? "N/A"}x.`);
+      lines.push(`P/E: ${round(firstFiniteNumber(item.pe, externalValuation.trailingPE), 2) ?? "N/A"}x.`);
+      lines.push(`Forward P/E: ${round(firstFiniteNumber(item.forwardPE, externalValuation.forwardPE), 2) ?? "N/A"}x.`);
+      lines.push(`PEG: ${round(firstFiniteNumber(item.pegRatio, externalValuation.pegRatio, externalValuation.trailingPegRatio), 2) ?? "N/A"}x.`);
+      lines.push(`Price-to-sales: ${round(firstFiniteNumber(item.priceToSales, externalValuation.priceToSales), 2) ?? "N/A"}x.`);
+      lines.push(`Price-to-book: ${round(firstFiniteNumber(item.priceToBook, externalValuation.priceToBook), 2) ?? "N/A"}x.`);
       return lines.join("\n");
     }
 
@@ -6338,6 +6513,7 @@ function buildMrRallyAiPrompt({ message, currentTicker, intent, history, context
     marketCap: item.marketCap,
     pe: item.pe,
     forwardPE: item.forwardPE,
+    pegRatio: item.pegRatio,
     priceToSales: item.priceToSales,
     priceToBook: item.priceToBook,
     targetMean: item.targetMean,
@@ -6352,6 +6528,7 @@ function buildMrRallyAiPrompt({ message, currentTicker, intent, history, context
     risks: item.risks,
     scenarios: item.scenarios,
     externalFinancials: item.externalFinancials,
+    externalMetrics: item.externalMetrics,
     updatedAt: item.updatedAt
   }));
 
@@ -6521,7 +6698,7 @@ app.post("/api/mr-rally-chat", async (req, res) => {
       answer,
       symbols: contexts.map((item) => item.symbol),
       sources: [...new Set(contexts.flatMap((item) =>
-        [item.source, item.externalFinancials?.source].filter(Boolean)
+        [item.source, item.externalFinancials?.source, item.externalMetrics?.source].filter(Boolean)
       ))]
     });
   } catch (err) {
