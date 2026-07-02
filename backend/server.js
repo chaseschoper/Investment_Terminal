@@ -37,6 +37,9 @@ const FINANCIAL_HISTORY_VERSION = 121;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
+const MR_RALLY_AI_TIMEOUT_MS = 12000;
+const MR_RALLY_FAST_CONTEXT_TIMEOUT_MS = 3000;
+const MR_RALLY_WEB_CONTEXT_TIMEOUT_MS = 6000;
 const STOCK_PROVIDER_TIMEOUT_MS = 8000;
 const STOCK_SLOW_PROVIDER_TIMEOUT_MS = 10000;
 const STOCK_INITIAL_SEC_TIMEOUT_MS = 9000;
@@ -5740,6 +5743,7 @@ const getQuestionIntent = (question = "") => {
   const text = String(question || "").toLowerCase();
   const statementLineItem = /\b(sg&a|sga|selling general|selling, general|g&a|general and administrative|admin expense|administrative expense|r&d|research and development|cogs|cost of goods|cost of revenue|operating expense|opex|operating income|interest expense|tax expense|depreciation|amortization)\b/.test(text);
   const earningsCall = /\b(earnings call|conference call|call highlights?|transcript|management said|ceo said|cfo said|q&a|yesterday|today|latest call|most recent call)\b/.test(text);
+  const companyFacts = /\b(ceo|cfo|coo|chief executive|chief financial|founder|founded|headquarters|headquartered|employees|management|chairman|president|who runs|what does|business model)\b/.test(text);
   return {
     debt: /\b(debt|leverage|liabilit|balance sheet|borrowings?|cash|equity|current ratio)\b/.test(text),
     dividend: /\b(dividend|yield|payout)\b/.test(text),
@@ -5755,6 +5759,7 @@ const getQuestionIntent = (question = "") => {
     target: /\b(price target|target|upside)\b/.test(text),
     statementLineItem,
     earningsCall,
+    companyFacts,
     currentEvents: earningsCall || /\b(today|yesterday|latest|most recent|news|reported|just reported)\b/.test(text)
   };
 };
@@ -6635,6 +6640,14 @@ async function resolveMrRallySymbols(message = "", fallbackTicker = "") {
   const explicitSymbols = extractStockSymbolsFromQuestion(message);
   if (explicitSymbols.length) return explicitSymbols;
 
+  const normalizedMessage = normalizeCompanyName(message);
+  if (
+    fallbackTicker &&
+    /\b(this company|this stock|current company|current stock)\b/.test(normalizedMessage)
+  ) {
+    return extractStockSymbolsFromQuestion("", fallbackTicker);
+  }
+
   const companySymbols = await resolveSymbolsFromCompanyName(message);
   if (companySymbols.length) return companySymbols;
 
@@ -6684,10 +6697,10 @@ async function getMrRallyStockContext(ticker, intent = {}) {
   const data = withGuaranteedAnalystSection(stock.data || {});
   const analysis = buildResearchAnalysis(stock);
   const [externalFinancials, externalMetrics, externalStatements, externalWebContext] = await Promise.all([
-    resolveWithin(fetchExternalFinancialContext(symbol, intent), 5500, null),
-    resolveWithin(fetchExternalMetricContext(symbol, intent), 4500, null),
-    resolveWithin(fetchExternalStatementContext(symbol, intent, intent.question || ""), 7500, null),
-    resolveWithin(fetchMrRallyWebContext(symbol, intent, intent.question || ""), 14000, null)
+    resolveWithin(fetchExternalFinancialContext(symbol, intent), MR_RALLY_FAST_CONTEXT_TIMEOUT_MS, null),
+    resolveWithin(fetchExternalMetricContext(symbol, intent), MR_RALLY_FAST_CONTEXT_TIMEOUT_MS, null),
+    resolveWithin(fetchExternalStatementContext(symbol, intent, intent.question || ""), MR_RALLY_FAST_CONTEXT_TIMEOUT_MS, null),
+    resolveWithin(fetchMrRallyWebContext(symbol, intent, intent.question || ""), MR_RALLY_WEB_CONTEXT_TIMEOUT_MS, null)
   ]);
   const history = [...(data.revenueData || [])]
     .filter((row) => row?.year)
@@ -6944,6 +6957,7 @@ function buildMrRallyAiPrompt({ message, currentTicker, intent, history, context
     canUseLiveWeb
       ? "If MrktRally does not have the requested data, use web search/current public sources to answer."
       : "If MrktRally does not have the requested data, answer from the model's general knowledge only when appropriate and clearly say when current market data is not available.",
+    "For basic company facts like CEO, founder, headquarters, or what the business does, answer naturally and use current public sources when search is available.",
     "When public web or transcript context is provided, use it to answer current earnings-call, news, and management-commentary questions instead of saying the data is unavailable.",
     "Do not pretend missing MrktRally data exists. If outside data fills the gap, say so briefly.",
     "For factual market data, be clear about the period or date when that matters.",
@@ -6963,33 +6977,41 @@ function buildMrRallyAiPrompt({ message, currentTicker, intent, history, context
 }
 
 async function buildMrRallyOpenAiAnswer({ message, currentTicker, intent, history, contexts }) {
+  const canUseLiveWeb = Boolean(intent.currentEvents || intent.earningsCall || intent.companyFacts);
   const { instructions, userInput } = buildMrRallyAiPrompt({
     message,
     currentTicker,
     intent,
     history,
     contexts,
-    canUseLiveWeb: true
+    canUseLiveWeb
   });
 
   try {
-    const response = await openai.responses.create({
+    const responseOptions = {
       model: process.env.MR_RALLY_MODEL || "gpt-4.1-mini",
       instructions,
       input: userInput,
-      tools: [
+      max_output_tokens: 700,
+      temperature: 0.35
+    };
+
+    if (canUseLiveWeb) {
+      responseOptions.tools = [
         {
           type: "web_search_preview",
-          search_context_size: "medium",
+          search_context_size: "low",
           user_location: {
             type: "approximate",
             country: "US"
           }
         }
-      ],
-      tool_choice: "auto",
-      max_output_tokens: 900,
-      temperature: 0.45
+      ];
+      responseOptions.tool_choice = "auto";
+    }
+
+    const response = await openai.responses.create({
+      ...responseOptions
     });
 
     const answer = readOpenAIText(response);
@@ -7000,8 +7022,8 @@ async function buildMrRallyOpenAiAnswer({ message, currentTicker, intent, histor
 
   const completion = await openai.chat.completions.create({
     model: process.env.MR_RALLY_MODEL || "gpt-4.1-mini",
-    temperature: 0.45,
-    max_tokens: 850,
+    temperature: 0.35,
+    max_tokens: 700,
     messages: [
       { role: "system", content: instructions },
       { role: "user", content: userInput }
@@ -7012,13 +7034,14 @@ async function buildMrRallyOpenAiAnswer({ message, currentTicker, intent, histor
 }
 
 async function buildMrRallyGeminiAnswer({ message, currentTicker, intent, history, contexts }) {
+  const canUseLiveWeb = Boolean(intent.currentEvents || intent.earningsCall || intent.companyFacts);
   const { instructions, userInput } = buildMrRallyAiPrompt({
     message,
     currentTicker,
     intent,
     history,
     contexts,
-    canUseLiveWeb: true
+    canUseLiveWeb
   });
 
   const model = process.env.MR_RALLY_GEMINI_MODEL || "gemini-2.5-flash";
@@ -7033,13 +7056,16 @@ async function buildMrRallyGeminiAnswer({ message, currentTicker, intent, histor
         }
       ],
       generationConfig: {
-        temperature: 0.45,
-        maxOutputTokens: 900
-      },
-      tools: [
-        { google_search: {} }
-      ]
+        temperature: 0.35,
+        maxOutputTokens: 700
+      }
     };
+
+  if (canUseLiveWeb) {
+    requestBody.tools = [
+      { google_search: {} }
+    ];
+  }
 
   try {
     const { data } = await axios.post(
@@ -7047,7 +7073,7 @@ async function buildMrRallyGeminiAnswer({ message, currentTicker, intent, histor
       requestBody,
       {
         params: { key: geminiApiKey },
-        timeout: 30000
+        timeout: MR_RALLY_AI_TIMEOUT_MS
       }
     );
 
@@ -7066,7 +7092,7 @@ async function buildMrRallyGeminiAnswer({ message, currentTicker, intent, histor
     },
     {
       params: { key: geminiApiKey },
-      timeout: 30000
+      timeout: MR_RALLY_AI_TIMEOUT_MS
     }
   );
 
@@ -7074,14 +7100,6 @@ async function buildMrRallyGeminiAnswer({ message, currentTicker, intent, histor
 }
 
 async function buildMrRallyAiAnswer({ message, currentTicker, intent, history, contexts }) {
-  if (openai) {
-    try {
-      return await buildMrRallyOpenAiAnswer({ message, currentTicker, intent, history, contexts });
-    } catch (err) {
-      console.log("Mr. Rally OpenAI answer skipped:", err.message);
-    }
-  }
-
   if (geminiApiKey) {
     try {
       return await buildMrRallyGeminiAnswer({ message, currentTicker, intent, history, contexts });
@@ -7089,6 +7107,14 @@ async function buildMrRallyAiAnswer({ message, currentTicker, intent, history, c
       const status = err.response?.status ? ` (${err.response.status})` : "";
       const detail = err.response?.data?.error?.message || err.message;
       console.log(`Mr. Rally Gemini answer skipped${status}:`, detail);
+    }
+  }
+
+  if (openai) {
+    try {
+      return await buildMrRallyOpenAiAnswer({ message, currentTicker, intent, history, contexts });
+    } catch (err) {
+      console.log("Mr. Rally OpenAI answer skipped:", err.message);
     }
   }
 
@@ -7116,13 +7142,17 @@ app.post("/api/mr-rally-chat", async (req, res) => {
       getMrRallyStockContext(symbol, intent)
     ))).filter(Boolean);
 
-    const answer = await buildMrRallyAiAnswer({
-      message,
-      currentTicker,
-      intent,
-      history,
-      contexts
-    });
+    const answer = await resolveWithin(
+      buildMrRallyAiAnswer({
+        message,
+        currentTicker,
+        intent,
+        history,
+        contexts
+      }),
+      MR_RALLY_AI_TIMEOUT_MS + 1000,
+      null
+    ) || buildMrRallyFallbackAnswer(message, contexts);
 
     return res.json({
       answer,
