@@ -33,7 +33,7 @@ const priceHistoryCache = new Map();
 const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 119;
+const FINANCIAL_HISTORY_VERSION = 121;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -1693,7 +1693,12 @@ const getStatementYear = (value) => {
   return Number.isNaN(date.getTime()) ? Number(value) || null : date.getFullYear();
 };
 
-function mergeHistoricalFinancials(primary, fallback) {
+function limitHistoricalFinancialRows(rows, limit = 7) {
+  const dedupedRows = removeDuplicateInterimAnnualRows(rows);
+  return Number.isFinite(limit) ? dedupedRows.slice(-limit) : dedupedRows;
+}
+
+function mergeHistoricalFinancials(primary = [], fallback = [], limit = 7) {
   const rowsByPeriod = new Map();
 
   [...fallback, ...primary].forEach((row) => {
@@ -1737,10 +1742,10 @@ function mergeHistoricalFinancials(primary, fallback) {
       return String(a.period || "").localeCompare(String(b.period || ""));
     });
 
-  return removeDuplicateInterimAnnualRows(mergedRows).slice(-7);
+  return limitHistoricalFinancialRows(mergedRows, limit);
 }
 
-function mergeSupplementalHistoricalFields(baseRows = [], supplementalRows = []) {
+function mergeSupplementalHistoricalFields(baseRows = [], supplementalRows = [], limit = 7) {
   const rowsByPeriod = new Map();
   const rowKeyFor = (row) => {
     const period = row.period || String(row.year);
@@ -1781,7 +1786,7 @@ function mergeSupplementalHistoricalFields(baseRows = [], supplementalRows = [])
     });
   });
 
-  return removeDuplicateInterimAnnualRows([...rowsByPeriod.values()]
+  return limitHistoricalFinancialRows([...rowsByPeriod.values()]
     .filter((row) =>
       row.revenue !== null ||
       row.earnings !== null ||
@@ -1799,8 +1804,35 @@ function mergeSupplementalHistoricalFields(baseRows = [], supplementalRows = [])
         return a.isInterim ? 1 : -1;
       }
       return String(a.period || "").localeCompare(String(b.period || ""));
-    }))
-    .slice(-7);
+    }), limit);
+}
+
+function mergeAllHistoricalFinancials(...sources) {
+  return sources.reduce(
+    (mergedRows, sourceRows) => mergeHistoricalFinancials(sourceRows || [], mergedRows, Infinity),
+    []
+  );
+}
+
+function removeStaleModeledFallbackRows(rows = []) {
+  const realAnnualYears = (rows || [])
+    .filter((row) =>
+      row?.year &&
+      !row?.isInterim &&
+      row?.source !== "Modeled fallback" &&
+      row?.source !== "Current metric fallback"
+    )
+    .map((row) => Number(row.year))
+    .filter((year) => Number.isFinite(year));
+
+  if (!realAnnualYears.length) return rows;
+
+  const latestRealAnnualYear = Math.max(...realAnnualYears);
+  return (rows || []).filter((row) => {
+    if (row?.source !== "Modeled fallback" || row?.isInterim) return true;
+    const rowYear = Number(row.year);
+    return Number.isFinite(rowYear) && rowYear > latestRealAnnualYear;
+  });
 }
 
 function removeDuplicateInterimAnnualRows(rows) {
@@ -3723,7 +3755,7 @@ async function fetchStockData(ticker) {
   const reports = financials?.data || [];
 
   finnhubReportedData = reports
-    .slice(0, 5)
+    .slice(0, 10)
     .map((report) => {
       const ic = report.report?.ic || [];
 
@@ -3895,30 +3927,28 @@ async function fetchStockData(ticker) {
       row?.source !== "Current metric fallback"
   );
 
-  const reportedAnnualData = mergeHistoricalFinancials(
-    getRecentEarningsReleaseAnnualRows(ticker),
-    mergeHistoricalFinancials(
-      yahooFinancialData,
-      mergeHistoricalFinancials(
-        fmpIncomeStatementData,
-        mergeHistoricalFinancials(
-          finnhubReportedData,
-          mergeHistoricalFinancials(finnhubMetricData, previousRealRevenueData)
-        )
+  const reportedAnnualData = mergeAllHistoricalFinancials(
+    previousRealRevenueData,
+    finnhubMetricData,
+    finnhubReportedData,
+    fmpIncomeStatementData,
+    yahooFinancialData,
+    getRecentEarningsReleaseAnnualRows(ticker)
+  );
+  const supplementalAnnualData = mergeAllHistoricalFinancials(
+    fmpCashFlowHistory,
+    stockAnalysisFinancialData,
+    fmpQuarterlyFinancialData,
+    secAnnualMargins.history || []
+  );
+  const revenueData = limitHistoricalFinancialRows(
+    removeStaleModeledFallbackRows(
+      finalizeFinancialHistory(
+        mergeSupplementalHistoricalFields(reportedAnnualData, supplementalAnnualData, Infinity),
+        sharesOutstanding
       )
     )
   );
-  const supplementalAnnualData = mergeHistoricalFinancials(
-    mergeHistoricalFinancials(
-      mergeHistoricalFinancials(secAnnualMargins.history || [], fmpQuarterlyFinancialData),
-      stockAnalysisFinancialData
-    ),
-    fmpCashFlowHistory
-  );
-  const revenueData = removeDuplicateInterimAnnualRows(finalizeFinancialHistory(
-    mergeSupplementalHistoricalFields(reportedAnnualData, supplementalAnnualData),
-    sharesOutstanding
-  ));
   const revenueHistory = removeDuplicateInterimAnnualRows(finalizeRevenueHistory(
     revenueData
   ));
