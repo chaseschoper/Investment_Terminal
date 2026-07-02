@@ -31,6 +31,7 @@ const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
 const mrRallyExternalMetricCache = new Map();
+const mrRallyStatementCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 119;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
@@ -57,6 +58,7 @@ const TICKER_ALIASES = {
   APPLE: "AAPL",
   CARNIVAL: "CCL",
   CELSIUS: "CELH",
+  CHEESECAKEFACTORY: "CAKE",
   COSTCO: "COST",
   FEDEX: "FDX",
   GOOGLE: "GOOGL",
@@ -80,6 +82,8 @@ const COMPANY_NAME_ALIASES = {
   "carnival": "CCL",
   "celsius": "CELH",
   "celsius holdings": "CELH",
+  "cheesecake factory": "CAKE",
+  "the cheesecake factory": "CAKE",
   "costco": "COST",
   "fedex": "FDX",
   "google": "GOOGL",
@@ -5684,6 +5688,11 @@ const analysisMoney = (value) => {
   return `${sign}$${absolute.toFixed(0)}`;
 };
 
+const percentText = (value, digits = 1) => {
+  const number = toNumberOrNull(value);
+  return number === null ? "N/A" : `${number.toFixed(digits)}%`;
+};
+
 const yahooRawNumber = (value) => toNumberOrNull(
   value && typeof value === "object" && "raw" in value ? value.raw : value
 );
@@ -5698,6 +5707,7 @@ const firstYahooRawNumber = (...values) => {
 
 const getQuestionIntent = (question = "") => {
   const text = String(question || "").toLowerCase();
+  const statementLineItem = /\b(sg&a|sga|selling general|selling, general|g&a|general and administrative|admin expense|administrative expense|r&d|research and development|cogs|cost of goods|cost of revenue|operating expense|opex|operating income|interest expense|tax expense|depreciation|amortization)\b/.test(text);
   return {
     debt: /\b(debt|leverage|liabilit|balance sheet|borrowings?|cash|equity|current ratio)\b/.test(text),
     dividend: /\b(dividend|yield|payout)\b/.test(text),
@@ -5710,9 +5720,144 @@ const getQuestionIntent = (question = "") => {
     catalyst: /\b(catalyst|bull|upside|positive|why buy|growth)\b/.test(text),
     margins: /\b(margin|profitability|gross|operating margin|profit margin)\b/.test(text),
     cashFlow: /\b(free cash flow|fcf|cash flow)\b/.test(text),
-    target: /\b(price target|target|upside)\b/.test(text)
+    target: /\b(price target|target|upside)\b/.test(text),
+    statementLineItem
   };
 };
+
+const getRequestedStatementLineItems = (question = "") => {
+  const text = String(question || "").toLowerCase();
+  const items = [];
+  const add = (key, label, concepts = [], labelPattern = null) => {
+    if (!items.some((item) => item.key === key)) {
+      items.push({ key, label, concepts, labelPattern });
+    }
+  };
+
+  if (/\b(sg&a|sga|selling general|selling, general|g&a|general and administrative|admin expense|administrative expense)\b/.test(text)) {
+    add("sga", "SG&A / G&A expense", [
+      "us-gaap_SellingGeneralAndAdministrativeExpense",
+      "us-gaap_GeneralAndAdministrativeExpense",
+      "us-gaap_SellingAndMarketingExpense",
+      "us-gaap_SellingExpense"
+    ], /(selling.*general.*administrative|general and administrative|administrative expense|selling and marketing|selling expense)/i);
+  }
+  if (/\b(r&d|research and development)\b/.test(text)) {
+    add("rd", "Research and development expense", [
+      "us-gaap_ResearchAndDevelopmentExpense",
+      "us-gaap_ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost"
+    ], /(research and development|r&d)/i);
+  }
+  if (/\b(cogs|cost of goods|cost of revenue|food and beverage costs?)\b/.test(text)) {
+    add("costOfRevenue", "Cost of revenue", [
+      "us-gaap_CostOfRevenue",
+      "us-gaap_CostOfGoodsAndServicesSold",
+      "us-gaap_CostsOfGoodsSold",
+      "cake_FoodAndBeverageCosts"
+    ], /(cost of revenue|cost of goods|food and beverage costs?)/i);
+  }
+  if (/\b(operating expense|opex)\b/.test(text)) {
+    add("operatingExpenses", "Operating expenses", [
+      "us-gaap_OperatingExpenses",
+      "us-gaap_CostsAndExpenses"
+    ], /(operating expenses|costs and expenses)/i);
+  }
+  if (/\b(operating income|operating profit|operating loss)\b/.test(text)) {
+    add("operatingIncome", "Operating income", [
+      "us-gaap_OperatingIncomeLoss"
+    ], /operating income|operating \(loss\)/i);
+  }
+  if (/\b(interest expense|interest income)\b/.test(text)) {
+    add("interestExpense", "Interest expense", [
+      "us-gaap_InterestExpenseNonOperating",
+      "us-gaap_InterestIncomeExpenseNonoperatingNet"
+    ], /interest/i);
+  }
+  if (/\b(tax expense|income tax)\b/.test(text)) {
+    add("taxExpense", "Income tax expense", [
+      "us-gaap_IncomeTaxExpenseBenefit"
+    ], /income tax/i);
+  }
+  if (/\b(depreciation|amortization|d&a)\b/.test(text)) {
+    add("depreciationAmortization", "Depreciation and amortization", [
+      "us-gaap_DepreciationDepletionAndAmortization"
+    ], /(depreciation|amortization)/i);
+  }
+
+  return items;
+};
+
+async function fetchExternalStatementContext(ticker, intent = {}, question = "") {
+  if (!intent.statementLineItem) return null;
+  if (!process.env.FINNHUB_API_KEY) return null;
+
+  const symbol = String(ticker || "").trim().toUpperCase();
+  const requestedItems = getRequestedStatementLineItems(question);
+  if (!symbol || !requestedItems.length) return null;
+
+  const cacheKey = `${symbol}:${requestedItems.map((item) => item.key).join(",")}`;
+  const cached = mrRallyStatementCache.get(cacheKey);
+  if (cached && Date.now() - cached.createdAt < 10 * 60 * 1000) return cached.value;
+
+  try {
+    const { data } = await axios.get("https://finnhub.io/api/v1/stock/financials-reported", {
+      params: {
+        symbol,
+        freq: "quarterly",
+        token: process.env.FINNHUB_API_KEY
+      },
+      timeout: 7000
+    });
+    const filing = (data?.data || [])
+      .filter((item) => item?.report?.ic)
+      .sort((a, b) => String(b.endDate || "").localeCompare(String(a.endDate || "")))
+      .at(0);
+
+    if (!filing) return null;
+
+    const incomeStatement = filing.report.ic || [];
+    const revenue = incomeStatement.find((line) =>
+      /revenue/i.test(line?.label || "") ||
+      /Revenue/i.test(line?.concept || "")
+    );
+    const revenueValue = toNumberOrNull(revenue?.value);
+
+    const lineItems = requestedItems.map((requested) => {
+      const match = incomeStatement.find((line) =>
+        requested.concepts.includes(line?.concept)
+      ) || incomeStatement.find((line) =>
+        requested.labelPattern?.test(line?.label || "")
+      );
+      const value = toNumberOrNull(match?.value);
+      return {
+        key: requested.key,
+        label: requested.label,
+        reportedLabel: match?.label || null,
+        concept: match?.concept || null,
+        value,
+        percentOfRevenue: value !== null && revenueValue ? (value / revenueValue) * 100 : null
+      };
+    }).filter((line) => line.value !== null || line.reportedLabel);
+
+    const context = {
+      source: "Finnhub reported quarterly filing data",
+      form: filing.form || null,
+      period: filing.year && filing.quarter ? `${filing.year} Q${filing.quarter}` : null,
+      startDate: filing.startDate || null,
+      endDate: filing.endDate || null,
+      filedDate: filing.filedDate || null,
+      revenue: revenueValue,
+      revenueLabel: revenue?.label || null,
+      lineItems
+    };
+
+    mrRallyStatementCache.set(cacheKey, { createdAt: Date.now(), value: context });
+    return context;
+  } catch (err) {
+    console.log("Mr. Rally statement line items skipped:", symbol, err.response?.status || err.message);
+    return null;
+  }
+}
 
 async function fetchExternalFinancialContext(ticker, intent = {}) {
   if (!intent.debt && !intent.cashFlow) return null;
@@ -6161,8 +6306,8 @@ function buildResearchAnalysis(stock) {
 
 const extractStockSymbolsFromQuestion = (message = "", fallbackTicker = "") => {
   const ignored = new Set([
-    "A", "AI", "API", "CEO", "CFO", "DCF", "EPS", "ETF", "FCF", "FY", "GAAP",
-    "GDP", "IPO", "MR", "PE", "PEG", "PS", "Q", "SEC", "TTM", "US", "USD", "YOY"
+    "A", "AI", "API", "CEO", "CFO", "DCF", "EPS", "ETF", "FCF", "FY", "G", "GA", "GAAP",
+    "GDP", "IPO", "MR", "PE", "PEG", "PS", "Q", "R", "RD", "SEC", "SG", "SGA", "TTM", "US", "USD", "YOY"
   ]);
   const symbols = new Set();
   const add = (value) => {
@@ -6341,9 +6486,10 @@ async function getMrRallyStockContext(ticker, intent = {}) {
 
   const data = withGuaranteedAnalystSection(stock.data || {});
   const analysis = buildResearchAnalysis(stock);
-  const [externalFinancials, externalMetrics] = await Promise.all([
+  const [externalFinancials, externalMetrics, externalStatements] = await Promise.all([
     resolveWithin(fetchExternalFinancialContext(symbol, intent), 5500, null),
-    resolveWithin(fetchExternalMetricContext(symbol, intent), 4500, null)
+    resolveWithin(fetchExternalMetricContext(symbol, intent), 4500, null),
+    resolveWithin(fetchExternalStatementContext(symbol, intent, intent.question || ""), 7500, null)
   ]);
   const history = [...(data.revenueData || [])]
     .filter((row) => row?.year)
@@ -6381,6 +6527,7 @@ async function getMrRallyStockContext(ticker, intent = {}) {
     scenarios: analysis.stockAnalysis.scenarios,
     externalFinancials,
     externalMetrics,
+    externalStatements,
     updatedAt: stock.updatedAt
   };
 }
@@ -6398,7 +6545,28 @@ const buildMrRallyFallbackAnswer = (question, contexts) => {
     const nextYear = estimates.nextYear || {};
     const externalBalance = item.externalFinancials?.balanceSheet || {};
     const externalValuation = item.externalMetrics?.valuation || {};
+    const externalStatements = item.externalStatements || {};
     const lines = [`${item.symbol}: ${item.name}`];
+
+    if (intent.statementLineItem) {
+      if (externalStatements.lineItems?.length) {
+        const period = externalStatements.period || "latest reported quarter";
+        const endDate = externalStatements.endDate
+          ? String(externalStatements.endDate).slice(0, 10)
+          : null;
+        lines.push(`${period}${endDate ? ` ended ${endDate}` : ""}:`);
+        externalStatements.lineItems.forEach((line) => {
+          lines.push(`${line.reportedLabel || line.label}: ${analysisMoney(line.value)}${line.percentOfRevenue !== null && line.percentOfRevenue !== undefined ? ` (${percentText(line.percentOfRevenue)} of revenue)` : ""}.`);
+        });
+        if (externalStatements.revenue !== null && externalStatements.revenue !== undefined) {
+          lines.push(`Revenue: ${analysisMoney(externalStatements.revenue)}.`);
+        }
+        lines.push(`Source: ${externalStatements.source}.`);
+      } else {
+        lines.push("I could not find that specific line item in the latest quarterly income statement.");
+      }
+      return lines.join("\n");
+    }
 
     if (intent.peg) {
       const pegRatio = firstFiniteNumber(item.pegRatio, externalValuation.pegRatio, externalValuation.trailingPegRatio);
@@ -6529,6 +6697,7 @@ function buildMrRallyAiPrompt({ message, currentTicker, intent, history, context
     scenarios: item.scenarios,
     externalFinancials: item.externalFinancials,
     externalMetrics: item.externalMetrics,
+    externalStatements: item.externalStatements,
     updatedAt: item.updatedAt
   }));
 
@@ -6669,7 +6838,7 @@ app.post("/api/mr-rally-chat", async (req, res) => {
   try {
     const message = String(req.body?.message || "").trim();
     const currentTicker = String(req.body?.ticker || "").trim().toUpperCase();
-    const intent = getQuestionIntent(message);
+    const intent = { ...getQuestionIntent(message), question: message };
     const history = Array.isArray(req.body?.history)
       ? req.body.history.slice(-6).map((item) => ({
           role: item.role === "user" ? "user" : "assistant",
@@ -6698,7 +6867,7 @@ app.post("/api/mr-rally-chat", async (req, res) => {
       answer,
       symbols: contexts.map((item) => item.symbol),
       sources: [...new Set(contexts.flatMap((item) =>
-        [item.source, item.externalFinancials?.source, item.externalMetrics?.source].filter(Boolean)
+        [item.source, item.externalFinancials?.source, item.externalMetrics?.source, item.externalStatements?.source].filter(Boolean)
       ))]
     });
   } catch (err) {
