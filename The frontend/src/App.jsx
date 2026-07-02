@@ -700,6 +700,8 @@ function App() {
   const latestComparisonRequest = useRef(0);
   const latestAiRequest = useRef(0);
   const latestEarningsCallRequest = useRef(0);
+  const initialSavedPricesLoaded = useRef(false);
+  const firstStockLoadSettled = useRef(false);
   const previousMarketEventRef = useRef(null);
   const firedMarketEventsRef = useRef(new Set());
   const speechQueueRef = useRef([]);
@@ -998,7 +1000,7 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
     });
 
   const [isMarketLoading, setIsMarketLoading] =
-    useState(true);
+    useState(() => !marketIndices.length);
 
   const [marketClockNow, setMarketClockNow] =
     useState(() => new Date());
@@ -1052,7 +1054,15 @@ useEffect(() => {
   const refreshPrices = async () => {
     if (!isActive) return;
     const marketIsOpen = getMarketClock(new Date()).tone === "open";
-    loadSavedPrices(symbols, 0, { live: true });
+    if (!initialSavedPricesLoaded.current) {
+      initialSavedPricesLoaded.current = true;
+      loadSavedPrices(symbols, 0, { live: false });
+      window.setTimeout(() => {
+        if (isActive) loadSavedPrices(symbols, 0, { live: true });
+      }, 1800);
+    } else {
+      loadSavedPrices(symbols, 0, { live: true });
+    }
     refreshTimer = window.setTimeout(
       refreshPrices,
       marketIsOpen ? 20 * 1000 : 2 * 60 * 1000
@@ -1238,6 +1248,7 @@ useEffect(() => {
     latestAiRequest.current += 1;
     latestEarningsCallRequest.current += 1;
     setStockData(cachedStock);
+    if (cachedStock) firstStockLoadSettled.current = true;
     setAiAnalysis(null);
     setEarningsCall(null);
     setSelectedTranscriptPeriod("latest");
@@ -1266,49 +1277,58 @@ useEffect(() => {
     const requestId = ++latestEarningsCallRequest.current;
     const periodOptions = buildTranscriptPeriodOptions();
     const selectedPeriod = periodOptions.find((period) => period.value === selectedTranscriptPeriod);
-    setIsEarningsCallLoading(true);
+    const delay = selectedTranscriptPeriod === "latest" ? 1800 : 100;
+    const timer = window.setTimeout(() => {
+      setIsEarningsCallLoading(true);
 
-    axios.get(`${API_URL}/api/earnings-call/${ticker}`, {
-      params: selectedPeriod?.year && selectedPeriod?.quarter
-        ? { year: selectedPeriod.year, quarter: selectedPeriod.quarter }
-        : undefined
-    })
-      .then((response) => {
-        if (requestId === latestEarningsCallRequest.current) {
-          setEarningsCall(response.data);
-        }
+      axios.get(`${API_URL}/api/earnings-call/${ticker}`, {
+        params: selectedPeriod?.year && selectedPeriod?.quarter
+          ? { year: selectedPeriod.year, quarter: selectedPeriod.quarter }
+          : undefined
       })
-      .catch((error) => {
-        console.error("Earnings call failed", error);
-        if (requestId === latestEarningsCallRequest.current) {
-          setEarningsCall({ available: false });
-        }
-      })
-      .finally(() => {
-        if (requestId === latestEarningsCallRequest.current) {
-          setIsEarningsCallLoading(false);
-        }
+        .then((response) => {
+          if (requestId === latestEarningsCallRequest.current) {
+            setEarningsCall(response.data);
+          }
+        })
+        .catch((error) => {
+          console.error("Earnings call failed", error);
+          if (requestId === latestEarningsCallRequest.current) {
+            setEarningsCall({ available: false });
+          }
+        })
+        .finally(() => {
+          if (requestId === latestEarningsCallRequest.current) {
+            setIsEarningsCallLoading(false);
+          }
+        });
       });
+
+    return () => window.clearTimeout(timer);
   }, [ticker, loadedStockSymbol, isStockLoading, selectedTranscriptPeriod]);
 
   useEffect(() => {
     if (!stockData?.price || stockData.symbol !== ticker) return;
 
     const requestId = ++latestAiRequest.current;
-    setIsAiLoading(true);
+    const timer = window.setTimeout(() => {
+      setIsAiLoading(true);
 
-    axios.get(`${API_URL}/api/ai-analysis/${ticker}`)
-      .then((response) => {
-        if (requestId === latestAiRequest.current) {
-          setAiAnalysis(response.data);
-        }
-      })
-      .catch((error) => console.error("AI analysis failed", error))
-      .finally(() => {
-        if (requestId === latestAiRequest.current) {
-          setIsAiLoading(false);
-        }
-      });
+      axios.get(`${API_URL}/api/ai-analysis/${ticker}`)
+        .then((response) => {
+          if (requestId === latestAiRequest.current) {
+            setAiAnalysis(response.data);
+          }
+        })
+        .catch((error) => console.error("AI analysis failed", error))
+        .finally(() => {
+          if (requestId === latestAiRequest.current) {
+            setIsAiLoading(false);
+          }
+        });
+    }, 1200);
+
+    return () => window.clearTimeout(timer);
   }, [ticker, stockData?.price, stockData?.updatedAt]);
 
   /*
@@ -1317,7 +1337,12 @@ useEffect(() => {
 
   useEffect(() => {
 
-    loadEarnings(earningsWeekStart);
+    const timer = window.setTimeout(
+      () => loadEarnings(earningsWeekStart),
+      firstStockLoadSettled.current ? 250 : 2200
+    );
+
+    return () => window.clearTimeout(timer);
 
   }, [earningsWeekStart]);
 
@@ -1386,6 +1411,7 @@ useEffect(() => {
       stockMemoryCacheRef.current.set(symbol, response.data);
       setStockData(response.data);
       setIsStockLoading(false);
+      firstStockLoadSettled.current = true;
 
       if (response.data.refreshing && attempt < 150) {
         scheduleRetry(attempt < 30 ? 1000 : 2500);
@@ -1403,6 +1429,7 @@ useEffect(() => {
 
       if (error.response?.status === 400 || error.response?.status === 404) {
         setIsStockLoading(false);
+        firstStockLoadSettled.current = true;
         return;
       }
 
