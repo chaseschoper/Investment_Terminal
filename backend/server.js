@@ -5473,10 +5473,9 @@ app.get("/api/price-history/:ticker", async (req, res) => {
 });
 
 app.get("/api/stock/:ticker", async (req, res) => {
-  let ticker = "";
   try {
     const requestedTicker = req.params.ticker.trim().toUpperCase();
-    ticker = TICKER_ALIASES[requestedTicker] || requestedTicker;
+    const ticker = TICKER_ALIASES[requestedTicker] || requestedTicker;
 
     if (!ticker || ticker.length > 10) {
       return res.status(400).json({
@@ -5484,24 +5483,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       });
     }
 
-    const stockLookup = await resolveWithin(
-      Stock.findOne({ ticker }),
-      1500,
-      "__MRKT_DB_TIMEOUT__"
-    );
-    if (stockLookup === "__MRKT_DB_TIMEOUT__") {
-      const quickData = await getImmediateStockSnapshot(ticker);
-      return res.json({
-        ticker,
-        status: "ready",
-        refreshing: true,
-        ...quickData,
-        error: "Stock cache is waking up. Showing fast market data first.",
-        updatedAt: new Date()
-      });
-    }
-
-    let stock = stockLookup;
+    let stock = await Stock.findOne({ ticker });
 
     if (!stock) {
       const quickData = await getImmediateStockSnapshot(ticker);
@@ -5715,21 +5697,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Stock fetch failed:", ticker || req.params.ticker, err.message);
-    const fallbackTicker = ticker || String(req.params.ticker || "").trim().toUpperCase();
-    if (fallbackTicker) {
-      const quickData = await getImmediateStockSnapshot(fallbackTicker, {}).catch(() =>
-        buildMinimalStockSnapshot(fallbackTicker, {})
-      );
-      return res.json({
-        ticker: fallbackTicker,
-        status: "ready",
-        refreshing: true,
-        ...quickData,
-        error: "Stock data is temporarily limited. Showing fast market data first.",
-        updatedAt: new Date()
-      });
-    }
+    console.error("Stock fetch failed:", err.message);
     res.status(500).json({ error: "Stock fetch failed" });
   }
 });
@@ -6714,16 +6682,10 @@ async function getMrRallyStockContext(ticker, intent = {}) {
   const symbol = TICKER_ALIASES[requestedTicker] || requestedTicker;
   if (!/^[A-Z0-9.-]{1,12}$/.test(symbol)) return null;
 
-  const stockLookup = await resolveWithin(
-    Stock.findOne({ ticker: symbol }),
-    1500,
-    "__MRKT_DB_TIMEOUT__"
-  );
-  let stock = stockLookup === "__MRKT_DB_TIMEOUT__" ? null : stockLookup;
-  const cacheTimedOut = stockLookup === "__MRKT_DB_TIMEOUT__";
+  let stock = await Stock.findOne({ ticker: symbol });
   const needsRefresh = !stock;
 
-  if (needsRefresh && !cacheTimedOut) {
+  if (needsRefresh) {
     try {
       startStockFetch(symbol);
       await resolveWithin(getImmediateStockSnapshot(symbol, {}), MR_RALLY_STOCK_REFRESH_TIMEOUT_MS, null);
@@ -6739,7 +6701,7 @@ async function getMrRallyStockContext(ticker, intent = {}) {
       return {
         symbol,
         name: quickData.name || symbol,
-        source: cacheTimedOut ? "fast market quote while stock cache is waking up" : "external market quote",
+        source: "external market quote",
         price: quickData.price,
         change: quickData.change,
         percentChange: quickData.percentChange,
