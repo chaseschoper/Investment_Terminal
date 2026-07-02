@@ -2175,7 +2175,7 @@ const sendMrRallyMessage = async (event) => {
         ticker,
         history: mrRallyMessages
       },
-      { timeout: 30000 }
+      { timeout: 60000 }
     );
 
     setMrRallyMessages([

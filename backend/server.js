@@ -23,6 +23,7 @@ const app = express();
 const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
   : null;
+const geminiApiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || "";
 const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
@@ -6318,7 +6319,14 @@ const readOpenAIText = (response) => {
   return text || "";
 };
 
-async function buildMrRallyAiAnswer({ message, currentTicker, intent, history, contexts }) {
+const readGeminiText = (response = {}) =>
+  response?.candidates
+    ?.flatMap((candidate) => candidate?.content?.parts || [])
+    ?.map((part) => part?.text || "")
+    ?.join("")
+    ?.trim() || "";
+
+function buildMrRallyAiPrompt({ message, currentTicker, intent, history, contexts, canUseLiveWeb = false }) {
   const siteContext = contexts.map((item) => ({
     symbol: item.symbol,
     name: item.name,
@@ -6352,7 +6360,9 @@ async function buildMrRallyAiAnswer({ message, currentTicker, intent, history, c
     "Answer like a helpful ChatGPT-style market analyst, not like a database dump.",
     "Directly answer the user's exact question first. If they ask for one number, give that number and a short explanation only.",
     "Use the provided MrktRally site data as the first trusted source when it is relevant.",
-    "If MrktRally does not have the requested data, use web search/current public sources to answer.",
+    canUseLiveWeb
+      ? "If MrktRally does not have the requested data, use web search/current public sources to answer."
+      : "If MrktRally does not have the requested data, answer from the model's general knowledge only when appropriate and clearly say when current market data is not available.",
     "Do not pretend missing MrktRally data exists. If outside data fills the gap, say so briefly.",
     "For factual market data, be clear about the period or date when that matters.",
     "Keep the tone natural and conversational, but avoid personalized financial advice.",
@@ -6366,6 +6376,19 @@ async function buildMrRallyAiAnswer({ message, currentTicker, intent, history, c
     `MrktRally site context: ${JSON.stringify(siteContext)}`,
     `User question: ${message}`
   ].join("\n\n");
+
+  return { instructions, userInput };
+}
+
+async function buildMrRallyOpenAiAnswer({ message, currentTicker, intent, history, contexts }) {
+  const { instructions, userInput } = buildMrRallyAiPrompt({
+    message,
+    currentTicker,
+    intent,
+    history,
+    contexts,
+    canUseLiveWeb: true
+  });
 
   try {
     const response = await openai.responses.create({
@@ -6406,6 +6429,55 @@ async function buildMrRallyAiAnswer({ message, currentTicker, intent, history, c
   return completion.choices?.[0]?.message?.content?.trim() || buildMrRallyFallbackAnswer(message, contexts);
 }
 
+async function buildMrRallyGeminiAnswer({ message, currentTicker, intent, history, contexts }) {
+  const { instructions, userInput } = buildMrRallyAiPrompt({
+    message,
+    currentTicker,
+    intent,
+    history,
+    contexts,
+    canUseLiveWeb: false
+  });
+
+  const model = process.env.MR_RALLY_GEMINI_MODEL || "gemini-2.5-flash";
+  const { data } = await axios.post(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+    {
+      systemInstruction: {
+        parts: [{ text: instructions }]
+      },
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: userInput }]
+        }
+      ],
+      generationConfig: {
+        temperature: 0.45,
+        maxOutputTokens: 900
+      }
+    },
+    {
+      params: { key: geminiApiKey },
+      timeout: 30000
+    }
+  );
+
+  return readGeminiText(data) || buildMrRallyFallbackAnswer(message, contexts);
+}
+
+async function buildMrRallyAiAnswer({ message, currentTicker, intent, history, contexts }) {
+  if (openai) {
+    return buildMrRallyOpenAiAnswer({ message, currentTicker, intent, history, contexts });
+  }
+
+  if (geminiApiKey) {
+    return buildMrRallyGeminiAnswer({ message, currentTicker, intent, history, contexts });
+  }
+
+  return buildMrRallyFallbackAnswer(message, contexts);
+}
+
 app.post("/api/mr-rally-chat", async (req, res) => {
   try {
     const message = String(req.body?.message || "").trim();
@@ -6426,16 +6498,6 @@ app.post("/api/mr-rally-chat", async (req, res) => {
     const contexts = (await Promise.all(symbols.map((symbol) =>
       getMrRallyStockContext(symbol, intent)
     ))).filter(Boolean);
-
-    if (!openai) {
-      return res.json({
-        answer: buildMrRallyFallbackAnswer(message, contexts),
-        symbols: contexts.map((item) => item.symbol),
-        sources: [...new Set(contexts.flatMap((item) =>
-          [item.source, item.externalFinancials?.source].filter(Boolean)
-        ))]
-      });
-    }
 
     const answer = await buildMrRallyAiAnswer({
       message,
