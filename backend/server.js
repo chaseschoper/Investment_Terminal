@@ -32,6 +32,7 @@ const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
 const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
+const mrRallyWebContextCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 119;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
@@ -5708,6 +5709,7 @@ const firstYahooRawNumber = (...values) => {
 const getQuestionIntent = (question = "") => {
   const text = String(question || "").toLowerCase();
   const statementLineItem = /\b(sg&a|sga|selling general|selling, general|g&a|general and administrative|admin expense|administrative expense|r&d|research and development|cogs|cost of goods|cost of revenue|operating expense|opex|operating income|interest expense|tax expense|depreciation|amortization)\b/.test(text);
+  const earningsCall = /\b(earnings call|conference call|call highlights?|transcript|management said|ceo said|cfo said|q&a|yesterday|today|latest call|most recent call)\b/.test(text);
   return {
     debt: /\b(debt|leverage|liabilit|balance sheet|borrowings?|cash|equity|current ratio)\b/.test(text),
     dividend: /\b(dividend|yield|payout)\b/.test(text),
@@ -5721,7 +5723,9 @@ const getQuestionIntent = (question = "") => {
     margins: /\b(margin|profitability|gross|operating margin|profit margin)\b/.test(text),
     cashFlow: /\b(free cash flow|fcf|cash flow)\b/.test(text),
     target: /\b(price target|target|upside)\b/.test(text),
-    statementLineItem
+    statementLineItem,
+    earningsCall,
+    currentEvents: earningsCall || /\b(today|yesterday|latest|most recent|news|reported|just reported)\b/.test(text)
   };
 };
 
@@ -5855,6 +5859,169 @@ async function fetchExternalStatementContext(ticker, intent = {}, question = "")
     return context;
   } catch (err) {
     console.log("Mr. Rally statement line items skipped:", symbol, err.response?.status || err.message);
+    return null;
+  }
+}
+
+const decodeDuckDuckGoUrl = (href = "") => {
+  try {
+    const absolute = href.startsWith("//") ? `https:${href}` : href;
+    const parsed = new URL(absolute);
+    const redirected = parsed.searchParams.get("uddg");
+    return redirected ? decodeURIComponent(redirected) : absolute;
+  } catch {
+    return null;
+  }
+};
+
+const extractRelevantWebText = (text = "", question = "") => {
+  const cleaned = String(text || "").replace(/\s+/g, " ").trim();
+  if (!cleaned) return "";
+
+  const lower = cleaned.toLowerCase();
+  const anchors = [
+    "company participants",
+    "conference call",
+    "earnings call",
+    "operator",
+    "question-and-answer",
+    "highlights",
+    ...normalizeCompanyName(question).split(" ").filter((token) => token.length > 4)
+  ];
+  const anchorIndex = anchors
+    .map((anchor) => lower.indexOf(anchor.toLowerCase()))
+    .filter((index) => index >= 0)
+    .sort((a, b) => a - b)[0];
+  const start = anchorIndex !== undefined ? Math.max(0, anchorIndex - 900) : 0;
+
+  return cleaned.slice(start, start + 14000);
+};
+
+const buildEarningsCallHighlightBullets = (text = "") => {
+  const cleaned = String(text || "").replace(/\s+/g, " ").trim();
+  if (!cleaned) return [];
+  const sentences = cleaned
+    .split(/(?<=[.!?])\s+(?=[A-Z$0-9])/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length >= 50 && sentence.length <= 340);
+  const keywords = [
+    /revenue|sales|growth|declin|increase|decrease/i,
+    /gross margin|margin|profit|eps|earnings/i,
+    /guidance|outlook|expect|forecast|fiscal/i,
+    /china|north america|emea|direct|wholesale|digital|inventory/i,
+    /tariff|consumer|demand|pressure|turnaround|strategy/i,
+    /cfo|ceo|management|appointed|transition/i
+  ];
+  const picked = [];
+  for (const pattern of keywords) {
+    const sentence = sentences.find((candidate) =>
+      pattern.test(candidate) &&
+      !picked.some((existing) => existing === candidate)
+    );
+    if (sentence) picked.push(sentence);
+    if (picked.length >= 6) break;
+  }
+  return picked.slice(0, 5);
+};
+
+async function searchDuckDuckGo(query) {
+  const { data } = await axios.get("https://html.duckduckgo.com/html/", {
+    params: { q: query },
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      Accept: "text/html,application/xhtml+xml"
+    },
+    timeout: 9000
+  });
+  const $ = cheerio.load(data || "");
+  const results = [];
+  $(".result").each((_, element) => {
+    const title = $(element).find(".result__a").text().trim().replace(/\s+/g, " ");
+    const href = decodeDuckDuckGoUrl($(element).find(".result__a").attr("href"));
+    const snippet = $(element).find(".result__snippet").text().trim().replace(/\s+/g, " ");
+    if (!title || !href || !/^https?:\/\//i.test(href)) return;
+    if (results.some((result) => result.url === href)) return;
+    results.push({ title, url: href, snippet });
+  });
+  return results.slice(0, 8);
+}
+
+async function fetchPublicPageText(url) {
+  const { data, headers } = await axios.get(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      Accept: "text/html,text/plain,application/xhtml+xml"
+    },
+    timeout: 10000,
+    maxRedirects: 4
+  });
+  const contentType = String(headers["content-type"] || "").toLowerCase();
+  if (!/html|text/.test(contentType)) return "";
+  return stripHtmlToText(String(data || ""));
+}
+
+async function fetchMrRallyWebContext(ticker, intent = {}, question = "") {
+  if (!intent.currentEvents && !intent.earningsCall) return null;
+
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol) return null;
+
+  const cacheKey = `${symbol}:${normalizeCompanyName(question).slice(0, 90)}`;
+  const cached = mrRallyWebContextCache.get(cacheKey);
+  if (cached && Date.now() - cached.createdAt < 20 * 60 * 1000) return cached.value;
+
+  const currentYear = new Date().getFullYear();
+  const query = intent.earningsCall
+    ? `${symbol} ${currentYear} earnings call highlights revenue guidance transcript`
+    : `${symbol} latest stock news earnings`;
+
+  try {
+    const searchResults = await searchDuckDuckGo(query);
+    const ranked = searchResults
+      .map((result) => ({
+        ...result,
+        score:
+          (/transcript|earnings call|conference call/i.test(`${result.title} ${result.snippet}`) ? 8 : 0) +
+          (/complete transcript|q[1-4].*transcript|transcript.*q[1-4]/i.test(`${result.title} ${result.snippet}`) ? 5 : 0) +
+          (/benzinga|alphastreet|seekingalpha|yahoo|stockanalysis|gurufocus/i.test(result.url) ? 4 : 0) +
+          (/\/transcripts\/?$|earnings-calls\/?$/i.test(result.url) ? -7 : 0) +
+          (/latest|q[1-4]|2026|2025/i.test(`${result.title} ${result.snippet}`) ? 2 : 0)
+      }))
+      .sort((a, b) => b.score - a.score);
+
+    const pages = [];
+    for (const result of ranked.slice(0, 4)) {
+      if (pages.length >= 2) break;
+      try {
+        const text = await fetchPublicPageText(result.url);
+        const relevantText = extractRelevantWebText(text, question);
+        if (relevantText.length < 300) continue;
+        if (
+          intent.earningsCall &&
+          !/operator|company participants|question-and-answer|conference call|complete transcript/i.test(relevantText)
+        ) continue;
+        pages.push({
+          title: result.title,
+          url: result.url,
+          snippet: result.snippet,
+          text: relevantText
+        });
+      } catch (err) {
+        // Some publishers block server-side requests. Keep trying other results.
+      }
+    }
+
+    const context = {
+      source: "Public web search and transcript pages",
+      query,
+      results: ranked.slice(0, 5).map(({ title, url, snippet }) => ({ title, url, snippet })),
+      pages
+    };
+
+    mrRallyWebContextCache.set(cacheKey, { createdAt: Date.now(), value: context });
+    return context;
+  } catch (err) {
+    console.log("Mr. Rally public web context skipped:", symbol, err.response?.status || err.message);
     return null;
   }
 }
@@ -6486,10 +6653,11 @@ async function getMrRallyStockContext(ticker, intent = {}) {
 
   const data = withGuaranteedAnalystSection(stock.data || {});
   const analysis = buildResearchAnalysis(stock);
-  const [externalFinancials, externalMetrics, externalStatements] = await Promise.all([
+  const [externalFinancials, externalMetrics, externalStatements, externalWebContext] = await Promise.all([
     resolveWithin(fetchExternalFinancialContext(symbol, intent), 5500, null),
     resolveWithin(fetchExternalMetricContext(symbol, intent), 4500, null),
-    resolveWithin(fetchExternalStatementContext(symbol, intent, intent.question || ""), 7500, null)
+    resolveWithin(fetchExternalStatementContext(symbol, intent, intent.question || ""), 7500, null),
+    resolveWithin(fetchMrRallyWebContext(symbol, intent, intent.question || ""), 14000, null)
   ]);
   const history = [...(data.revenueData || [])]
     .filter((row) => row?.year)
@@ -6528,6 +6696,7 @@ async function getMrRallyStockContext(ticker, intent = {}) {
     externalFinancials,
     externalMetrics,
     externalStatements,
+    externalWebContext,
     updatedAt: stock.updatedAt
   };
 }
@@ -6546,7 +6715,42 @@ const buildMrRallyFallbackAnswer = (question, contexts) => {
     const externalBalance = item.externalFinancials?.balanceSheet || {};
     const externalValuation = item.externalMetrics?.valuation || {};
     const externalStatements = item.externalStatements || {};
+    const externalWeb = item.externalWebContext || {};
     const lines = [`${item.symbol}: ${item.name}`];
+
+    if (intent.earningsCall || intent.currentEvents) {
+      if (externalWeb.pages?.length) {
+        const page = externalWeb.pages[0];
+        const snippetBullets = (externalWeb.results || [])
+          .map((result) => result.snippet)
+          .filter((snippet) =>
+            snippet &&
+            snippet.length > 80 &&
+            !/provides transcripts|access historical|investor relations/i.test(snippet)
+          )
+          .slice(0, 4);
+        const bullets = buildEarningsCallHighlightBullets(page.text);
+        lines.push(`I found the recent outside transcript/source: ${page.title}.`);
+        if (snippetBullets.length) {
+          lines.push("Biggest items I can pull from recent outside sources:");
+          snippetBullets.forEach((bullet) => lines.push(`- ${bullet}`));
+        } else if (bullets.length) {
+          lines.push("Biggest items I can pull from it:");
+          bullets.forEach((bullet) => lines.push(`- ${bullet}`));
+        } else {
+          lines.push(page.snippet || page.text.slice(0, 700));
+        }
+        lines.push(`Source: ${page.url}`);
+      } else if (externalWeb.results?.length) {
+        lines.push("I found recent outside sources, but could not pull enough page text to summarize them reliably.");
+        externalWeb.results.slice(0, 3).forEach((result) => {
+          lines.push(`${result.title}: ${result.url}`);
+        });
+      } else {
+        lines.push("I could not find recent earnings-call context for that question yet.");
+      }
+      return lines.join("\n");
+    }
 
     if (intent.statementLineItem) {
       if (externalStatements.lineItems?.length) {
@@ -6698,6 +6902,7 @@ function buildMrRallyAiPrompt({ message, currentTicker, intent, history, context
     externalFinancials: item.externalFinancials,
     externalMetrics: item.externalMetrics,
     externalStatements: item.externalStatements,
+    externalWebContext: item.externalWebContext,
     updatedAt: item.updatedAt
   }));
 
@@ -6709,6 +6914,7 @@ function buildMrRallyAiPrompt({ message, currentTicker, intent, history, context
     canUseLiveWeb
       ? "If MrktRally does not have the requested data, use web search/current public sources to answer."
       : "If MrktRally does not have the requested data, answer from the model's general knowledge only when appropriate and clearly say when current market data is not available.",
+    "When public web or transcript context is provided, use it to answer current earnings-call, news, and management-commentary questions instead of saying the data is unavailable.",
     "Do not pretend missing MrktRally data exists. If outside data fills the gap, say so briefly.",
     "For factual market data, be clear about the period or date when that matters.",
     "Keep the tone natural and conversational, but avoid personalized financial advice.",
@@ -6782,13 +6988,11 @@ async function buildMrRallyGeminiAnswer({ message, currentTicker, intent, histor
     intent,
     history,
     contexts,
-    canUseLiveWeb: false
+    canUseLiveWeb: true
   });
 
   const model = process.env.MR_RALLY_GEMINI_MODEL || "gemini-2.5-flash";
-  const { data } = await axios.post(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-    {
+  const requestBody = {
       systemInstruction: {
         parts: [{ text: instructions }]
       },
@@ -6801,7 +7005,34 @@ async function buildMrRallyGeminiAnswer({ message, currentTicker, intent, histor
       generationConfig: {
         temperature: 0.45,
         maxOutputTokens: 900
+      },
+      tools: [
+        { google_search: {} }
+      ]
+    };
+
+  try {
+    const { data } = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+      requestBody,
+      {
+        params: { key: geminiApiKey },
+        timeout: 30000
       }
+    );
+
+    return readGeminiText(data) || buildMrRallyFallbackAnswer(message, contexts);
+  } catch (err) {
+    const messageText = err.response?.data?.error?.message || err.message;
+    if (!/tool|google_search|search|unsupported|invalid/i.test(messageText)) throw err;
+    console.log("Mr. Rally Gemini search grounding skipped:", messageText);
+  }
+
+  const { data } = await axios.post(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+    {
+      ...requestBody,
+      tools: undefined
     },
     {
       params: { key: geminiApiKey },
@@ -6867,7 +7098,7 @@ app.post("/api/mr-rally-chat", async (req, res) => {
       answer,
       symbols: contexts.map((item) => item.symbol),
       sources: [...new Set(contexts.flatMap((item) =>
-        [item.source, item.externalFinancials?.source, item.externalMetrics?.source, item.externalStatements?.source].filter(Boolean)
+        [item.source, item.externalFinancials?.source, item.externalMetrics?.source, item.externalStatements?.source, item.externalWebContext?.source].filter(Boolean)
       ))]
     });
   } catch (err) {
