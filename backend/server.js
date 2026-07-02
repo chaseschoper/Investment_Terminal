@@ -6014,9 +6014,11 @@ const extractStockSymbolsFromQuestion = (message = "", fallbackTicker = "") => {
     }
   };
 
-  String(message || "").match(/\$?[A-Z][A-Z0-9.-]{0,9}\b/g)?.forEach((match) =>
-    add(match.replace(/^\$/, ""))
-  );
+  String(message || "").match(/\$?[A-Za-z][A-Za-z0-9.-]{0,9}\b/g)?.forEach((match) => {
+    const token = match.replace(/^\$/, "");
+    const wasCashTagged = match.startsWith("$");
+    if (wasCashTagged || token === token.toUpperCase()) add(token);
+  });
   if (!symbols.size) add(fallbackTicker);
 
   return [...symbols].slice(0, 5);
@@ -6304,6 +6306,106 @@ const buildMrRallyFallbackAnswer = (question, contexts) => {
   }).join("\n\n");
 };
 
+const readOpenAIText = (response) => {
+  if (response?.output_text) return response.output_text.trim();
+
+  const text = response?.output
+    ?.flatMap((item) => item?.content || [])
+    ?.map((part) => part?.text || part?.output_text || "")
+    ?.join("")
+    ?.trim();
+
+  return text || "";
+};
+
+async function buildMrRallyAiAnswer({ message, currentTicker, intent, history, contexts }) {
+  const siteContext = contexts.map((item) => ({
+    symbol: item.symbol,
+    name: item.name,
+    source: item.source,
+    price: item.price,
+    change: item.change,
+    percentChange: item.percentChange,
+    previousClose: item.previousClose,
+    marketCap: item.marketCap,
+    pe: item.pe,
+    forwardPE: item.forwardPE,
+    priceToSales: item.priceToSales,
+    priceToBook: item.priceToBook,
+    targetMean: item.targetMean,
+    recommendationKey: item.recommendationKey,
+    analystRatingText: item.analystRatingText,
+    margins: item.margins,
+    freeCashflow: item.freeCashflow,
+    analystEstimates: item.analystEstimates,
+    recentFinancialHistory: item.history,
+    verdict: item.verdict,
+    catalysts: item.catalysts,
+    risks: item.risks,
+    scenarios: item.scenarios,
+    externalFinancials: item.externalFinancials,
+    updatedAt: item.updatedAt
+  }));
+
+  const instructions = [
+    "You are Mr. Rally, the stock research chat inside MrktRally.",
+    "Answer like a helpful ChatGPT-style market analyst, not like a database dump.",
+    "Directly answer the user's exact question first. If they ask for one number, give that number and a short explanation only.",
+    "Use the provided MrktRally site data as the first trusted source when it is relevant.",
+    "If MrktRally does not have the requested data, use web search/current public sources to answer.",
+    "Do not pretend missing MrktRally data exists. If outside data fills the gap, say so briefly.",
+    "For factual market data, be clear about the period or date when that matters.",
+    "Keep the tone natural and conversational, but avoid personalized financial advice.",
+    "Do not use the same template for every stock."
+  ].join(" ");
+
+  const userInput = [
+    `Current page ticker: ${currentTicker || "none"}`,
+    `Detected question intent: ${JSON.stringify(intent)}`,
+    `Recent conversation: ${JSON.stringify(history)}`,
+    `MrktRally site context: ${JSON.stringify(siteContext)}`,
+    `User question: ${message}`
+  ].join("\n\n");
+
+  try {
+    const response = await openai.responses.create({
+      model: process.env.MR_RALLY_MODEL || "gpt-4.1-mini",
+      instructions,
+      input: userInput,
+      tools: [
+        {
+          type: "web_search_preview",
+          search_context_size: "medium",
+          user_location: {
+            type: "approximate",
+            country: "US"
+          }
+        }
+      ],
+      tool_choice: "auto",
+      max_output_tokens: 900,
+      temperature: 0.45
+    });
+
+    const answer = readOpenAIText(response);
+    if (answer) return answer;
+  } catch (err) {
+    console.log("Mr. Rally Responses API skipped:", err.message);
+  }
+
+  const completion = await openai.chat.completions.create({
+    model: process.env.MR_RALLY_MODEL || "gpt-4.1-mini",
+    temperature: 0.45,
+    max_tokens: 850,
+    messages: [
+      { role: "system", content: instructions },
+      { role: "user", content: userInput }
+    ]
+  });
+
+  return completion.choices?.[0]?.message?.content?.trim() || buildMrRallyFallbackAnswer(message, contexts);
+}
+
 app.post("/api/mr-rally-chat", async (req, res) => {
   try {
     const message = String(req.body?.message || "").trim();
@@ -6335,31 +6437,16 @@ app.post("/api/mr-rally-chat", async (req, res) => {
       });
     }
 
-    const completion = await openai.chat.completions.create({
-      model: process.env.MR_RALLY_MODEL || "gpt-4.1-mini",
-      temperature: 0.25,
-      max_tokens: 650,
-      messages: [
-        {
-          role: "system",
-          content: [
-            "You are Mr. Rally, a concise stock research chatbot inside MrktRally.",
-            "Use the provided MrktRally website data first.",
-            "If a field says external market quote, you may use it only to fill missing website quote data.",
-            "Do not invent numbers. If data is missing, say what is missing.",
-            "This is research information, not personalized financial advice.",
-            "Answer in plain English with a short, useful structure."
-          ].join(" ")
-        },
-        {
-          role: "user",
-          content: `Current page ticker: ${currentTicker || "none"}\nQuestion intent:\n${JSON.stringify(intent)}\nConversation:\n${JSON.stringify(history)}\nStock data:\n${JSON.stringify(contexts)}\nQuestion: ${message}`
-        }
-      ]
+    const answer = await buildMrRallyAiAnswer({
+      message,
+      currentTicker,
+      intent,
+      history,
+      contexts
     });
 
     return res.json({
-      answer: completion.choices?.[0]?.message?.content?.trim() || buildMrRallyFallbackAnswer(message, contexts),
+      answer,
       symbols: contexts.map((item) => item.symbol),
       sources: [...new Set(contexts.flatMap((item) =>
         [item.source, item.externalFinancials?.source].filter(Boolean)
