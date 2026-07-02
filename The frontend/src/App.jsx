@@ -658,7 +658,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 95;
+const FINANCIAL_HISTORY_VERSION = 119;
 
 const getDefaultCompanyLogoUrl = (symbol) => {
   const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
@@ -1917,6 +1917,16 @@ const profitMarginHistory = chartRowsWithCurrentFallback(
   stockData?.profitMargins
 );
 
+const hasRealHistoryRows = (rows = []) =>
+  rows.filter((row) => !row?.isCurrent).length >= 2 ||
+  rows.some((row) => row?.isInterim && !row?.isCurrent);
+const isHistoryRefreshPending =
+  isStockLoading ||
+  stockData?.refreshing === true ||
+  stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION;
+const shouldShowHistoryLoading = (rows = []) =>
+  isHistoryRefreshPending && !hasRealHistoryRows(rows);
+
 const estimateFromHistoryYear = (year, fallback = {}) => {
   const row = financialHistory.find(
     (item) => Number(item?.year) === year
@@ -2104,15 +2114,21 @@ const projectionCases = PROJECTION_CASES.map((projectionCase) => {
 });
 const isStockRefreshing = stockData?.refreshing === true;
 const areEstimatesRefreshing =
-  isStockRefreshing &&
-  stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION;
+  (isStockRefreshing ||
+    stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION) &&
+  (
+    !isNumber(currentYearEstimate?.revenue) ||
+    !isNumber(currentYearEstimate?.eps) ||
+    !isNumber(nextYearEstimate?.revenue) ||
+    !isNumber(nextYearEstimate?.eps)
+  );
 const isInitialStockLoad = isStockLoading && !stockData?.symbol;
 const stockValue = (value) =>
   isInitialStockLoad
     ? "Loading..."
     : value;
 const estimateValue = (value) =>
-  isInitialStockLoad && (value === "N/A" || value === null || value === undefined)
+  (isInitialStockLoad || areEstimatesRefreshing) && (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
     : stockValue(value);
 const selectedEarningsDay = (earnings?.days || []).find(
@@ -3250,7 +3266,7 @@ return (
 
 <div className="chart-box">
 
-{isStockLoading || (isStockRefreshing && !revenueHistory.length) ? (
+{shouldShowHistoryLoading(revenueHistory) ? (
 
   <StockDataLoading label="Loading revenue history..." />
 
@@ -3326,7 +3342,7 @@ return (
 
   <div className="chart-box">
 
-    {isStockLoading || (isStockRefreshing && !earningsHistory.length) ? (
+    {shouldShowHistoryLoading(earningsHistory) ? (
 
       <StockDataLoading label="Loading net income history..." />
 
@@ -3405,7 +3421,7 @@ return (
 
   <div className="chart-box">
 
-    {isStockLoading || (isStockRefreshing && !epsHistory.length) ? (
+    {shouldShowHistoryLoading(epsHistory) ? (
 
       <StockDataLoading label="Loading EPS history..." />
 
@@ -3482,7 +3498,7 @@ return (
     color="#60a5fa"
     formatter={(value) => `${Number(value).toFixed(1)}x`}
     valueLabel="P/E"
-    loading={isInitialStockLoad}
+    loading={shouldShowHistoryLoading(historicalPeHistory)}
   />
   <HistoricalLineChart
     title={stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin History"}
@@ -3491,7 +3507,7 @@ return (
     color="#a78bfa"
     formatter={(value) => `${Number(value).toFixed(1)}%`}
     valueLabel={stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin"}
-    loading={isInitialStockLoad}
+    loading={shouldShowHistoryLoading(grossMarginHistory)}
   />
   <HistoricalLineChart
     title={stockData.isFinancialCompany ? "Pre-Tax Margin History" : "Operating Margin History"}
@@ -3500,7 +3516,7 @@ return (
     color="#f59e0b"
     formatter={(value) => `${Number(value).toFixed(1)}%`}
     valueLabel={stockData.isFinancialCompany ? "Pre-Tax Margin" : "Operating Margin"}
-    loading={isInitialStockLoad}
+    loading={shouldShowHistoryLoading(operatingMarginHistory)}
   />
   <HistoricalLineChart
     title="Profit Margin History"
@@ -3509,7 +3525,7 @@ return (
     color="#34d399"
     formatter={(value) => `${Number(value).toFixed(1)}%`}
     valueLabel="Profit Margin"
-    loading={isInitialStockLoad}
+    loading={shouldShowHistoryLoading(profitMarginHistory)}
   />
   <HistoricalLineChart
     title="Operating Cash Flow History"
@@ -3518,7 +3534,7 @@ return (
     color="#22d3ee"
     formatter={formatChartBillions}
     valueLabel="Operating Cash Flow"
-    loading={isInitialStockLoad}
+    loading={shouldShowHistoryLoading(operatingCashflowHistory)}
   />
   <HistoricalLineChart
     title="Free Cash Flow History"
@@ -3527,7 +3543,7 @@ return (
     color="#14b8a6"
     formatter={formatChartBillions}
     valueLabel="Free Cash Flow"
-    loading={isInitialStockLoad}
+    loading={shouldShowHistoryLoading(freeCashflowHistory)}
   />
   <HistoricalLineChart
     title="Shares Outstanding History"
@@ -3536,7 +3552,7 @@ return (
     color="#f472b6"
     formatter={formatSharesMillions}
     valueLabel="Shares"
-    loading={isInitialStockLoad}
+    loading={shouldShowHistoryLoading(sharesOutstandingHistory)}
   />
 </div>
 
