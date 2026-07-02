@@ -295,9 +295,113 @@ const addEasternCalendarDays = (parts, days) => {
 const getEasternWeekday = (parts) =>
   new Date(Date.UTC(parts.year, parts.month - 1, parts.day, 12)).getUTCDay();
 
-const isWeekdayMarketSession = (parts) => {
+const getMarketDateKey = ({ year, month, day }) =>
+  `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+const getNthWeekdayOfMonth = (year, month, weekday, occurrence) => {
+  let count = 0;
+  for (let day = 1; day <= 31; day += 1) {
+    const date = new Date(Date.UTC(year, month - 1, day, 12));
+    if (date.getUTCMonth() !== month - 1) break;
+    if (date.getUTCDay() === weekday) {
+      count += 1;
+      if (count === occurrence) return day;
+    }
+  }
+  return null;
+};
+
+const getLastWeekdayOfMonth = (year, month, weekday) => {
+  for (let day = 31; day >= 1; day -= 1) {
+    const date = new Date(Date.UTC(year, month - 1, day, 12));
+    if (date.getUTCMonth() === month - 1 && date.getUTCDay() === weekday) {
+      return day;
+    }
+  }
+  return null;
+};
+
+const getWesternEasterParts = (year) => {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return { year, month, day };
+};
+
+const getObservedFixedHolidayKey = (year, month, day) => {
+  const weekday = getEasternWeekday({ year, month, day });
+  if (weekday === 6) return getMarketDateKey(addEasternCalendarDays({ year, month, day }, -1));
+  if (weekday === 0) return getMarketDateKey(addEasternCalendarDays({ year, month, day }, 1));
+  return getMarketDateKey({ year, month, day });
+};
+
+const getNyseHolidayKeys = (year) => {
+  const holidays = new Set([
+    getObservedFixedHolidayKey(year, 1, 1),
+    getMarketDateKey({ year, month: 1, day: getNthWeekdayOfMonth(year, 1, 1, 3) }),
+    getMarketDateKey({ year, month: 2, day: getNthWeekdayOfMonth(year, 2, 1, 3) }),
+    getMarketDateKey(addEasternCalendarDays(getWesternEasterParts(year), -2)),
+    getMarketDateKey({ year, month: 5, day: getLastWeekdayOfMonth(year, 5, 1) }),
+    getObservedFixedHolidayKey(year, 6, 19),
+    getObservedFixedHolidayKey(year, 7, 4),
+    getMarketDateKey({ year, month: 9, day: getNthWeekdayOfMonth(year, 9, 1, 1) }),
+    getMarketDateKey({ year, month: 11, day: getNthWeekdayOfMonth(year, 11, 4, 4) }),
+    getObservedFixedHolidayKey(year, 12, 25),
+    getObservedFixedHolidayKey(year + 1, 1, 1),
+  ]);
+  return holidays;
+};
+
+const isNyseHoliday = (parts) =>
+  getNyseHolidayKeys(parts.year).has(getMarketDateKey(parts));
+
+const isMarketSessionDay = (parts) => {
   const day = getEasternWeekday(parts);
-  return day !== 0 && day !== 6;
+  return day !== 0 && day !== 6 && !isNyseHoliday(parts);
+};
+
+const isNyseEarlyClose = (parts) => {
+  if (!isMarketSessionDay(parts)) return false;
+  const nextDay = addEasternCalendarDays(parts, 1);
+  const nextDayAfter = addEasternCalendarDays(parts, 2);
+  const isDayAfterThanksgiving =
+    parts.month === 11 &&
+    getEasternWeekday(parts) === 5 &&
+    parts.day === getNthWeekdayOfMonth(parts.year, 11, 4, 4) + 1;
+  const isBeforeIndependenceDay =
+    nextDay.month === 7 && nextDay.day === 4;
+  const isFridayBeforeSaturdayIndependenceDay =
+    getEasternWeekday(parts) === 5 &&
+    nextDayAfter.month === 7 &&
+    nextDayAfter.day === 4;
+  const isChristmasEve = parts.month === 12 && parts.day === 24;
+  return isDayAfterThanksgiving || isBeforeIndependenceDay || isFridayBeforeSaturdayIndependenceDay || isChristmasEve;
+};
+
+const getMarketCloseParts = (parts) => ({
+  ...parts,
+  hour: isNyseEarlyClose(parts) ? 13 : 16,
+  minute: 0,
+  second: 0,
+});
+
+const getNextMarketSessionParts = (parts) => {
+  for (let offset = 1; offset <= 14; offset += 1) {
+    const nextParts = addEasternCalendarDays(parts, offset);
+    if (isMarketSessionDay(nextParts)) return nextParts;
+  }
+  return null;
 };
 
 const formatCountdownDuration = (milliseconds) => {
@@ -311,8 +415,8 @@ const formatCountdownDuration = (milliseconds) => {
 const getMarketClock = (now = new Date()) => {
   const parts = getEasternParts(now);
   const open = getEasternDateAsUtc({ ...parts, hour: 9, minute: 30, second: 0 });
-  const close = getEasternDateAsUtc({ ...parts, hour: 16, minute: 0, second: 0 });
-  const isTradingDay = isWeekdayMarketSession(parts);
+  const close = getEasternDateAsUtc(getMarketCloseParts(parts));
+  const isTradingDay = isMarketSessionDay(parts);
 
   if (isTradingDay && now >= open && now < close) {
     return {
@@ -330,16 +434,14 @@ const getMarketClock = (now = new Date()) => {
     };
   }
 
-  for (let offset = 1; offset <= 7; offset += 1) {
-    const nextParts = addEasternCalendarDays(parts, offset);
-    if (isWeekdayMarketSession(nextParts)) {
-      const nextOpen = getEasternDateAsUtc({ ...nextParts, hour: 9, minute: 30, second: 0 });
-      return {
-        label: "Market opens in",
-        value: formatCountdownDuration(nextOpen.getTime() - now.getTime()),
-        tone: "closed",
-      };
-    }
+  const nextParts = getNextMarketSessionParts(parts);
+  if (nextParts) {
+    const nextOpen = getEasternDateAsUtc({ ...nextParts, hour: 9, minute: 30, second: 0 });
+    return {
+      label: "Market opens in",
+      value: formatCountdownDuration(nextOpen.getTime() - now.getTime()),
+      tone: "closed",
+    };
   }
 
   return {
@@ -352,9 +454,9 @@ const getMarketClock = (now = new Date()) => {
 const getMarketEventSnapshot = (now = new Date()) => {
   const parts = getEasternParts(now);
   const open = getEasternDateAsUtc({ ...parts, hour: 9, minute: 30, second: 0 });
-  const close = getEasternDateAsUtc({ ...parts, hour: 16, minute: 0, second: 0 });
-  const isTradingDay = isWeekdayMarketSession(parts);
-  const sessionKey = `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+  const close = getEasternDateAsUtc(getMarketCloseParts(parts));
+  const isTradingDay = isMarketSessionDay(parts);
+  const sessionKey = getMarketDateKey(parts);
 
   if (!isTradingDay) {
     return { status: "closed", sessionKey, secondsToOpen: null, secondsToClose: null };
