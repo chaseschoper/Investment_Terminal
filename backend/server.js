@@ -40,6 +40,7 @@ const STOCK_FAILED_RETRY_MS = 30 * 1000;
 const MR_RALLY_AI_TIMEOUT_MS = 12000;
 const MR_RALLY_FAST_CONTEXT_TIMEOUT_MS = 3000;
 const MR_RALLY_WEB_CONTEXT_TIMEOUT_MS = 6000;
+const MR_RALLY_COMPANY_LOOKUP_TIMEOUT_MS = 2500;
 const STOCK_PROVIDER_TIMEOUT_MS = 8000;
 const STOCK_SLOW_PROVIDER_TIMEOUT_MS = 10000;
 const STOCK_INITIAL_SEC_TIMEOUT_MS = 9000;
@@ -6568,6 +6569,31 @@ const addResolvedSymbol = (symbols, value) => {
   }
 };
 
+const shouldUseCurrentTickerForMrRally = (message = "", intent = {}) => {
+  const normalizedMessage = normalizeCompanyName(message);
+  if (/\b(this company|this stock|current company|current stock|the company|the stock)\b/.test(normalizedMessage)) {
+    return true;
+  }
+
+  return Boolean(
+    intent.debt ||
+    intent.dividend ||
+    intent.forwardPe ||
+    intent.peg ||
+    intent.pe ||
+    intent.valuation ||
+    intent.estimates ||
+    intent.risk ||
+    intent.catalyst ||
+    intent.margins ||
+    intent.cashFlow ||
+    intent.target ||
+    intent.statementLineItem ||
+    intent.earningsCall ||
+    intent.companyFacts
+  );
+};
+
 async function resolveSymbolsFromCompanyName(message = "") {
   const symbols = new Set();
   const normalizedMessage = normalizeCompanyName(message);
@@ -6636,7 +6662,7 @@ async function resolveSymbolsFromCompanyName(message = "") {
   return [...symbols].slice(0, 5);
 }
 
-async function resolveMrRallySymbols(message = "", fallbackTicker = "") {
+async function resolveMrRallySymbols(message = "", fallbackTicker = "", intent = {}) {
   const explicitSymbols = extractStockSymbolsFromQuestion(message);
   if (explicitSymbols.length) return explicitSymbols;
 
@@ -6648,10 +6674,16 @@ async function resolveMrRallySymbols(message = "", fallbackTicker = "") {
     return extractStockSymbolsFromQuestion("", fallbackTicker);
   }
 
-  const companySymbols = await resolveSymbolsFromCompanyName(message);
+  const companySymbols = await resolveWithin(
+    resolveSymbolsFromCompanyName(message),
+    MR_RALLY_COMPANY_LOOKUP_TIMEOUT_MS,
+    []
+  );
   if (companySymbols.length) return companySymbols;
 
-  return extractStockSymbolsFromQuestion("", fallbackTicker);
+  return fallbackTicker && shouldUseCurrentTickerForMrRally(message, intent)
+    ? extractStockSymbolsFromQuestion("", fallbackTicker)
+    : [];
 }
 
 async function getMrRallyStockContext(ticker, intent = {}) {
@@ -6748,7 +6780,7 @@ const buildMrRallyFallbackAnswer = (question, contexts) => {
   const intent = getQuestionIntent(question);
   const usable = contexts.filter((item) => item && !item.error);
   if (!usable.length) {
-    return "I could not find enough reliable stock data for that question yet. Try asking with a specific ticker, like AMD, NKE, or FDX.";
+    return "I could not reach the AI answer service for that question yet. Ask again in a moment, or include a ticker if you want me to use MrktRally's saved stock data.";
   }
 
   return usable.map((item) => {
@@ -6792,6 +6824,11 @@ const buildMrRallyFallbackAnswer = (question, contexts) => {
       } else {
         lines.push("I could not find recent earnings-call context for that question yet.");
       }
+      return lines.join("\n");
+    }
+
+    if (intent.companyFacts) {
+      lines.push("I need the AI/current company profile service to answer that company-fact question cleanly. Try again in a moment.");
       return lines.join("\n");
     }
 
@@ -6953,7 +6990,8 @@ function buildMrRallyAiPrompt({ message, currentTicker, intent, history, context
     "You are Mr. Rally, the stock research chat inside MrktRally.",
     "Answer like a helpful ChatGPT-style market analyst, not like a database dump.",
     "Directly answer the user's exact question first. If they ask for one number, give that number and a short explanation only.",
-    "Use the provided MrktRally site data as the first trusted source when it is relevant.",
+    "Use the provided MrktRally site data as the first trusted source only when it is relevant to the exact company or topic the user asked about.",
+    "If no MrktRally site context is provided, answer the user's stock, market, investing, or company question directly from your own knowledge and current public sources when search is available.",
     canUseLiveWeb
       ? "If MrktRally does not have the requested data, use web search/current public sources to answer."
       : "If MrktRally does not have the requested data, answer from the model's general knowledge only when appropriate and clearly say when current market data is not available.",
@@ -6977,7 +7015,7 @@ function buildMrRallyAiPrompt({ message, currentTicker, intent, history, context
 }
 
 async function buildMrRallyOpenAiAnswer({ message, currentTicker, intent, history, contexts }) {
-  const canUseLiveWeb = Boolean(intent.currentEvents || intent.earningsCall || intent.companyFacts);
+  const canUseLiveWeb = Boolean(!contexts.length || intent.currentEvents || intent.earningsCall || intent.companyFacts);
   const { instructions, userInput } = buildMrRallyAiPrompt({
     message,
     currentTicker,
@@ -7034,7 +7072,7 @@ async function buildMrRallyOpenAiAnswer({ message, currentTicker, intent, histor
 }
 
 async function buildMrRallyGeminiAnswer({ message, currentTicker, intent, history, contexts }) {
-  const canUseLiveWeb = Boolean(intent.currentEvents || intent.earningsCall || intent.companyFacts);
+  const canUseLiveWeb = Boolean(!contexts.length || intent.currentEvents || intent.earningsCall || intent.companyFacts);
   const { instructions, userInput } = buildMrRallyAiPrompt({
     message,
     currentTicker,
@@ -7137,7 +7175,7 @@ app.post("/api/mr-rally-chat", async (req, res) => {
       return res.status(400).json({ error: "Ask Mr. Rally a question first." });
     }
 
-    const symbols = await resolveMrRallySymbols(message, currentTicker);
+    const symbols = await resolveMrRallySymbols(message, currentTicker, intent);
     const contexts = (await Promise.all(symbols.map((symbol) =>
       getMrRallyStockContext(symbol, intent)
     ))).filter(Boolean);
