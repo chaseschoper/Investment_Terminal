@@ -10,7 +10,7 @@ html {
 }
 
 body {
-  background: #05080d;
+  background: #02040a;
   color: white;
   font-family: Inter, sans-serif;
 }
@@ -32,8 +32,8 @@ body {
   padding: 64px clamp(24px, 7vw, 112px);
   background-color: rgba(5, 10, 14, 0.42);
   background-image:
-    radial-gradient(circle at 16% 12%, rgba(56, 189, 248, 0.14), transparent 30%),
-    linear-gradient(145deg, rgba(5, 8, 13, 0.88) 0%, rgba(11, 18, 32, 0.58) 48%, rgba(7, 17, 31, 0.82) 100%),
+    radial-gradient(circle at 16% 12%, rgba(56, 189, 248, 0.08), transparent 26%),
+    linear-gradient(145deg, rgba(2, 4, 10, 0.94) 0%, rgba(5, 8, 14, 0.78) 52%, rgba(2, 4, 10, 0.95) 100%),
     url("/mrktrally-hero.png");
   background-blend-mode: multiply;
   background-size: cover;
@@ -149,9 +149,9 @@ body {
 .app {
   min-height: 100vh;
   background:
-    radial-gradient(circle at 14% 8%, rgba(56, 189, 248, 0.12), transparent 28%),
-    radial-gradient(circle at 90% 18%, rgba(20, 184, 166, 0.06), transparent 32%),
-    linear-gradient(145deg, #05080d 0%, #0b1220 46%, #07111f 100%);
+    radial-gradient(circle at 12% 6%, rgba(56, 189, 248, 0.07), transparent 24%),
+    radial-gradient(circle at 88% 16%, rgba(20, 184, 166, 0.04), transparent 28%),
+    linear-gradient(145deg, #02040a 0%, #05080d 48%, #03060c 100%);
 }
 
 .layout {
