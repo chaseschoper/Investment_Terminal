@@ -5190,8 +5190,6 @@ app.get("/api/market-indices", async (req, res) => {
   };
 
   const fetchYahooChartIndex = async (index) => {
-    if (!canUseYahoo()) return null;
-
     const response = await axios.get(
       `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(index.yahooSymbol)}`,
       {
@@ -5236,8 +5234,6 @@ app.get("/api/market-indices", async (req, res) => {
   };
 
   const fetchYahooIndex = async (index) => {
-    if (!canUseYahoo()) return null;
-
     const quote = await resolveWithin(
       yahooFinance.quote(index.yahooSymbol),
       3500,
@@ -5257,7 +5253,7 @@ app.get("/api/market-indices", async (req, res) => {
   };
 
   const fetchYahooFuture = async (index) => {
-    if (!canUseYahoo() || !index.futuresSymbol) return null;
+    if (!index.futuresSymbol) return null;
 
     const quote = await resolveWithin(
       yahooFinance.quote(index.futuresSymbol).catch(() => null),
@@ -5309,12 +5305,12 @@ app.get("/api/market-indices", async (req, res) => {
 
   const fetchBestIndexQuote = async (index) => {
     const sources = [
-      ["Yahoo chart", fetchYahooChartIndex],
       ["Yahoo quote", fetchYahooIndex],
-      ["Investing.com", fetchInvestingIndex]
+      ["Yahoo chart", fetchYahooChartIndex]
     ];
-    const attempts = sources.map(([label, fetchIndex]) =>
-      resolveWithin(Promise.resolve()
+
+    for (const [label, fetchIndex] of sources) {
+      const quote = await resolveWithin(Promise.resolve()
         .then(() => fetchIndex(index))
         .then((indexQuote) => {
           if (!indexQuote) throw new Error(`Missing ${index.label} ${label} quote`);
@@ -5326,11 +5322,12 @@ app.get("/api/market-indices", async (req, res) => {
           }
           console.log(`Market index ${label} skipped:`, index.label, err.response?.status || err.message);
           return null;
-        }), label === "Investing.com" ? 2600 : 2200, null)
-    );
+        }), 2600, null);
 
-    const settled = await Promise.all(attempts);
-    return settled.find(Boolean) || null;
+      if (quote) return quote;
+    }
+
+    return null;
   };
 
   const fetchFreshIndices = async () => {
