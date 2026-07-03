@@ -10,7 +10,7 @@ html {
 }
 
 body {
-  background: #0b0f14;
+  background: #08111c;
   color: white;
   font-family: Inter, sans-serif;
 }
@@ -31,7 +31,9 @@ body {
   align-items: center;
   padding: 64px clamp(24px, 7vw, 112px);
   background-color: rgba(5, 10, 14, 0.42);
-  background-image: url("/mrktrally-hero.png");
+  background-image:
+    linear-gradient(105deg, rgba(5, 12, 22, 0.74), rgba(8, 28, 48, 0.28) 48%, rgba(20, 184, 166, 0.14)),
+    url("/mrktrally-hero.png");
   background-blend-mode: multiply;
   background-size: cover;
   background-position: center;
@@ -145,7 +147,10 @@ body {
 
 .app {
   min-height: 100vh;
-  background: #0b0f14;
+  background:
+    linear-gradient(135deg, rgba(37, 99, 235, 0.15), transparent 34%),
+    linear-gradient(315deg, rgba(20, 184, 166, 0.1), transparent 38%),
+    linear-gradient(180deg, #08111c 0%, #0b0f14 44%, #07111b 100%);
 }
 
 .layout {
