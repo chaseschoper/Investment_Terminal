@@ -982,7 +982,7 @@ const handleForgotPassword = async () => {
         : response.data.emailError
           ? response.data.emailError
         : response.data.emailSent === false
-          ? "Password reset email is not configured yet. Add SMTP settings in Render, then try again."
+          ? "Password reset email is not configured yet. Add Resend or SMTP settings in Render, then try again."
         : response.data.message || "If that email is on MrktRally, a reset link will be sent."
     );
   } catch (err) {

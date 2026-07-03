@@ -8,7 +8,18 @@ Google sign-in needs the same OAuth client ID in both places:
 - Backend Render env: `GOOGLE_CLIENT_ID`
 - Frontend Vercel env: `VITE_GOOGLE_CLIENT_ID`
 
-Password reset emails need SMTP env vars on the backend:
+Password reset emails can use Resend, which works better on Render than Gmail SMTP:
+
+- `FRONTEND_URL`
+- `RESEND_API_KEY`
+- `RESEND_FROM`
+
+Example Resend values:
+
+- `RESEND_API_KEY=re_xxxxxxxxx`
+- `RESEND_FROM=MrktRally <onboarding@resend.dev>`
+
+Or password reset emails can use SMTP env vars on the backend:
 
 - `FRONTEND_URL`
 - `SMTP_HOST`

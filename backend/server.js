@@ -229,7 +229,37 @@ const getFrontendUrl = (req) =>
   req.get("origin") ||
   "http://localhost:5173";
 
+const buildPasswordResetEmail = (resetUrl) => ({
+  subject: "Reset your MrktRally password",
+  text: `Use this link to reset your MrktRally password. It expires in 1 hour:\n\n${resetUrl}`,
+  html: `<p>Use this link to reset your MrktRally password. It expires in 1 hour.</p><p><a href="${resetUrl}">Reset password</a></p>`
+});
+
 const sendPasswordResetEmail = async ({ to, resetUrl }) => {
+  const email = buildPasswordResetEmail(resetUrl);
+
+  if (process.env.RESEND_API_KEY) {
+    await axios.post(
+      "https://api.resend.com/emails",
+      {
+        from: process.env.RESEND_FROM || process.env.SMTP_FROM || "MrktRally <onboarding@resend.dev>",
+        to: [to],
+        subject: email.subject,
+        text: email.text,
+        html: email.html
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+          "Content-Type": "application/json",
+          "User-Agent": "MrktRally/1.0"
+        },
+        timeout: 12000
+      }
+    );
+    return true;
+  }
+
   if (!process.env.SMTP_HOST) return false;
 
   const port = Number(process.env.SMTP_PORT || 587);
@@ -252,9 +282,9 @@ const sendPasswordResetEmail = async ({ to, resetUrl }) => {
   await transporter.sendMail({
     from: process.env.SMTP_FROM || process.env.SMTP_USER || "no-reply@mrktrally.com",
     to,
-    subject: "Reset your MrktRally password",
-    text: `Use this link to reset your MrktRally password. It expires in 1 hour:\n\n${resetUrl}`,
-    html: `<p>Use this link to reset your MrktRally password. It expires in 1 hour.</p><p><a href="${resetUrl}">Reset password</a></p>`
+    subject: email.subject,
+    text: email.text,
+    html: email.html
   });
 
   return true;
@@ -9010,7 +9040,7 @@ if (!emailSent) {
 
 res.json({
   ...genericResponse,
-  emailConfigured: Boolean(process.env.SMTP_HOST),
+  emailConfigured: Boolean(process.env.RESEND_API_KEY || process.env.SMTP_HOST),
   emailSent,
   emailError: emailSent ? undefined : "Password reset email could not be sent. Check SMTP settings in Render.",
   resetLink: !emailSent && process.env.ALLOW_RESET_LINK_RESPONSE === "true" ? resetUrl : undefined
