@@ -6,6 +6,7 @@ const cors = require("cors");
 const axios = require("axios");
 const cheerio = require("cheerio");
 const https = require("https");
+const dns = require("dns");
 const zlib = require("zlib");
 const mongoose = require("mongoose");
 const yahooFinance = require("yahoo-finance2").default;
@@ -20,6 +21,8 @@ const nodemailer = require("nodemailer");
 const Stock = require("./models/Stock");
 const User = require("./models/User");
 const EarningsCall = require("./models/EarningsCall");
+
+dns.setDefaultResultOrder("ipv4first");
 
 const app = express();
 const openai = process.env.OPENAI_API_KEY
@@ -234,6 +237,7 @@ const sendPasswordResetEmail = async ({ to, resetUrl }) => {
     host: process.env.SMTP_HOST,
     port,
     secure: port === 465,
+    family: 4,
     connectionTimeout: 10000,
     greetingTimeout: 10000,
     socketTimeout: 15000,
