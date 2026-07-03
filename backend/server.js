@@ -234,10 +234,13 @@ const sendPasswordResetEmail = async ({ to, resetUrl }) => {
     host: process.env.SMTP_HOST,
     port,
     secure: port === 465,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
     auth: process.env.SMTP_USER
       ? {
           user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS
+          pass: String(process.env.SMTP_PASS || "").replace(/\s/g, "")
         }
       : undefined
   });
@@ -8987,7 +8990,15 @@ user.passwordResetExpires = new Date(Date.now() + 60 * 60 * 1000);
 await user.save();
 
 const resetUrl = `${getFrontendUrl(req).replace(/\/$/, "")}/?resetToken=${encodeURIComponent(resetToken)}&email=${encodeURIComponent(user.email)}`;
-const emailSent = await sendPasswordResetEmail({ to: user.email, resetUrl });
+let emailSent = false;
+let emailError = "";
+
+try {
+  emailSent = await sendPasswordResetEmail({ to: user.email, resetUrl });
+} catch (err) {
+  emailError = err?.response || err?.message || "Email send failed";
+  console.error("Password reset email failed:", emailError);
+}
 
 if (!emailSent) {
   console.log(`Password reset link for ${user.email}: ${resetUrl}`);
@@ -8997,6 +9008,7 @@ res.json({
   ...genericResponse,
   emailConfigured: Boolean(process.env.SMTP_HOST),
   emailSent,
+  emailError: emailSent ? undefined : "Password reset email could not be sent. Check SMTP settings in Render.",
   resetLink: !emailSent && process.env.ALLOW_RESET_LINK_RESPONSE === "true" ? resetUrl : undefined
 });
 

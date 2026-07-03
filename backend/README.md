@@ -27,3 +27,5 @@ Example Gmail SMTP values:
 - `SMTP_USER=yourgmail@gmail.com`
 - `SMTP_PASS=your_google_app_password`
 - `SMTP_FROM=MrktRally <yourgmail@gmail.com>`
+
+Google shows app passwords in groups with spaces. Render can store it either way; the backend removes spaces before sending.

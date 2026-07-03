@@ -2722,6 +2722,12 @@ body {
   outline: none;
 }
 
+.auth-box button:disabled {
+  cursor: wait;
+  opacity: 0.68;
+  filter: none;
+}
+
 .auth-secondary-button {
   background: #0b1117 !important;
   color: #d1d5db !important;

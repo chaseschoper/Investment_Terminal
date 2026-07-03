@@ -851,6 +851,7 @@ function App() {
   const [showAuth, setShowAuth] = useState(false);
   const [authPrompt, setAuthPrompt] = useState("");
   const [authMessage, setAuthMessage] = useState("");
+  const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
   const [marketEventToast, setMarketEventToast] = useState(null);
   const googleButtonRef = useRef(null);
 const [isLogin, setIsLogin] = useState(true);
@@ -911,6 +912,7 @@ const completeAuth = async (data, successMessage) => {
 const handleAuth = async () => {
 
   try {
+    setIsAuthSubmitting(true);
 
     const endpoint = isLogin
       ? `${API_URL}/api/login`
@@ -947,11 +949,14 @@ const handleAuth = async () => {
       err.response?.data?.error ||
       "Authentication failed"
     );
+  } finally {
+    setIsAuthSubmitting(false);
   }
 };
 
 const handleGoogleCredential = async (credential) => {
   try {
+    setIsAuthSubmitting(true);
     const response = await axios.post(`${API_URL}/api/google-login`, {
       credential
     });
@@ -959,17 +964,23 @@ const handleGoogleCredential = async (credential) => {
   } catch (err) {
     console.error(err);
     alert(err.response?.data?.error || "Google sign-in failed");
+  } finally {
+    setIsAuthSubmitting(false);
   }
 };
 
 const handleForgotPassword = async () => {
   try {
+    setIsAuthSubmitting(true);
+    setAuthMessage("Sending reset link...");
     const response = await axios.post(`${API_URL}/api/forgot-password`, {
       email
     });
     setAuthMessage(
       response.data.resetLink
         ? `Reset link created: ${response.data.resetLink}`
+        : response.data.emailError
+          ? response.data.emailError
         : response.data.emailSent === false
           ? "Password reset email is not configured yet. Add SMTP settings in Render, then try again."
         : response.data.message || "If that email is on MrktRally, a reset link will be sent."
@@ -977,11 +988,14 @@ const handleForgotPassword = async () => {
   } catch (err) {
     console.error(err);
     alert(err.response?.data?.error || "Password reset request failed");
+  } finally {
+    setIsAuthSubmitting(false);
   }
 };
 
 const handleResetPassword = async () => {
   try {
+    setIsAuthSubmitting(true);
     const response = await axios.post(`${API_URL}/api/reset-password`, {
       email,
       token: passwordResetToken,
@@ -991,6 +1005,8 @@ const handleResetPassword = async () => {
   } catch (err) {
     console.error(err);
     alert(err.response?.data?.error || "Password reset failed");
+  } finally {
+    setIsAuthSubmitting(false);
   }
 };
 
@@ -5242,6 +5258,7 @@ return (
       ) : null}
 
       <button
+        disabled={isAuthSubmitting}
         onClick={
           isRecoveringPassword
             ? passwordResetToken
@@ -5250,7 +5267,9 @@ return (
             : handleAuth
         }
       >
-        {isRecoveringPassword
+        {isAuthSubmitting
+          ? "Working..."
+          : isRecoveringPassword
           ? passwordResetToken
             ? "Reset Password"
             : "Send Reset Link"
