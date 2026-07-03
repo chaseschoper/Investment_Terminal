@@ -1340,21 +1340,21 @@ useEffect(() => {
         timeout: 4200,
       });
       if (isActive) {
-        const indices = Array.isArray(response.data.indices)
-          ? response.data.indices
-          : null;
-        if (indices) {
-          setMarketIndices(() => {
-            const freshByKey = new Map(indices.map((index) => [index.key, index]));
-            const fresh = MARKET_INDEX_ORDER
-              .map((item) => freshByKey.get(item.key))
+        const indices = response.data.indices || [];
+        if (indices.length) {
+          setMarketIndices((previous) => {
+            const mergedByKey = new Map((previous || []).map((index) => [index.key, index]));
+            indices.forEach((index) => {
+              mergedByKey.set(index.key, {
+                ...(mergedByKey.get(index.key) || {}),
+                ...index
+              });
+            });
+            const merged = MARKET_INDEX_ORDER
+              .map((item) => mergedByKey.get(item.key))
               .filter(Boolean);
-            if (fresh.length) {
-              localStorage.setItem(MARKET_INDICES_STORAGE_KEY, JSON.stringify(fresh));
-            } else {
-              localStorage.removeItem(MARKET_INDICES_STORAGE_KEY);
-            }
-            return fresh;
+            localStorage.setItem(MARKET_INDICES_STORAGE_KEY, JSON.stringify(merged));
+            return merged;
           });
         }
       }
