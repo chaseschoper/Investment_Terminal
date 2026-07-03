@@ -19,3 +19,11 @@ Password reset emails need SMTP env vars on the backend:
 
 If SMTP is not configured, reset links are logged by the backend in development.
 Set `ALLOW_RESET_LINK_RESPONSE=true` only for local testing if you want the API to return reset links directly.
+
+Example Gmail SMTP values:
+
+- `SMTP_HOST=smtp.gmail.com`
+- `SMTP_PORT=587`
+- `SMTP_USER=yourgmail@gmail.com`
+- `SMTP_PASS=your_google_app_password`
+- `SMTP_FROM=MrktRally <yourgmail@gmail.com>`

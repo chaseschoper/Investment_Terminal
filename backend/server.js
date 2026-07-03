@@ -8995,6 +8995,7 @@ if (!emailSent) {
 
 res.json({
   ...genericResponse,
+  emailConfigured: Boolean(process.env.SMTP_HOST),
   emailSent,
   resetLink: !emailSent && process.env.ALLOW_RESET_LINK_RESPONSE === "true" ? resetUrl : undefined
 });
