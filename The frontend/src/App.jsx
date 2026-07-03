@@ -1328,9 +1328,11 @@ useEffect(() => {
   let refreshTimer;
   let retryTimer;
 
-  const scheduleRetry = (attempt) => {
+  const scheduleRetry = (attempt, quick = false) => {
     if (!isActive) return;
-    const retryDelay = Math.min(10000, 1500 + attempt * 1500);
+    const retryDelay = quick
+      ? Math.min(3500, 800 + attempt * 700)
+      : Math.min(10000, 1500 + attempt * 1500);
     if (retryTimer) window.clearTimeout(retryTimer);
     retryTimer = window.setTimeout(() => {
       loadPriceHistory(false, attempt + 1);
@@ -1353,6 +1355,8 @@ useEffect(() => {
       }
     }
 
+    let keepLoading = false;
+
     try {
       const response = await axios.get(
         `${API_URL}/api/price-history/${ticker}`,
@@ -1369,6 +1373,23 @@ useEffect(() => {
 
       const points = response.data.points || [];
       const latest = response.data.latest || null;
+      const isFallbackHistory =
+        response.data.stale && response.data.interval === "fallback";
+
+      if (isFallbackHistory) {
+        setStockChartMeta(latest);
+        if (cachedChart?.points?.length) {
+          setStockChartData(cachedChart.points);
+          setStockChartError("Chart history is refreshing...");
+        } else {
+          setStockChartData([]);
+          setStockChartError("Chart history is loading...");
+          keepLoading = true;
+        }
+        scheduleRetry(attempt, true);
+        return;
+      }
+
       if (points.length) {
         stockChartMemoryCacheRef.current.set(cacheKey, {
           points,
@@ -1397,7 +1418,7 @@ useEffect(() => {
       }
     } finally {
       if (isActive) {
-        setIsStockChartLoading(false);
+        setIsStockChartLoading(keepLoading);
       }
     }
   };
@@ -3132,11 +3153,16 @@ return (
             formatter={(value) => [formatPrice(value), "Price"]}
           />
           <Line
+            key={`${ticker}-${stockChartRange}-${stockChartData.length}-${stockChartData[0]?.time || ""}-${stockChartData[stockChartData.length - 1]?.time || ""}`}
             type="monotone"
             dataKey="price"
             stroke="url(#priceLineGradient)"
             strokeWidth={3}
             dot={false}
+            isAnimationActive
+            animationBegin={80}
+            animationDuration={900}
+            animationEasing="ease-out"
             activeDot={{
               r: 5,
               stroke: "#f8fafc",
