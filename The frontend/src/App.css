@@ -2727,6 +2727,16 @@ body {
   color: #d1d5db !important;
 }
 
+.google-auth-button {
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+}
+
+.google-auth-button iframe {
+  color-scheme: normal;
+}
+
 .auth-switch {
   margin: 4px 0 0;
   color: #93c5fd;

@@ -850,7 +850,9 @@ function App() {
   const speechUtteranceRef = useRef(null);
   const [showAuth, setShowAuth] = useState(false);
   const [authPrompt, setAuthPrompt] = useState("");
+  const [authMessage, setAuthMessage] = useState("");
   const [marketEventToast, setMarketEventToast] = useState(null);
+  const googleButtonRef = useRef(null);
 const [isLogin, setIsLogin] = useState(true);
 
 const [username, setUsername] = useState("");
@@ -858,6 +860,10 @@ const [username, setUsername] = useState("");
 const [email, setEmail] = useState("");
 
 const [password, setPassword] = useState("");
+const [resetPassword, setResetPassword] = useState("");
+const [isRecoveringPassword, setIsRecoveringPassword] = useState(false);
+const [passwordResetToken, setPasswordResetToken] = useState("");
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 
 const handleSignOut = () => {
   localStorage.removeItem("token");
@@ -869,15 +875,37 @@ const handleSignOut = () => {
   setNamedWatchlists([]);
   setSavedProjections({});
   setAuthPrompt("");
+  setAuthMessage("");
   setShowAuth(false);
 };
 
 const requireAuth = (message = "Log in or sign up to save this.") => {
   if (user) return true;
   setAuthPrompt(message);
+  setAuthMessage("");
   setIsLogin(true);
+  setIsRecoveringPassword(false);
   setShowAuth(true);
   return false;
+};
+
+const completeAuth = async (data, successMessage) => {
+  if (data.user) {
+    setUser(data.user);
+    localStorage.setItem("token", data.token);
+    localStorage.setItem("user", JSON.stringify(data.user));
+  }
+
+  setShowAuth(false);
+  setAuthPrompt("");
+  setAuthMessage("");
+  setIsRecoveringPassword(false);
+  setPasswordResetToken("");
+  setPassword("");
+  setResetPassword("");
+
+  alert(successMessage);
+  await loadUserData();
 };
 
 const handleAuth = async () => {
@@ -904,34 +932,12 @@ const handleAuth = async () => {
       body
     );
 
-    if (response.data.user) {
-
-      setUser(
-        response.data.user
-      );
-
-      localStorage.setItem(
-        "token",
-        response.data.token
-      );
-
-      localStorage.setItem(
-        "user",
-        JSON.stringify(
-          response.data.user
-        )
-      );
-    }
-
-    alert(
+    await completeAuth(
+      response.data,
       isLogin
         ? "Login successful"
         : "Account created"
     );
-setShowAuth(false);
-setAuthPrompt("");
-
-await loadUserData();
 
   } catch (err) {
 
@@ -943,6 +949,111 @@ await loadUserData();
     );
   }
 };
+
+const handleGoogleCredential = async (credential) => {
+  try {
+    const response = await axios.post(`${API_URL}/api/google-login`, {
+      credential
+    });
+    await completeAuth(response.data, "Google sign-in successful");
+  } catch (err) {
+    console.error(err);
+    alert(err.response?.data?.error || "Google sign-in failed");
+  }
+};
+
+const handleForgotPassword = async () => {
+  try {
+    const response = await axios.post(`${API_URL}/api/forgot-password`, {
+      email
+    });
+    setAuthMessage(
+      response.data.resetLink
+        ? `Reset link created: ${response.data.resetLink}`
+        : response.data.message || "If that email is on MrktRally, a reset link will be sent."
+    );
+  } catch (err) {
+    console.error(err);
+    alert(err.response?.data?.error || "Password reset request failed");
+  }
+};
+
+const handleResetPassword = async () => {
+  try {
+    const response = await axios.post(`${API_URL}/api/reset-password`, {
+      email,
+      token: passwordResetToken,
+      password: resetPassword
+    });
+    await completeAuth(response.data, "Password reset successful");
+  } catch (err) {
+    console.error(err);
+    alert(err.response?.data?.error || "Password reset failed");
+  }
+};
+
+useEffect(() => {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get("resetToken");
+  const resetEmail = params.get("email");
+  if (!token) return;
+
+  setPasswordResetToken(token);
+  setEmail(resetEmail || "");
+  setIsLogin(true);
+  setIsRecoveringPassword(true);
+  setShowAuth(true);
+  setAuthPrompt("Enter a new password to finish recovering your account.");
+  setAuthMessage("");
+
+  params.delete("resetToken");
+  params.delete("email");
+  const nextQuery = params.toString();
+  window.history.replaceState(
+    {},
+    "",
+    `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`
+  );
+}, []);
+
+useEffect(() => {
+  if (!showAuth || !isLogin || isRecoveringPassword || !GOOGLE_CLIENT_ID || !googleButtonRef.current) return;
+
+  const renderGoogleButton = () => {
+    if (!window.google?.accounts?.id || !googleButtonRef.current) return;
+    googleButtonRef.current.innerHTML = "";
+    window.google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: (response) => handleGoogleCredential(response.credential)
+    });
+    window.google.accounts.id.renderButton(googleButtonRef.current, {
+      theme: "filled_black",
+      size: "large",
+      type: "standard",
+      shape: "rectangular",
+      width: 330,
+      text: "continue_with"
+    });
+  };
+
+  if (window.google?.accounts?.id) {
+    renderGoogleButton();
+    return;
+  }
+
+  const existingScript = document.querySelector("script[src='https://accounts.google.com/gsi/client']");
+  if (existingScript) {
+    existingScript.addEventListener("load", renderGoogleButton, { once: true });
+    return;
+  }
+
+  const script = document.createElement("script");
+  script.src = "https://accounts.google.com/gsi/client";
+  script.async = true;
+  script.defer = true;
+  script.addEventListener("load", renderGoogleButton, { once: true });
+  document.body.appendChild(script);
+}, [showAuth, isLogin, isRecoveringPassword, GOOGLE_CLIENT_ID]);
 
 
 
@@ -5071,9 +5182,11 @@ return (
     <div className="auth-box">
 
       <h2>
-        {isLogin
-          ? "Login"
-          : "Create Account"}
+        {isRecoveringPassword
+          ? "Reset Password"
+          : isLogin
+            ? "Login"
+            : "Create Account"}
       </h2>
 
       {authPrompt && (
@@ -5082,7 +5195,13 @@ return (
         </div>
       )}
 
-      {!isLogin && (
+      {authMessage && (
+        <div className="auth-required-message">
+          {authMessage}
+        </div>
+      )}
+
+      {!isLogin && !isRecoveringPassword && (
         <input
           placeholder="Username"
           value={username}
@@ -5100,30 +5219,83 @@ return (
         }
       />
 
-      <input
-        type="password"
-        placeholder="Password"
-        value={password}
-        onChange={(e) =>
-          setPassword(e.target.value)
-        }
-      />
+      {isRecoveringPassword && passwordResetToken ? (
+        <input
+          type="password"
+          placeholder="New password"
+          value={resetPassword}
+          onChange={(e) =>
+            setResetPassword(e.target.value)
+          }
+        />
+      ) : !isRecoveringPassword ? (
+        <input
+          type="password"
+          placeholder="Password"
+          value={password}
+          onChange={(e) =>
+            setPassword(e.target.value)
+          }
+        />
+      ) : null}
 
-      <button onClick={handleAuth}>
-        {isLogin
-          ? "Login"
-          : "Create Account"}
+      <button
+        onClick={
+          isRecoveringPassword
+            ? passwordResetToken
+              ? handleResetPassword
+              : handleForgotPassword
+            : handleAuth
+        }
+      >
+        {isRecoveringPassword
+          ? passwordResetToken
+            ? "Reset Password"
+            : "Send Reset Link"
+          : isLogin
+            ? "Login"
+            : "Create Account"}
       </button>
+
+      {isLogin && !isRecoveringPassword && (
+        <>
+          {GOOGLE_CLIENT_ID ? (
+            <div className="google-auth-button" ref={googleButtonRef} />
+          ) : (
+            <div className="auth-required-message">
+              Google sign-in needs a Google Client ID added first.
+            </div>
+          )}
+
+          <p
+            className="auth-switch"
+            onClick={() => {
+              setIsRecoveringPassword(true);
+              setPasswordResetToken("");
+              setAuthPrompt("");
+              setAuthMessage("");
+            }}
+          >
+            Forgot password?
+          </p>
+        </>
+      )}
 
       <p
         className="auth-switch"
-        onClick={() =>
-          setIsLogin(!isLogin)
-        }
+        onClick={() => {
+          setIsLogin(!isLogin);
+          setIsRecoveringPassword(false);
+          setPasswordResetToken("");
+          setAuthPrompt("");
+          setAuthMessage("");
+        }}
       >
-        {isLogin
-          ? "Need an account? Sign up"
-          : "Already have an account? Login"}
+        {isRecoveringPassword
+          ? "Back to login"
+          : isLogin
+            ? "Need an account? Sign up"
+            : "Already have an account? Login"}
       </p>
 
       <button

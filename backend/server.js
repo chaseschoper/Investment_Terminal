@@ -11,9 +11,11 @@ const mongoose = require("mongoose");
 const yahooFinance = require("yahoo-finance2").default;
 const OpenAI = require("openai");
 const { PDFParse } = require("pdf-parse");
+const crypto = require("crypto");
 
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const nodemailer = require("nodemailer");
 
 const Stock = require("./models/Stock");
 const User = require("./models/User");
@@ -195,6 +197,60 @@ next();
 } catch (err) {
 return res.status(401).json({ error: "Invalid token" });
 }
+};
+
+const toSafeUser = (user) => {
+  const plainUser = user?.toObject ? user.toObject() : { ...(user || {}) };
+  delete plainUser.password;
+  delete plainUser.passwordResetToken;
+  delete plainUser.passwordResetExpires;
+  return plainUser;
+};
+
+const createAuthResponse = (user) => ({
+  success: true,
+  token: jwt.sign(
+    { id: user._id },
+    process.env.JWT_SECRET,
+    { expiresIn: "7d" }
+  ),
+  user: toSafeUser(user)
+});
+
+const hashPasswordResetToken = (token) =>
+  crypto.createHash("sha256").update(token).digest("hex");
+
+const getFrontendUrl = (req) =>
+  process.env.FRONTEND_URL ||
+  process.env.CLIENT_URL ||
+  req.get("origin") ||
+  "http://localhost:5173";
+
+const sendPasswordResetEmail = async ({ to, resetUrl }) => {
+  if (!process.env.SMTP_HOST) return false;
+
+  const port = Number(process.env.SMTP_PORT || 587);
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port,
+    secure: port === 465,
+    auth: process.env.SMTP_USER
+      ? {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS
+        }
+      : undefined
+  });
+
+  await transporter.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER || "no-reply@mrktrally.com",
+    to,
+    subject: "Reset your MrktRally password",
+    text: `Use this link to reset your MrktRally password. It expires in 1 hour:\n\n${resetUrl}`,
+    html: `<p>Use this link to reset your MrktRally password. It expires in 1 hour.</p><p><a href="${resetUrl}">Reset password</a></p>`
+  });
+
+  return true;
 };
 
 
@@ -8806,32 +8862,28 @@ app.get("/api/earnings", async (req, res) => {
 app.post("/api/signup", async (req, res) => {
 try {
 const { username, email, password } = req.body;
+const normalizedEmail = String(email || "").trim().toLowerCase();
+
+if (!username || !normalizedEmail || !password) {
+  return res.status(400).json({ error: "Username, email, and password are required" });
+}
 
 
-const exists = await User.findOne({ email });
+const exists = await User.findOne({ email: normalizedEmail });
 if (exists) return res.status(400).json({ error: "User exists" });
 
 const hashed = await bcrypt.hash(password, 10);
 
 const user = new User({
   username,
-  email,
-  password: hashed
+  email: normalizedEmail,
+  password: hashed,
+  authProvider: "password"
 });
 
 await user.save();
 
-const token = jwt.sign(
-  { id: user._id },
-  process.env.JWT_SECRET,
-  { expiresIn: "7d" }
-);
-
-res.json({
-  success: true,
-  token,
-  user
-});
+res.json(createAuthResponse(user));
 
 
 } catch (err) {
@@ -8844,30 +8896,146 @@ res.status(500).json({ error: "Signup failed" });
 app.post("/api/login", async (req, res) => {
 try {
 const { email, password } = req.body;
+const normalizedEmail = String(email || "").trim().toLowerCase();
 
 
-const user = await User.findOne({ email });
+const user = await User.findOne({ email: normalizedEmail });
 if (!user) return res.status(400).json({ error: "Invalid credentials" });
+if (!user.password) {
+  return res.status(400).json({ error: "Use Google sign-in for this account or reset your password" });
+}
 
 const valid = await bcrypt.compare(password, user.password);
 if (!valid) return res.status(400).json({ error: "Invalid credentials" });
 
-const token = jwt.sign(
-  { id: user._id },
-  process.env.JWT_SECRET,
-  { expiresIn: "7d" }
-);
-
-res.json({
-  success: true,
-  token,
-  user
-});
-
+res.json(createAuthResponse(user));
 
 } catch (err) {
 console.error(err);
 res.status(500).json({ error: "Login failed" });
+}
+});
+
+app.post("/api/google-login", async (req, res) => {
+try {
+const { credential } = req.body;
+const googleClientId = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID;
+
+if (!googleClientId) {
+  return res.status(500).json({ error: "Google sign-in is not configured yet" });
+}
+
+if (!credential) {
+  return res.status(400).json({ error: "Missing Google credential" });
+}
+
+const googleResponse = await axios.get("https://oauth2.googleapis.com/tokeninfo", {
+  params: { id_token: credential },
+  timeout: 8000
+});
+
+const profile = googleResponse.data || {};
+if (profile.aud !== googleClientId) {
+  return res.status(401).json({ error: "Google sign-in could not be verified" });
+}
+
+if (profile.email_verified !== "true" && profile.email_verified !== true) {
+  return res.status(401).json({ error: "Google email is not verified" });
+}
+
+const normalizedEmail = String(profile.email || "").trim().toLowerCase();
+if (!normalizedEmail) {
+  return res.status(400).json({ error: "Google account did not include an email" });
+}
+
+let user = await User.findOne({ email: normalizedEmail });
+if (!user) {
+  user = new User({
+    username: profile.name || normalizedEmail.split("@")[0],
+    email: normalizedEmail,
+    googleId: profile.sub || "",
+    authProvider: "google"
+  });
+} else {
+  user.googleId = user.googleId || profile.sub || "";
+  user.authProvider = user.password ? "password_google" : "google";
+}
+
+await user.save();
+res.json(createAuthResponse(user));
+
+} catch (err) {
+console.error(err);
+res.status(500).json({ error: "Google sign-in failed" });
+}
+});
+
+app.post("/api/forgot-password", async (req, res) => {
+try {
+const normalizedEmail = String(req.body.email || "").trim().toLowerCase();
+const user = normalizedEmail ? await User.findOne({ email: normalizedEmail }) : null;
+const genericResponse = {
+  success: true,
+  message: "If that email is on MrktRally, a reset link will be sent."
+};
+
+if (!user) return res.json(genericResponse);
+
+const resetToken = crypto.randomBytes(32).toString("hex");
+user.passwordResetToken = hashPasswordResetToken(resetToken);
+user.passwordResetExpires = new Date(Date.now() + 60 * 60 * 1000);
+await user.save();
+
+const resetUrl = `${getFrontendUrl(req).replace(/\/$/, "")}/?resetToken=${encodeURIComponent(resetToken)}&email=${encodeURIComponent(user.email)}`;
+const emailSent = await sendPasswordResetEmail({ to: user.email, resetUrl });
+
+if (!emailSent) {
+  console.log(`Password reset link for ${user.email}: ${resetUrl}`);
+}
+
+res.json({
+  ...genericResponse,
+  emailSent,
+  resetLink: !emailSent && process.env.ALLOW_RESET_LINK_RESPONSE === "true" ? resetUrl : undefined
+});
+
+} catch (err) {
+console.error(err);
+res.status(500).json({ error: "Password reset request failed" });
+}
+});
+
+app.post("/api/reset-password", async (req, res) => {
+try {
+const normalizedEmail = String(req.body.email || "").trim().toLowerCase();
+const resetToken = String(req.body.token || "");
+const newPassword = String(req.body.password || "");
+
+if (!normalizedEmail || !resetToken || newPassword.length < 6) {
+  return res.status(400).json({ error: "A valid reset link and a password of at least 6 characters are required" });
+}
+
+const user = await User.findOne({
+  email: normalizedEmail,
+  passwordResetToken: hashPasswordResetToken(resetToken),
+  passwordResetExpires: { $gt: new Date() }
+});
+
+if (!user) {
+  return res.status(400).json({ error: "Reset link is invalid or expired" });
+}
+
+user.password = await bcrypt.hash(newPassword, 10);
+user.passwordResetToken = "";
+user.passwordResetExpires = null;
+user.authProvider = user.googleId ? "password_google" : "password";
+await user.save();
+
+res.json(createAuthResponse(user));
+
+} catch (err) {
+console.error(err);
+res.status(500).json({ error: "Password reset failed" });
 }
 });
 

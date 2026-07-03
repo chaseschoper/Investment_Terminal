@@ -14,7 +14,27 @@ const UserSchema = new mongoose.Schema({
 
   password: {
     type: String,
-    required: true,
+    default: "",
+  },
+
+  googleId: {
+    type: String,
+    default: "",
+  },
+
+  authProvider: {
+    type: String,
+    default: "password",
+  },
+
+  passwordResetToken: {
+    type: String,
+    default: "",
+  },
+
+  passwordResetExpires: {
+    type: Date,
+    default: null,
   },
 
   watchlist: {
