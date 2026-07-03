@@ -2896,20 +2896,8 @@ return (
     <div className="main">
 
     <section className="welcome-hero" id="home" aria-labelledby="welcome-title">
-      <div className="holiday-firework holiday-firework-left" aria-hidden="true">
-        <span></span><span></span><span></span><span></span>
-      </div>
-      <div className="holiday-firework holiday-firework-right" aria-hidden="true">
-        <span></span><span></span><span></span><span></span>
-      </div>
       <div className="welcome-hero-content">
         <div className="welcome-kicker">Market research, focused</div>
-        <div className="holiday-badge" aria-label="Independence week theme">
-          <span className="holiday-flag" aria-hidden="true">
-            <span></span><span></span><span></span>
-          </span>
-          Independence Week
-        </div>
         <div className="welcome-title-row">
           <h1 id="welcome-title">Welcome to MrktRally</h1>
           <img
@@ -2919,9 +2907,6 @@ return (
           />
         </div>
         <p>Track companies, study the numbers, and keep your market view in one place.</p>
-        <div className="holiday-star-row" aria-hidden="true">
-          <span></span><span></span><span></span><span></span><span></span>
-        </div>
         <a className="welcome-action" href="#overview">Explore the market</a>
       </div>
     </section>
