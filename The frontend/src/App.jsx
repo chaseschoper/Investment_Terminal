@@ -837,6 +837,7 @@ function App() {
   const latestStockRequest = useRef(0);
   const stockRetryTimerRef = useRef(null);
   const stockMemoryCacheRef = useRef(new Map());
+  const stockChartMemoryCacheRef = useRef(new Map());
   const latestComparisonRequest = useRef(0);
   const latestAiRequest = useRef(0);
   const latestEarningsCallRequest = useRef(0);
@@ -957,6 +958,37 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const savedUser =
     localStorage.getItem("user");
 
+  try {
+    const savedLists = JSON.parse(
+      localStorage.getItem(SAVED_LISTS_STORAGE_KEY) || "{}"
+    );
+    if (Array.isArray(savedLists.watchlist)) {
+      setWatchlist(savedLists.watchlist);
+    }
+    if (Array.isArray(savedLists.portfolios) && savedLists.portfolios.length) {
+      setPortfolios(savedLists.portfolios);
+    }
+    if (savedLists.activePortfolioId) {
+      setActivePortfolioId(savedLists.activePortfolioId);
+    }
+    if (Array.isArray(savedLists.namedWatchlists)) {
+      setNamedWatchlists(savedLists.namedWatchlists);
+    }
+    setSavedProjections(normalizeStockProjections(savedLists.projections || {}));
+    setHasMeaningfulSavedLists(
+      Boolean(
+        (savedLists.watchlist || []).length ||
+        hasPortfolioPositions(savedLists.portfolios || []) ||
+        (savedLists.namedWatchlists || []).some((list) => (list.symbols || []).length) ||
+        Object.keys(savedLists.projections || {}).length
+      )
+    );
+  } catch (error) {
+    console.error("Saved lists restore failed", error);
+  } finally {
+    setHasLoadedSavedLists(true);
+  }
+
   if (savedUser) {
 
     setUser(
@@ -964,37 +996,6 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
     );
 
     loadUserData();
-  } else {
-    try {
-      const savedLists = JSON.parse(
-        localStorage.getItem(SAVED_LISTS_STORAGE_KEY) || "{}"
-      );
-      if (Array.isArray(savedLists.watchlist)) {
-        setWatchlist(savedLists.watchlist);
-      }
-      if (Array.isArray(savedLists.portfolios) && savedLists.portfolios.length) {
-        setPortfolios(savedLists.portfolios);
-      }
-      if (savedLists.activePortfolioId) {
-        setActivePortfolioId(savedLists.activePortfolioId);
-      }
-      if (Array.isArray(savedLists.namedWatchlists)) {
-        setNamedWatchlists(savedLists.namedWatchlists);
-      }
-      setSavedProjections(normalizeStockProjections(savedLists.projections || {}));
-      setHasMeaningfulSavedLists(
-        Boolean(
-          (savedLists.watchlist || []).length ||
-          hasPortfolioPositions(savedLists.portfolios || []) ||
-          (savedLists.namedWatchlists || []).some((list) => (list.symbols || []).length) ||
-          Object.keys(savedLists.projections || {}).length
-        )
-      );
-    } catch (error) {
-      console.error("Saved lists restore failed", error);
-    } finally {
-      setHasLoadedSavedLists(true);
-    }
   }
 
 }, []);
@@ -1325,34 +1326,74 @@ useEffect(() => {
 useEffect(() => {
   let isActive = true;
   let refreshTimer;
+  let retryTimer;
 
-  const loadPriceHistory = async (showLoading = true) => {
+  const scheduleRetry = (attempt) => {
+    if (!isActive) return;
+    const retryDelay = Math.min(10000, 1500 + attempt * 1500);
+    if (retryTimer) window.clearTimeout(retryTimer);
+    retryTimer = window.setTimeout(() => {
+      loadPriceHistory(false, attempt + 1);
+    }, retryDelay);
+  };
+
+  const loadPriceHistory = async (showLoading = true, attempt = 0) => {
     if (!ticker) return;
+    const cacheKey = `${ticker}:${stockChartRange}`;
+    const cachedChart = stockChartMemoryCacheRef.current.get(cacheKey);
     if (showLoading) {
       setIsStockChartLoading(true);
       setStockChartError("");
-      setStockChartData([]);
-      setStockChartMeta(null);
+      if (cachedChart?.points?.length) {
+        setStockChartData(cachedChart.points);
+        setStockChartMeta(cachedChart.latest || null);
+      } else {
+        setStockChartData([]);
+        setStockChartMeta(null);
+      }
     }
 
     try {
       const response = await axios.get(
         `${API_URL}/api/price-history/${ticker}`,
         {
-          params: { range: stockChartRange },
+          params: {
+            range: stockChartRange,
+            fast: stockChartRange === "1D" && attempt === 0 ? "1" : undefined
+          },
           timeout: 12000
         }
       );
 
       if (!isActive) return;
 
-      setStockChartData(response.data.points || []);
+      const points = response.data.points || [];
+      const latest = response.data.latest || null;
+      if (points.length) {
+        stockChartMemoryCacheRef.current.set(cacheKey, {
+          points,
+          latest,
+          updatedAt: response.data.updatedAt
+        });
+      }
+      setStockChartData(points);
       setStockChartMeta(response.data.latest || null);
-      setStockChartError("");
+      setStockChartError(response.data.stale ? "Chart history is refreshing..." : "");
+      if (response.data.stale) {
+        scheduleRetry(attempt);
+      }
     } catch (error) {
       console.error("Price history failed", error);
       if (isActive) {
-        setStockChartError("Chart history is temporarily unavailable.");
+        const hasCachedChart = Boolean(cachedChart?.points?.length);
+        setStockChartError(
+          hasCachedChart
+            ? "Chart history is refreshing..."
+            : attempt < 6
+              ? "Chart history is still loading..."
+              : "Still trying to load chart history..."
+        );
+        scheduleRetry(attempt);
       }
     } finally {
       if (isActive) {
@@ -1371,6 +1412,7 @@ useEffect(() => {
   return () => {
     isActive = false;
     window.clearInterval(refreshTimer);
+    if (retryTimer) window.clearTimeout(retryTimer);
   };
 }, [ticker, stockChartRange]);
 

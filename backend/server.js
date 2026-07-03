@@ -5348,6 +5348,65 @@ app.get("/api/market-indices", async (req, res) => {
 });
 
 app.get("/api/price-history/:ticker", async (req, res) => {
+  const buildFallbackPriceHistory = async (requestedTicker, ticker, requestedRange) => {
+    if (requestedRange !== "1D") return null;
+
+    const cachedQuote = livePriceCache.get(ticker);
+    const savedStock = await resolveWithin(
+      Stock.findOne({ ticker })
+        .select("ticker data.price data.previousClose data.change data.percentChange")
+        .lean(),
+      1200,
+      null
+    );
+    const savedData = savedStock?.data || {};
+    const price = firstFiniteNumber(cachedQuote?.price, savedData.price);
+    const previousClose = firstFiniteNumber(savedData.previousClose);
+    const change = firstFiniteNumber(
+      cachedQuote?.change,
+      savedData.change,
+      price !== null && previousClose > 0 ? price - previousClose : null
+    );
+    const percentChange = firstFiniteNumber(
+      cachedQuote?.percentChange,
+      savedData.percentChange,
+      change !== null && previousClose > 0 ? (change / previousClose) * 100 : null
+    );
+
+    if (price === null || price <= 0) return null;
+
+    const now = Date.now();
+    const basePrice = previousClose && previousClose > 0 ? previousClose : price;
+    return {
+      symbol: requestedTicker,
+      sourceSymbol: ticker,
+      range: requestedRange,
+      interval: "fallback",
+      stale: true,
+      points: [
+        {
+          time: now - 6 * 60 * 60 * 1000,
+          date: new Date(now - 6 * 60 * 60 * 1000).toISOString(),
+          price: basePrice,
+          volume: null
+        },
+        {
+          time: now,
+          date: new Date(now).toISOString(),
+          price,
+          volume: null
+        }
+      ],
+      latest: {
+        price,
+        change,
+        percentChange,
+        previousClose: basePrice
+      },
+      updatedAt: new Date(now).toISOString()
+    };
+  };
+
   try {
     const requestedTicker = req.params.ticker.trim().toUpperCase();
     const ticker = TICKER_ALIASES[requestedTicker] || requestedTicker;
@@ -5365,6 +5424,12 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     }
     if (!canUseYahoo() && cached?.data) {
       return res.json({ ...cached.data, stale: true });
+    }
+    if (requestedRange === "1D" && (req.query.fast === "1" || req.query.fast === "true")) {
+      const fallbackHistory = await buildFallbackPriceHistory(requestedTicker, ticker, requestedRange);
+      if (fallbackHistory) {
+        return res.json(fallbackHistory);
+      }
     }
 
     const params = {
@@ -5464,6 +5529,13 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     const cached = priceHistoryCache.get(`${req.params.ticker.trim().toUpperCase()}:${String(req.query.range || "1D").trim().toUpperCase()}`);
     if (cached?.data) {
       return res.json({ ...cached.data, stale: true });
+    }
+    const requestedTicker = req.params.ticker.trim().toUpperCase();
+    const ticker = TICKER_ALIASES[requestedTicker] || requestedTicker;
+    const requestedRange = String(req.query.range || "1D").trim().toUpperCase();
+    const fallbackHistory = await buildFallbackPriceHistory(requestedTicker, ticker, requestedRange);
+    if (fallbackHistory) {
+      return res.json(fallbackHistory);
     }
     console.log("Price history failed:", req.params.ticker, err.response?.status || err.message);
     return res.status(502).json({ error: "Price history unavailable" });
