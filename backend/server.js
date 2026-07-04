@@ -39,7 +39,7 @@ const priceHistoryCache = new Map();
 const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 121;
+const FINANCIAL_HISTORY_VERSION = 125;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -2007,15 +2007,29 @@ function fillEstimatedEps(rows, sharesOutstanding) {
     earnings:
       row.earnings ??
       (row.eps !== null && row.eps !== undefined
-        ? (row.eps * shares) / 1000
+        ? computeEarningsFromEpsAndShares(row.eps, shares)
         : null),
     eps:
       row.eps ??
       (row.earnings !== null && row.earnings !== undefined
-        ? (row.earnings * 1000) / shares
+        ? computeEpsFromEarningsAndShares(row.earnings, shares)
         : null)
   }));
 }
+
+const computeEpsFromEarningsAndShares = (earningsBillions, shares) => {
+  const earnings = toNumberOrNull(earningsBillions);
+  const shareCount = toNumberOrNull(shares);
+  if (earnings === null || shareCount === null || shareCount <= 0) return null;
+  return shareCount < 100 ? earnings / shareCount : (earnings * 1000) / shareCount;
+};
+
+const computeEarningsFromEpsAndShares = (eps, shares) => {
+  const epsValue = toNumberOrNull(eps);
+  const shareCount = toNumberOrNull(shares);
+  if (epsValue === null || shareCount === null || shareCount <= 0) return null;
+  return shareCount < 100 ? epsValue * shareCount : (epsValue * shareCount) / 1000;
+};
 
 const normalizeHistoricalShares = (candidate, currentShares) => {
   let shares = toNumberOrNull(candidate);
@@ -2027,6 +2041,58 @@ const normalizeHistoricalShares = (candidate, currentShares) => {
   return shares;
 };
 
+const normalizeHistoricalEps = (row, currentShares) => {
+  const eps = toNumberOrNull(row?.eps);
+  const earnings = toNumberOrNull(row?.earnings);
+  const shares = toNumberOrNull(currentShares);
+  if (eps === null || earnings === null || shares === null || shares <= 0 || eps === 0) {
+    return eps;
+  }
+
+  const impliedShares = Math.abs(shares < 100 ? earnings / eps : (earnings * 1000) / eps);
+  if (!Number.isFinite(impliedShares) || impliedShares <= 0) return eps;
+
+  const shareRatio = impliedShares / shares;
+  if (shareRatio < 0.4 || shareRatio > 2.5) {
+    return computeEpsFromEarningsAndShares(earnings, shares);
+  }
+
+  return eps;
+};
+
+function removeStaleProviderScaleBreakRows(rows = []) {
+  const annualRows = (rows || [])
+    .filter((row) => row?.year && !row?.isInterim && toNumberOrNull(row.revenue) > 0)
+    .sort((a, b) => Number(a.year) - Number(b.year));
+
+  if (annualRows.length < 4) return rows;
+
+  const staleKeys = new Set();
+  annualRows.forEach((row, index) => {
+    const source = String(row.source || "");
+    if (!/finnhub/i.test(source)) return;
+
+    const revenue = toNumberOrNull(row.revenue);
+    const laterTrustedRevenues = annualRows
+      .slice(index + 1)
+      .filter((laterRow) => /stockanalysis|yahoo|fmp|sec/i.test(String(laterRow.source || "")))
+      .map((laterRow) => toNumberOrNull(laterRow.revenue))
+      .filter((value) => value !== null && value > 0)
+      .sort((a, b) => a - b);
+
+    if (revenue === null || laterTrustedRevenues.length < 2) return;
+
+    const medianLaterRevenue = laterTrustedRevenues[Math.floor(laterTrustedRevenues.length / 2)];
+    if (medianLaterRevenue >= revenue * 5) {
+      staleKeys.add(`${Number(row.year)}:${row.period || row.year}`);
+    }
+  });
+
+  if (!staleKeys.size) return rows;
+
+  return (rows || []).filter((row) => !staleKeys.has(`${Number(row?.year)}:${row?.period || row?.year}`));
+}
+
 function finalizeFinancialHistory(rows, sharesOutstanding) {
   return fillEstimatedEps(rows, sharesOutstanding).map((row) => ({
     year: row.year,
@@ -2034,7 +2100,7 @@ function finalizeFinancialHistory(rows, sharesOutstanding) {
     isInterim: Boolean(row.isInterim),
     revenue: toNumberOrNull(row.revenue),
     earnings: toNumberOrNull(row.earnings),
-    eps: toNumberOrNull(row.eps),
+    eps: normalizeHistoricalEps(row, sharesOutstanding),
     grossProfit: toNumberOrNull(row.grossProfit),
     operatingIncome: toNumberOrNull(row.operatingIncome),
     operatingCashflow: toNumberOrNull(row.operatingCashflow),
@@ -2047,7 +2113,7 @@ function finalizeFinancialHistory(rows, sharesOutstanding) {
           row.eps !== null &&
           row.eps !== undefined &&
           row.eps !== 0
-          ? (row.earnings * 1000) / row.eps
+          ? Math.abs(toNumberOrNull(sharesOutstanding) < 100 ? row.earnings / row.eps : (row.earnings * 1000) / row.eps)
           : null,
         sharesOutstanding
       ),
@@ -2493,22 +2559,24 @@ function withGuaranteedAnalystSection(data = {}) {
       .filter((row) => row?.isInterim && row?.period !== "Current")
       .map((row) => Number(row.year))
   );
-  const guaranteedRevenueData = removeDuplicateInterimAnnualRows(guaranteedRevenueRows
-    .filter((row) =>
-      !(
-        row?.source === "Current metric fallback" &&
-        row?.period === "Current" &&
-        interimRevenueYears.has(Number(row.year))
+  const guaranteedRevenueData = removeDuplicateInterimAnnualRows(
+    removeStaleModeledFallbackRows(guaranteedRevenueRows)
+      .filter((row) =>
+        !(
+          row?.source === "Current metric fallback" &&
+          row?.period === "Current" &&
+          interimRevenueYears.has(Number(row.year))
+        )
       )
-    )
-    .sort((a, b) => {
-      const yearDiff = Number(a.year) - Number(b.year);
-      if (yearDiff !== 0) return yearDiff;
-      if (Boolean(a.isInterim) !== Boolean(b.isInterim)) {
-        return a.isInterim ? 1 : -1;
-      }
-      return String(a.period || "").localeCompare(String(b.period || ""));
-    }));
+      .sort((a, b) => {
+        const yearDiff = Number(a.year) - Number(b.year);
+        if (yearDiff !== 0) return yearDiff;
+        if (Boolean(a.isInterim) !== Boolean(b.isInterim)) {
+          return a.isInterim ? 1 : -1;
+        }
+        return String(a.period || "").localeCompare(String(b.period || ""));
+      })
+  );
   const suppliedMarginHistory = Array.isArray(data.marginHistory)
     ? data.marginHistory
     : [];
@@ -4031,6 +4099,7 @@ async function fetchStockData(ticker) {
     finnhubMetricData,
     finnhubReportedData,
     fmpIncomeStatementData,
+    stockAnalysisFinancialData,
     yahooFinancialData,
     getRecentEarningsReleaseAnnualRows(ticker)
   );
@@ -4042,9 +4111,11 @@ async function fetchStockData(ticker) {
   );
   const revenueData = limitHistoricalFinancialRows(
     removeStaleModeledFallbackRows(
-      finalizeFinancialHistory(
-        mergeSupplementalHistoricalFields(reportedAnnualData, supplementalAnnualData, Infinity),
-        sharesOutstanding
+      removeStaleProviderScaleBreakRows(
+        finalizeFinancialHistory(
+          mergeSupplementalHistoricalFields(reportedAnnualData, supplementalAnnualData, Infinity),
+          sharesOutstanding
+        )
       )
     )
   );
@@ -4531,12 +4602,30 @@ async function fetchStockData(ticker) {
     impliedAnnualShares,
     FALLBACK_SHARES_OUTSTANDING_MILLIONS
   );
-  const trailingEpsValue = firstNumber(
+  const rawTrailingEpsValue = firstNumber(
     secAnnualMargins.trailingEps,
     yahooSupplementalData.trailingEps,
     metrics.epsTTM,
     metrics.epsInclExtraItemsTTM
   );
+  const marketReportedPE = firstNumber(
+    metrics.peTTM,
+    stockAnalysisForecast.pe,
+    yahooSupplementalData.pe,
+    metrics.peNormalizedAnnual
+  );
+  const computedTrailingPE =
+    rawTrailingEpsValue > 0 && quote.c
+      ? quote.c / rawTrailingEpsValue
+      : null;
+  const trailingEpsValue =
+    rawTrailingEpsValue > 0 &&
+    quote.c &&
+    marketReportedPE > 1 &&
+    computedTrailingPE !== null &&
+    computedTrailingPE < marketReportedPE * 0.25
+      ? quote.c / marketReportedPE
+      : rawTrailingEpsValue;
   const forwardEpsValue = firstNumber(
     stockAnalysisForecast.forwardPE > 0
       ? quote.c / stockAnalysisForecast.forwardPE
@@ -4550,10 +4639,7 @@ async function fetchStockData(ticker) {
   );
   const reportedPE = firstNumber(
     trailingEpsValue > 0 ? quote.c / trailingEpsValue : null,
-    metrics.peTTM,
-    stockAnalysisForecast.pe,
-    yahooSupplementalData.pe,
-    metrics.peNormalizedAnnual
+    marketReportedPE
   );
   if (
     !latestInterimPeRow &&
