@@ -39,7 +39,7 @@ const priceHistoryCache = new Map();
 const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 125;
+const FINANCIAL_HISTORY_VERSION = 126;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -444,15 +444,16 @@ const parseAbbreviatedNumber = (value) => {
 
 async function fetchStockAnalysisForecast(ticker) {
   try {
+    const stockAnalysisTicker = normalizeTickerForStockAnalysis(ticker);
     const headers = {
       "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36"
     };
     const [forecastResponse, statisticsResponse] = await Promise.all([
-      axios.get(`https://stockanalysis.com/stocks/${ticker.toLowerCase()}/forecast/`, {
+      axios.get(`https://stockanalysis.com/stocks/${stockAnalysisTicker}/forecast/`, {
         headers,
         timeout: 10000
       }),
-      axios.get(`https://stockanalysis.com/stocks/${ticker.toLowerCase()}/statistics/`, {
+      axios.get(`https://stockanalysis.com/stocks/${stockAnalysisTicker}/statistics/`, {
         headers,
         timeout: 10000
       }).catch(() => ({ data: "" }))
@@ -1756,6 +1757,30 @@ const unwrapFinancialValue = (value) => {
 const firstYahooNumber = (...values) =>
   firstNumber(...values.map((value) => unwrapFinancialValue(value)));
 
+const normalizeTickerForStockAnalysis = (ticker) => {
+  const symbol = String(ticker || "").trim();
+  if (/^BRK[-.]B$/i.test(symbol)) return "brk.b";
+  if (/^BRK[-.]A$/i.test(symbol)) return "brk.a";
+  return symbol.toLowerCase();
+};
+
+const normalizeBookValuePerShare = (bookValuePerShare, price, ticker) => {
+  const bookValue = toNumberOrNull(bookValuePerShare);
+  const priceNumber = toNumberOrNull(price);
+  if (bookValue === null) return null;
+
+  if (
+    /^BRK[-.]B$/i.test(String(ticker || "")) &&
+    priceNumber !== null &&
+    priceNumber > 0 &&
+    bookValue / priceNumber > 50
+  ) {
+    return bookValue / 1500;
+  }
+
+  return bookValue;
+};
+
 const reconcilePriceToBook = (reportedPriceToBook, price, bookValuePerShare) => {
   const reported = toNumberOrNull(reportedPriceToBook);
   const priceNumber = toNumberOrNull(price);
@@ -2370,7 +2395,11 @@ function withGuaranteedAnalystSection(data = {}) {
     data.priceToSales,
     marketCap !== null && currentRevenue > 0 ? marketCap / currentRevenue : null
   );
-  const bookValuePerShare = firstNumber(data.bookValuePerShare);
+  const bookValuePerShare = normalizeBookValuePerShare(
+    firstNumber(data.bookValuePerShare),
+    price,
+    data.symbol || data.ticker
+  );
   const priceToBook = reconcilePriceToBook(data.priceToBook, price, bookValuePerShare);
   const safeNextRevenue = sanitizeNearTermRevenueEstimate(
     nextYear.revenue,
@@ -3237,8 +3266,9 @@ const parseStockAnalysisNumber = (value) => {
 
 async function fetchStockAnalysisIncomeStatementHistory(ticker) {
   try {
+    const stockAnalysisTicker = normalizeTickerForStockAnalysis(ticker);
     const { data } = await axios.get(
-      `https://stockanalysis.com/stocks/${ticker.toLowerCase()}/financials/income-statement/`,
+      `https://stockanalysis.com/stocks/${stockAnalysisTicker}/financials/income-statement/`,
       {
         headers: { "User-Agent": "Mozilla/5.0" },
         timeout: STOCK_PROVIDER_TIMEOUT_MS
@@ -4805,10 +4835,14 @@ async function fetchStockData(ticker) {
       ? modeledMarketCap / currentRevenueValue
       : null
   );
-  const bookValuePerShare = firstNumber(
-    metrics.bookValuePerShareAnnual,
-    metrics.bookValuePerShareQuarterly,
-    yahooSupplementalData.bookValuePerShare
+  const bookValuePerShare = normalizeBookValuePerShare(
+    firstNumber(
+      metrics.bookValuePerShareAnnual,
+      metrics.bookValuePerShareQuarterly,
+      yahooSupplementalData.bookValuePerShare
+    ),
+    quote.c,
+    ticker
   );
   const priceToBook = firstNumber(
     reconcilePriceToBook(yahooSupplementalData.priceToBook, quote.c, bookValuePerShare),
