@@ -56,6 +56,14 @@ const buildTranscriptPeriodOptions = () => {
   ];
 };
 
+const COMPANY_DOCUMENT_TABS = [
+  { id: "filings", label: "Filings" },
+  { id: "incomeStatement", label: "Income Statement" },
+  { id: "balanceSheet", label: "Balance Sheet" },
+  { id: "cashFlow", label: "Cash Flow" },
+  { id: "earningsRelease", label: "Earnings Release" }
+];
+
 const formatDividendYield = (value) =>
   isNumber(value) ? `${(Math.abs(value) > 1 ? value : value * 100).toFixed(2)}%` : "N/A";
 
@@ -1182,6 +1190,15 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [earningsCall, setEarningsCall] =
     useState(null);
 
+  const [companyDocuments, setCompanyDocuments] =
+    useState(null);
+
+  const [activeCompanyDocumentTab, setActiveCompanyDocumentTab] =
+    useState("filings");
+
+  const [isCompanyDocumentsLoading, setIsCompanyDocumentsLoading] =
+    useState(false);
+
   const [selectedTranscriptPeriod, setSelectedTranscriptPeriod] =
     useState("latest");
 
@@ -1583,6 +1600,8 @@ useEffect(() => {
     if (cachedStock) firstStockLoadSettled.current = true;
     setAiAnalysis(null);
     setEarningsCall(null);
+    setCompanyDocuments(null);
+    setActiveCompanyDocumentTab("filings");
     setSelectedTranscriptPeriod("latest");
     window.speechSynthesis?.cancel();
     setIsSpeechPlaying(false);
@@ -1603,6 +1622,34 @@ useEffect(() => {
   useEffect(() => () => {
     window.speechSynthesis?.cancel();
   }, []);
+
+  useEffect(() => {
+    if (!loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
+    let isActive = true;
+
+    setIsCompanyDocumentsLoading(true);
+    axios.get(`${API_URL}/api/company-documents/${ticker}`, { timeout: 15000 })
+      .then((response) => {
+        if (isActive) {
+          setCompanyDocuments(response.data);
+        }
+      })
+      .catch((error) => {
+        console.error("Company documents failed", error);
+        if (isActive) {
+          setCompanyDocuments({ available: false });
+        }
+      })
+      .finally(() => {
+        if (isActive) {
+          setIsCompanyDocumentsLoading(false);
+        }
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [ticker, loadedStockSymbol, isStockLoading]);
 
   useEffect(() => {
     if (!loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
@@ -2454,6 +2501,27 @@ const totalPortfolioValue = portfolioAllocationData.reduce(
   0
 );
 const transcriptPeriodOptions = buildTranscriptPeriodOptions();
+const statementRowsForActiveDocument =
+  activeCompanyDocumentTab === "incomeStatement"
+    ? companyDocuments?.statements?.incomeStatement || []
+    : activeCompanyDocumentTab === "balanceSheet"
+      ? companyDocuments?.statements?.balanceSheet || []
+      : activeCompanyDocumentTab === "cashFlow"
+        ? companyDocuments?.statements?.cashFlow || []
+        : [];
+const companyDocumentCards = [
+  companyDocuments?.filings?.tenK,
+  companyDocuments?.filings?.tenQ,
+  companyDocuments?.filings?.earningsRelease,
+  companyDocuments?.filings?.latest8K
+].filter((document, index, documents) =>
+  document?.url &&
+  documents.findIndex((item) => item?.url === document.url) === index
+);
+const earningsReleaseCards = [
+  companyDocuments?.filings?.earningsRelease,
+  ...(companyDocuments?.earningsExhibits || [])
+].filter((document) => document?.url);
 
 const stopComputerRead = () => {
   window.speechSynthesis?.cancel();
@@ -3014,6 +3082,7 @@ return (
       <a href="#projections">Projections</a>
       <a href="#ai-analysis">AI Analysis</a>
       <a href="#earnings-calls">Transcript</a>
+      <a href="#company-documents">Documents</a>
       <a href="#portfolio">Portfolio</a>
       <a href="#watchlists">Watchlists</a>
       <a href="#earnings-calendar">Calendar</a>
@@ -3540,6 +3609,105 @@ return (
   </div>
 
 </div>
+{/* COMPANY DOCUMENTS */}
+
+<section className="chart-section company-documents-section" id="company-documents">
+
+  <div className="company-documents-heading">
+    <div>
+      <h2 className="section-title">
+        Company Documents
+      </h2>
+    </div>
+    {companyDocuments?.updatedAt && (
+      <span className="company-documents-updated">
+        Updated {new Date(companyDocuments.updatedAt).toLocaleString()}
+      </span>
+    )}
+  </div>
+
+  <div className="company-documents-panel">
+    <div className="company-document-tabs" role="tablist" aria-label="Company documents">
+      {COMPANY_DOCUMENT_TABS.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          className={activeCompanyDocumentTab === tab.id ? "active" : ""}
+          onClick={() => setActiveCompanyDocumentTab(tab.id)}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+
+    {isCompanyDocumentsLoading && !companyDocuments ? (
+      <StockDataLoading label="Loading company documents..." />
+    ) : !companyDocuments?.available ? (
+      <div className="company-documents-empty">
+        Company documents are not available for this ticker yet.
+      </div>
+    ) : activeCompanyDocumentTab === "filings" ? (
+      <div className="company-document-grid">
+        {companyDocumentCards.map((document) => (
+          <a
+            className="company-document-card"
+            key={`${document.form}-${document.url}`}
+            href={document.url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <span>{document.form || "SEC"}</span>
+            <strong>{document.title}</strong>
+            <small>
+              {[document.reportDate, document.filingDate].filter(Boolean).join(" • ")}
+            </small>
+          </a>
+        ))}
+      </div>
+    ) : activeCompanyDocumentTab === "earningsRelease" ? (
+      <div className="company-document-grid">
+        {earningsReleaseCards.length ? earningsReleaseCards.map((document) => (
+          <a
+            className="company-document-card earnings-release-card"
+            key={document.url}
+            href={document.url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <span>{document.form || document.type || "Release"}</span>
+            <strong>{document.title}</strong>
+            <small>
+              {[document.reportDate, document.filingDate, document.items ? `Items ${document.items}` : null]
+                .filter(Boolean)
+                .join(" • ")}
+            </small>
+          </a>
+        )) : (
+          <div className="company-documents-empty">
+            Earnings-release exhibits are not available for this ticker yet.
+          </div>
+        )}
+      </div>
+    ) : (
+      <div className="company-statement-card">
+        <div className="company-statement-meta">
+          <strong>{companyDocuments.statements?.sourceForm || "Latest filing"}</strong>
+          <span>{companyDocuments.statements?.period || "Latest period"}</span>
+        </div>
+        <div className="company-statement-table">
+          {statementRowsForActiveDocument.map((row) => (
+            <div className="company-statement-row" key={`${activeCompanyDocumentTab}-${row.label}`}>
+              <span>{row.label}</span>
+              <strong>{row.displayValue || "N/A"}</strong>
+              <small>{row.form && row.periodEnd ? `${row.form} • ${row.periodEnd}` : row.concept}</small>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+  </div>
+
+</section>
 {/* REVENUE CHART */}
 
 <div className="chart-section" id="financials">

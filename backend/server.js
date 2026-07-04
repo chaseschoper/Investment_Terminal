@@ -36,6 +36,7 @@ const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
+const companyDocumentsCache = new Map();
 const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
@@ -720,6 +721,236 @@ function calculateSecTrailingEps(companyFacts) {
   }
 
   return null;
+}
+
+const secArchivesDocumentUrl = (cik, accessionNumber, documentName = "") => {
+  if (!cik || !accessionNumber || !documentName) return null;
+  return `https://www.sec.gov/Archives/edgar/data/${Number(cik)}/${String(accessionNumber).replace(/-/g, "")}/${documentName}`;
+};
+
+const secFilingIndexUrl = (cik, accessionNumber) => {
+  if (!cik || !accessionNumber) return null;
+  return `https://www.sec.gov/Archives/edgar/data/${Number(cik)}/${String(accessionNumber).replace(/-/g, "")}/`;
+};
+
+const normalizeSecRecentFilings = (recent = {}) => {
+  const forms = recent.form || [];
+  return forms.map((form, index) => ({
+    form,
+    accessionNumber: recent.accessionNumber?.[index] || null,
+    filingDate: recent.filingDate?.[index] || null,
+    reportDate: recent.reportDate?.[index] || null,
+    primaryDocument: recent.primaryDocument?.[index] || null,
+    primaryDocDescription: recent.primaryDocDescription?.[index] || null,
+    items: recent.items?.[index] || null
+  })).filter((filing) => filing.form && filing.accessionNumber);
+};
+
+const buildSecDocumentItem = (filing, cik, fallbackTitle = null) => ({
+  form: filing?.form || null,
+  title:
+    fallbackTitle ||
+    filing?.primaryDocDescription ||
+    filing?.form ||
+    "SEC filing",
+  filingDate: filing?.filingDate || null,
+  reportDate: filing?.reportDate || null,
+  items: filing?.items || null,
+  url: secArchivesDocumentUrl(cik, filing?.accessionNumber, filing?.primaryDocument),
+  indexUrl: secFilingIndexUrl(cik, filing?.accessionNumber),
+  accessionNumber: filing?.accessionNumber || null
+});
+
+const findLatestSecFact = (companyFacts, concepts, {
+  units = ["USD"],
+  formTypes = ["10-Q", "10-Q/A", "10-K", "10-K/A"],
+  endDate = null,
+  maxEndDate = null,
+  instantOnly = false
+} = {}) => {
+  let candidates = [];
+  for (const concept of concepts) {
+    const conceptUnits = companyFacts?.facts?.["us-gaap"]?.[concept]?.units || {};
+    for (const unit of units) {
+      const entries = conceptUnits[unit] || [];
+      candidates.push(...entries.map((entry) => ({ ...entry, concept, unit })));
+    }
+  }
+
+  candidates = candidates.filter((entry) => {
+    if (!entry.end || !formTypes.includes(entry.form)) return false;
+    if (endDate && entry.end !== endDate) return false;
+    if (maxEndDate && String(entry.end) > String(maxEndDate)) return false;
+    if (instantOnly && entry.start) return false;
+    if (!instantOnly && entry.start) {
+      const durationDays = (new Date(entry.end) - new Date(entry.start)) / 86400000;
+      if (durationDays < 50 || durationDays > 400) return false;
+    }
+    return true;
+  });
+
+  return candidates.sort((a, b) =>
+    String(a.end).localeCompare(String(b.end)) ||
+    String(a.filed).localeCompare(String(b.filed))
+  ).at(-1) || null;
+};
+
+const formatSecFactValue = (entry) => {
+  const value = toNumberOrNull(entry?.val);
+  if (value === null) return null;
+  if (entry.unit === "USD/shares") return `$${value.toFixed(2)}`;
+  if (Math.abs(value) >= 1000000000) return `$${(value / 1000000000).toFixed(2)}B`;
+  if (Math.abs(value) >= 1000000) return `$${(value / 1000000).toFixed(1)}M`;
+  return `$${value.toLocaleString()}`;
+};
+
+const buildStatementRows = (companyFacts, definitions, options) =>
+  definitions.map((definition) => {
+    const fact = findLatestSecFact(companyFacts, definition.concepts, {
+      ...options,
+      units: definition.units || ["USD"]
+    });
+    return {
+      label: definition.label,
+      value: fact ? toNumberOrNull(fact.val) : null,
+      displayValue: fact ? formatSecFactValue(fact) : "N/A",
+      concept: fact?.concept || definition.concepts[0],
+      periodEnd: fact?.end || null,
+      filedDate: fact?.filed || null,
+      form: fact?.form || null
+    };
+  });
+
+const INCOME_STATEMENT_DEFINITIONS = [
+  { label: "Revenue", concepts: ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "SalesRevenueNet", "OperatingRevenues", "RevenuesNetOfInterestExpense"] },
+  { label: "Gross Profit", concepts: ["GrossProfit", "InterestIncomeExpenseNet"] },
+  { label: "Operating Income", concepts: ["OperatingIncomeLoss", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest"] },
+  { label: "Pretax Income", concepts: ["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments"] },
+  { label: "Net Income", concepts: ["NetIncomeLoss", "ProfitLoss", "NetIncomeLossAvailableToCommonStockholdersBasic"] },
+  { label: "Diluted EPS", concepts: ["EarningsPerShareDiluted", "EarningsPerShareBasicAndDiluted"], units: ["USD/shares"] }
+];
+
+const BALANCE_SHEET_DEFINITIONS = [
+  { label: "Cash & Equivalents", concepts: ["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"] },
+  { label: "Total Assets", concepts: ["Assets"] },
+  { label: "Current Debt", concepts: ["DebtCurrent", "LongTermDebtCurrent", "ShortTermBorrowings", "LongTermDebtAndFinanceLeaseObligationsCurrent"] },
+  { label: "Long-Term Debt", concepts: ["LongTermDebtNoncurrent", "LongTermDebtAndFinanceLeaseObligationsNoncurrent"] },
+  { label: "Total Liabilities", concepts: ["Liabilities"] },
+  { label: "Shareholders' Equity", concepts: ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"] }
+];
+
+const CASH_FLOW_DEFINITIONS = [
+  { label: "Operating Cash Flow", concepts: ["NetCashProvidedByUsedInOperatingActivities", "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"] },
+  { label: "Capital Expenditures", concepts: ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets", "PaymentsForAdditionsToPropertyPlantAndEquipment"] },
+  { label: "Dividends Paid", concepts: ["PaymentsOfDividends", "PaymentsOfDividendsCommonStock"] },
+  { label: "Share Repurchases", concepts: ["PaymentsForRepurchaseOfCommonStock", "PaymentsForRepurchaseOfEquity"] },
+  { label: "Cash Change", concepts: ["CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseIncludingExchangeRateEffect", "CashAndCashEquivalentsPeriodIncreaseDecrease"] }
+];
+
+async function fetchSecFilingExhibits(cik, filing) {
+  if (!filing?.accessionNumber) return [];
+  try {
+    const response = await axios.get(
+      `${secFilingIndexUrl(cik, filing.accessionNumber)}index.json`,
+      {
+        headers: { "User-Agent": "InvestmentTerminal/1.0 contact@investmentterminal.app" },
+        timeout: 8000
+      }
+    );
+    const items = response.data?.directory?.item || [];
+    return items
+      .filter((item) => {
+        const name = String(item.name || "");
+        return /\.(htm|html|pdf)$/i.test(name) &&
+          (/ex[-_]?99|exhibit|earnings|release|results|presentation/i.test(name));
+      })
+      .slice(0, 8)
+      .map((item) => ({
+        title: item.name,
+        url: secArchivesDocumentUrl(cik, filing.accessionNumber, item.name),
+        type: /\.pdf$/i.test(item.name) ? "PDF" : "HTML"
+      }));
+  } catch (err) {
+    console.log("SEC exhibits skipped:", filing.form, err.response?.status || err.message);
+    return [];
+  }
+}
+
+async function fetchCompanyDocuments(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  const cached = companyDocumentsCache.get(symbol);
+  if (cached && Date.now() - cached.fetchedAt < 3 * 60 * 60 * 1000) {
+    return cached.data;
+  }
+
+  const tickerMap = await getSecTickerMap();
+  const cik = tickerMap.get(symbol);
+  if (!cik) {
+    return { available: false, symbol, message: "SEC documents are not available for this ticker yet." };
+  }
+
+  const [submissionsResponse, factsResponse] = await Promise.all([
+    axios.get(`https://data.sec.gov/submissions/CIK${cik}.json`, {
+      headers: { "User-Agent": "InvestmentTerminal/1.0 contact@investmentterminal.app" },
+      timeout: 12000
+    }),
+    axios.get(`https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`, {
+      headers: { "User-Agent": "InvestmentTerminal/1.0 contact@investmentterminal.app" },
+      timeout: 12000
+    }).catch(() => ({ data: null }))
+  ]);
+
+  const filings = normalizeSecRecentFilings(submissionsResponse.data?.filings?.recent || {});
+  const latest10k = filings.find((filing) => /^10-K/i.test(filing.form));
+  const latest10q = filings.find((filing) => /^10-Q/i.test(filing.form));
+  const latest8k = filings.find((filing) => filing.form === "8-K" || filing.form === "8-K/A");
+  const latestEarnings8k =
+    filings.find((filing) =>
+      /^8-K/i.test(filing.form) &&
+      (/2\.02/.test(String(filing.items || "")) ||
+        /results|earnings|quarter|annual|financial/i.test(`${filing.primaryDocDescription || ""} ${filing.primaryDocument || ""}`))
+    ) || latest8k;
+  const earningsExhibits = await fetchSecFilingExhibits(cik, latestEarnings8k);
+  const statementFiling = latest10q || latest10k;
+  const statementEndDate = statementFiling?.reportDate || null;
+  const statementFormTypes = statementFiling?.form?.startsWith("10-K")
+    ? ["10-K", "10-K/A"]
+    : ["10-Q", "10-Q/A", "10-K", "10-K/A"];
+  const facts = factsResponse.data || {};
+  const statementOptions = {
+    formTypes: statementFormTypes,
+    maxEndDate: statementEndDate
+  };
+  const statements = {
+    period: statementEndDate,
+    sourceForm: statementFiling?.form || null,
+    filedDate: statementFiling?.filingDate || null,
+    incomeStatement: buildStatementRows(facts, INCOME_STATEMENT_DEFINITIONS, statementOptions),
+    balanceSheet: buildStatementRows(facts, BALANCE_SHEET_DEFINITIONS, {
+      ...statementOptions,
+      instantOnly: true
+    }),
+    cashFlow: buildStatementRows(facts, CASH_FLOW_DEFINITIONS, statementOptions)
+  };
+
+  const data = {
+    available: true,
+    symbol,
+    companyName: submissionsResponse.data?.name || symbol,
+    cik,
+    updatedAt: new Date().toISOString(),
+    filings: {
+      tenK: latest10k ? buildSecDocumentItem(latest10k, cik, "Latest 10-K annual report") : null,
+      tenQ: latest10q ? buildSecDocumentItem(latest10q, cik, "Latest 10-Q quarterly report") : null,
+      earningsRelease: latestEarnings8k ? buildSecDocumentItem(latestEarnings8k, cik, "Latest earnings/results 8-K") : null,
+      latest8K: latest8k ? buildSecDocumentItem(latest8k, cik, "Latest 8-K") : null
+    },
+    earningsExhibits,
+    statements
+  };
+
+  companyDocumentsCache.set(symbol, { data, fetchedAt: Date.now() });
+  return data;
 }
 
 async function fetchSecAnnualMargins(ticker) {
@@ -8718,6 +8949,25 @@ app.get("/api/earnings-call/:ticker/transcript-file", async (req, res) => {
   } catch (err) {
     console.error("Transcript proxy failed:", ticker, err.response?.status || err.message);
     return res.status(502).json({ error: "Transcript file unavailable" });
+  }
+});
+
+app.get("/api/company-documents/:ticker", async (req, res) => {
+  const ticker = req.params.ticker.trim().toUpperCase();
+  if (!/^[A-Z0-9.-]{1,15}$/.test(ticker)) {
+    return res.status(400).json({ available: false, error: "Invalid ticker" });
+  }
+
+  try {
+    const data = await fetchCompanyDocuments(ticker);
+    return res.json(data);
+  } catch (err) {
+    console.error("Company documents fetch failed:", ticker, err.response?.status || err.message);
+    return res.status(502).json({
+      available: false,
+      symbol: ticker,
+      error: "Company documents are temporarily unavailable"
+    });
   }
 });
 
