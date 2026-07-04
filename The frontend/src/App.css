@@ -138,6 +138,10 @@ body {
   order: 12;
 }
 
+.company-documents-section {
+  order: 12;
+}
+
 .calendar-bottom-section {
   order: 20;
 }
@@ -2028,6 +2032,7 @@ body {
 #metrics,
 #portfolio,
 #comparison,
+#company-documents,
 #earnings-calendar,
 #mr-rally {
   scroll-margin-top: 132px;
