@@ -57,11 +57,11 @@ const buildTranscriptPeriodOptions = () => {
 };
 
 const COMPANY_DOCUMENT_TABS = [
-  { id: "filings", label: "Filings" },
-  { id: "incomeStatement", label: "Income Statement" },
-  { id: "balanceSheet", label: "Balance Sheet" },
-  { id: "cashFlow", label: "Cash Flow" },
-  { id: "earningsRelease", label: "Earnings Release" }
+  { id: "results", label: "Latest Results" },
+  { id: "tenK", label: "10-K" },
+  { id: "tenQ", label: "10-Q" },
+  { id: "exhibits", label: "8-K / Exhibits" },
+  { id: "all", label: "All Documents" }
 ];
 
 const formatDividendYield = (value) =>
@@ -1194,7 +1194,7 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
     useState(null);
 
   const [activeCompanyDocumentTab, setActiveCompanyDocumentTab] =
-    useState("filings");
+    useState("results");
 
   const [isCompanyDocumentsLoading, setIsCompanyDocumentsLoading] =
     useState(false);
@@ -1601,7 +1601,7 @@ useEffect(() => {
     setAiAnalysis(null);
     setEarningsCall(null);
     setCompanyDocuments(null);
-    setActiveCompanyDocumentTab("filings");
+    setActiveCompanyDocumentTab("results");
     setSelectedTranscriptPeriod("latest");
     window.speechSynthesis?.cancel();
     setIsSpeechPlaying(false);
@@ -2501,27 +2501,44 @@ const totalPortfolioValue = portfolioAllocationData.reduce(
   0
 );
 const transcriptPeriodOptions = buildTranscriptPeriodOptions();
-const statementRowsForActiveDocument =
-  activeCompanyDocumentTab === "incomeStatement"
-    ? companyDocuments?.statements?.incomeStatement || []
-    : activeCompanyDocumentTab === "balanceSheet"
-      ? companyDocuments?.statements?.balanceSheet || []
-      : activeCompanyDocumentTab === "cashFlow"
-        ? companyDocuments?.statements?.cashFlow || []
-        : [];
-const companyDocumentCards = [
-  companyDocuments?.filings?.tenK,
-  companyDocuments?.filings?.tenQ,
+const primaryResultDocuments = companyDocuments?.resultDocuments || [];
+const resultDocumentCards = (
+  primaryResultDocuments.length
+    ? primaryResultDocuments
+    : [companyDocuments?.filings?.earningsRelease]
+).filter((document, index, documents) =>
+  document?.url &&
+  documents.findIndex((item) => item?.url === document.url) === index
+);
+const exhibitDocumentCards = [
   companyDocuments?.filings?.earningsRelease,
-  companyDocuments?.filings?.latest8K
+  companyDocuments?.filings?.latest8K,
+  ...(companyDocuments?.earningsExhibits || [])
 ].filter((document, index, documents) =>
   document?.url &&
   documents.findIndex((item) => item?.url === document.url) === index
 );
-const earningsReleaseCards = [
+const companyDocumentCards = [
+  companyDocuments?.filings?.tenK,
+  companyDocuments?.filings?.tenQ,
   companyDocuments?.filings?.earningsRelease,
+  companyDocuments?.filings?.latest8K,
+  ...(companyDocuments?.resultDocuments || []),
   ...(companyDocuments?.earningsExhibits || [])
-].filter((document) => document?.url);
+].filter((document, index, documents) =>
+  document?.url &&
+  documents.findIndex((item) => item?.url === document.url) === index
+);
+const activeCompanyDocumentCards =
+  activeCompanyDocumentTab === "results"
+    ? resultDocumentCards
+    : activeCompanyDocumentTab === "tenK"
+      ? [companyDocuments?.filings?.tenK].filter((document) => document?.url)
+      : activeCompanyDocumentTab === "tenQ"
+        ? [companyDocuments?.filings?.tenQ].filter((document) => document?.url)
+        : activeCompanyDocumentTab === "exhibits"
+          ? exhibitDocumentCards
+          : companyDocumentCards;
 
 const stopComputerRead = () => {
   window.speechSynthesis?.cancel();
@@ -3646,63 +3663,33 @@ return (
       <div className="company-documents-empty">
         Company documents are not available for this ticker yet.
       </div>
-    ) : activeCompanyDocumentTab === "filings" ? (
+    ) : activeCompanyDocumentCards.length ? (
       <div className="company-document-grid">
-        {companyDocumentCards.map((document) => (
+        {activeCompanyDocumentCards.map((document) => (
           <a
-            className="company-document-card"
-            key={`${document.form}-${document.url}`}
+            className={`company-document-card ${
+              activeCompanyDocumentTab === "results" || activeCompanyDocumentTab === "exhibits"
+                ? "earnings-release-card"
+                : ""
+            }`}
+            key={`${document.form || document.type || "document"}-${document.url}`}
             href={document.url}
             target="_blank"
             rel="noreferrer"
           >
-            <span>{document.form || "SEC"}</span>
+            <span>{document.form || document.type || document.source || "Document"}</span>
             <strong>{document.title}</strong>
             <small>
-              {[document.reportDate, document.filingDate].filter(Boolean).join(" • ")}
-            </small>
-          </a>
-        ))}
-      </div>
-    ) : activeCompanyDocumentTab === "earningsRelease" ? (
-      <div className="company-document-grid">
-        {earningsReleaseCards.length ? earningsReleaseCards.map((document) => (
-          <a
-            className="company-document-card earnings-release-card"
-            key={document.url}
-            href={document.url}
-            target="_blank"
-            rel="noreferrer"
-          >
-            <span>{document.form || document.type || "Release"}</span>
-            <strong>{document.title}</strong>
-            <small>
-              {[document.reportDate, document.filingDate, document.items ? `Items ${document.items}` : null]
+              {[document.reportDate, document.filingDate, document.items ? `Items ${document.items}` : null, document.source]
                 .filter(Boolean)
                 .join(" • ")}
             </small>
           </a>
-        )) : (
-          <div className="company-documents-empty">
-            Earnings-release exhibits are not available for this ticker yet.
-          </div>
-        )}
+        ))}
       </div>
     ) : (
-      <div className="company-statement-card">
-        <div className="company-statement-meta">
-          <strong>{companyDocuments.statements?.sourceForm || "Latest filing"}</strong>
-          <span>{companyDocuments.statements?.period || "Latest period"}</span>
-        </div>
-        <div className="company-statement-table">
-          {statementRowsForActiveDocument.map((row) => (
-            <div className="company-statement-row" key={`${activeCompanyDocumentTab}-${row.label}`}>
-              <span>{row.label}</span>
-              <strong>{row.displayValue || "N/A"}</strong>
-              <small>{row.form && row.periodEnd ? `${row.form} • ${row.periodEnd}` : row.concept}</small>
-            </div>
-          ))}
-        </div>
+      <div className="company-documents-empty">
+        No matching company documents are available for this ticker yet.
       </div>
     )}
   </div>

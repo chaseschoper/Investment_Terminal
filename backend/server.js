@@ -804,6 +804,33 @@ const formatSecFactValue = (entry) => {
   return `$${value.toLocaleString()}`;
 };
 
+async function fetchPublicDocumentTitle(url) {
+  if (!url) return null;
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+      },
+      timeout: 8000,
+      maxRedirects: 4
+    });
+    const contentType = String(response.headers["content-type"] || "");
+    if (!/html|text/i.test(contentType)) return null;
+    const $ = cheerio.load(response.data || "");
+    const title = $("title").first().text().trim();
+    const bodyText = $("body").text().replace(/\s+/g, " ").trim();
+    const resultTitle =
+      bodyText.match(/([A-Z][A-Z0-9,.'’&\- ]{8,}\s+REPORTS\s+[^.]{20,160}?RESULTS)/)?.[1] ||
+      bodyText.match(/([A-Z][A-Z0-9,.'’&\- ]{8,}\s+ANNOUNCES\s+[^.]{20,160}?RESULTS)/)?.[1] ||
+      bodyText.match(/([A-Z][A-Z0-9,.'’&\- ]{8,}\s+RELEASES\s+[^.]{20,160}?RESULTS)/)?.[1];
+
+    return resultTitle || (/^document$/i.test(title) ? null : title) || null;
+  } catch {
+    return null;
+  }
+}
+
 const buildStatementRows = (companyFacts, definitions, options) =>
   definitions.map((definition) => {
     const fact = findLatestSecFact(companyFacts, definition.concepts, {
@@ -858,18 +885,24 @@ async function fetchSecFilingExhibits(cik, filing) {
       }
     );
     const items = response.data?.directory?.item || [];
-    return items
+    const exhibitItems = items
       .filter((item) => {
         const name = String(item.name || "");
         return /\.(htm|html|pdf)$/i.test(name) &&
           (/ex[-_]?99|exhibit|earnings|release|results|presentation/i.test(name));
       })
-      .slice(0, 8)
-      .map((item) => ({
-        title: item.name,
-        url: secArchivesDocumentUrl(cik, filing.accessionNumber, item.name),
-        type: /\.pdf$/i.test(item.name) ? "PDF" : "HTML"
-      }));
+      .slice(0, 8);
+
+    return Promise.all(exhibitItems.map(async (item) => {
+      const url = secArchivesDocumentUrl(cik, filing.accessionNumber, item.name);
+      const title = await fetchPublicDocumentTitle(url);
+      return {
+        title: title || item.name,
+        url,
+        type: /\.pdf$/i.test(item.name) ? "PDF" : "HTML",
+        source: "SEC exhibit"
+      };
+    }));
   } catch (err) {
     console.log("SEC exhibits skipped:", filing.form, err.response?.status || err.message);
     return [];
@@ -910,7 +943,19 @@ async function fetchCompanyDocuments(ticker) {
       (/2\.02/.test(String(filing.items || "")) ||
         /results|earnings|quarter|annual|financial/i.test(`${filing.primaryDocDescription || ""} ${filing.primaryDocument || ""}`))
     ) || latest8k;
-  const earningsExhibits = await fetchSecFilingExhibits(cik, latestEarnings8k);
+  const [earningsExhibits, investorRelationsDocuments] = await Promise.all([
+    fetchSecFilingExhibits(cik, latestEarnings8k),
+    fetchInvestorRelationsDocuments(symbol).catch((err) => {
+      console.log("IR result documents skipped:", symbol, err.response?.status || err.message);
+      return [];
+    })
+  ]);
+  const resultDocumentMap = new Map();
+  [...investorRelationsDocuments, ...earningsExhibits].forEach((document) => {
+    if (document?.url && !resultDocumentMap.has(document.url)) {
+      resultDocumentMap.set(document.url, document);
+    }
+  });
   const statementFiling = latest10q || latest10k;
   const statementEndDate = statementFiling?.reportDate || null;
   const statementFormTypes = statementFiling?.form?.startsWith("10-K")
@@ -945,6 +990,8 @@ async function fetchCompanyDocuments(ticker) {
       earningsRelease: latestEarnings8k ? buildSecDocumentItem(latestEarnings8k, cik, "Latest earnings/results 8-K") : null,
       latest8K: latest8k ? buildSecDocumentItem(latest8k, cik, "Latest 8-K") : null
     },
+    resultDocuments: [...resultDocumentMap.values()],
+    investorRelationsDocuments,
     earningsExhibits,
     statements
   };
@@ -8332,6 +8379,71 @@ function extractIrTranscriptLinks(html, pageUrl, ticker) {
   return links;
 }
 
+function extractIrDocumentLinks(html, pageUrl, ticker) {
+  const $ = cheerio.load(html || "");
+  const links = [];
+  const seen = new Set();
+  const escapedTicker = String(ticker).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const tickerPattern = new RegExp(`\\b${escapedTicker}\\b`, "i");
+  const currentYear = new Date().getFullYear();
+
+  $("a[href]").each((_, element) => {
+    const href = $(element).attr("href");
+    const resolved = resolvePublicUrl(href, pageUrl);
+    if (!resolved || seen.has(resolved) || isExcludedIrAudioHost(resolved)) return;
+
+    const parsedResolved = new URL(resolved);
+    const parsedPage = new URL(pageUrl);
+    if (
+      parsedResolved.origin === parsedPage.origin &&
+      parsedResolved.pathname === parsedPage.pathname &&
+      parsedResolved.hash
+    ) return;
+
+    const contextText = $(element)
+      .closest("tr, li, article, section, div")
+      .text()
+      .trim()
+      .replace(/\s+/g, " ")
+      .slice(0, 400);
+    const label = [
+      $(element).text(),
+      $(element).attr("title"),
+      $(element).attr("aria-label"),
+      contextText,
+      resolved
+    ].filter(Boolean).join(" ");
+    const isDocumentUrl = /\.(pdf|htm|html)(?:$|\?)/i.test(parsedResolved.pathname);
+    const looksLikeResultsDocument =
+      /earnings|quarter|results|release|financial results|press release|shareholder letter|presentation|supplement|10-k|10-q|annual report/i.test(label);
+
+    if (!isDocumentUrl || !looksLikeResultsDocument) return;
+    seen.add(resolved);
+
+    const score =
+      (/results|earnings|financial results/i.test(label) ? 10 : 0) +
+      (/press release|release/i.test(label) ? 7 : 0) +
+      (/pdf/i.test(label) ? 5 : 0) +
+      (/quarter|q[1-4]|fourth|third|second|first/i.test(label) ? 4 : 0) +
+      (/presentation|supplement/i.test(label) ? 3 : 0) +
+      (/10-k|10-q|annual report/i.test(label) ? 2 : 0) +
+      (tickerPattern.test(label) ? 2 : 0) +
+      (new RegExp(`\\b${currentYear}\\b`).test(label) ? 5 : 0) +
+      (new RegExp(`\\b${currentYear - 1}\\b`).test(label) ? 3 : 0);
+
+    links.push({
+      title: $(element).text().trim() || $(element).attr("title") || `${ticker} results document`,
+      url: resolved,
+      type: /\.pdf(?:$|\?)/i.test(parsedResolved.pathname) ? "PDF" : "HTML",
+      pageUrl,
+      source: "Investor Relations",
+      score
+    });
+  });
+
+  return links;
+}
+
 async function getCompanyInvestorRelationsUrl(ticker) {
   if (KNOWN_COMPANY_WEBSITES[ticker]) {
     return KNOWN_COMPANY_WEBSITES[ticker];
@@ -8368,6 +8480,59 @@ function buildEarningsAudioProxyUrl(apiBaseUrl, ticker, audioUrl) {
 function buildEarningsTranscriptProxyUrl(apiBaseUrl, ticker, transcriptUrl) {
   const params = new URLSearchParams({ url: transcriptUrl });
   return `${apiBaseUrl}/api/earnings-call/${encodeURIComponent(ticker)}/transcript-file?${params}`;
+}
+
+async function fetchInvestorRelationsDocuments(ticker) {
+  const companyUrl = await getCompanyInvestorRelationsUrl(ticker);
+  if (!companyUrl) return [];
+
+  const candidatePages = buildIrCandidatePages(companyUrl);
+  const discoveredPages = new Set(candidatePages);
+  const documentLinks = [];
+
+  for (const pageUrl of candidatePages) {
+    try {
+      const html = await fetchHtmlPage(pageUrl);
+      if (!html) continue;
+      documentLinks.push(...extractIrDocumentLinks(html, pageUrl, ticker));
+
+      const $ = cheerio.load(html);
+      $("a[href]").each((_, element) => {
+        if (discoveredPages.size >= 32) return;
+        const label = `${$(element).text()} ${$(element).attr("href") || ""}`;
+        if (!/earnings|quarter|results|news|press|financial|reports|presentations|events/i.test(label)) return;
+        const resolved = resolvePublicUrl($(element).attr("href"), pageUrl);
+        if (resolved && !isExcludedIrAudioHost(resolved)) {
+          discoveredPages.add(resolved);
+        }
+      });
+    } catch {
+      // Many IR sites block scraping; SEC exhibits still provide the official release fallback.
+    }
+  }
+
+  for (const pageUrl of [...discoveredPages].slice(candidatePages.length, 32)) {
+    try {
+      const html = await fetchHtmlPage(pageUrl);
+      if (!html) continue;
+      documentLinks.push(...extractIrDocumentLinks(html, pageUrl, ticker));
+    } catch {
+      // Keep the document finder best-effort.
+    }
+  }
+
+  const byUrl = new Map();
+  documentLinks.forEach((document) => {
+    const existing = byUrl.get(document.url);
+    if (!existing || document.score > existing.score) {
+      byUrl.set(document.url, document);
+    }
+  });
+
+  return [...byUrl.values()]
+    .filter((document) => document.score >= 7)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 12);
 }
 
 async function classifyInvestorRelationsMedia(candidate) {
