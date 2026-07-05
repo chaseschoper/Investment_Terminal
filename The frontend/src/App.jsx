@@ -1626,28 +1626,46 @@ useEffect(() => {
   useEffect(() => {
     if (!loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
     let isActive = true;
+    let retryTimer;
 
-    setIsCompanyDocumentsLoading(true);
-    axios.get(`${API_URL}/api/company-documents/${ticker}`, { timeout: 15000 })
-      .then((response) => {
-        if (isActive) {
-          setCompanyDocuments(response.data);
-        }
-      })
-      .catch((error) => {
-        console.error("Company documents failed", error);
-        if (isActive) {
-          setCompanyDocuments({ available: false });
-        }
-      })
-      .finally(() => {
-        if (isActive) {
-          setIsCompanyDocumentsLoading(false);
-        }
-      });
+    const loadCompanyDocuments = (attempt = 0) => {
+      if (!isActive) return;
+      let willRetry = false;
+      setIsCompanyDocumentsLoading(true);
+      axios.get(`${API_URL}/api/company-documents/${ticker}`, { timeout: 45000 })
+        .then((response) => {
+          if (isActive) {
+            setCompanyDocuments(response.data);
+          }
+        })
+        .catch((error) => {
+          console.error("Company documents failed", error);
+          if (!isActive) return;
+          if (attempt < 5) {
+            willRetry = true;
+            retryTimer = window.setTimeout(
+              () => loadCompanyDocuments(attempt + 1),
+              Math.min(12000, 1800 + attempt * 1800)
+            );
+            return;
+          }
+          setCompanyDocuments({
+            available: false,
+            loadingFailed: true
+          });
+        })
+        .finally(() => {
+          if (isActive && !willRetry) {
+            setIsCompanyDocumentsLoading(false);
+          }
+        });
+    };
+
+    loadCompanyDocuments();
 
     return () => {
       isActive = false;
+      if (retryTimer) window.clearTimeout(retryTimer);
     };
   }, [ticker, loadedStockSymbol, isStockLoading]);
 

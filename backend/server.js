@@ -37,10 +37,11 @@ const earningsCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
 const companyDocumentsCache = new Map();
+const companyDocumentsInFlight = new Map();
 const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 126;
+const FINANCIAL_HISTORY_VERSION = 128;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -915,89 +916,74 @@ async function fetchCompanyDocuments(ticker) {
   if (cached && Date.now() - cached.fetchedAt < 3 * 60 * 60 * 1000) {
     return cached.data;
   }
+  const inFlight = companyDocumentsInFlight.get(symbol);
+  if (inFlight) return inFlight;
 
-  const tickerMap = await getSecTickerMap();
-  const cik = tickerMap.get(symbol);
-  if (!cik) {
-    return { available: false, symbol, message: "SEC documents are not available for this ticker yet." };
-  }
-
-  const [submissionsResponse, factsResponse] = await Promise.all([
-    axios.get(`https://data.sec.gov/submissions/CIK${cik}.json`, {
-      headers: { "User-Agent": "InvestmentTerminal/1.0 contact@investmentterminal.app" },
-      timeout: 12000
-    }),
-    axios.get(`https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`, {
-      headers: { "User-Agent": "InvestmentTerminal/1.0 contact@investmentterminal.app" },
-      timeout: 12000
-    }).catch(() => ({ data: null }))
-  ]);
-
-  const filings = normalizeSecRecentFilings(submissionsResponse.data?.filings?.recent || {});
-  const latest10k = filings.find((filing) => /^10-K/i.test(filing.form));
-  const latest10q = filings.find((filing) => /^10-Q/i.test(filing.form));
-  const latest8k = filings.find((filing) => filing.form === "8-K" || filing.form === "8-K/A");
-  const latestEarnings8k =
-    filings.find((filing) =>
-      /^8-K/i.test(filing.form) &&
-      (/2\.02/.test(String(filing.items || "")) ||
-        /results|earnings|quarter|annual|financial/i.test(`${filing.primaryDocDescription || ""} ${filing.primaryDocument || ""}`))
-    ) || latest8k;
-  const [earningsExhibits, investorRelationsDocuments] = await Promise.all([
-    fetchSecFilingExhibits(cik, latestEarnings8k),
-    fetchInvestorRelationsDocuments(symbol).catch((err) => {
-      console.log("IR result documents skipped:", symbol, err.response?.status || err.message);
-      return [];
-    })
-  ]);
-  const resultDocumentMap = new Map();
-  [...investorRelationsDocuments, ...earningsExhibits].forEach((document) => {
-    if (document?.url && !resultDocumentMap.has(document.url)) {
-      resultDocumentMap.set(document.url, document);
+  const fetchPromise = (async () => {
+    const tickerMap = await getSecTickerMap();
+    const cik = tickerMap.get(symbol);
+    if (!cik) {
+      return { available: false, symbol, message: "SEC documents are not available for this ticker yet." };
     }
+
+    const submissionsResponse = await axios.get(`https://data.sec.gov/submissions/CIK${cik}.json`, {
+      headers: { "User-Agent": "InvestmentTerminal/1.0 contact@investmentterminal.app" },
+      timeout: 12000
+    });
+
+    const filings = normalizeSecRecentFilings(submissionsResponse.data?.filings?.recent || {});
+    const latest10k = filings.find((filing) => /^10-K/i.test(filing.form));
+    const latest10q = filings.find((filing) => /^10-Q/i.test(filing.form));
+    const latest8k = filings.find((filing) => filing.form === "8-K" || filing.form === "8-K/A");
+    const latestEarnings8k =
+      filings.find((filing) =>
+        /^8-K/i.test(filing.form) &&
+        (/2\.02/.test(String(filing.items || "")) ||
+          /results|earnings|quarter|annual|financial/i.test(`${filing.primaryDocDescription || ""} ${filing.primaryDocument || ""}`))
+      ) || latest8k;
+    const [earningsExhibits, investorRelationsDocuments] = await Promise.all([
+      fetchSecFilingExhibits(cik, latestEarnings8k),
+      resolveWithin(
+        fetchInvestorRelationsDocuments(symbol).catch((err) => {
+          console.log("IR result documents skipped:", symbol, err.response?.status || err.message);
+          return [];
+        }),
+        9000,
+        []
+      )
+    ]);
+    const resultDocumentMap = new Map();
+    [...investorRelationsDocuments, ...earningsExhibits].forEach((document) => {
+      if (document?.url && !resultDocumentMap.has(document.url)) {
+        resultDocumentMap.set(document.url, document);
+      }
+    });
+
+    const data = {
+      available: true,
+      symbol,
+      companyName: submissionsResponse.data?.name || symbol,
+      cik,
+      updatedAt: new Date().toISOString(),
+      filings: {
+        tenK: latest10k ? buildSecDocumentItem(latest10k, cik, "Latest 10-K annual report") : null,
+        tenQ: latest10q ? buildSecDocumentItem(latest10q, cik, "Latest 10-Q quarterly report") : null,
+        earningsRelease: latestEarnings8k ? buildSecDocumentItem(latestEarnings8k, cik, "Latest earnings/results 8-K") : null,
+        latest8K: latest8k ? buildSecDocumentItem(latest8k, cik, "Latest 8-K") : null
+      },
+      resultDocuments: [...resultDocumentMap.values()],
+      investorRelationsDocuments,
+      earningsExhibits
+    };
+
+    companyDocumentsCache.set(symbol, { data, fetchedAt: Date.now() });
+    return data;
+  })().finally(() => {
+    companyDocumentsInFlight.delete(symbol);
   });
-  const statementFiling = latest10q || latest10k;
-  const statementEndDate = statementFiling?.reportDate || null;
-  const statementFormTypes = statementFiling?.form?.startsWith("10-K")
-    ? ["10-K", "10-K/A"]
-    : ["10-Q", "10-Q/A", "10-K", "10-K/A"];
-  const facts = factsResponse.data || {};
-  const statementOptions = {
-    formTypes: statementFormTypes,
-    maxEndDate: statementEndDate
-  };
-  const statements = {
-    period: statementEndDate,
-    sourceForm: statementFiling?.form || null,
-    filedDate: statementFiling?.filingDate || null,
-    incomeStatement: buildStatementRows(facts, INCOME_STATEMENT_DEFINITIONS, statementOptions),
-    balanceSheet: buildStatementRows(facts, BALANCE_SHEET_DEFINITIONS, {
-      ...statementOptions,
-      instantOnly: true
-    }),
-    cashFlow: buildStatementRows(facts, CASH_FLOW_DEFINITIONS, statementOptions)
-  };
 
-  const data = {
-    available: true,
-    symbol,
-    companyName: submissionsResponse.data?.name || symbol,
-    cik,
-    updatedAt: new Date().toISOString(),
-    filings: {
-      tenK: latest10k ? buildSecDocumentItem(latest10k, cik, "Latest 10-K annual report") : null,
-      tenQ: latest10q ? buildSecDocumentItem(latest10q, cik, "Latest 10-Q quarterly report") : null,
-      earningsRelease: latestEarnings8k ? buildSecDocumentItem(latestEarnings8k, cik, "Latest earnings/results 8-K") : null,
-      latest8K: latest8k ? buildSecDocumentItem(latest8k, cik, "Latest 8-K") : null
-    },
-    resultDocuments: [...resultDocumentMap.values()],
-    investorRelationsDocuments,
-    earningsExhibits,
-    statements
-  };
-
-  companyDocumentsCache.set(symbol, { data, fetchedAt: Date.now() });
-  return data;
+  companyDocumentsInFlight.set(symbol, fetchPromise);
+  return fetchPromise;
 }
 
 async function fetchSecAnnualMargins(ticker) {
@@ -2324,14 +2310,14 @@ const computeEpsFromEarningsAndShares = (earningsBillions, shares) => {
   const earnings = toNumberOrNull(earningsBillions);
   const shareCount = toNumberOrNull(shares);
   if (earnings === null || shareCount === null || shareCount <= 0) return null;
-  return shareCount < 100 ? earnings / shareCount : (earnings * 1000) / shareCount;
+  return (earnings * 1000) / shareCount;
 };
 
 const computeEarningsFromEpsAndShares = (eps, shares) => {
   const epsValue = toNumberOrNull(eps);
   const shareCount = toNumberOrNull(shares);
   if (epsValue === null || shareCount === null || shareCount <= 0) return null;
-  return shareCount < 100 ? epsValue * shareCount : (epsValue * shareCount) / 1000;
+  return (epsValue * shareCount) / 1000;
 };
 
 const normalizeHistoricalShares = (candidate, currentShares) => {
@@ -2344,6 +2330,23 @@ const normalizeHistoricalShares = (candidate, currentShares) => {
   return shares;
 };
 
+const normalizeSharesOutstandingMillions = (candidate, marketCap, price) => {
+  let shares = toNumberOrNull(candidate);
+  const cap = toNumberOrNull(marketCap);
+  const quotePrice = toNumberOrNull(price);
+  if (shares === null) return null;
+
+  const impliedShares =
+    cap !== null && cap > 0 && quotePrice !== null && quotePrice > 0
+      ? cap / quotePrice / 1000000
+      : null;
+  if (impliedShares === null || impliedShares <= 0) return shares;
+
+  while (shares / impliedShares > 25) shares /= 1000;
+  while (impliedShares / shares > 25) shares *= 1000;
+  return shares;
+};
+
 const normalizeHistoricalEps = (row, currentShares) => {
   const eps = toNumberOrNull(row?.eps);
   const earnings = toNumberOrNull(row?.earnings);
@@ -2352,7 +2355,7 @@ const normalizeHistoricalEps = (row, currentShares) => {
     return eps;
   }
 
-  const impliedShares = Math.abs(shares < 100 ? earnings / eps : (earnings * 1000) / eps);
+  const impliedShares = Math.abs((earnings * 1000) / eps);
   if (!Number.isFinite(impliedShares) || impliedShares <= 0) return eps;
 
   const shareRatio = impliedShares / shares;
@@ -2416,7 +2419,7 @@ function finalizeFinancialHistory(rows, sharesOutstanding) {
           row.eps !== null &&
           row.eps !== undefined &&
           row.eps !== 0
-          ? Math.abs(toNumberOrNull(sharesOutstanding) < 100 ? row.earnings / row.eps : (row.earnings * 1000) / row.eps)
+          ? Math.abs((row.earnings * 1000) / row.eps)
           : null,
         sharesOutstanding
       ),
@@ -2596,15 +2599,19 @@ function withGuaranteedAnalystSection(data = {}) {
     latestReportedEarnings !== null && latestReportedEps
       ? (latestReportedEarnings * 1000) / latestReportedEps
       : null;
-  const suppliedSharesMillions = firstNumber(
-    data.sharesOutstanding,
-    marketCap !== null && price ? marketCap / price / 1000000 : null
+  const marketCapImpliedShares =
+    marketCap !== null && price ? marketCap / price / 1000000 : null;
+  const suppliedSharesMillions = normalizeSharesOutstandingMillions(
+    firstNumber(data.sharesOutstanding, marketCapImpliedShares),
+    marketCap,
+    price
   );
   const suppliedToImpliedRatio =
     suppliedSharesMillions && impliedSharesMillions
       ? suppliedSharesMillions / impliedSharesMillions
       : null;
   const sharesOutstanding = firstNumber(
+    marketCapImpliedShares,
     suppliedToImpliedRatio !== null &&
       (suppliedToImpliedRatio > 1.5 || suppliedToImpliedRatio < 0.67)
       ? impliedSharesMillions
@@ -4417,12 +4424,33 @@ async function fetchStockData(ticker) {
     fmpQuarterlyFinancialData,
     secAnnualMargins.history || []
   );
+  const historicalMarketCap =
+    nasdaqData.marketCap ??
+    yahooSupplementalData.marketCap ??
+    (profile.marketCapitalization
+      ? profile.marketCapitalization * 1000000
+      : sharesOutstanding && quote.c
+        ? sharesOutstanding * 1000000 * quote.c
+        : null);
+  const historicalSharesOutstanding = normalizeSharesOutstandingMillions(
+    firstNumber(
+      sharesOutstanding,
+      yahooSupplementalData.sharesOutstanding
+        ? yahooSupplementalData.sharesOutstanding / 1000000
+        : null,
+      historicalMarketCap && quote.c
+        ? historicalMarketCap / quote.c / 1000000
+        : null
+    ),
+    historicalMarketCap,
+    quote.c
+  );
   const revenueData = limitHistoricalFinancialRows(
     removeStaleModeledFallbackRows(
       removeStaleProviderScaleBreakRows(
         finalizeFinancialHistory(
           mergeSupplementalHistoricalFields(reportedAnnualData, supplementalAnnualData, Infinity),
-          sharesOutstanding
+          historicalSharesOutstanding
         )
       )
     )
@@ -4799,11 +4827,32 @@ async function fetchStockData(ticker) {
   const followingRevenue =
     fmpFollowingRevenueEstimate ??
     estimateDecayedForwardValue(nextRevenue, currentRevenueBase);
+  const preliminaryMarketCap =
+    nasdaqData.marketCap ??
+    yahooSupplementalData.marketCap ??
+    (profile.marketCapitalization
+      ? profile.marketCapitalization * 1000000
+      : sharesOutstanding && quote.c
+        ? sharesOutstanding * 1000000 * quote.c
+      : null);
+  const preliminarySharesOutstandingValue = normalizeSharesOutstandingMillions(
+    firstNumber(
+      sharesOutstanding,
+      yahooSupplementalData.sharesOutstanding
+        ? yahooSupplementalData.sharesOutstanding / 1000000
+        : null,
+      preliminaryMarketCap && quote.c
+        ? preliminaryMarketCap / quote.c / 1000000
+        : null
+    ),
+    preliminaryMarketCap,
+    quote.c
+  );
 
   const currentEarnings =
     firstNumber(
-      currentEps && sharesOutstanding
-        ? currentEps * sharesOutstanding * 1000000
+      currentEps && preliminarySharesOutstandingValue
+        ? currentEps * preliminarySharesOutstandingValue * 1000000
         : null,
       fmpEstimateField(
         fmpCurrentEstimate,
@@ -4816,8 +4865,8 @@ async function fetchStockData(ticker) {
 
   const nextEarnings =
     firstNumber(
-      nextEps && sharesOutstanding
-        ? nextEps * sharesOutstanding * 1000000
+      nextEps && preliminarySharesOutstandingValue
+        ? nextEps * preliminarySharesOutstandingValue * 1000000
         : null,
       fmpEstimateField(
         fmpNextEstimate,
@@ -4872,26 +4921,13 @@ async function fetchStockData(ticker) {
     sanitizeForwardEps(followingEpsCandidate, nextEps);
   const followingEarnings =
     firstNumber(
-      followingEps && sharesOutstanding
-        ? followingEps * sharesOutstanding * 1000000
+      followingEps && preliminarySharesOutstandingValue
+        ? followingEps * preliminarySharesOutstandingValue * 1000000
         : null
     );
 
-  const marketCap =
-    nasdaqData.marketCap ??
-    yahooSupplementalData.marketCap ??
-    (profile.marketCapitalization
-      ? profile.marketCapitalization * 1000000
-      : sharesOutstanding && quote.c
-        ? sharesOutstanding * 1000000 * quote.c
-      : null);
-  const sharesOutstandingValue =
-    sharesOutstanding ??
-    (yahooSupplementalData.sharesOutstanding
-      ? yahooSupplementalData.sharesOutstanding / 1000000
-      : marketCap && quote.c
-        ? marketCap / quote.c / 1000000
-      : null);
+  const marketCap = preliminaryMarketCap;
+  const sharesOutstandingValue = preliminarySharesOutstandingValue;
   const modeledMarketCap =
     marketCap ??
     (quote.c ? quote.c * FALLBACK_SHARES_OUTSTANDING_MILLIONS * 1000000 : null);
