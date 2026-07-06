@@ -824,7 +824,8 @@ async function fetchPublicDocumentTitle(url) {
     const resultTitle =
       bodyText.match(/([A-Z][A-Z0-9,.'’&\- ]{8,}\s+REPORTS\s+[^.]{20,160}?RESULTS)/)?.[1] ||
       bodyText.match(/([A-Z][A-Z0-9,.'’&\- ]{8,}\s+ANNOUNCES\s+[^.]{20,160}?RESULTS)/)?.[1] ||
-      bodyText.match(/([A-Z][A-Z0-9,.'’&\- ]{8,}\s+RELEASES\s+[^.]{20,160}?RESULTS)/)?.[1];
+      bodyText.match(/([A-Z][A-Z0-9,.'’&\- ]{8,}\s+RELEASES\s+[^.]{20,160}?RESULTS)/)?.[1] ||
+      bodyText.match(/([A-Z][A-Za-z0-9,.'’&\- ]{2,}\s+(?:Reports|Announces|Releases)\s+[^.]{12,140}?Results)/)?.[1];
 
     return resultTitle || (/^document$/i.test(title) ? null : title) || null;
   } catch {
@@ -890,20 +891,28 @@ async function fetchSecFilingExhibits(cik, filing) {
       .filter((item) => {
         const name = String(item.name || "");
         return /\.(htm|html|pdf)$/i.test(name) &&
-          (/ex[-_]?99|exhibit|earnings|release|results|presentation/i.test(name));
+          (/ex[-_]?99|exhibit|earnings|release|results|presentation|(?:^|[^0-9])99[._-]?1|991/i.test(name));
       })
-      .slice(0, 8);
+      .slice(0, 12);
 
-    return Promise.all(exhibitItems.map(async (item) => {
+    const documents = await Promise.all(exhibitItems.map(async (item) => {
       const url = secArchivesDocumentUrl(cik, filing.accessionNumber, item.name);
       const title = await fetchPublicDocumentTitle(url);
+      const label = `${title || ""} ${item.name}`;
+      const score =
+        scoreIrResultsDocument(label, url, 0) +
+        (/(?:^|[^0-9])99[._-]?1|991/i.test(item.name) ? 18 : 0) +
+        (/ex[-_]?99/i.test(item.name) ? 10 : 0) -
+        (/slides|presentation|deck/i.test(label) && !/release|reports? .*results/i.test(label) ? 16 : 0);
       return {
         title: title || item.name,
         url,
         type: /\.pdf$/i.test(item.name) ? "PDF" : "HTML",
-        source: "SEC exhibit"
+        source: "SEC exhibit",
+        score
       };
     }));
+    return documents.sort((a, b) => b.score - a.score).slice(0, 8);
   } catch (err) {
     console.log("SEC exhibits skipped:", filing.form, err.response?.status || err.message);
     return [];
@@ -948,7 +957,7 @@ async function fetchCompanyDocuments(ticker) {
           console.log("IR result documents skipped:", symbol, err.response?.status || err.message);
           return [];
         }),
-        9000,
+        12000,
         []
       )
     ]);
@@ -8308,10 +8317,25 @@ function getIrCandidateRoots(companyUrl) {
 function buildIrCandidatePages(companyUrl) {
   const paths = [
     "",
+    "/news",
+    "/news-releases",
+    "/press-releases",
+    "/investor-news",
+    "/investor-news-events",
+    "/investor-relations/news",
+    "/investor-relations/news-releases",
+    "/investor-relations/press-releases",
+    "/investors/news",
+    "/investors/news-releases",
+    "/investors/press-releases",
     "/financial-information/earnings-annual-reports",
     "/financial-information/quarterly-results",
+    "/financial-information/quarterly-earnings",
     "/financials/quarterly-results",
+    "/financials/quarterly-earnings",
+    "/financial-results",
     "/quarterly-results",
+    "/quarterly-earnings",
     "/investors",
     "/investor-relations",
     "/investor",
@@ -8320,6 +8344,8 @@ function buildIrCandidatePages(companyUrl) {
     "/events-and-presentations",
     "/events-presentations",
     "/events",
+    "/news-events/press-releases",
+    "/news-events/news-releases",
     "/financials",
     "/financial-information"
   ];
@@ -8507,15 +8533,12 @@ function extractIrDocumentLinks(html, pageUrl, ticker) {
     seen.add(resolved);
 
     const score =
-      (/results|earnings|financial results/i.test(label) ? 10 : 0) +
-      (/press release|release/i.test(label) ? 7 : 0) +
-      (/pdf/i.test(label) ? 5 : 0) +
-      (/quarter|q[1-4]|fourth|third|second|first/i.test(label) ? 4 : 0) +
-      (/presentation|supplement/i.test(label) ? 3 : 0) +
-      (/10-k|10-q|annual report/i.test(label) ? 2 : 0) +
-      (tickerPattern.test(label) ? 2 : 0) +
-      (new RegExp(`\\b${currentYear}\\b`).test(label) ? 5 : 0) +
-      (new RegExp(`\\b${currentYear - 1}\\b`).test(label) ? 3 : 0);
+      scoreIrResultsDocument(label, resolved, links.length) +
+      (tickerPattern.test(label) ? 3 : 0) +
+      (new RegExp(`\\b${currentYear}\\b`).test(label) ? 4 : 0) +
+      (new RegExp(`\\b${currentYear - 1}\\b`).test(label) ? 2 : 0) -
+      (/presentation|supplement|slides/i.test(label) && !/release|reports? .*results/i.test(label) ? 10 : 0) -
+      (/10-k|10-q|annual report/i.test(label) && !/earnings|results|press release/i.test(label) ? 8 : 0);
 
     links.push({
       title: $(element).text().trim() || $(element).attr("title") || `${ticker} results document`,
@@ -8528,6 +8551,84 @@ function extractIrDocumentLinks(html, pageUrl, ticker) {
   });
 
   return links;
+}
+
+function scoreIrResultsDocument(label, url, orderIndex = 0) {
+  const text = `${label || ""} ${url || ""}`;
+  const currentYear = new Date().getFullYear();
+  const orderBonus = Math.max(0, 30 - orderIndex);
+  const isLatestYear =
+    new RegExp(`\\b${currentYear}\\b`).test(text) ||
+    new RegExp(`\\b${currentYear - 1}\\b`).test(text) ||
+    new RegExp(`\\b${currentYear + 1}\\b`).test(text);
+
+  return (
+    (/reports? (first|second|third|fourth|fiscal|quarter|annual|full.year)?.{0,30}results/i.test(text) ? 22 : 0) +
+    (/quarterly results|financial results|earnings results|fiscal .* results|results release/i.test(text) ? 18 : 0) +
+    (/earnings release|press release|news release/i.test(text) ? 12 : 0) +
+    (/ceo|chief executive|commented|said/i.test(text) ? 6 : 0) +
+    (/income statement|statements? of operations|balance sheet|cash flows?|cash flow statement/i.test(text) ? 8 : 0) +
+    (/highlights|quarter highlights|business highlights|financial highlights/i.test(text) ? 5 : 0) +
+    (/q[1-4]|first quarter|second quarter|third quarter|fourth quarter|full year|annual/i.test(text) ? 5 : 0) +
+    (/pdf/i.test(text) ? 4 : 0) +
+    (isLatestYear ? 8 : 0) +
+    orderBonus
+  );
+}
+
+function extractIrPageResultDocument(html, pageUrl, ticker) {
+  const $ = cheerio.load(html || "");
+  $("script, style, nav, header, footer, iframe, noscript").remove();
+  const title =
+    $("meta[property='og:title']").attr("content") ||
+    $("h1").first().text().trim() ||
+    $("title").first().text().trim();
+  const bodyText = $("body").text().replace(/\s+/g, " ").trim().slice(0, 5000);
+  const label = `${title} ${bodyText}`;
+  const score = scoreIrResultsDocument(label, pageUrl, 0);
+  const looksLikeRelease =
+    score >= 34 &&
+    /results|earnings|quarter|fiscal|financial/i.test(label) &&
+    !/transcript|webcast replay|presentation only/i.test(label);
+
+  if (!looksLikeRelease) return null;
+
+  const date =
+    $("time[datetime]").first().attr("datetime") ||
+    $("meta[property='article:published_time']").attr("content") ||
+    $("meta[name='date']").attr("content") ||
+    null;
+
+  return {
+    title: title || `${ticker} latest results release`,
+    url: pageUrl,
+    type: "Results Release",
+    source: "Investor Relations release",
+    filingDate: date ? String(date).slice(0, 10) : null,
+    score
+  };
+}
+
+async function fetchInvestorRelationsDocumentsFromPage(pageUrl, ticker) {
+  const html = await fetchHtmlPage(pageUrl);
+  if (!html) return { documents: [], discoveredPages: [] };
+
+  const documents = [
+    extractIrPageResultDocument(html, pageUrl, ticker),
+    ...extractIrDocumentLinks(html, pageUrl, ticker)
+  ].filter(Boolean);
+  const discoveredPages = [];
+  const $ = cheerio.load(html);
+  $("a[href]").each((_, element) => {
+    const label = `${$(element).text()} ${$(element).attr("href") || ""}`;
+    if (!/earnings|quarter|results|news|press|release|financial|reports|presentations|events/i.test(label)) return;
+    const resolved = resolvePublicUrl($(element).attr("href"), pageUrl);
+    if (resolved && !isExcludedIrAudioHost(resolved)) {
+      discoveredPages.push(resolved);
+    }
+  });
+
+  return { documents, discoveredPages };
 }
 
 async function getCompanyInvestorRelationsUrl(ticker) {
@@ -8576,36 +8677,28 @@ async function fetchInvestorRelationsDocuments(ticker) {
   const discoveredPages = new Set(candidatePages);
   const documentLinks = [];
 
-  for (const pageUrl of candidatePages) {
-    try {
-      const html = await fetchHtmlPage(pageUrl);
-      if (!html) continue;
-      documentLinks.push(...extractIrDocumentLinks(html, pageUrl, ticker));
+  const fetchPage = async (pageUrl) =>
+    resolveWithin(
+      fetchInvestorRelationsDocumentsFromPage(pageUrl, ticker).catch(() => ({ documents: [], discoveredPages: [] })),
+      3500,
+      { documents: [], discoveredPages: [] }
+    );
+  const primaryResults = await Promise.all(candidatePages.slice(0, 24).map(fetchPage));
+  primaryResults.forEach((result) => {
+    documentLinks.push(...result.documents);
+    result.discoveredPages.forEach((pageUrl) => {
+      if (discoveredPages.size < 48) discoveredPages.add(pageUrl);
+    });
+  });
 
-      const $ = cheerio.load(html);
-      $("a[href]").each((_, element) => {
-        if (discoveredPages.size >= 32) return;
-        const label = `${$(element).text()} ${$(element).attr("href") || ""}`;
-        if (!/earnings|quarter|results|news|press|financial|reports|presentations|events/i.test(label)) return;
-        const resolved = resolvePublicUrl($(element).attr("href"), pageUrl);
-        if (resolved && !isExcludedIrAudioHost(resolved)) {
-          discoveredPages.add(resolved);
-        }
-      });
-    } catch {
-      // Many IR sites block scraping; SEC exhibits still provide the official release fallback.
-    }
-  }
-
-  for (const pageUrl of [...discoveredPages].slice(candidatePages.length, 32)) {
-    try {
-      const html = await fetchHtmlPage(pageUrl);
-      if (!html) continue;
-      documentLinks.push(...extractIrDocumentLinks(html, pageUrl, ticker));
-    } catch {
-      // Keep the document finder best-effort.
-    }
-  }
+  const secondaryPages = [...discoveredPages]
+    .slice(candidatePages.length)
+    .filter((pageUrl) => /earnings|quarter|results|news|press|release|financial/i.test(pageUrl))
+    .slice(0, 24);
+  const secondaryResults = await Promise.all(secondaryPages.map(fetchPage));
+  secondaryResults.forEach((result) => {
+    documentLinks.push(...result.documents);
+  });
 
   const byUrl = new Map();
   documentLinks.forEach((document) => {
@@ -8616,7 +8709,7 @@ async function fetchInvestorRelationsDocuments(ticker) {
   });
 
   return [...byUrl.values()]
-    .filter((document) => document.score >= 7)
+    .filter((document) => document.score >= 18)
     .sort((a, b) => b.score - a.score)
     .slice(0, 12);
 }
