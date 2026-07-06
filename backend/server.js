@@ -122,6 +122,7 @@ function parseRequestedEarningsPeriod(query = {}) {
   return { year: rawYear, quarter };
 }
 const KNOWN_COMPANY_WEBSITES = {
+  NVDA: "https://nvidianews.nvidia.com/",
   TXN: "https://www.ti.com"
 };
 const KNOWN_FINANCIAL_INSTITUTIONS = new Set([
@@ -825,7 +826,8 @@ async function fetchPublicDocumentTitle(url) {
       bodyText.match(/([A-Z][A-Z0-9,.'’&\- ]{8,}\s+REPORTS\s+[^.]{20,160}?RESULTS)/)?.[1] ||
       bodyText.match(/([A-Z][A-Z0-9,.'’&\- ]{8,}\s+ANNOUNCES\s+[^.]{20,160}?RESULTS)/)?.[1] ||
       bodyText.match(/([A-Z][A-Z0-9,.'’&\- ]{8,}\s+RELEASES\s+[^.]{20,160}?RESULTS)/)?.[1] ||
-      bodyText.match(/([A-Z][A-Za-z0-9,.'’&\- ]{2,}\s+(?:Reports|Announces|Releases)\s+[^.]{12,140}?Results)/)?.[1];
+      bodyText.match(/([A-Z][A-Za-z0-9,.'’&\- ]{2,}\s+(?:Reports|Announces|Releases)\s+[^.]{12,140}?Results)/)?.[1] ||
+      bodyText.match(/([A-Z][A-Za-z0-9,.'’&\- ]{2,}\s+Announces\s+Financial Results for\s+[^.]{8,120}?Fiscal\s+\d{4})/)?.[1];
 
     return resultTitle || (/^document$/i.test(title) ? null : title) || null;
   } catch {
@@ -891,7 +893,7 @@ async function fetchSecFilingExhibits(cik, filing) {
       .filter((item) => {
         const name = String(item.name || "");
         return /\.(htm|html|pdf)$/i.test(name) &&
-          (/ex[-_]?99|exhibit|earnings|release|results|presentation|(?:^|[^0-9])99[._-]?1|991/i.test(name));
+          (/ex[-_]?99|exhibit|earnings|release|results|presentation|(?:^|[^0-9])99[._-]?1|991|(?:^|[._-])pr(?:[._-]|\.)|pr\.(?:htm|html|pdf)$/i.test(name));
       })
       .slice(0, 12);
 
@@ -902,6 +904,7 @@ async function fetchSecFilingExhibits(cik, filing) {
       const score =
         scoreIrResultsDocument(label, url, 0) +
         (/(?:^|[^0-9])99[._-]?1|991/i.test(item.name) ? 18 : 0) +
+        (/(?:^|[._-])pr(?:[._-]|\.)|pr\.(?:htm|html|pdf)$/i.test(item.name) ? 16 : 0) +
         (/ex[-_]?99/i.test(item.name) ? 10 : 0) -
         (/slides|presentation|deck/i.test(label) && !/release|reports? .*results/i.test(label) ? 16 : 0);
       return {
