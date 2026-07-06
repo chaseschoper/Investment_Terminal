@@ -2269,6 +2269,29 @@ const freeCashflowHistory =
     stockData?.freeCashflow,
     (value) => value / 1e9
   );
+const latestChartMetricDollars = (rows, key) => {
+  const latest = [...(rows || [])]
+    .filter((row) => isNumber(row?.[key]))
+    .sort((a, b) => {
+      const yearDiff = Number(a.year || 0) - Number(b.year || 0);
+      if (yearDiff !== 0) return yearDiff;
+      if (Boolean(a.isInterim) !== Boolean(b.isInterim)) {
+        return a.isInterim ? 1 : -1;
+      }
+      return String(a.period || "").localeCompare(String(b.period || ""));
+    })
+    .at(-1);
+
+  return latest ? latest[key] * 1e9 : null;
+};
+const latestFreeCashflowFromChart = latestChartMetricDollars(
+  freeCashflowHistory,
+  "freeCashflow"
+);
+const latestOperatingCashflowFromChart = latestChartMetricDollars(
+  operatingCashflowHistory,
+  "operatingCashflow"
+);
 const sharesOutstandingHistory =
   chartRowsWithCurrentFallback(
     buildChartRows(financialHistory, "sharesOutstanding"),
@@ -4174,7 +4197,7 @@ return (
 {stockValue(formatBillions(
   stockData.isFinancialCompany
     ? stockData.bankMetrics?.annualCashChange
-    : stockData.freeCashflow
+    : latestFreeCashflowFromChart
 ))}
     </div>
   </div>
@@ -4186,7 +4209,7 @@ return (
     </div>
 
     <div className="card-value">
-{stockValue(formatBillions(stockData.operatingCashflow))}
+{stockValue(formatBillions(latestOperatingCashflowFromChart))}
     </div>
   </div>
   )}
