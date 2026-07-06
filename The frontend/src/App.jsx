@@ -34,17 +34,36 @@ const isNumber = (value) =>
 const formatPercent = (value) =>
   isNumber(value) ? `${value.toFixed(1)}%` : "N/A";
 
-const buildTranscriptPeriodOptions = () => {
+const buildTranscriptPeriodOptions = (latestFiscalPeriod = null) => {
   const now = new Date();
   const currentQuarter = Math.floor(now.getMonth() / 3) + 1;
   const latestReportedQuarter = currentQuarter === 1 ? 4 : currentQuarter - 1;
   const latestReportedYear = currentQuarter === 1 ? now.getFullYear() - 1 : now.getFullYear();
+  const fiscalPeriodMatch = String(latestFiscalPeriod || "").match(/(20\d{2}).*Q([1-4])/i);
+  const fiscalPeriod = fiscalPeriodMatch
+    ? {
+        year: Number(fiscalPeriodMatch[1]),
+        quarter: Number(fiscalPeriodMatch[2])
+      }
+    : null;
+  const calendarSerial = latestReportedYear * 4 + latestReportedQuarter;
+  const fiscalSerial = fiscalPeriod
+    ? fiscalPeriod.year * 4 + fiscalPeriod.quarter
+    : null;
+  const startingYear =
+    fiscalSerial !== null && fiscalSerial > calendarSerial
+      ? fiscalPeriod.year
+      : latestReportedYear;
+  const startingQuarter =
+    fiscalSerial !== null && fiscalSerial > calendarSerial
+      ? fiscalPeriod.quarter
+      : latestReportedQuarter;
 
   return [
     { value: "latest", label: "Latest call", year: null, quarter: null },
     ...Array.from({ length: 20 }, (_, index) => {
-      const zeroBasedQuarter = latestReportedQuarter - 1 - index;
-      const year = latestReportedYear + Math.floor(zeroBasedQuarter / 4);
+      const zeroBasedQuarter = startingQuarter - 1 - index;
+      const year = startingYear + Math.floor(zeroBasedQuarter / 4);
       const quarter = ((zeroBasedQuarter % 4) + 4) % 4 + 1;
       return {
         value: `${year}-Q${quarter}`,
@@ -768,7 +787,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 119;
+const FINANCIAL_HISTORY_VERSION = 129;
 
 const getDefaultCompanyLogoUrl = (symbol) => {
   const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
@@ -1672,7 +1691,7 @@ useEffect(() => {
   useEffect(() => {
     if (!loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
     const requestId = ++latestEarningsCallRequest.current;
-    const periodOptions = buildTranscriptPeriodOptions();
+    const periodOptions = buildTranscriptPeriodOptions(stockData?.latestInterimPeriod);
     const selectedPeriod = periodOptions.find((period) => period.value === selectedTranscriptPeriod);
     const delay = selectedTranscriptPeriod === "latest" ? 1800 : 100;
     const timer = window.setTimeout(() => {
@@ -1702,7 +1721,7 @@ useEffect(() => {
       });
 
     return () => window.clearTimeout(timer);
-  }, [ticker, loadedStockSymbol, isStockLoading, selectedTranscriptPeriod]);
+  }, [ticker, loadedStockSymbol, isStockLoading, selectedTranscriptPeriod, stockData?.latestInterimPeriod]);
 
   useEffect(() => {
     if (!stockData?.price || stockData.symbol !== ticker) return;
@@ -1814,7 +1833,12 @@ useEffect(() => {
       setIsStockLoading(false);
       firstStockLoadSettled.current = true;
 
-      if (response.data.refreshing && attempt < 150) {
+      const needsFreshHistory =
+        response.data.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
+        !Array.isArray(stableResponse.revenueData) ||
+        stableResponse.revenueData.length === 0;
+
+      if (response.data.refreshing && needsFreshHistory && attempt < 90) {
         scheduleRetry(attempt < 30 ? 1000 : 2500);
       }
 
@@ -2281,7 +2305,6 @@ const hasRealHistoryRows = (rows = []) =>
   rows.some((row) => row?.isInterim && !row?.isCurrent);
 const isHistoryRefreshPending =
   isStockLoading ||
-  stockData?.refreshing === true ||
   stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION;
 const shouldShowHistoryLoading = (rows = []) =>
   isHistoryRefreshPending && !hasRealHistoryRows(rows);
@@ -2471,9 +2494,8 @@ const projectionCases = PROJECTION_CASES.map((projectionCase) => {
       : null
   };
 });
-const isStockRefreshing = stockData?.refreshing === true;
 const areEstimatesRefreshing =
-  (isStockRefreshing ||
+  (isStockLoading ||
     stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION) &&
   (
     !isNumber(currentYearEstimate?.revenue) ||
@@ -2518,7 +2540,7 @@ const totalPortfolioValue = portfolioAllocationData.reduce(
   (total, position) => total + position.value,
   0
 );
-const transcriptPeriodOptions = buildTranscriptPeriodOptions();
+const transcriptPeriodOptions = buildTranscriptPeriodOptions(stockData?.latestInterimPeriod);
 const primaryResultDocuments = companyDocuments?.resultDocuments || [];
 const resultDocumentCards = (
   primaryResultDocuments.length

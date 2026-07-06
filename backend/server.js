@@ -41,7 +41,7 @@ const companyDocumentsInFlight = new Map();
 const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 128;
+const FINANCIAL_HISTORY_VERSION = 129;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -2459,7 +2459,7 @@ function finalizeRevenueHistory(rows) {
 
 function historicalGrowth(rows, field, currentYear = 2025, previousYear = 2024) {
   const sortedRows = [...(rows || [])]
-    .filter((row) => row?.year)
+    .filter((row) => row?.year && !row?.isInterim && !row?.isCurrent)
     .sort((a, b) => a.year - b.year);
   const currentRow = sortedRows.find((row) => Number(row.year) === currentYear);
   const previousRow = sortedRows.find((row) => Number(row.year) === previousYear);
@@ -2527,8 +2527,7 @@ function hasCompleteSupplementalData(stock) {
 function needsFinancialHistoryRefresh(stock) {
   return (
     stock?.data?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
-    !hasCompleteChartHistory(stock) ||
-    !hasCompleteSupplementalData(stock)
+    !hasCompleteChartHistory(stock)
   );
 }
 
@@ -6168,7 +6167,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       const isOutdated =
         stock.data?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION;
       const isIncomplete =
-        !hasCompleteChartHistory(stock) || !hasCompleteSupplementalData(stock);
+        !hasCompleteChartHistory(stock);
       const isStale =
         isOutdated ||
         isIncomplete ||
@@ -9182,21 +9181,6 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
       process.env.PUBLIC_API_URL ||
       `${req.protocol}://${req.get("host")}`;
     const cached = await EarningsCall.findOne({ ticker });
-    if (
-      !isSpecificPeriodRequest &&
-      cached?.data?.version === EARNINGS_CALL_VERSION &&
-      Date.now() - new Date(cached.updatedAt).getTime() < 12 * 60 * 60 * 1000
-    ) {
-      const cachedData = { ...cached.data };
-      if (cachedData.rawAudioUrl && /\/ir-audio\?/.test(String(cachedData.audioUrl || ""))) {
-        cachedData.audioUrl = buildEarningsAudioProxyUrl(apiBaseUrl, ticker, cachedData.rawAudioUrl);
-      }
-      if (cachedData.rawTranscriptUrl && /\/transcript-file\?/.test(String(cachedData.transcriptUrl || ""))) {
-        cachedData.transcriptUrl = buildEarningsTranscriptProxyUrl(apiBaseUrl, ticker, cachedData.rawTranscriptUrl);
-      }
-      return res.json(cachedData);
-    }
-
     const providerErrors = [];
     const cachedTranscriptUrl =
       cached?.data?.rawTranscriptUrl ||
@@ -9226,14 +9210,14 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
       }];
     const transcriptProviders = [
       ...(isSpecificPeriodRequest ? [["EarningsCall public", () => fetchEarningsCallPublicPage(ticker, requestedPeriod)]] : []),
-      ...(isSpecificPeriodRequest ? [] : [["ROIC.ai", () => fetchRoicEarningsCall(ticker)]]),
+      ["EarningsCall", () => fetchEarningsCallBiz(ticker, apiBaseUrl, requestedPeriod)],
       ["Alpha Vantage", () => fetchAlphaVantageEarningsCall(ticker, null, requestedPeriod)],
       ["Finnhub", () => fetchFinnhubEarningsCall(ticker, requestedPeriod)],
-      ["EarningsCall", () => fetchEarningsCallBiz(ticker, apiBaseUrl, requestedPeriod)],
       ...(isSpecificPeriodRequest
         ? []
         : [
             ["Investor Relations", () => resolveWithin(fetchInvestorRelationsAudio(ticker, apiBaseUrl, { transcriptOnly: true }), 12000, null)],
+            ["ROIC.ai", () => fetchRoicEarningsCall(ticker)],
             cachedTranscriptProvider
           ])
     ];
