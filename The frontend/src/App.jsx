@@ -60,7 +60,12 @@ const buildTranscriptPeriodOptions = (latestFiscalPeriod = null) => {
       : latestReportedQuarter;
 
   return [
-    { value: "latest", label: "Latest call", year: null, quarter: null },
+    {
+      value: "latest",
+      label: "Latest call",
+      year: fiscalPeriod ? fiscalPeriod.year : null,
+      quarter: fiscalPeriod ? fiscalPeriod.quarter : null
+    },
     ...Array.from({ length: 20 }, (_, index) => {
       const zeroBasedQuarter = startingQuarter - 1 - index;
       const year = startingYear + Math.floor(zeroBasedQuarter / 4);
@@ -1693,14 +1698,15 @@ useEffect(() => {
     const requestId = ++latestEarningsCallRequest.current;
     const periodOptions = buildTranscriptPeriodOptions(stockData?.latestInterimPeriod);
     const selectedPeriod = periodOptions.find((period) => period.value === selectedTranscriptPeriod);
-    const delay = selectedTranscriptPeriod === "latest" ? 1800 : 100;
+    const delay = selectedTranscriptPeriod === "latest" ? 250 : 100;
     const timer = window.setTimeout(() => {
       setIsEarningsCallLoading(true);
 
       axios.get(`${API_URL}/api/earnings-call/${ticker}`, {
         params: selectedPeriod?.year && selectedPeriod?.quarter
           ? { year: selectedPeriod.year, quarter: selectedPeriod.quarter }
-          : undefined
+          : undefined,
+        timeout: 20000
       })
         .then((response) => {
           if (requestId === latestEarningsCallRequest.current) {

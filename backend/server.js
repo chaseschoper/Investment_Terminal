@@ -9222,6 +9222,44 @@ app.get("/api/company-documents/:ticker", async (req, res) => {
   }
 });
 
+function earningsCallResultScore(result = {}, providerName = "") {
+  const fiscalYear = toNumberOrNull(result.fiscalYear);
+  const fiscalQuarter = toNumberOrNull(String(result.fiscalPeriod || "").match(/Q([1-4])/i)?.[1]);
+  const dateTime = result.date ? new Date(result.date).getTime() : null;
+  const periodScore =
+    fiscalYear !== null && fiscalQuarter !== null
+      ? fiscalYear * 10 + fiscalQuarter
+      : null;
+  const providerPriority = {
+    EarningsCall: 7,
+    Quartr: 6,
+    "Alpha Vantage": 5,
+    Finnhub: 4,
+    "ROIC.ai": 3,
+    "Investor Relations": 2,
+    "Cached transcript": 1
+  }[providerName] || 0;
+
+  if (periodScore !== null) return periodScore * 100 + providerPriority;
+  if (dateTime && Number.isFinite(dateTime)) return Math.floor(dateTime / 86400000) + providerPriority;
+  return providerPriority;
+}
+
+function normalizeCachedEarningsCall(cached, ticker, cachedTranscriptUrl) {
+  if (!cached?.data?.transcript?.length && !cachedTranscriptUrl) return null;
+  return {
+    available: true,
+    provider: cached.data.provider || "Cached transcript",
+    title: cached.data.title || `${ticker} earnings call transcript`,
+    date: cached.data.date || null,
+    fiscalYear: cached.data.fiscalYear || null,
+    fiscalPeriod: cached.data.fiscalPeriod || null,
+    transcriptUrl: cachedTranscriptUrl || null,
+    transcript: cached.data.transcript || [],
+    transcriptSourceUrl: cached.data.transcriptSourceUrl || null
+  };
+}
+
 app.get("/api/earnings-call/:ticker", async (req, res) => {
   const ticker = req.params.ticker.trim().toUpperCase();
   const requestedPeriod = parseRequestedEarningsPeriod(req.query);
@@ -9238,48 +9276,39 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
       (/\/transcript-file\?/.test(String(cached?.data?.transcriptUrl || ""))
         ? null
         : cached?.data?.transcriptUrl);
-    const cachedTranscriptProvider = ["Cached transcript", async () => {
-        if (!cached?.data?.transcript?.length && !cachedTranscriptUrl) return null;
-        const transcript = cached?.data?.transcript?.length
-          ? cached.data.transcript
-          : await fetchTranscriptSectionsFromUrl(cachedTranscriptUrl).catch((err) => {
-            console.log("Cached transcript extraction skipped:", ticker, err.response?.status || err.message);
-            return [];
-          });
-        if (!transcript.length && !cachedTranscriptUrl) return null;
-        return {
-          available: true,
-          provider: cached.data.provider || "Investor Relations",
-          title: cached.data.title || `${ticker} earnings call transcript`,
-          date: cached.data.date || null,
-          fiscalYear: cached.data.fiscalYear || null,
-          fiscalPeriod: cached.data.fiscalPeriod || null,
-          transcriptUrl: cachedTranscriptUrl || null,
-          transcript,
-          transcriptSourceUrl: cached.data.transcriptSourceUrl || null
-        };
-      }];
     const transcriptProviders = [
-      ...(isSpecificPeriodRequest ? [["EarningsCall public", () => fetchEarningsCallPublicPage(ticker, requestedPeriod)]] : []),
-      ["EarningsCall", () => fetchEarningsCallBiz(ticker, apiBaseUrl, requestedPeriod)],
-      ["Alpha Vantage", () => fetchAlphaVantageEarningsCall(ticker, null, requestedPeriod)],
-      ["Finnhub", () => fetchFinnhubEarningsCall(ticker, requestedPeriod)],
+      ...(isSpecificPeriodRequest ? [["EarningsCall public", () => fetchEarningsCallPublicPage(ticker, requestedPeriod), 8000]] : []),
+      ["EarningsCall", () => fetchEarningsCallBiz(ticker, apiBaseUrl, requestedPeriod), 11000],
+      ...(isSpecificPeriodRequest ? [] : [["Quartr", () => fetchQuartrEarningsCall(ticker), 9000]]),
+      ["Alpha Vantage", () => fetchAlphaVantageEarningsCall(ticker, null, requestedPeriod), 9000],
+      ["Finnhub", () => fetchFinnhubEarningsCall(ticker, requestedPeriod), 9000],
       ...(isSpecificPeriodRequest
         ? []
         : [
-            ["Investor Relations", () => resolveWithin(fetchInvestorRelationsAudio(ticker, apiBaseUrl, { transcriptOnly: true }), 12000, null)],
-            ["ROIC.ai", () => fetchRoicEarningsCall(ticker)],
-            cachedTranscriptProvider
+            ["Investor Relations", () => fetchInvestorRelationsAudio(ticker, apiBaseUrl, { transcriptOnly: true }), 9000],
+            ["ROIC.ai", () => fetchRoicEarningsCall(ticker), 8000],
+            ["Cached transcript", async () => {
+              const cachedData = normalizeCachedEarningsCall(cached, ticker, cachedTranscriptUrl);
+              if (!cachedData) return null;
+              if (!cachedData.transcript?.length && cachedTranscriptUrl) {
+                cachedData.transcript = await fetchTranscriptSectionsFromUrl(cachedTranscriptUrl).catch((err) => {
+                  console.log("Cached transcript extraction skipped:", ticker, err.response?.status || err.message);
+                  return [];
+                });
+              }
+              return cachedData;
+            }, 500]
           ])
     ];
-    let transcriptData = null;
-
-    for (const [providerName, fetchProvider] of transcriptProviders) {
+    const providerResults = await Promise.all(transcriptProviders.map(async ([providerName, fetchProvider, timeoutMs]) => {
       try {
-        const providerData = await fetchProvider();
+        const providerData = await resolveWithin(fetchProvider(), timeoutMs || 9000, null);
         if (providerData?.available && (providerData.transcript?.length || providerData.transcriptUrl)) {
-          transcriptData = providerData;
-          break;
+          return {
+            providerName,
+            data: providerData,
+            score: earningsCallResultScore(providerData, providerName)
+          };
         }
       } catch (err) {
         providerErrors.push({
@@ -9288,7 +9317,11 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
         });
         console.log(`${providerName} earnings call skipped:`, ticker, err.providerCode || err.response?.status || err.message);
       }
-    }
+      return null;
+    }));
+    const transcriptData = providerResults
+      .filter(Boolean)
+      .sort((a, b) => b.score - a.score)[0]?.data || null;
 
     if (transcriptData?.transcript?.length || transcriptData?.transcriptUrl) {
       const data = {
