@@ -3867,6 +3867,8 @@ const extractYahooAnalysisAverageRow = ($, sectionTestId, { money = false } = {}
   if (!row.length) return null;
 
   return {
+    currentQuarter: parseYahooAnalysisNumber(row.find('td[data-testid-cell="0q"]').text(), { money }),
+    nextQuarter: parseYahooAnalysisNumber(row.find('td[data-testid-cell="+1q"]').text(), { money }),
     currentYear: parseYahooAnalysisNumber(row.find('td[data-testid-cell="0y"]').text(), { money }),
     nextYear: parseYahooAnalysisNumber(row.find('td[data-testid-cell="+1y"]').text(), { money })
   };
@@ -3933,6 +3935,16 @@ async function fetchYahooAnalysisPageEstimates(ticker) {
     if (!revenue && !eps) return null;
 
     return {
+      currentQuarter: {
+        revenue: revenue?.currentQuarter ?? null,
+        earnings: null,
+        eps: eps?.currentQuarter ?? null
+      },
+      nextQuarter: {
+        revenue: revenue?.nextQuarter ?? null,
+        earnings: null,
+        eps: eps?.nextQuarter ?? null
+      },
       currentYear: {
         revenue: revenue?.currentYear ?? null,
         earnings: null,
@@ -5902,12 +5914,12 @@ function getLatestInterimQuarterSnapshot(rows = []) {
 }
 
 const formatQuarterLabel = (row = {}) => {
+  if (row.year && row.quarter) return `${row.year} Q${row.quarter}`;
   if (row.period && /^\d{4}-\d{2}-\d{2}/.test(String(row.period))) {
     const date = new Date(`${String(row.period).slice(0, 10)}T12:00:00Z`);
     const quarter = Math.floor(date.getUTCMonth() / 3) + 1;
     return `${date.getUTCFullYear()} Q${quarter}`;
   }
-  if (row.year && row.quarter) return `${row.year} Q${row.quarter}`;
   return row.period || null;
 };
 
@@ -6173,6 +6185,28 @@ function buildCeoHighlightFromText(resultsText = null, fallbackHighlight = null)
 }
 
 async function fetchYahooQuarterlyExpectations(ticker) {
+  const analysisPageEstimates = await fetchYahooAnalysisPageEstimates(ticker).catch(() => null);
+  if (
+    analysisPageEstimates?.currentQuarter?.revenue !== null ||
+    analysisPageEstimates?.currentQuarter?.eps !== null ||
+    analysisPageEstimates?.nextQuarter?.revenue !== null ||
+    analysisPageEstimates?.nextQuarter?.eps !== null
+  ) {
+    return {
+      currentQuarter: {
+        revenue: analysisPageEstimates.currentQuarter?.revenue ?? null,
+        eps: analysisPageEstimates.currentQuarter?.eps ?? null
+      },
+      nextQuarter: {
+        revenue: analysisPageEstimates.nextQuarter?.revenue ?? null,
+        eps: analysisPageEstimates.nextQuarter?.eps ?? null
+      },
+      currentPeriod: "Current quarter",
+      nextPeriod: "Next quarter",
+      source: "Yahoo Finance analysis"
+    };
+  }
+
   if (!canUseYahooEarningsTrend()) return {};
 
   try {
@@ -6190,7 +6224,8 @@ async function fetchYahooQuarterlyExpectations(ticker) {
       currentQuarter: estimateFromYahooTrend(currentQuarter),
       nextQuarter: estimateFromYahooTrend(nextQuarter),
       currentPeriod: currentQuarter?.period || null,
-      nextPeriod: nextQuarter?.period || null
+      nextPeriod: nextQuarter?.period || null,
+      source: "Yahoo Finance earnings trend"
     };
   } catch (err) {
     setYahooEarningsTrendCooldown(err, "quarterly expectations", ticker);
@@ -6287,13 +6322,16 @@ async function buildEarningsTrackerData(ticker) {
     stockData.consensusNextYearEps
   );
   const latestRevenueEstimate = firstFiniteNumber(
-    calendarEvent?.revenueEstimate,
-    quarterlyExpectations?.currentQuarter?.revenue
+    calendarEvent?.revenueEstimate
   );
   const latestEpsEstimate = firstFiniteNumber(
     !latestInterimRevenueRow?.period || latestEpsLabel === latestInterimRevenueRow.period ? latestEpsRow?.estimate : null,
-    calendarEvent?.epsEstimate,
-    quarterlyExpectations?.currentQuarter?.eps
+    calendarEvent?.epsEstimate
+  );
+  const latestEpsActual = firstFiniteNumber(
+    !latestInterimRevenueRow?.period || latestEpsLabel === latestInterimRevenueRow.period ? latestEpsRow?.actual : null,
+    latestInterimRevenueRow?.eps,
+    calendarEvent?.epsActual
   );
   const latestReportedQuarter = latestInterimRevenueRow?.period || latestEpsLabel || stockData.latestInterimPeriod || null;
   const hasQuarterlyExpectation =
@@ -6323,7 +6361,7 @@ async function buildEarningsTrackerData(ticker) {
       latestRevenueEstimate
     ),
     eps: calculateBeatMiss(
-      firstFiniteNumber(latestInterimRevenueRow?.eps, latestEpsRow?.actual, calendarEvent?.epsActual),
+      latestEpsActual,
       latestEpsEstimate
     ),
     nextQuarterExpectations: {
@@ -6331,7 +6369,7 @@ async function buildEarningsTrackerData(ticker) {
       eps: nextQuarterEps,
       period: quarterlyExpectations?.nextPeriod || quarterlyExpectations?.currentPeriod || "Next quarter",
       source: hasQuarterlyExpectation
-        ? "Yahoo Finance earnings trend"
+        ? quarterlyExpectations?.source || "Yahoo Finance estimates"
         : nextQuarterRevenue !== null || nextQuarterEps !== null
           ? "Annual consensus run-rate"
           : null
@@ -6475,7 +6513,7 @@ function normalizeAnalystActionRow(row = {}, fallback = {}) {
     previousRating: previousRating || null,
     action: firstText(row.action, row.gradeAction, row.type, fallback.action),
     date: isoDateOnly(row.publishedDate || row.date || row.updatedAt || row.newsDate || fallback.date),
-    url: row.newsURL || row.url || row.newsUrl || null,
+    url: null,
     title: firstText(row.newsTitle, row.title, row.headline)
   };
 }

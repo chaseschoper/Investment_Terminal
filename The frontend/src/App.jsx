@@ -4746,7 +4746,6 @@ return (
           <thead>
             <tr>
               <th>Institution</th>
-              <th>Analyst</th>
               <th>Price Target</th>
               <th>Rating</th>
               <th>Action</th>
@@ -4759,7 +4758,6 @@ return (
                 <td>
                   {action.firm || "Consensus"}
                 </td>
-                <td>{action.analyst || "N/A"}</td>
                 <td>
                   {formatPrice(action.priceTarget)}
                   {isNumber(action.previousPriceTarget) && (
