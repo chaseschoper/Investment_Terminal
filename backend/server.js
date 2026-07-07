@@ -5853,6 +5853,54 @@ const calculateBeatMiss = (actual, estimate) => {
   };
 };
 
+function interimQuarterNumber(row = {}) {
+  return Number(String(row.period || "").match(/\bQ([1-4])\b/i)?.[1]) || null;
+}
+
+function getLatestInterimQuarterSnapshot(rows = []) {
+  const sortedRows = [...(rows || [])]
+    .filter((row) => row?.isInterim && toNumberOrNull(row.revenue) !== null)
+    .sort((a, b) => {
+      const yearDiff = Number(a.year || 0) - Number(b.year || 0);
+      if (yearDiff !== 0) return yearDiff;
+      return (interimQuarterNumber(a) || 0) - (interimQuarterNumber(b) || 0);
+    });
+  const latest = sortedRows.at(-1) || null;
+  if (!latest) return null;
+
+  const quarter = interimQuarterNumber(latest);
+  const isYtd = /\bYTD\b/i.test(String(latest.period || ""));
+  if (!isYtd || !quarter || quarter <= 1) {
+    return {
+      ...latest,
+      period: latest.period ? String(latest.period).replace(/\s+YTD\b/i, "") : latest.period,
+      revenue: toNumberOrNull(latest.revenue),
+      eps: toNumberOrNull(latest.eps)
+    };
+  }
+
+  const previousYtd = [...sortedRows]
+    .reverse()
+    .find((row) =>
+      row !== latest &&
+      Number(row.year) === Number(latest.year) &&
+      interimQuarterNumber(row) === quarter - 1 &&
+      /\bYTD\b/i.test(String(row.period || ""))
+    );
+  const latestRevenue = toNumberOrNull(latest.revenue);
+  const previousRevenue = toNumberOrNull(previousYtd?.revenue);
+  const latestEps = toNumberOrNull(latest.eps);
+  const previousEps = toNumberOrNull(previousYtd?.eps);
+
+  return {
+    ...latest,
+    period: latest.period ? String(latest.period).replace(/\s+YTD\b/i, "") : latest.period,
+    revenue: latestRevenue !== null && previousRevenue !== null ? latestRevenue - previousRevenue : latestRevenue,
+    eps: latestEps !== null && previousEps !== null ? latestEps - previousEps : latestEps,
+    source: latest.source ? `${latest.source} quarterized` : "Quarterized interim filing"
+  };
+}
+
 const formatQuarterLabel = (row = {}) => {
   if (row.period && /^\d{4}-\d{2}-\d{2}/.test(String(row.period))) {
     const date = new Date(`${String(row.period).slice(0, 10)}T12:00:00Z`);
@@ -6188,10 +6236,8 @@ async function buildEarningsTrackerData(ticker) {
   const stock = await Stock.findOne({ ticker: normalizedTicker }).lean().catch(() => null);
   const stockData = stock?.data || {};
   const company = stockData.name || normalizedTicker;
-  const [companyEarningsResponse, documents, cachedTranscript, quarterlyExpectations] = await Promise.all([
+  const [companyEarningsResponse, quarterlyExpectations] = await Promise.all([
     withTimeout(getFinnhub(`https://finnhub.io/api/v1/stock/earnings?symbol=${normalizedTicker}`), EARNINGS_TRACKER_FAST_TIMEOUT_MS, []).catch(() => []),
-    withTimeout(fetchCompanyDocuments(normalizedTicker), EARNINGS_TRACKER_FAST_TIMEOUT_MS, null).catch(() => null),
-    EarningsCall.findOne({ ticker: normalizedTicker }).lean().catch(() => null),
     withTimeout(fetchYahooQuarterlyExpectations(normalizedTicker), EARNINGS_TRACKER_FAST_TIMEOUT_MS, {}).catch(() => ({}))
   ]);
   const companyEarnings = Array.isArray(companyEarningsResponse) ? companyEarningsResponse : [];
@@ -6200,19 +6246,13 @@ async function buildEarningsTrackerData(ticker) {
     .sort((a, b) =>
       String(b.period || `${b.year}-${b.quarter || 1}`).localeCompare(String(a.period || `${a.year}-${a.quarter || 1}`))
     )[0] || null;
+  const latestEpsLabel = formatQuarterLabel(latestEpsRow);
   const [calendarEvent, nextEvent] = await Promise.all([
     withTimeout(fetchLatestEarningsCalendarEvent(normalizedTicker, latestEpsRow?.period), EARNINGS_TRACKER_FAST_TIMEOUT_MS, null).catch(() => null),
     withTimeout(fetchNextEarningsDate(normalizedTicker), EARNINGS_TRACKER_FAST_TIMEOUT_MS, null).catch(() => null)
   ]);
 
-  const latestInterimRevenueRow = [...(stockData.revenueData || [])]
-    .filter((row) => row?.isInterim && toNumberOrNull(row.revenue) !== null)
-    .sort((a, b) => {
-      const yearDiff = Number(a.year || 0) - Number(b.year || 0);
-      if (yearDiff !== 0) return yearDiff;
-      return String(a.period || "").localeCompare(String(b.period || ""));
-    })
-    .at(-1) || null;
+  const latestInterimRevenueRow = getLatestInterimQuarterSnapshot(stockData.revenueData || []);
   const latestMarginRow = [...(stockData.marginHistory || [])]
     .filter((row) => toNumberOrNull(row.operatingMargin ?? row.profitMargin) !== null)
     .sort((a, b) => {
@@ -6234,15 +6274,6 @@ async function buildEarningsTrackerData(ticker) {
     .at(-1) || null;
   const latestMargin = firstFiniteNumber(latestMarginRow?.operatingMargin, latestMarginRow?.profitMargin);
   const previousMargin = firstFiniteNumber(previousMarginRow?.operatingMargin, previousMarginRow?.profitMargin);
-  const transcriptHighlight = buildTrackerHighlightFromTranscript(cachedTranscript);
-  const resultsText =
-    (await withTimeout(fetchLatestResultsText(documents), RELEASE_TEXT_FAST_TIMEOUT_MS, null).catch(() => null)) ||
-    (await withTimeout(fetchLatestResultsTextFromWeb(normalizedTicker, company), RELEASE_TEXT_FAST_TIMEOUT_MS, null).catch(() => null));
-  const guidanceSignal = buildGuidanceSignalFromText(
-    resultsText,
-    buildGuidanceSignal(documents, transcriptHighlight)
-  );
-  const ceoHighlight = buildCeoHighlightFromText(resultsText, transcriptHighlight);
   const runRateRevenueEstimate = firstFiniteNumber(
     stockData.analystEstimates?.currentYear?.revenue,
     stockData.analystEstimates?.nextYear?.revenue,
@@ -6257,15 +6288,14 @@ async function buildEarningsTrackerData(ticker) {
   );
   const latestRevenueEstimate = firstFiniteNumber(
     calendarEvent?.revenueEstimate,
-    quarterlyExpectations?.currentQuarter?.revenue,
-    runRateRevenueEstimate !== null ? runRateRevenueEstimate / 4 : null
+    quarterlyExpectations?.currentQuarter?.revenue
   );
   const latestEpsEstimate = firstFiniteNumber(
-    latestEpsRow?.estimate,
+    !latestInterimRevenueRow?.period || latestEpsLabel === latestInterimRevenueRow.period ? latestEpsRow?.estimate : null,
     calendarEvent?.epsEstimate,
-    quarterlyExpectations?.currentQuarter?.eps,
-    runRateEpsEstimate !== null ? runRateEpsEstimate / 4 : null
+    quarterlyExpectations?.currentQuarter?.eps
   );
+  const latestReportedQuarter = latestInterimRevenueRow?.period || latestEpsLabel || stockData.latestInterimPeriod || null;
   const hasQuarterlyExpectation =
     firstFiniteNumber(
       quarterlyExpectations?.nextQuarter?.revenue,
@@ -6286,14 +6316,14 @@ async function buildEarningsTrackerData(ticker) {
   const data = {
     symbol: normalizedTicker,
     company,
-    latestReportedQuarter: formatQuarterLabel(latestEpsRow) || latestInterimRevenueRow?.period || stockData.latestInterimPeriod || null,
-    reportDate: calendarEvent?.date || latestEpsRow?.period || latestInterimRevenueRow?.endDate || null,
+    latestReportedQuarter,
+    reportDate: latestInterimRevenueRow?.endDate || calendarEvent?.date || latestEpsRow?.period || null,
     revenue: calculateBeatMiss(
       firstFiniteNumber(calendarEvent?.revenueActual, latestInterimRevenueRow?.revenue !== undefined ? latestInterimRevenueRow.revenue * 1000000000 : null),
       latestRevenueEstimate
     ),
     eps: calculateBeatMiss(
-      firstFiniteNumber(latestEpsRow?.actual, calendarEvent?.epsActual, latestInterimRevenueRow?.eps),
+      firstFiniteNumber(latestInterimRevenueRow?.eps, latestEpsRow?.actual, calendarEvent?.epsActual),
       latestEpsEstimate
     ),
     nextQuarterExpectations: {
@@ -6314,8 +6344,6 @@ async function buildEarningsTrackerData(ticker) {
       currentPeriod: latestMarginRow?.period || null,
       previousPeriod: previousMarginRow?.period || null
     },
-    guidance: guidanceSignal,
-    ceoHighlight,
     nextEarningsDate: nextEvent?.date || null,
     nextEarningsTime: nextEvent?.hour || null,
     source: {
@@ -6325,7 +6353,7 @@ async function buildEarningsTrackerData(ticker) {
         : latestInterimRevenueRow
           ? latestInterimRevenueRow.source
           : null,
-      documents: documents?.available ? "Company documents" : null
+      documents: null
     },
     updatedAt: new Date().toISOString()
   };
@@ -6352,14 +6380,7 @@ async function buildFastEarningsTrackerFallback(ticker) {
   const normalizedTicker = normalizePeerSymbol(ticker);
   const stock = await Stock.findOne({ ticker: normalizedTicker }).lean().catch(() => null);
   const stockData = stock?.data || {};
-  const latestInterimRevenueRow = [...(stockData.revenueData || [])]
-    .filter((row) => row?.isInterim && toNumberOrNull(row.revenue) !== null)
-    .sort((a, b) => {
-      const yearDiff = Number(a.year || 0) - Number(b.year || 0);
-      if (yearDiff !== 0) return yearDiff;
-      return String(a.period || "").localeCompare(String(b.period || ""));
-    })
-    .at(-1) || null;
+  const latestInterimRevenueRow = getLatestInterimQuarterSnapshot(stockData.revenueData || []);
   const marginRows = [...(stockData.marginHistory || [])]
     .filter((row) => toNumberOrNull(row.operatingMargin ?? row.profitMargin) !== null)
     .sort((a, b) => {
@@ -6410,17 +6431,6 @@ async function buildFastEarningsTrackerFallback(ticker) {
       change: latestMargin !== null && previousMargin !== null ? latestMargin - previousMargin : null,
       currentPeriod: latestMarginRow?.period || null,
       previousPeriod: previousMarginRow?.period || null
-    },
-    guidance: {
-      status: "loading",
-      text: "Latest release details are still loading.",
-      source: null,
-      url: null
-    },
-    ceoHighlight: {
-      speaker: null,
-      text: "Latest release highlight is still loading.",
-      source: null
     },
     nextEarningsDate: null,
     nextEarningsTime: null,
@@ -6474,6 +6484,32 @@ function parseMmDdYyyy(value = "") {
   const match = String(value).match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (!match) return null;
   return `${match[3]}-${match[1]}-${match[2]}`;
+}
+
+function cleanAnalystProviderText(value = "") {
+  return String(value || "")
+    .replace(/Subscribe to MarketBeat.*$/i, "")
+    .replace(/\d+\s+of\s+5\s+stars/gi, "")
+    .replace(/\bNot Rated\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function parsePriceTargetCell(value = "") {
+  const targets = String(value || "").match(/\$?\d+(?:\.\d+)?/g) || [];
+  const numbers = targets.map((target) => toNumberOrNull(target.replace("$", ""))).filter((target) => target !== null);
+  return {
+    previousPriceTarget: numbers.length > 1 ? numbers[0] : null,
+    priceTarget: numbers.length ? numbers[numbers.length - 1] : null
+  };
+}
+
+function isUsableAnalystAction(row = {}) {
+  const firm = String(row.firm || "").trim();
+  if (!firm || /^(consensus|target|rating|lower target|raised price target)$/i.test(firm)) return false;
+  const hasTarget = toNumberOrNull(row.priceTarget) !== null;
+  const hasRating = row.rating && row.rating !== "N/A" && !/not rated/i.test(row.rating);
+  return hasTarget || hasRating;
 }
 
 async function fetchBenzingaAnalystActions(ticker) {
@@ -6530,30 +6566,43 @@ async function fetchMarketBeatAnalystActions(ticker) {
         timeout: ANALYST_ACTIONS_FAST_TIMEOUT_MS
       }
     );
-    const text = String(response.data || "")
-      .replace(/&#x279D;|→/g, "→")
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/&nbsp;/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+    const $ = cheerio.load(response.data || "");
     const rows = [];
-    const pattern = /([A-Z][A-Za-z&.' -]{2,80})\s+(?:Subscribe to MarketBeat[^$]+)?(?:Reiterated Rating|Set Target|Raised Price Target|Lowered Price Target|Initiated Coverage)?\s*([A-Za-z ]{3,30})?\s*(?:\$[\d.]+\s*→\s*)?\$([\d.]+)\s*[-+\d.]+%\s*(\d{1,2}\/\d{1,2}\/\d{4})/g;
-    let match;
-    while ((match = pattern.exec(text)) && rows.length < 12) {
-      rows.push({
-        firm: match[1].trim(),
-        analyst: null,
-        priceTarget: toNumberOrNull(match[3]),
-        rating: firstText(match[2], "N/A"),
-        previousRating: null,
-        action: "Latest rating",
-        date: isoDateOnly(match[4]),
-        url: `https://www.marketbeat.com/stocks/NASDAQ/${encodeURIComponent(normalized.toUpperCase())}/forecast/`,
-        title: `${match[1].trim()} analyst rating`
+    $("table").each((_, table) => {
+      const headers = $(table).find("tr").first().find("th,td").map((__, cell) =>
+        $(cell).text().replace(/\s+/g, " ").trim().toLowerCase()
+      ).get();
+      if (!headers.includes("brokerage") || !headers.includes("price target")) return;
+
+      $(table).find("tr").slice(1).each((__, row) => {
+        if (rows.length >= 16) return;
+        const cells = $(row).find("td").map((___, cell) =>
+          $(cell).text().replace(/\s+/g, " ").trim()
+        ).get();
+        if (cells.length < 6) return;
+
+        const date = parseMmDdYyyy(cells[0]) || isoDateOnly(cells[0]);
+        const firm = cleanAnalystProviderText(cells[1]);
+        const analyst = cleanAnalystProviderText(cells[2]);
+        const action = cleanAnalystProviderText(cells[3]);
+        const rating = cleanAnalystProviderText(cells[4]);
+        const target = parsePriceTargetCell(cells[5]);
+        if (!firm || (!target.priceTarget && !rating)) return;
+
+        rows.push({
+          firm,
+          analyst: analyst || null,
+          priceTarget: target.priceTarget,
+          previousPriceTarget: target.previousPriceTarget,
+          rating: rating || "N/A",
+          previousRating: null,
+          action: action || "Latest rating",
+          date,
+          url: null,
+          title: `${firm} ${action || "updates"} ${rating || "rating"}`
+        });
       });
-    }
+    });
     return rows;
   } catch (err) {
     console.log("MarketBeat analyst actions skipped:", ticker, err.response?.status || err.message);
@@ -6604,7 +6653,7 @@ async function buildAnalystActionsData(ticker) {
     ...(Array.isArray(gradeRows) ? gradeRows : gradeRows ? [gradeRows] : [])
   ]
     .map((row) => normalizeAnalystActionRow(row))
-    .filter((row) => row.firm || row.priceTarget !== null || row.rating !== "N/A");
+    .filter(isUsableAnalystAction);
   const uniqueRows = [];
   const seen = new Set();
   for (const row of rows) {

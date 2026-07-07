@@ -3815,19 +3815,6 @@ return (
         </div>
       </div>
 
-      <div className="quarterly-tracker-notes">
-        <div className="quarterly-tracker-note">
-          <span>Guidance change</span>
-          <p>{earningsTracker?.guidance?.text || "Guidance change is not available yet."}</p>
-        </div>
-        <div className="quarterly-tracker-note">
-          <span>CEO quote / highlight</span>
-          <p>{earningsTracker?.ceoHighlight?.text || "CEO highlight is not available yet."}</p>
-          {earningsTracker?.ceoHighlight?.speaker && (
-            <small>{earningsTracker.ceoHighlight.speaker}</small>
-          )}
-        </div>
-      </div>
     </>
   )}
 </section>
@@ -4770,13 +4757,7 @@ return (
             {analystActions.map((action, index) => (
               <tr key={`${action.firm || "firm"}-${action.date || index}-${index}`}>
                 <td>
-                  {action.url ? (
-                    <a href={action.url} target="_blank" rel="noreferrer">
-                      {action.firm || "Consensus"}
-                    </a>
-                  ) : (
-                    action.firm || "Consensus"
-                  )}
+                  {action.firm || "Consensus"}
                 </td>
                 <td>{action.analyst || "N/A"}</td>
                 <td>
