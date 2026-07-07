@@ -38,6 +38,7 @@ const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
 const companyDocumentsCache = new Map();
 const companyDocumentsInFlight = new Map();
+const similarCompanyMetricCache = new Map();
 const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
@@ -5667,6 +5668,145 @@ async function buildSimilarCompanyItem(symbol) {
   };
 }
 
+async function fetchSimilarCompanyQuote(symbol) {
+  const cached = livePriceCache.get(symbol);
+  if (
+    cached &&
+    toNumberOrNull(cached.price) !== null &&
+    toNumberOrNull(cached.percentChange) !== null &&
+    Date.now() - cached.fetchedAt < 45 * 1000
+  ) {
+    return cached;
+  }
+
+  let quote = null;
+  let extendedHours = null;
+
+  const quickData = await resolveWithin(fetchYahooQuickQuote(symbol), 1600, null).catch(() => null);
+  if (quickData) {
+    extendedHours = quickData.extendedHours || null;
+    quote = normalizeQuotePayload({}, quickData);
+  }
+
+  if (toNumberOrNull(quote?.c) === null || toNumberOrNull(quote?.dp) === null) {
+    const yahooChartQuote = await resolveWithin(fetchYahooChartQuote(symbol), 1600, null).catch(() => null);
+    if (!extendedHours && yahooChartQuote?.extendedHours) {
+      extendedHours = yahooChartQuote.extendedHours;
+    }
+    quote = normalizeQuotePayload(quote || {}, {
+      price: yahooChartQuote?.c,
+      change: yahooChartQuote?.d,
+      percentChange: yahooChartQuote?.dp,
+      previousClose: yahooChartQuote?.pc,
+      high: yahooChartQuote?.h,
+      low: yahooChartQuote?.l,
+      open: yahooChartQuote?.o
+    });
+  }
+
+  if (toNumberOrNull(quote?.c) === null || toNumberOrNull(quote?.dp) === null) {
+    const finnhubQuote = await resolveWithin(
+      getFinnhub(`https://finnhub.io/api/v1/quote?symbol=${symbol}`),
+      1600,
+      null
+    ).catch(() => null);
+    quote = normalizeQuotePayload(quote || {}, {
+      price: finnhubQuote?.c,
+      change: finnhubQuote?.d,
+      percentChange: finnhubQuote?.dp,
+      previousClose: finnhubQuote?.pc,
+      high: finnhubQuote?.h,
+      low: finnhubQuote?.l,
+      open: finnhubQuote?.o
+    });
+  }
+
+  const price = toNumberOrNull(quote?.c);
+  const previousClose = toNumberOrNull(quote?.pc);
+  const providerChange = toNumberOrNull(quote?.d);
+  const providerPercentChange = toNumberOrNull(quote?.dp);
+  const computedChange =
+    price !== null && previousClose > 0
+      ? price - previousClose
+      : null;
+  const change = providerChange ?? computedChange;
+  const percentChange = providerPercentChange ?? (
+    computedChange !== null && previousClose > 0
+      ? (computedChange / previousClose) * 100
+      : null
+  );
+
+  if (price !== null && price > 0) {
+    const nextQuote = {
+      price,
+      change,
+      percentChange,
+      extendedHours,
+      fetchedAt: Date.now()
+    };
+    livePriceCache.set(symbol, nextQuote);
+    return nextQuote;
+  }
+
+  return cached || {};
+}
+
+async function fetchSimilarCompanyForwardPe(symbol) {
+  const cached = similarCompanyMetricCache.get(symbol);
+  if (cached && Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1000) {
+    return cached.forwardPE;
+  }
+
+  const metrics = await resolveWithin(
+    getFinnhub(`https://finnhub.io/api/v1/stock/metric?symbol=${symbol}&metric=all`),
+    2200,
+    null
+  ).catch(() => null);
+  const forwardPE = firstFiniteNumber(metrics?.metric?.forwardPE, metrics?.metric?.peNormalizedAnnual);
+
+  if (forwardPE !== null) {
+    similarCompanyMetricCache.set(symbol, {
+      forwardPE,
+      fetchedAt: Date.now()
+    });
+  }
+
+  return forwardPE;
+}
+
+async function hydrateSimilarCompaniesFast(companies) {
+  const queue = [...companies];
+  const workerCount = Math.min(4, queue.length);
+
+  await resolveWithin(
+    Promise.all(Array.from({ length: workerCount }, async () => {
+      while (queue.length) {
+        const company = queue.shift();
+        if (!company?.symbol) continue;
+
+        const [quote, forwardPE] = await Promise.all([
+          toNumberOrNull(company.price) !== null && toNumberOrNull(company.percentChange) !== null
+            ? Promise.resolve(null)
+            : fetchSimilarCompanyQuote(company.symbol),
+          toNumberOrNull(company.forwardPE) !== null
+            ? Promise.resolve(null)
+            : fetchSimilarCompanyForwardPe(company.symbol)
+        ]);
+
+        if (quote) {
+          company.price = firstFiniteNumber(quote.price, company.price);
+          company.percentChange = firstFiniteNumber(quote.percentChange, company.percentChange);
+        }
+        company.forwardPE = firstFiniteNumber(company.forwardPE, forwardPE);
+      }
+    })),
+    5200,
+    null
+  );
+
+  return companies;
+}
+
 // =========================
 // STOCK ROUTE - AUTO ONBOARD TICKERS
 // =========================
@@ -6352,13 +6492,13 @@ app.get("/api/similar-companies/:ticker", async (req, res) => {
 
     peerSymbols = [...new Set(peerSymbols)].slice(0, 12);
 
-    const companies = (await Promise.all(
+    const companies = await hydrateSimilarCompaniesFast((await Promise.all(
       peerSymbols.map(async (symbol) => {
         return buildSimilarCompanyItem(symbol);
       })
     ))
       .filter(Boolean)
-      .slice(0, 8);
+      .slice(0, 8));
 
     return res.json({
       symbol: ticker,
