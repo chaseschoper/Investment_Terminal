@@ -1229,6 +1229,18 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [isEarningsCallLoading, setIsEarningsCallLoading] =
     useState(false);
 
+  const [earningsTracker, setEarningsTracker] =
+    useState(null);
+
+  const [isEarningsTrackerLoading, setIsEarningsTrackerLoading] =
+    useState(false);
+
+  const [analystActions, setAnalystActions] =
+    useState([]);
+
+  const [isAnalystActionsLoading, setIsAnalystActionsLoading] =
+    useState(false);
+
   const [isSpeechPlaying, setIsSpeechPlaying] =
     useState(false);
 
@@ -1630,6 +1642,8 @@ useEffect(() => {
     if (cachedStock) firstStockLoadSettled.current = true;
     setAiAnalysis(null);
     setEarningsCall(null);
+    setEarningsTracker(null);
+    setAnalystActions([]);
     setCompanyDocuments(null);
     setSimilarCompanies([]);
     setActiveCompanyDocumentTab("results");
@@ -1759,6 +1773,64 @@ useEffect(() => {
 
     return () => window.clearTimeout(timer);
   }, [ticker, stockData?.price, stockData?.updatedAt]);
+
+  useEffect(() => {
+    if (!loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
+
+    let isActive = true;
+    setIsEarningsTrackerLoading(true);
+
+    axios.get(`${API_URL}/api/earnings-tracker/${ticker}`, { timeout: 22000 })
+      .then((response) => {
+        if (isActive) {
+          setEarningsTracker(response.data);
+        }
+      })
+      .catch((error) => {
+        console.error("Earnings tracker failed", error);
+        if (isActive) {
+          setEarningsTracker({ error: true });
+        }
+      })
+      .finally(() => {
+        if (isActive) {
+          setIsEarningsTrackerLoading(false);
+        }
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [ticker, loadedStockSymbol, isStockLoading]);
+
+  useEffect(() => {
+    if (!loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
+
+    let isActive = true;
+    setIsAnalystActionsLoading(true);
+
+    axios.get(`${API_URL}/api/analyst-actions/${ticker}`, { timeout: 15000 })
+      .then((response) => {
+        if (isActive) {
+          setAnalystActions(response.data?.actions || []);
+        }
+      })
+      .catch((error) => {
+        console.error("Analyst actions failed", error);
+        if (isActive) {
+          setAnalystActions([]);
+        }
+      })
+      .finally(() => {
+        if (isActive) {
+          setIsAnalystActionsLoading(false);
+        }
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [ticker, loadedStockSymbol, isStockLoading]);
 
   useEffect(() => {
     if (!loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
@@ -2577,6 +2649,18 @@ const estimateValue = (value) =>
   (isInitialStockLoad || areEstimatesRefreshing) && (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
     : stockValue(value);
+const formatTrackerMoney = (value) =>
+  isNumber(value) ? formatBillions(value) : "N/A";
+const formatTrackerEps = (value) =>
+  isNumber(value) ? `$${value.toFixed(2)}` : "N/A";
+const trackerResultClass = (result) =>
+  result === "beat" ? "positive-text" : result === "miss" ? "negative-text" : "";
+const formatTrackerBeatMiss = (item, formatter = formatTrackerMoney) => {
+  if (!item || item.result === "unavailable") return "No estimate";
+  const label = item.result === "beat" ? "Beat" : item.result === "miss" ? "Miss" : "Met";
+  const percent = isNumber(item.surprisePercent) ? ` (${item.surprisePercent > 0 ? "+" : ""}${item.surprisePercent.toFixed(1)}%)` : "";
+  return `${label} by ${formatter(Math.abs(item.surprise || 0))}${percent}`;
+};
 const selectedEarningsDay = (earnings?.days || []).find(
   (day) => day.date === selectedEarningsDate
 ) || { date: selectedEarningsDate, events: [] };
@@ -3205,6 +3289,7 @@ return (
       <a href="#similar-companies">Similar Companies</a>
       <a href="#projections">Projections</a>
       <a href="#ai-analysis">AI Analysis</a>
+      <a href="#earnings-tracker">Earnings Tracker</a>
       <a href="#earnings-calls">Transcript</a>
       <a href="#company-documents">Documents</a>
       <a href="#portfolio">Portfolio</a>
@@ -3650,6 +3735,92 @@ return (
   </div>
 
 </div>
+{/* QUARTERLY EARNINGS TRACKER */}
+
+<section className="chart-section quarterly-tracker-section" id="earnings-tracker">
+  <div className="quarterly-tracker-heading">
+    <div>
+      <span className="quarterly-tracker-kicker">Latest Quarter</span>
+      <h2 className="section-title">Quarterly Earnings Tracker</h2>
+    </div>
+    {earningsTracker?.updatedAt && (
+      <span className="quarterly-tracker-updated">
+        Updated {new Date(earningsTracker.updatedAt).toLocaleString()}
+      </span>
+    )}
+  </div>
+
+  {isEarningsTrackerLoading && !earningsTracker ? (
+    <StockDataLoading label="Loading quarterly earnings tracker..." />
+  ) : earningsTracker?.error ? (
+    <div className="quarterly-tracker-empty">
+      Quarterly earnings tracker is not available for this ticker yet.
+    </div>
+  ) : (
+    <>
+      <div className="quarterly-tracker-grid">
+        <div className="quarterly-tracker-card">
+          <span>Latest reported quarter</span>
+          <strong>{earningsTracker?.latestReportedQuarter || "N/A"}</strong>
+          <small>{earningsTracker?.reportDate || "Report date unavailable"}</small>
+        </div>
+
+        <div className="quarterly-tracker-card">
+          <span>Revenue beat/miss</span>
+          <strong className={trackerResultClass(earningsTracker?.revenue?.result)}>
+            {formatTrackerBeatMiss(earningsTracker?.revenue, formatTrackerMoney)}
+          </strong>
+          <small>
+            Actual {formatTrackerMoney(earningsTracker?.revenue?.actual)} • Est. {formatTrackerMoney(earningsTracker?.revenue?.estimate)}
+          </small>
+        </div>
+
+        <div className="quarterly-tracker-card">
+          <span>EPS beat/miss</span>
+          <strong className={trackerResultClass(earningsTracker?.eps?.result)}>
+            {formatTrackerBeatMiss(earningsTracker?.eps, formatTrackerEps)}
+          </strong>
+          <small>
+            Actual {formatTrackerEps(earningsTracker?.eps?.actual)} • Est. {formatTrackerEps(earningsTracker?.eps?.estimate)}
+          </small>
+        </div>
+
+        <div className="quarterly-tracker-card">
+          <span>{earningsTracker?.marginChange?.label || "Margin change"}</span>
+          <strong className={isNumber(earningsTracker?.marginChange?.change) ? earningsTracker.marginChange.change >= 0 ? "positive-text" : "negative-text" : ""}>
+            {isNumber(earningsTracker?.marginChange?.change)
+              ? `${earningsTracker.marginChange.change > 0 ? "+" : ""}${earningsTracker.marginChange.change.toFixed(1)} pts`
+              : "N/A"}
+          </strong>
+          <small>
+            {formatPercent(earningsTracker?.marginChange?.current)} vs {formatPercent(earningsTracker?.marginChange?.previous)}
+          </small>
+        </div>
+
+        <div className="quarterly-tracker-card">
+          <span>Next earnings date</span>
+          <strong>{earningsTracker?.nextEarningsDate || "N/A"}</strong>
+          <small>{earningsTracker?.nextEarningsTime || "Time not supplied"}</small>
+        </div>
+      </div>
+
+      <div className="quarterly-tracker-notes">
+        <div className="quarterly-tracker-note">
+          <span>Guidance change</span>
+          <p>{earningsTracker?.guidance?.text || "Guidance change is not available yet."}</p>
+        </div>
+        <div className="quarterly-tracker-note">
+          <span>CEO quote / highlight</span>
+          <p>{earningsTracker?.ceoHighlight?.text || "CEO highlight is not available yet."}</p>
+          {earningsTracker?.ceoHighlight?.speaker && (
+            <small>{earningsTracker.ceoHighlight.speaker}</small>
+          )}
+        </div>
+      </div>
+    </>
+  )}
+</section>
+
 {/* EARNINGS CALL TRANSCRIPTS */}
 
 <div className="chart-section research-section earnings-call-section" id="earnings-calls">
@@ -4556,6 +4727,64 @@ return (
       </strong>
       <span className="estimate-growth-period">Next estimate vs. current estimate</span>
     </div>
+  </div>
+
+  <div className="analyst-actions-panel">
+    <div className="analyst-actions-heading">
+      <div>
+        <span>Analyst Updates</span>
+        <h3>Price Targets & Ratings</h3>
+      </div>
+      {isAnalystActionsLoading && (
+        <small>Loading analyst updates...</small>
+      )}
+    </div>
+
+    {isAnalystActionsLoading && !analystActions.length ? (
+      <StockDataLoading label="Loading analyst targets..." />
+    ) : analystActions.length ? (
+      <div className="analyst-actions-table-wrap">
+        <table className="analyst-actions-table">
+          <thead>
+            <tr>
+              <th>Institution</th>
+              <th>Analyst</th>
+              <th>Price Target</th>
+              <th>Rating</th>
+              <th>Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            {analystActions.map((action, index) => (
+              <tr key={`${action.firm || "firm"}-${action.date || index}-${index}`}>
+                <td>
+                  {action.url ? (
+                    <a href={action.url} target="_blank" rel="noreferrer">
+                      {action.firm || "Consensus"}
+                    </a>
+                  ) : (
+                    action.firm || "Consensus"
+                  )}
+                </td>
+                <td>{action.analyst || "N/A"}</td>
+                <td>{formatPrice(action.priceTarget)}</td>
+                <td>
+                  {action.rating || "N/A"}
+                  {action.previousRating && (
+                    <small>from {action.previousRating}</small>
+                  )}
+                </td>
+                <td>{action.date || "N/A"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    ) : (
+      <div className="analyst-actions-empty">
+        Analyst target updates are not available for this ticker yet.
+      </div>
+    )}
   </div>
 
 </div>

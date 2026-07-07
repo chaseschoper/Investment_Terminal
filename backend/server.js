@@ -38,6 +38,8 @@ const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
 const companyDocumentsCache = new Map();
 const companyDocumentsInFlight = new Map();
+const earningsTrackerCache = new Map();
+const analystActionsCache = new Map();
 const similarCompanyMetricCache = new Map();
 const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
@@ -5807,6 +5809,328 @@ async function hydrateSimilarCompaniesFast(companies) {
   return companies;
 }
 
+const isoDateOnly = (value) => {
+  const date = value ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime()) ? date.toISOString().slice(0, 10) : null;
+};
+
+const addDaysIso = (value, days) => {
+  const date = value ? new Date(`${value}T12:00:00Z`) : new Date();
+  if (Number.isNaN(date.getTime())) return isoDateOnly(new Date());
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+
+const calculateBeatMiss = (actual, estimate) => {
+  const actualNumber = toNumberOrNull(actual);
+  const estimateNumber = toNumberOrNull(estimate);
+  if (actualNumber === null || estimateNumber === null) {
+    return { actual: actualNumber, estimate: estimateNumber, surprise: null, surprisePercent: null, result: "unavailable" };
+  }
+  const surprise = actualNumber - estimateNumber;
+  return {
+    actual: actualNumber,
+    estimate: estimateNumber,
+    surprise,
+    surprisePercent: estimateNumber !== 0 ? (surprise / Math.abs(estimateNumber)) * 100 : null,
+    result: surprise > 0 ? "beat" : surprise < 0 ? "miss" : "met"
+  };
+};
+
+const formatQuarterLabel = (row = {}) => {
+  if (row.period && /^\d{4}-\d{2}-\d{2}/.test(String(row.period))) {
+    const date = new Date(`${String(row.period).slice(0, 10)}T12:00:00Z`);
+    const quarter = Math.floor(date.getUTCMonth() / 3) + 1;
+    return `${date.getUTCFullYear()} Q${quarter}`;
+  }
+  if (row.year && row.quarter) return `${row.year} Q${row.quarter}`;
+  return row.period || null;
+};
+
+function buildTrackerHighlightFromTranscript(cachedTranscript = null) {
+  const sections = cachedTranscript?.data?.transcript || [];
+  if (!Array.isArray(sections) || !sections.length) return null;
+
+  const ceoSection = sections.find((section) =>
+    /ceo|chief executive|president|founder/i.test(`${section.speaker || ""} ${section.session || ""}`)
+  ) || sections.find((section) =>
+    section?.text &&
+    !/operator|transcript|moderator/i.test(`${section.speaker || ""} ${section.session || ""}`) &&
+    !/welcome to|good afternoon|good morning|conference call/i.test(String(section.text).slice(0, 160))
+  );
+  const text = String(ceoSection?.text || "").replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  const sentence = text
+    .split(/(?<=[.!?])\s+/)
+    .find((item) => item.length >= 45 && item.length <= 260) ||
+    text.slice(0, 240);
+
+  return {
+    speaker: ceoSection.speaker || "Management",
+    text: sentence,
+    source: cachedTranscript?.data?.provider || "Earnings call transcript"
+  };
+}
+
+function buildGuidanceSignal(documents = null, transcriptHighlight = null) {
+  const docs = [
+    ...(documents?.resultDocuments || []),
+    documents?.filings?.earningsRelease,
+    ...(documents?.earningsExhibits || [])
+  ].filter(Boolean);
+  const guidanceDoc = docs.find((document) =>
+    /guidance|outlook|raises|raised|lowers|lowered|expects|forecast/i.test(
+      `${document.title || ""} ${document.type || ""} ${document.form || ""}`
+    )
+  );
+
+  if (guidanceDoc) {
+    return {
+      status: "mentioned",
+      text: guidanceDoc.title,
+      source: guidanceDoc.source || guidanceDoc.form || "Earnings document",
+      url: guidanceDoc.url || null
+    };
+  }
+
+  if (transcriptHighlight?.text && /guidance|outlook|expect|forecast|fiscal/i.test(transcriptHighlight.text)) {
+    return {
+      status: "mentioned",
+      text: transcriptHighlight.text,
+      source: transcriptHighlight.source,
+      url: null
+    };
+  }
+
+  return {
+    status: "unavailable",
+    text: "Guidance change is not available from structured data yet.",
+    source: null,
+    url: null
+  };
+}
+
+async function fetchLatestEarningsCalendarEvent(ticker, latestPeriod = null) {
+  if (!process.env.FINNHUB_API_KEY) return null;
+  const today = isoDateOnly(new Date());
+  const from = latestPeriod ? addDaysIso(latestPeriod, -120) : addDaysIso(today, -220);
+  const to = today;
+
+  const response = await getFinnhub(
+    `https://finnhub.io/api/v1/calendar/earnings?from=${from}&to=${to}&symbol=${ticker}`
+  );
+  const rows = Array.isArray(response?.earningsCalendar) ? response.earningsCalendar : [];
+  return rows
+    .filter((row) => row.symbol === ticker && String(row.date || "") <= today)
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))[0] || null;
+}
+
+async function fetchNextEarningsDate(ticker) {
+  if (!process.env.FINNHUB_API_KEY) return null;
+  const from = isoDateOnly(new Date());
+  const to = addDaysIso(from, 220);
+  const response = await getFinnhub(
+    `https://finnhub.io/api/v1/calendar/earnings?from=${from}&to=${to}&symbol=${ticker}`
+  );
+  const rows = Array.isArray(response?.earningsCalendar) ? response.earningsCalendar : [];
+  return rows
+    .filter((row) => row.symbol === ticker && row.date)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)))[0] || null;
+}
+
+async function buildEarningsTracker(ticker) {
+  const normalizedTicker = normalizePeerSymbol(ticker);
+  const cacheKey = normalizedTicker;
+  const cached = earningsTrackerCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < 15 * 60 * 1000) return cached.data;
+
+  const stock = await Stock.findOne({ ticker: normalizedTicker }).lean().catch(() => null);
+  const stockData = stock?.data || {};
+  const company = stockData.name || normalizedTicker;
+  const [companyEarningsResponse, documents, cachedTranscript] = await Promise.all([
+    getFinnhub(`https://finnhub.io/api/v1/stock/earnings?symbol=${normalizedTicker}`).catch(() => []),
+    fetchCompanyDocuments(normalizedTicker).catch(() => null),
+    EarningsCall.findOne({ ticker: normalizedTicker }).lean().catch(() => null)
+  ]);
+  const companyEarnings = Array.isArray(companyEarningsResponse) ? companyEarningsResponse : [];
+  const latestEpsRow = companyEarnings
+    .filter((row) => row.period || row.year)
+    .sort((a, b) =>
+      String(b.period || `${b.year}-${b.quarter || 1}`).localeCompare(String(a.period || `${a.year}-${a.quarter || 1}`))
+    )[0] || null;
+  const [calendarEvent, nextEvent] = await Promise.all([
+    fetchLatestEarningsCalendarEvent(normalizedTicker, latestEpsRow?.period).catch(() => null),
+    fetchNextEarningsDate(normalizedTicker).catch(() => null)
+  ]);
+
+  const latestInterimRevenueRow = [...(stockData.revenueData || [])]
+    .filter((row) => row?.isInterim && toNumberOrNull(row.revenue) !== null)
+    .sort((a, b) => {
+      const yearDiff = Number(a.year || 0) - Number(b.year || 0);
+      if (yearDiff !== 0) return yearDiff;
+      return String(a.period || "").localeCompare(String(b.period || ""));
+    })
+    .at(-1) || null;
+  const latestMarginRow = [...(stockData.marginHistory || [])]
+    .filter((row) => toNumberOrNull(row.operatingMargin ?? row.profitMargin) !== null)
+    .sort((a, b) => {
+      const yearDiff = Number(a.year || 0) - Number(b.year || 0);
+      if (yearDiff !== 0) return yearDiff;
+      return String(a.period || "").localeCompare(String(b.period || ""));
+    })
+    .at(-1) || null;
+  const previousMarginRow = [...(stockData.marginHistory || [])]
+    .filter((row) =>
+      row !== latestMarginRow &&
+      toNumberOrNull(row.operatingMargin ?? row.profitMargin) !== null
+    )
+    .sort((a, b) => {
+      const yearDiff = Number(a.year || 0) - Number(b.year || 0);
+      if (yearDiff !== 0) return yearDiff;
+      return String(a.period || "").localeCompare(String(b.period || ""));
+    })
+    .at(-1) || null;
+  const latestMargin = firstFiniteNumber(latestMarginRow?.operatingMargin, latestMarginRow?.profitMargin);
+  const previousMargin = firstFiniteNumber(previousMarginRow?.operatingMargin, previousMarginRow?.profitMargin);
+  const transcriptHighlight = buildTrackerHighlightFromTranscript(cachedTranscript);
+  const data = {
+    symbol: normalizedTicker,
+    company,
+    latestReportedQuarter: formatQuarterLabel(latestEpsRow) || latestInterimRevenueRow?.period || stockData.latestInterimPeriod || null,
+    reportDate: calendarEvent?.date || latestEpsRow?.period || latestInterimRevenueRow?.endDate || null,
+    revenue: calculateBeatMiss(
+      firstFiniteNumber(calendarEvent?.revenueActual, latestInterimRevenueRow?.revenue !== undefined ? latestInterimRevenueRow.revenue * 1000000000 : null),
+      firstFiniteNumber(calendarEvent?.revenueEstimate)
+    ),
+    eps: calculateBeatMiss(
+      firstFiniteNumber(latestEpsRow?.actual, calendarEvent?.epsActual, latestInterimRevenueRow?.eps),
+      firstFiniteNumber(latestEpsRow?.estimate, calendarEvent?.epsEstimate)
+    ),
+    marginChange: {
+      label: latestMarginRow?.operatingMargin !== undefined ? "Operating margin" : "Profit margin",
+      current: latestMargin,
+      previous: previousMargin,
+      change: latestMargin !== null && previousMargin !== null ? latestMargin - previousMargin : null,
+      currentPeriod: latestMarginRow?.period || null,
+      previousPeriod: previousMarginRow?.period || null
+    },
+    guidance: buildGuidanceSignal(documents, transcriptHighlight),
+    ceoHighlight: transcriptHighlight || {
+      speaker: null,
+      text: "CEO highlight is not available until a transcript or earnings release is captured.",
+      source: null
+    },
+    nextEarningsDate: nextEvent?.date || null,
+    nextEarningsTime: nextEvent?.hour || null,
+    source: {
+      eps: latestEpsRow ? "Finnhub company earnings" : null,
+      revenue: calendarEvent?.revenueActual || calendarEvent?.revenueEstimate
+        ? "Finnhub earnings calendar"
+        : latestInterimRevenueRow
+          ? latestInterimRevenueRow.source
+          : null,
+      documents: documents?.available ? "Company documents" : null
+    },
+    updatedAt: new Date().toISOString()
+  };
+
+  earningsTrackerCache.set(cacheKey, { fetchedAt: Date.now(), data });
+  return data;
+}
+
+function normalizeAnalystActionRow(row = {}, fallback = {}) {
+  const firm = firstText(
+    row.analystCompany,
+    row.gradingCompany,
+    row.company,
+    row.firm,
+    row.brokerage,
+    row.source,
+    fallback.firm
+  );
+  const analyst = firstText(row.analystName, row.analyst, row.name, fallback.analyst);
+  const rating = firstText(row.ratingCurrent, row.newGrade, row.grade, row.rating, row.action, fallback.rating);
+  const previousRating = firstText(row.ratingPrior, row.previousGrade, row.previousRating);
+  const target = firstFiniteNumber(
+    row.priceTarget,
+    row.priceTargetNew,
+    row.newPriceTarget,
+    row.targetPrice,
+    row.pt,
+    fallback.priceTarget
+  );
+
+  return {
+    firm: firm || "Consensus",
+    analyst: analyst || null,
+    priceTarget: target,
+    rating: rating || "N/A",
+    previousRating: previousRating || null,
+    action: firstText(row.action, row.gradeAction, row.type, fallback.action),
+    date: isoDateOnly(row.publishedDate || row.date || row.updatedAt || row.newsDate || fallback.date),
+    url: row.newsURL || row.url || row.newsUrl || null,
+    title: firstText(row.newsTitle, row.title, row.headline)
+  };
+}
+
+async function buildAnalystActions(ticker) {
+  const normalizedTicker = normalizePeerSymbol(ticker);
+  const cached = analystActionsCache.get(normalizedTicker);
+  if (cached && Date.now() - cached.fetchedAt < 30 * 60 * 1000) return cached.data;
+
+  const stock = await Stock.findOne({ ticker: normalizedTicker }).lean().catch(() => null);
+  const stockData = stock?.data || {};
+  const [targetRows, gradeRows] = await Promise.all([
+    getFmpData(normalizedTicker, "analyst price targets", [
+      "/api/v4/price-target?symbol={ticker}",
+      "/stable/price-target-news?symbol={ticker}&limit=12"
+    ]).catch(() => null),
+    getFmpData(normalizedTicker, "analyst grades", [
+      "/stable/grades-historical?symbol={ticker}&limit=12",
+      "/api/v3/grade/{ticker}?limit=12"
+    ]).catch(() => null)
+  ]);
+  const rows = [
+    ...(Array.isArray(targetRows) ? targetRows : targetRows ? [targetRows] : []),
+    ...(Array.isArray(gradeRows) ? gradeRows : gradeRows ? [gradeRows] : [])
+  ]
+    .map((row) => normalizeAnalystActionRow(row))
+    .filter((row) => row.firm || row.priceTarget !== null || row.rating !== "N/A");
+  const uniqueRows = [];
+  const seen = new Set();
+  for (const row of rows) {
+    const key = `${row.firm}:${row.analyst || ""}:${row.priceTarget || ""}:${row.rating}:${row.date || ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    uniqueRows.push(row);
+  }
+
+  if (!uniqueRows.length) {
+    uniqueRows.push(normalizeAnalystActionRow({}, {
+      firm: "Consensus",
+      priceTarget: stockData.targetMean,
+      rating: stockData.analystRatingText || stockData.recommendationKey,
+      action: "Current consensus",
+      date: stock?.updatedAt
+    }));
+  }
+
+  const data = {
+    symbol: normalizedTicker,
+    actions: uniqueRows
+      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
+      .slice(0, 8),
+    consensus: {
+      priceTarget: firstFiniteNumber(stockData.targetMean),
+      rating: firstText(stockData.analystRatingText, stockData.recommendationKey)
+    },
+    updatedAt: new Date().toISOString()
+  };
+
+  analystActionsCache.set(normalizedTicker, { fetchedAt: Date.now(), data });
+  return data;
+}
+
 // =========================
 // STOCK ROUTE - AUTO ONBOARD TICKERS
 // =========================
@@ -6509,6 +6833,43 @@ app.get("/api/similar-companies/:ticker", async (req, res) => {
   } catch (err) {
     console.log("Similar companies failed:", req.params.ticker, err.message);
     return res.status(502).json({ companies: [] });
+  }
+});
+
+app.get("/api/earnings-tracker/:ticker", async (req, res) => {
+  const ticker = req.params.ticker.trim().toUpperCase();
+  if (!/^[A-Z0-9.-]{1,15}$/.test(ticker)) {
+    return res.status(400).json({ error: "Invalid ticker" });
+  }
+
+  try {
+    const data = await buildEarningsTracker(ticker);
+    return res.json(data);
+  } catch (err) {
+    console.error("Earnings tracker failed:", ticker, err.response?.status || err.message);
+    return res.status(502).json({
+      symbol: ticker,
+      error: "Quarterly earnings tracker is temporarily unavailable"
+    });
+  }
+});
+
+app.get("/api/analyst-actions/:ticker", async (req, res) => {
+  const ticker = req.params.ticker.trim().toUpperCase();
+  if (!/^[A-Z0-9.-]{1,15}$/.test(ticker)) {
+    return res.status(400).json({ error: "Invalid ticker" });
+  }
+
+  try {
+    const data = await buildAnalystActions(ticker);
+    return res.json(data);
+  } catch (err) {
+    console.error("Analyst actions failed:", ticker, err.response?.status || err.message);
+    return res.status(502).json({
+      symbol: ticker,
+      actions: [],
+      error: "Analyst actions are temporarily unavailable"
+    });
   }
 });
 
