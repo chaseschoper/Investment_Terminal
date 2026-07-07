@@ -40,6 +40,7 @@ const companyDocumentsCache = new Map();
 const companyDocumentsInFlight = new Map();
 const earningsTrackerCache = new Map();
 const analystActionsCache = new Map();
+const earningsReleaseTextCache = new Map();
 const similarCompanyMetricCache = new Map();
 const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
@@ -5910,6 +5911,231 @@ function buildGuidanceSignal(documents = null, transcriptHighlight = null) {
   };
 }
 
+async function fetchDocumentText(url) {
+  if (!url || !/^https?:\/\//i.test(url)) return "";
+  const cached = earningsReleaseTextCache.get(url);
+  if (cached && Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1000) return cached.text;
+
+  const response = await axios.get(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      Accept: "application/pdf,text/html,text/plain,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    },
+    responseType: "arraybuffer",
+    timeout: 12000,
+    maxRedirects: 4,
+    validateStatus: (status) => status >= 200 && status < 400
+  });
+  const contentType = String(response.headers["content-type"] || "").toLowerCase();
+  const buffer = Buffer.from(response.data);
+  const looksLikePdf =
+    contentType.includes("pdf") ||
+    url.toLowerCase().includes(".pdf") ||
+    buffer.subarray(0, 4).toString() === "%PDF";
+  const text = looksLikePdf
+    ? await extractPdfText(buffer)
+    : /html|xml/i.test(contentType)
+      ? stripHtmlToText(buffer.toString("utf8"))
+      : buffer.toString("utf8");
+  const cleaned = String(text || "").replace(/\s+/g, " ").trim().slice(0, 60000);
+  earningsReleaseTextCache.set(url, { fetchedAt: Date.now(), text: cleaned });
+  return cleaned;
+}
+
+async function fetchLatestResultsText(documents = null) {
+  const candidates = [
+    ...(documents?.resultDocuments || []),
+    documents?.filings?.earningsRelease,
+    ...(documents?.earningsExhibits || [])
+  ].filter((document) =>
+    document?.url &&
+    /results|earnings|quarter|financial|release|shareholder/i.test(
+      `${document.title || ""} ${document.type || ""} ${document.form || ""} ${document.source || ""}`
+    )
+  );
+
+  for (const document of candidates.slice(0, 4)) {
+    try {
+      const text = await fetchDocumentText(document.url);
+      if (text && text.length > 300) {
+        return {
+          text,
+          title: document.title || "Latest results",
+          url: document.url,
+          source: document.source || document.form || "Earnings release"
+        };
+      }
+    } catch (err) {
+      console.log("Earnings release text skipped:", document.url, err.response?.status || err.message);
+    }
+  }
+
+  return null;
+}
+
+async function fetchLatestResultsTextFromWeb(ticker, companyName = "") {
+  const symbol = normalizePeerSymbol(ticker);
+  const queryName = companyName && companyName !== symbol ? `${companyName} ${symbol}` : symbol;
+  const query = `${queryName} latest quarterly results earnings release guidance CEO revenue EPS`;
+
+  try {
+    const results = await searchDuckDuckGo(query);
+    const ranked = results
+      .map((result) => {
+        const haystack = `${result.title || ""} ${result.snippet || ""} ${result.url || ""}`;
+        let score = 0;
+        if (/investor|ir\.|investors\.|newsroom|press-release|quarterly-results|earnings/i.test(haystack)) score += 4;
+        if (/reports|results|quarter|fiscal|earnings|financial/i.test(haystack)) score += 3;
+        if (/guidance|outlook|ceo|chief executive|revenue|eps/i.test(haystack)) score += 2;
+        if (/sec\.gov|annualreports|macrotrends|stockanalysis|marketbeat|benzinga|zacks|tipranks/i.test(haystack)) score -= 2;
+        return { ...result, score };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    for (const result of ranked.slice(0, 5)) {
+      try {
+        const text = await fetchDocumentText(result.url);
+        if (
+          text &&
+          text.length > 500 &&
+          /revenue|sales|earnings|quarter|fiscal/i.test(text) &&
+          /results|reported|reports|announces|release/i.test(`${result.title || ""} ${text.slice(0, 1200)}`)
+        ) {
+          return {
+            text,
+            title: result.title || "Latest earnings release",
+            url: result.url,
+            source: "Public earnings release"
+          };
+        }
+      } catch (err) {
+        console.log("Public earnings release text skipped:", result.url, err.response?.status || err.message);
+      }
+    }
+  } catch (err) {
+    console.log("Public earnings release search skipped:", symbol, err.response?.status || err.message);
+  }
+
+  return null;
+}
+
+function sentenceMatches(text = "", patterns = []) {
+  return String(text || "")
+    .split(/(?<=[.!?])\s+(?=[A-Z0-9"$])/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length >= 45 && sentence.length <= 360)
+    .find((sentence) => patterns.some((pattern) => pattern.test(sentence)));
+}
+
+function cleanReleaseSnippet(value = "") {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .replace(/[,;:\s]+$/g, "")
+    .trim();
+}
+
+function buildGuidanceSignalFromText(resultsText = null, fallbackSignal = null) {
+  const releaseText = String(resultsText?.text || "").replace(/"\s*"/g, '" "');
+  const quotedExpectation = releaseText.match(/"([^"]{40,650}\b(expectations?|outlook|guidance|headwinds|challeng(?:e|ed|ing)|profitability|costs?)\b[^"]{0,650})"\s*(?:said|commented|stated)\s+([^".]{3,140})/i);
+  if (quotedExpectation) {
+    return {
+      status: "mentioned",
+      text: cleanReleaseSnippet(quotedExpectation[1]),
+      source: resultsText?.source || "Earnings release",
+      url: resultsText?.url || null
+    };
+  }
+
+  const sentence = sentenceMatches(resultsText?.text, [
+    /\bguidance\b/i,
+    /\boutlook\b/i,
+    /\bexpects?\b.*\b(fiscal|quarter|revenue|sales|eps|earnings|margin)\b/i,
+    /\bforecast\b/i,
+    /\brais(?:e|ed|es|ing)\b.*\b(outlook|guidance|revenue|eps|earnings)\b/i,
+    /\blower(?:s|ed|ing)?\b.*\b(outlook|guidance|revenue|eps|earnings)\b/i
+  ]);
+
+  if (sentence) {
+    return {
+      status: "mentioned",
+      text: sentence,
+      source: resultsText?.source || "Earnings release",
+      url: resultsText?.url || null
+    };
+  }
+
+  return fallbackSignal || {
+    status: "unavailable",
+    text: "Guidance change is not available from the latest release yet.",
+    source: null,
+    url: null
+  };
+}
+
+function buildCeoHighlightFromText(resultsText = null, fallbackHighlight = null) {
+  const releaseText = String(resultsText?.text || "").replace(/"\s*"/g, '" "');
+  const ceoQuote = releaseText.match(/"([^"]{40,850})"\s*(?:said|commented|stated)\s+([^".]{3,160}?(?:CEO|Chief Executive Officer|President)[^".]*)/i);
+  if (ceoQuote) {
+    return {
+      speaker: cleanReleaseSnippet(ceoQuote[2]),
+      text: cleanReleaseSnippet(ceoQuote[1]),
+      source: resultsText?.source || "Earnings release"
+    };
+  }
+
+  const sentence = sentenceMatches(resultsText?.text, [
+    /\b(ceo|chief executive officer|president and chief executive)\b.*\b(said|commented|stated)\b/i,
+    /\b(said|commented|stated)\b.*\b(ceo|chief executive officer|president and chief executive)\b/i,
+    /\bwe (delivered|achieved|reported|remain|expect|continue)\b/i
+  ]);
+
+  if (sentence) {
+    const speaker =
+      sentence.match(/(?:said|commented|stated)\s+([^,.]{3,80}?(?:CEO|Chief Executive Officer|President)[^,.]*)/i)?.[1] ||
+      sentence.match(/([^,.]{3,80}?(?:CEO|Chief Executive Officer|President)[^,.]*)(?:\s+said|\s+commented|\s+stated)/i)?.[1] ||
+      "Management";
+    return {
+      speaker,
+      text: sentence,
+      source: resultsText?.source || "Earnings release"
+    };
+  }
+
+  return fallbackHighlight || {
+    speaker: null,
+    text: "CEO highlight is not available until a transcript or earnings release is captured.",
+    source: null
+  };
+}
+
+async function fetchYahooQuarterlyExpectations(ticker) {
+  if (!canUseYahooEarningsTrend()) return {};
+
+  try {
+    const summary = await yahooFinance.quoteSummary(ticker, {
+      modules: ["earningsTrend"]
+    });
+    const trends = summary?.earningsTrend?.trend || [];
+    const quarterlyTrends = trends.filter((item) => /q$/i.test(String(item?.period || "")));
+    const currentQuarter = trends.find((item) => item.period === "0q") || quarterlyTrends[0] || {};
+    const nextQuarter = trends.find((item) => item.period === "+1q") ||
+      quarterlyTrends.find((item) => item !== currentQuarter) ||
+      {};
+
+    return {
+      currentQuarter: estimateFromYahooTrend(currentQuarter),
+      nextQuarter: estimateFromYahooTrend(nextQuarter),
+      currentPeriod: currentQuarter?.period || null,
+      nextPeriod: nextQuarter?.period || null
+    };
+  } catch (err) {
+    setYahooEarningsTrendCooldown(err, "quarterly expectations", ticker);
+    console.log("Yahoo quarterly expectations skipped:", ticker, err.message);
+    return {};
+  }
+}
+
 async function fetchLatestEarningsCalendarEvent(ticker, latestPeriod = null) {
   if (!process.env.FINNHUB_API_KEY) return null;
   const today = isoDateOnly(new Date());
@@ -5947,10 +6173,11 @@ async function buildEarningsTracker(ticker) {
   const stock = await Stock.findOne({ ticker: normalizedTicker }).lean().catch(() => null);
   const stockData = stock?.data || {};
   const company = stockData.name || normalizedTicker;
-  const [companyEarningsResponse, documents, cachedTranscript] = await Promise.all([
+  const [companyEarningsResponse, documents, cachedTranscript, quarterlyExpectations] = await Promise.all([
     getFinnhub(`https://finnhub.io/api/v1/stock/earnings?symbol=${normalizedTicker}`).catch(() => []),
     fetchCompanyDocuments(normalizedTicker).catch(() => null),
-    EarningsCall.findOne({ ticker: normalizedTicker }).lean().catch(() => null)
+    EarningsCall.findOne({ ticker: normalizedTicker }).lean().catch(() => null),
+    fetchYahooQuarterlyExpectations(normalizedTicker).catch(() => ({}))
   ]);
   const companyEarnings = Array.isArray(companyEarningsResponse) ? companyEarningsResponse : [];
   const latestEpsRow = companyEarnings
@@ -5993,6 +6220,52 @@ async function buildEarningsTracker(ticker) {
   const latestMargin = firstFiniteNumber(latestMarginRow?.operatingMargin, latestMarginRow?.profitMargin);
   const previousMargin = firstFiniteNumber(previousMarginRow?.operatingMargin, previousMarginRow?.profitMargin);
   const transcriptHighlight = buildTrackerHighlightFromTranscript(cachedTranscript);
+  const resultsText =
+    (await fetchLatestResultsText(documents).catch(() => null)) ||
+    (await fetchLatestResultsTextFromWeb(normalizedTicker, company).catch(() => null));
+  const guidanceSignal = buildGuidanceSignalFromText(
+    resultsText,
+    buildGuidanceSignal(documents, transcriptHighlight)
+  );
+  const ceoHighlight = buildCeoHighlightFromText(resultsText, transcriptHighlight);
+  const latestRevenueEstimate = firstFiniteNumber(
+    calendarEvent?.revenueEstimate,
+    quarterlyExpectations?.currentQuarter?.revenue
+  );
+  const latestEpsEstimate = firstFiniteNumber(
+    latestEpsRow?.estimate,
+    calendarEvent?.epsEstimate,
+    quarterlyExpectations?.currentQuarter?.eps
+  );
+  const runRateRevenueEstimate = firstFiniteNumber(
+    stockData.analystEstimates?.currentYear?.revenue,
+    stockData.analystEstimates?.nextYear?.revenue,
+    stockData.consensusCurrentYearRevenue,
+    stockData.consensusNextYearRevenue
+  );
+  const runRateEpsEstimate = firstFiniteNumber(
+    stockData.analystEstimates?.currentYear?.eps,
+    stockData.analystEstimates?.nextYear?.eps,
+    stockData.consensusCurrentYearEps,
+    stockData.consensusNextYearEps
+  );
+  const hasQuarterlyExpectation =
+    firstFiniteNumber(
+      quarterlyExpectations?.nextQuarter?.revenue,
+      quarterlyExpectations?.nextQuarter?.eps,
+      quarterlyExpectations?.currentQuarter?.revenue,
+      quarterlyExpectations?.currentQuarter?.eps
+    ) !== null;
+  const nextQuarterRevenue = firstFiniteNumber(
+    quarterlyExpectations?.nextQuarter?.revenue,
+    quarterlyExpectations?.currentQuarter?.revenue,
+    runRateRevenueEstimate !== null ? runRateRevenueEstimate / 4 : null
+  );
+  const nextQuarterEps = firstFiniteNumber(
+    quarterlyExpectations?.nextQuarter?.eps,
+    quarterlyExpectations?.currentQuarter?.eps,
+    runRateEpsEstimate !== null ? runRateEpsEstimate / 4 : null
+  );
   const data = {
     symbol: normalizedTicker,
     company,
@@ -6000,12 +6273,22 @@ async function buildEarningsTracker(ticker) {
     reportDate: calendarEvent?.date || latestEpsRow?.period || latestInterimRevenueRow?.endDate || null,
     revenue: calculateBeatMiss(
       firstFiniteNumber(calendarEvent?.revenueActual, latestInterimRevenueRow?.revenue !== undefined ? latestInterimRevenueRow.revenue * 1000000000 : null),
-      firstFiniteNumber(calendarEvent?.revenueEstimate)
+      latestRevenueEstimate
     ),
     eps: calculateBeatMiss(
       firstFiniteNumber(latestEpsRow?.actual, calendarEvent?.epsActual, latestInterimRevenueRow?.eps),
-      firstFiniteNumber(latestEpsRow?.estimate, calendarEvent?.epsEstimate)
+      latestEpsEstimate
     ),
+    nextQuarterExpectations: {
+      revenue: nextQuarterRevenue,
+      eps: nextQuarterEps,
+      period: quarterlyExpectations?.nextPeriod || quarterlyExpectations?.currentPeriod || "Next quarter",
+      source: hasQuarterlyExpectation
+        ? "Yahoo Finance earnings trend"
+        : nextQuarterRevenue !== null || nextQuarterEps !== null
+          ? "Annual consensus run-rate"
+          : null
+    },
     marginChange: {
       label: latestMarginRow?.operatingMargin !== undefined ? "Operating margin" : "Profit margin",
       current: latestMargin,
@@ -6014,12 +6297,8 @@ async function buildEarningsTracker(ticker) {
       currentPeriod: latestMarginRow?.period || null,
       previousPeriod: previousMarginRow?.period || null
     },
-    guidance: buildGuidanceSignal(documents, transcriptHighlight),
-    ceoHighlight: transcriptHighlight || {
-      speaker: null,
-      text: "CEO highlight is not available until a transcript or earnings release is captured.",
-      source: null
-    },
+    guidance: guidanceSignal,
+    ceoHighlight,
     nextEarningsDate: nextEvent?.date || null,
     nextEarningsTime: nextEvent?.hour || null,
     source: {
@@ -6064,6 +6343,7 @@ function normalizeAnalystActionRow(row = {}, fallback = {}) {
     firm: firm || "Consensus",
     analyst: analyst || null,
     priceTarget: target,
+    previousPriceTarget: firstFiniteNumber(row.previousPriceTarget, row.priceTargetPrior, row.oldPriceTarget),
     rating: rating || "N/A",
     previousRating: previousRating || null,
     action: firstText(row.action, row.gradeAction, row.type, fallback.action),
@@ -6073,6 +6353,97 @@ function normalizeAnalystActionRow(row = {}, fallback = {}) {
   };
 }
 
+function parseMmDdYyyy(value = "") {
+  const match = String(value).match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return null;
+  return `${match[3]}-${match[1]}-${match[2]}`;
+}
+
+async function fetchBenzingaAnalystActions(ticker) {
+  try {
+    const response = await axios.get(
+      `https://www.benzinga.com/quote/${encodeURIComponent(ticker)}/analyst-ratings`,
+      {
+        headers: {
+          "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml"
+        },
+        timeout: 12000
+      }
+    );
+    const $ = cheerio.load(response.data || "");
+    $("script, style, nav, header, footer, iframe, noscript").remove();
+    const text = $("body").text().replace(/\s+/g, " ").trim();
+    const rows = [];
+    const pattern = /(\d{2}\/\d{2}\/\d{4})\s*Buy Now\s*[-+\d.]+%\s*([A-Z][A-Za-z0-9&.' -]{1,70}?)\s*\$([\d.]+)\s*→\s*\$([\d.]+)\s*(Maintains|Reiterates|Upgrades|Downgrades|Initiates|Assumes|Lowers|Raises|Sets?|Announces)?\s*([A-Za-z ]{2,40})(?:\s*→\s*([A-Za-z ]{2,40}))?\s*Get Alert/g;
+    let match;
+    while ((match = pattern.exec(text)) && rows.length < 20) {
+      const rating = firstText(match[7], match[6])?.replace(/\s+/g, " ").trim();
+      rows.push({
+        firm: match[2].trim(),
+        analyst: null,
+        priceTarget: toNumberOrNull(match[4]),
+        previousPriceTarget: toNumberOrNull(match[3]),
+        rating,
+        previousRating: match[7] ? match[6]?.trim() : null,
+        action: match[5] || null,
+        date: parseMmDdYyyy(match[1]),
+        url: `https://www.benzinga.com/quote/${encodeURIComponent(ticker)}/analyst-ratings`,
+        title: `${match[2].trim()} ${match[5] || "updates"} ${rating || "rating"}`
+      });
+    }
+
+    return rows;
+  } catch (err) {
+    console.log("Benzinga analyst actions skipped:", ticker, err.response?.status || err.message);
+    return [];
+  }
+}
+
+async function fetchMarketBeatAnalystActions(ticker) {
+  try {
+    const normalized = normalizeTickerForStockAnalysis(ticker).replace(".", "-");
+    const response = await axios.get(
+      `https://www.marketbeat.com/stocks/NASDAQ/${encodeURIComponent(normalized.toUpperCase())}/forecast/`,
+      {
+        headers: {
+          "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml"
+        },
+        timeout: 12000
+      }
+    );
+    const text = String(response.data || "")
+      .replace(/&#x279D;|→/g, "→")
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const rows = [];
+    const pattern = /([A-Z][A-Za-z&.' -]{2,80})\s+(?:Subscribe to MarketBeat[^$]+)?(?:Reiterated Rating|Set Target|Raised Price Target|Lowered Price Target|Initiated Coverage)?\s*([A-Za-z ]{3,30})?\s*(?:\$[\d.]+\s*→\s*)?\$([\d.]+)\s*[-+\d.]+%\s*(\d{1,2}\/\d{1,2}\/\d{4})/g;
+    let match;
+    while ((match = pattern.exec(text)) && rows.length < 12) {
+      rows.push({
+        firm: match[1].trim(),
+        analyst: null,
+        priceTarget: toNumberOrNull(match[3]),
+        rating: firstText(match[2], "N/A"),
+        previousRating: null,
+        action: "Latest rating",
+        date: isoDateOnly(match[4]),
+        url: `https://www.marketbeat.com/stocks/NASDAQ/${encodeURIComponent(normalized.toUpperCase())}/forecast/`,
+        title: `${match[1].trim()} analyst rating`
+      });
+    }
+    return rows;
+  } catch (err) {
+    console.log("MarketBeat analyst actions skipped:", ticker, err.response?.status || err.message);
+    return [];
+  }
+}
+
 async function buildAnalystActions(ticker) {
   const normalizedTicker = normalizePeerSymbol(ticker);
   const cached = analystActionsCache.get(normalizedTicker);
@@ -6080,7 +6451,7 @@ async function buildAnalystActions(ticker) {
 
   const stock = await Stock.findOne({ ticker: normalizedTicker }).lean().catch(() => null);
   const stockData = stock?.data || {};
-  const [targetRows, gradeRows] = await Promise.all([
+  const [targetRows, gradeRows, benzingaRows, marketBeatRows] = await Promise.all([
     getFmpData(normalizedTicker, "analyst price targets", [
       "/api/v4/price-target?symbol={ticker}",
       "/stable/price-target-news?symbol={ticker}&limit=12"
@@ -6088,9 +6459,23 @@ async function buildAnalystActions(ticker) {
     getFmpData(normalizedTicker, "analyst grades", [
       "/stable/grades-historical?symbol={ticker}&limit=12",
       "/api/v3/grade/{ticker}?limit=12"
-    ]).catch(() => null)
+    ]).catch(() => null),
+    fetchBenzingaAnalystActions(normalizedTicker),
+    fetchMarketBeatAnalystActions(normalizedTicker)
   ]);
+  const cleanMarketBeatRows = marketBeatRows.filter((row) => {
+    const firm = String(row?.firm || "");
+    const rating = String(row?.rating || "");
+    return (
+      row?.priceTarget !== null &&
+      firm &&
+      !/target|rating|subscribe|not rated|initiated coverage|lower target|raised price/i.test(firm) &&
+      !/not rated/i.test(rating)
+    );
+  });
+  const scrapedRows = benzingaRows.length >= 4 ? benzingaRows : [...benzingaRows, ...cleanMarketBeatRows];
   const rows = [
+    ...scrapedRows,
     ...(Array.isArray(targetRows) ? targetRows : targetRows ? [targetRows] : []),
     ...(Array.isArray(gradeRows) ? gradeRows : gradeRows ? [gradeRows] : [])
   ]

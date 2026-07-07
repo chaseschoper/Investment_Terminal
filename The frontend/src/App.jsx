@@ -3802,6 +3802,17 @@ return (
           <strong>{earningsTracker?.nextEarningsDate || "N/A"}</strong>
           <small>{earningsTracker?.nextEarningsTime || "Time not supplied"}</small>
         </div>
+
+        <div className="quarterly-tracker-card">
+          <span>Next quarter expectations</span>
+          <strong>{formatTrackerMoney(earningsTracker?.nextQuarterExpectations?.revenue)}</strong>
+          <small>
+            Revenue • EPS {formatTrackerEps(earningsTracker?.nextQuarterExpectations?.eps)}
+          </small>
+          {earningsTracker?.nextQuarterExpectations?.source && (
+            <small>{earningsTracker.nextQuarterExpectations.source}</small>
+          )}
+        </div>
       </div>
 
       <div className="quarterly-tracker-notes">
@@ -4751,6 +4762,7 @@ return (
               <th>Analyst</th>
               <th>Price Target</th>
               <th>Rating</th>
+              <th>Action</th>
               <th>Date</th>
             </tr>
           </thead>
@@ -4767,13 +4779,19 @@ return (
                   )}
                 </td>
                 <td>{action.analyst || "N/A"}</td>
-                <td>{formatPrice(action.priceTarget)}</td>
+                <td>
+                  {formatPrice(action.priceTarget)}
+                  {isNumber(action.previousPriceTarget) && (
+                    <small>from {formatPrice(action.previousPriceTarget)}</small>
+                  )}
+                </td>
                 <td>
                   {action.rating || "N/A"}
                   {action.previousRating && (
                     <small>from {action.previousRating}</small>
                   )}
                 </td>
+                <td>{action.action || "N/A"}</td>
                 <td>{action.date || "N/A"}</td>
               </tr>
             ))}
