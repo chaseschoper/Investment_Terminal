@@ -41,7 +41,7 @@ const companyDocumentsInFlight = new Map();
 const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 131;
+const FINANCIAL_HISTORY_VERSION = 133;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -1165,6 +1165,7 @@ async function fetchSecAnnualMargins(ticker) {
           "RevenueOtherFinancialServices",
           "OperatingRevenues",
           "Revenues",
+          "PremiumsEarnedNet",
           "RevenueFromContractWithCustomerExcludingAssessedTax",
           "SalesRevenueNet"
         ]
@@ -1172,6 +1173,7 @@ async function fetchSecAnnualMargins(ticker) {
           "RevenueFromContractWithCustomerExcludingAssessedTax",
           "OperatingRevenues",
           "Revenues",
+          "PremiumsEarnedNet",
           "SalesRevenueNet",
           "RevenuesNetOfInterestExpense"
         ];
@@ -1179,7 +1181,19 @@ async function fetchSecAnnualMargins(ticker) {
     let revenueConcept = null;
     for (const concept of revenueConcepts) {
       const candidate = secAnnualFactEntries(facts, concept).at(-1);
-      if (candidate && (!revenue || String(candidate.end) > String(revenue.end))) {
+      const candidateValue = Math.abs(toNumberOrNull(candidate?.val) || 0);
+      const revenueValue = Math.abs(toNumberOrNull(revenue?.val) || 0);
+      if (
+        candidate &&
+        (
+          !revenue ||
+          String(candidate.end) > String(revenue.end) ||
+          (
+            String(candidate.end) === String(revenue.end) &&
+            candidateValue > revenueValue * 1.2
+          )
+        )
+      ) {
         revenue = candidate;
         revenueConcept = concept;
       }
@@ -4565,7 +4579,12 @@ async function fetchStockData(ticker) {
   const previousRealRevenueData = (previousData?.revenueData || []).filter(
     (row) =>
       row?.source !== "Modeled fallback" &&
-      row?.source !== "Current metric fallback"
+      row?.source !== "Current metric fallback" &&
+      !(
+        previousData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION &&
+        row?.isInterim &&
+        row?.source === "SEC interim filing"
+      )
   );
 
   const reportedAnnualData = mergeAllHistoricalFinancials(

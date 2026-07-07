@@ -3064,10 +3064,12 @@ body {
 }
 
 .similar-company-stats .positive {
+  background: transparent;
   color: #34d399;
 }
 
 .similar-company-stats .negative {
+  background: transparent;
   color: #f87171;
 }
 
