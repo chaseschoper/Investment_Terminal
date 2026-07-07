@@ -3201,6 +3201,8 @@ return (
       <a href="#financials">Financials</a>
       <a href="#metrics">Metrics</a>
       <a href="#comparison">Compare</a>
+      <a href="#analyst-estimates">Analyst Estimates</a>
+      <a href="#similar-companies">Similar Companies</a>
       <a href="#projections">Projections</a>
       <a href="#ai-analysis">AI Analysis</a>
       <a href="#earnings-calls">Transcript</a>
@@ -4274,6 +4276,8 @@ return (
 {/* Analyst Estimates */}
 
 <div
+  id="analyst-estimates"
+  className="section-anchor"
   style={{
     marginTop: "40px",
     padding: "30px",
