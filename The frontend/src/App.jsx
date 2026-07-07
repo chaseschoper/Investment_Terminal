@@ -1343,6 +1343,12 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [compareData, setCompareData] =
     useState([]);
 
+  const [similarCompanies, setSimilarCompanies] =
+    useState([]);
+
+  const [isSimilarCompaniesLoading, setIsSimilarCompaniesLoading] =
+    useState(false);
+
 
   
 
@@ -1625,6 +1631,7 @@ useEffect(() => {
     setAiAnalysis(null);
     setEarningsCall(null);
     setCompanyDocuments(null);
+    setSimilarCompanies([]);
     setActiveCompanyDocumentTab("results");
     setSelectedTranscriptPeriod("latest");
     window.speechSynthesis?.cancel();
@@ -1752,6 +1759,35 @@ useEffect(() => {
 
     return () => window.clearTimeout(timer);
   }, [ticker, stockData?.price, stockData?.updatedAt]);
+
+  useEffect(() => {
+    if (!loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
+
+    let isActive = true;
+    setIsSimilarCompaniesLoading(true);
+
+    axios.get(`${API_URL}/api/similar-companies/${ticker}`, { timeout: 15000 })
+      .then((response) => {
+        if (isActive) {
+          setSimilarCompanies(response.data?.companies || []);
+        }
+      })
+      .catch((error) => {
+        console.error("Similar companies failed", error);
+        if (isActive) {
+          setSimilarCompanies([]);
+        }
+      })
+      .finally(() => {
+        if (isActive) {
+          setIsSimilarCompaniesLoading(false);
+        }
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [ticker, loadedStockSymbol, isStockLoading]);
 
   /*
     LOAD EARNINGS ON START
@@ -4519,6 +4555,60 @@ return (
   </div>
 
 </div>
+
+{/* SIMILAR COMPANIES */}
+
+<section className="similar-companies-section section-anchor" id="similar-companies">
+  <div className="similar-companies-header">
+    <div>
+      <span className="similar-companies-kicker">Industry Peers</span>
+      <h2 className="section-title">Similar Companies</h2>
+    </div>
+    {similarCompanies[0]?.industry && (
+      <span className="similar-companies-context">
+        {similarCompanies[0].industry}
+      </span>
+    )}
+  </div>
+
+  {isSimilarCompaniesLoading && !similarCompanies.length ? (
+    <StockDataLoading label="Loading similar companies..." />
+  ) : similarCompanies.length ? (
+    <div className="similar-company-grid">
+      {similarCompanies.map((company) => (
+        <button
+          key={company.symbol}
+          type="button"
+          className="similar-company-card"
+          onClick={() => setTicker(company.symbol)}
+        >
+          <span className="similar-company-symbol">
+            {company.symbol}
+          </span>
+          <strong>
+            {company.name || company.symbol}
+          </strong>
+          <div className="similar-company-meta">
+            {[company.sector, company.industry].filter(Boolean).join(" • ")}
+          </div>
+          <div className="similar-company-stats">
+            <span>{formatPrice(company.price)}</span>
+            <span className={isNumber(company.percentChange) ? company.percentChange >= 0 ? "positive" : "negative" : ""}>
+              {formatPercent(company.percentChange)}
+            </span>
+            <span>
+              {isNumber(company.forwardPE) ? `${company.forwardPE.toFixed(1)}x Fwd P/E` : "Fwd P/E N/A"}
+            </span>
+          </div>
+        </button>
+      ))}
+    </div>
+  ) : (
+    <div className="similar-companies-empty">
+      Similar companies are not available for this ticker yet.
+    </div>
+  )}
+</section>
 
 {/* STOCK PROJECTIONS */}
 

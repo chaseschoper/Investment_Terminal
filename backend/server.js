@@ -87,6 +87,113 @@ const TICKER_ALIASES = {
   WALMART: "WMT"
 };
 
+const FALLBACK_SIMILAR_COMPANIES = {
+  AAPL: ["MSFT", "GOOGL", "META", "AMZN", "DELL", "HPQ"],
+  AMD: ["NVDA", "INTC", "QCOM", "AVGO", "MU", "TSM"],
+  AMZN: ["WMT", "COST", "TGT", "EBAY", "SHOP", "MELI"],
+  AZO: ["ORLY", "AAP", "GPC", "LKQ", "KMX"],
+  BRK_B: ["JPM", "BAC", "AXP", "CB", "AIG", "BLK"],
+  CAKE: ["DRI", "TXRH", "EAT", "BJRI", "BLMN"],
+  CCL: ["RCL", "NCLH", "MAR", "HLT", "EXPE"],
+  CELH: ["MNST", "PEP", "KO", "KDP", "STZ"],
+  CRM: ["MSFT", "ORCL", "NOW", "ADBE", "SAP"],
+  ELF: ["ULTA", "COTY", "EL", "PG", "CL"],
+  HD: ["LOW", "WMT", "TGT", "COST", "TSCO"],
+  MSFT: ["GOOGL", "AMZN", "ORCL", "CRM", "ADBE", "IBM"],
+  NKE: ["LULU", "DECK", "ONON", "UAA", "ADDYY"],
+  NVDA: ["AMD", "AVGO", "INTC", "QCOM", "MU", "TSM"],
+  SNOW: ["DDOG", "MDB", "PLTR", "NET", "CRM"],
+  TMO: ["DHR", "A", "MTD", "WAT", "ILMN"],
+  TSLA: ["RIVN", "GM", "F", "LCID", "NIO"],
+  WMT: ["COST", "TGT", "AMZN", "DG", "DLTR"]
+};
+
+const FALLBACK_COMPANY_NAMES = {
+  A: "Agilent Technologies",
+  AAP: "Advance Auto Parts",
+  AAPL: "Apple",
+  ADBE: "Adobe",
+  ADDYY: "Adidas",
+  AIG: "AIG",
+  AMD: "Advanced Micro Devices",
+  AMZN: "Amazon",
+  AVGO: "Broadcom",
+  AXP: "American Express",
+  AZO: "AutoZone",
+  BAC: "Bank of America",
+  BJRI: "BJ's Restaurants",
+  BLK: "BlackRock",
+  BLMN: "Bloomin' Brands",
+  CB: "Chubb",
+  CL: "Colgate-Palmolive",
+  COST: "Costco",
+  COTY: "Coty",
+  CRM: "Salesforce",
+  DDOG: "Datadog",
+  DECK: "Deckers Outdoor",
+  DELL: "Dell Technologies",
+  DG: "Dollar General",
+  DHR: "Danaher",
+  DLTR: "Dollar Tree",
+  DRI: "Darden Restaurants",
+  EAT: "Brinker International",
+  EBAY: "eBay",
+  EL: "Estee Lauder",
+  EXPE: "Expedia",
+  F: "Ford",
+  GM: "General Motors",
+  GOOGL: "Alphabet",
+  GPC: "Genuine Parts",
+  HD: "Home Depot",
+  HLT: "Hilton",
+  HPQ: "HP",
+  IBM: "IBM",
+  ILMN: "Illumina",
+  INTC: "Intel",
+  JPM: "JPMorgan Chase",
+  KDP: "Keurig Dr Pepper",
+  KMX: "CarMax",
+  KO: "Coca-Cola",
+  LCID: "Lucid",
+  LKQ: "LKQ",
+  LOW: "Lowe's",
+  LULU: "Lululemon",
+  MAR: "Marriott",
+  MDB: "MongoDB",
+  MELI: "MercadoLibre",
+  META: "Meta Platforms",
+  MNST: "Monster Beverage",
+  MSFT: "Microsoft",
+  MTD: "Mettler-Toledo",
+  MU: "Micron Technology",
+  NCLH: "Norwegian Cruise Line",
+  NET: "Cloudflare",
+  NIO: "NIO",
+  NOW: "ServiceNow",
+  NVDA: "Nvidia",
+  ONON: "On Holding",
+  ORCL: "Oracle",
+  ORLY: "O'Reilly Automotive",
+  PEP: "PepsiCo",
+  PG: "Procter & Gamble",
+  PLTR: "Palantir",
+  QCOM: "Qualcomm",
+  RCL: "Royal Caribbean",
+  RIVN: "Rivian",
+  SAP: "SAP",
+  SHOP: "Shopify",
+  STZ: "Constellation Brands",
+  TGT: "Target",
+  TMO: "Thermo Fisher Scientific",
+  TSCO: "Tractor Supply",
+  TSM: "Taiwan Semiconductor",
+  TXRH: "Texas Roadhouse",
+  UAA: "Under Armour",
+  ULTA: "Ulta Beauty",
+  WAT: "Waters",
+  WMT: "Walmart"
+};
+
 const COMPANY_NAME_ALIASES = {
   "advanced micro devices": "AMD",
   "alphabet": "GOOGL",
@@ -5359,6 +5466,8 @@ async function fetchStockData(ticker) {
     historicalPe,
     name: profile.name || ticker,
     symbol: ticker,
+    sector: firstText(profile.gicsSector, profile.sector, yahooSupplementalData.sector, previousData?.sector),
+    industry: firstText(profile.finnhubIndustry, profile.gicsSubIndustry, profile.industry, yahooSupplementalData.industry, previousData?.industry),
     logo: profile.logo || getFinnhubLogoUrl(ticker),
     price: quote.c,
     change: quote.d,
@@ -5495,6 +5604,48 @@ function startStockFetch(ticker) {
     .finally(() => {
       activeStockFetches.delete(ticker);
     });
+}
+
+function normalizePeerSymbol(symbol) {
+  return String(symbol || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\./g, "-");
+}
+
+function getFallbackSimilarSymbols(ticker, stockData = {}) {
+  const normalizedTicker = normalizePeerSymbol(ticker);
+  const direct = FALLBACK_SIMILAR_COMPANIES[normalizedTicker.replace(/-/g, "_")] || [];
+  const industryText = `${stockData.sector || ""} ${stockData.industry || ""}`.toLowerCase();
+
+  if (direct.length) return direct;
+  if (industryText.includes("semiconductor")) return FALLBACK_SIMILAR_COMPANIES.NVDA;
+  if (industryText.includes("restaurant")) return FALLBACK_SIMILAR_COMPANIES.CAKE;
+  if (industryText.includes("beverage")) return FALLBACK_SIMILAR_COMPANIES.CELH;
+  if (industryText.includes("software")) return FALLBACK_SIMILAR_COMPANIES.MSFT;
+  if (industryText.includes("retail")) return FALLBACK_SIMILAR_COMPANIES.WMT;
+  if (industryText.includes("auto")) return FALLBACK_SIMILAR_COMPANIES.AZO;
+
+  return [];
+}
+
+async function buildSimilarCompanyItem(symbol) {
+  const normalizedSymbol = normalizePeerSymbol(symbol);
+  const stock = await Stock.findOne({ ticker: normalizedSymbol }).lean().catch(() => null);
+  const data = stock?.data || {};
+  const cachedQuote = livePriceCache.get(normalizedSymbol) || {};
+
+  return {
+    symbol: normalizedSymbol,
+    name: firstText(data.name, data.companyName, FALLBACK_COMPANY_NAMES[normalizedSymbol], normalizedSymbol),
+    logo: firstText(data.logo, getFinnhubLogoUrl(normalizedSymbol)),
+    sector: firstText(data.sector),
+    industry: firstText(data.industry),
+    price: firstFiniteNumber(cachedQuote.price, data.price),
+    percentChange: firstFiniteNumber(cachedQuote.percentChange, data.percentChange),
+    forwardPE: firstFiniteNumber(data.forwardPE, data.forwardPe, data.peForward),
+    marketCap: firstFiniteNumber(data.marketCap)
+  };
 }
 
 // =========================
@@ -6143,6 +6294,62 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     }
     console.log("Price history failed:", req.params.ticker, err.response?.status || err.message);
     return res.status(502).json({ error: "Price history unavailable" });
+  }
+});
+
+app.get("/api/similar-companies/:ticker", async (req, res) => {
+  try {
+    const requestedTicker = req.params.ticker.trim().toUpperCase();
+    const ticker = TICKER_ALIASES[requestedTicker] || requestedTicker;
+
+    if (!ticker || ticker.length > 10) {
+      return res.status(400).json({ companies: [] });
+    }
+
+    const stock = await Stock.findOne({ ticker }).lean().catch(() => null);
+    const currentData = stock?.data || {};
+    let peerSymbols = [];
+
+    const finnhubPeers = await resolveWithin(
+      getFinnhub(`https://finnhub.io/api/v1/stock/peers?symbol=${ticker}`),
+      4500,
+      []
+    );
+
+    if (Array.isArray(finnhubPeers)) {
+      peerSymbols = finnhubPeers;
+    }
+
+    peerSymbols = [
+      ...getFallbackSimilarSymbols(ticker, currentData),
+      ...peerSymbols
+    ]
+      .map(normalizePeerSymbol)
+      .filter((symbol) =>
+        symbol &&
+        symbol !== ticker &&
+        /^[A-Z0-9-]{1,10}$/.test(symbol)
+      );
+
+    peerSymbols = [...new Set(peerSymbols)].slice(0, 12);
+
+    const companies = (await Promise.all(
+      peerSymbols.map(async (symbol) => {
+        return buildSimilarCompanyItem(symbol);
+      })
+    ))
+      .filter(Boolean)
+      .slice(0, 8);
+
+    return res.json({
+      symbol: ticker,
+      sector: currentData.sector || null,
+      industry: currentData.industry || null,
+      companies
+    });
+  } catch (err) {
+    console.log("Similar companies failed:", req.params.ticker, err.message);
+    return res.status(502).json({ companies: [] });
   }
 });
 
