@@ -39,7 +39,9 @@ const priceHistoryCache = new Map();
 const companyDocumentsCache = new Map();
 const companyDocumentsInFlight = new Map();
 const earningsTrackerCache = new Map();
+const earningsTrackerInFlight = new Map();
 const analystActionsCache = new Map();
+const analystActionsInFlight = new Map();
 const earningsReleaseTextCache = new Map();
 const similarCompanyMetricCache = new Map();
 const mrRallyExternalMetricCache = new Map();
@@ -53,6 +55,19 @@ const MR_RALLY_AI_TIMEOUT_MS = 12000;
 const MR_RALLY_FAST_CONTEXT_TIMEOUT_MS = 3000;
 const MR_RALLY_WEB_CONTEXT_TIMEOUT_MS = 6000;
 const MR_RALLY_COMPANY_LOOKUP_TIMEOUT_MS = 2500;
+const EARNINGS_TRACKER_FAST_TIMEOUT_MS = 4500;
+const RELEASE_TEXT_FAST_TIMEOUT_MS = 2500;
+const ANALYST_ACTIONS_FAST_TIMEOUT_MS = 5000;
+
+function withTimeout(promise, ms, fallbackValue = null) {
+  let timeoutId;
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise((resolve) => {
+      timeoutId = setTimeout(() => resolve(fallbackValue), ms);
+    })
+  ]).finally(() => clearTimeout(timeoutId));
+}
 const STOCK_PROVIDER_TIMEOUT_MS = 8000;
 const STOCK_SLOW_PROVIDER_TIMEOUT_MS = 10000;
 const STOCK_INITIAL_SEC_TIMEOUT_MS = 9000;
@@ -5922,7 +5937,7 @@ async function fetchDocumentText(url) {
       Accept: "application/pdf,text/html,text/plain,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
     },
     responseType: "arraybuffer",
-    timeout: 12000,
+    timeout: RELEASE_TEXT_FAST_TIMEOUT_MS,
     maxRedirects: 4,
     validateStatus: (status) => status >= 200 && status < 400
   });
@@ -6164,7 +6179,7 @@ async function fetchNextEarningsDate(ticker) {
     .sort((a, b) => String(a.date).localeCompare(String(b.date)))[0] || null;
 }
 
-async function buildEarningsTracker(ticker) {
+async function buildEarningsTrackerData(ticker) {
   const normalizedTicker = normalizePeerSymbol(ticker);
   const cacheKey = normalizedTicker;
   const cached = earningsTrackerCache.get(cacheKey);
@@ -6174,10 +6189,10 @@ async function buildEarningsTracker(ticker) {
   const stockData = stock?.data || {};
   const company = stockData.name || normalizedTicker;
   const [companyEarningsResponse, documents, cachedTranscript, quarterlyExpectations] = await Promise.all([
-    getFinnhub(`https://finnhub.io/api/v1/stock/earnings?symbol=${normalizedTicker}`).catch(() => []),
-    fetchCompanyDocuments(normalizedTicker).catch(() => null),
+    withTimeout(getFinnhub(`https://finnhub.io/api/v1/stock/earnings?symbol=${normalizedTicker}`), EARNINGS_TRACKER_FAST_TIMEOUT_MS, []).catch(() => []),
+    withTimeout(fetchCompanyDocuments(normalizedTicker), EARNINGS_TRACKER_FAST_TIMEOUT_MS, null).catch(() => null),
     EarningsCall.findOne({ ticker: normalizedTicker }).lean().catch(() => null),
-    fetchYahooQuarterlyExpectations(normalizedTicker).catch(() => ({}))
+    withTimeout(fetchYahooQuarterlyExpectations(normalizedTicker), EARNINGS_TRACKER_FAST_TIMEOUT_MS, {}).catch(() => ({}))
   ]);
   const companyEarnings = Array.isArray(companyEarningsResponse) ? companyEarningsResponse : [];
   const latestEpsRow = companyEarnings
@@ -6186,8 +6201,8 @@ async function buildEarningsTracker(ticker) {
       String(b.period || `${b.year}-${b.quarter || 1}`).localeCompare(String(a.period || `${a.year}-${a.quarter || 1}`))
     )[0] || null;
   const [calendarEvent, nextEvent] = await Promise.all([
-    fetchLatestEarningsCalendarEvent(normalizedTicker, latestEpsRow?.period).catch(() => null),
-    fetchNextEarningsDate(normalizedTicker).catch(() => null)
+    withTimeout(fetchLatestEarningsCalendarEvent(normalizedTicker, latestEpsRow?.period), EARNINGS_TRACKER_FAST_TIMEOUT_MS, null).catch(() => null),
+    withTimeout(fetchNextEarningsDate(normalizedTicker), EARNINGS_TRACKER_FAST_TIMEOUT_MS, null).catch(() => null)
   ]);
 
   const latestInterimRevenueRow = [...(stockData.revenueData || [])]
@@ -6221,22 +6236,13 @@ async function buildEarningsTracker(ticker) {
   const previousMargin = firstFiniteNumber(previousMarginRow?.operatingMargin, previousMarginRow?.profitMargin);
   const transcriptHighlight = buildTrackerHighlightFromTranscript(cachedTranscript);
   const resultsText =
-    (await fetchLatestResultsText(documents).catch(() => null)) ||
-    (await fetchLatestResultsTextFromWeb(normalizedTicker, company).catch(() => null));
+    (await withTimeout(fetchLatestResultsText(documents), RELEASE_TEXT_FAST_TIMEOUT_MS, null).catch(() => null)) ||
+    (await withTimeout(fetchLatestResultsTextFromWeb(normalizedTicker, company), RELEASE_TEXT_FAST_TIMEOUT_MS, null).catch(() => null));
   const guidanceSignal = buildGuidanceSignalFromText(
     resultsText,
     buildGuidanceSignal(documents, transcriptHighlight)
   );
   const ceoHighlight = buildCeoHighlightFromText(resultsText, transcriptHighlight);
-  const latestRevenueEstimate = firstFiniteNumber(
-    calendarEvent?.revenueEstimate,
-    quarterlyExpectations?.currentQuarter?.revenue
-  );
-  const latestEpsEstimate = firstFiniteNumber(
-    latestEpsRow?.estimate,
-    calendarEvent?.epsEstimate,
-    quarterlyExpectations?.currentQuarter?.eps
-  );
   const runRateRevenueEstimate = firstFiniteNumber(
     stockData.analystEstimates?.currentYear?.revenue,
     stockData.analystEstimates?.nextYear?.revenue,
@@ -6248,6 +6254,17 @@ async function buildEarningsTracker(ticker) {
     stockData.analystEstimates?.nextYear?.eps,
     stockData.consensusCurrentYearEps,
     stockData.consensusNextYearEps
+  );
+  const latestRevenueEstimate = firstFiniteNumber(
+    calendarEvent?.revenueEstimate,
+    quarterlyExpectations?.currentQuarter?.revenue,
+    runRateRevenueEstimate !== null ? runRateRevenueEstimate / 4 : null
+  );
+  const latestEpsEstimate = firstFiniteNumber(
+    latestEpsRow?.estimate,
+    calendarEvent?.epsEstimate,
+    quarterlyExpectations?.currentQuarter?.eps,
+    runRateEpsEstimate !== null ? runRateEpsEstimate / 4 : null
   );
   const hasQuarterlyExpectation =
     firstFiniteNumber(
@@ -6317,6 +6334,106 @@ async function buildEarningsTracker(ticker) {
   return data;
 }
 
+async function buildEarningsTracker(ticker) {
+  const normalizedTicker = normalizePeerSymbol(ticker);
+  const cached = earningsTrackerCache.get(normalizedTicker);
+  if (cached && Date.now() - cached.fetchedAt < 15 * 60 * 1000) return cached.data;
+
+  const inFlight = earningsTrackerInFlight.get(normalizedTicker);
+  if (inFlight) return inFlight;
+
+  const promise = buildEarningsTrackerData(normalizedTicker)
+    .finally(() => earningsTrackerInFlight.delete(normalizedTicker));
+  earningsTrackerInFlight.set(normalizedTicker, promise);
+  return promise;
+}
+
+async function buildFastEarningsTrackerFallback(ticker) {
+  const normalizedTicker = normalizePeerSymbol(ticker);
+  const stock = await Stock.findOne({ ticker: normalizedTicker }).lean().catch(() => null);
+  const stockData = stock?.data || {};
+  const latestInterimRevenueRow = [...(stockData.revenueData || [])]
+    .filter((row) => row?.isInterim && toNumberOrNull(row.revenue) !== null)
+    .sort((a, b) => {
+      const yearDiff = Number(a.year || 0) - Number(b.year || 0);
+      if (yearDiff !== 0) return yearDiff;
+      return String(a.period || "").localeCompare(String(b.period || ""));
+    })
+    .at(-1) || null;
+  const marginRows = [...(stockData.marginHistory || [])]
+    .filter((row) => toNumberOrNull(row.operatingMargin ?? row.profitMargin) !== null)
+    .sort((a, b) => {
+      const yearDiff = Number(a.year || 0) - Number(b.year || 0);
+      if (yearDiff !== 0) return yearDiff;
+      return String(a.period || "").localeCompare(String(b.period || ""));
+    });
+  const latestMarginRow = marginRows.at(-1) || null;
+  const previousMarginRow = marginRows.at(-2) || null;
+  const currentYearRevenue = firstFiniteNumber(
+    stockData.analystEstimates?.currentYear?.revenue,
+    stockData.consensusCurrentYearRevenue,
+    stockData.analystEstimates?.nextYear?.revenue,
+    stockData.consensusNextYearRevenue
+  );
+  const currentYearEps = firstFiniteNumber(
+    stockData.analystEstimates?.currentYear?.eps,
+    stockData.consensusCurrentYearEps,
+    stockData.analystEstimates?.nextYear?.eps,
+    stockData.consensusNextYearEps
+  );
+  const latestMargin = firstFiniteNumber(latestMarginRow?.operatingMargin, latestMarginRow?.profitMargin);
+  const previousMargin = firstFiniteNumber(previousMarginRow?.operatingMargin, previousMarginRow?.profitMargin);
+
+  return {
+    symbol: normalizedTicker,
+    company: stockData.name || normalizedTicker,
+    latestReportedQuarter: latestInterimRevenueRow?.period || stockData.latestInterimPeriod || null,
+    reportDate: latestInterimRevenueRow?.endDate || null,
+    revenue: calculateBeatMiss(
+      latestInterimRevenueRow?.revenue !== undefined ? latestInterimRevenueRow.revenue * 1000000000 : null,
+      currentYearRevenue !== null ? currentYearRevenue / 4 : null
+    ),
+    eps: calculateBeatMiss(
+      latestInterimRevenueRow?.eps,
+      currentYearEps !== null ? currentYearEps / 4 : null
+    ),
+    nextQuarterExpectations: {
+      revenue: currentYearRevenue !== null ? currentYearRevenue / 4 : null,
+      eps: currentYearEps !== null ? currentYearEps / 4 : null,
+      period: "Next quarter",
+      source: currentYearRevenue !== null || currentYearEps !== null ? "Annual consensus run-rate" : null
+    },
+    marginChange: {
+      label: latestMarginRow?.operatingMargin !== undefined ? "Operating margin" : "Profit margin",
+      current: latestMargin,
+      previous: previousMargin,
+      change: latestMargin !== null && previousMargin !== null ? latestMargin - previousMargin : null,
+      currentPeriod: latestMarginRow?.period || null,
+      previousPeriod: previousMarginRow?.period || null
+    },
+    guidance: {
+      status: "loading",
+      text: "Latest release details are still loading.",
+      source: null,
+      url: null
+    },
+    ceoHighlight: {
+      speaker: null,
+      text: "Latest release highlight is still loading.",
+      source: null
+    },
+    nextEarningsDate: null,
+    nextEarningsTime: null,
+    source: {
+      eps: latestInterimRevenueRow ? latestInterimRevenueRow.source : null,
+      revenue: latestInterimRevenueRow ? latestInterimRevenueRow.source : null,
+      documents: null
+    },
+    partial: true,
+    updatedAt: new Date().toISOString()
+  };
+}
+
 function normalizeAnalystActionRow(row = {}, fallback = {}) {
   const firm = firstText(
     row.analystCompany,
@@ -6368,7 +6485,7 @@ async function fetchBenzingaAnalystActions(ticker) {
           "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
           Accept: "text/html,application/xhtml+xml"
         },
-        timeout: 12000
+        timeout: ANALYST_ACTIONS_FAST_TIMEOUT_MS
       }
     );
     const $ = cheerio.load(response.data || "");
@@ -6410,7 +6527,7 @@ async function fetchMarketBeatAnalystActions(ticker) {
           "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
           Accept: "text/html,application/xhtml+xml"
         },
-        timeout: 12000
+        timeout: ANALYST_ACTIONS_FAST_TIMEOUT_MS
       }
     );
     const text = String(response.data || "")
@@ -6444,25 +6561,32 @@ async function fetchMarketBeatAnalystActions(ticker) {
   }
 }
 
-async function buildAnalystActions(ticker) {
+async function buildAnalystActionsData(ticker) {
   const normalizedTicker = normalizePeerSymbol(ticker);
   const cached = analystActionsCache.get(normalizedTicker);
   if (cached && Date.now() - cached.fetchedAt < 30 * 60 * 1000) return cached.data;
 
   const stock = await Stock.findOne({ ticker: normalizedTicker }).lean().catch(() => null);
   const stockData = stock?.data || {};
-  const [targetRows, gradeRows, benzingaRows, marketBeatRows] = await Promise.all([
-    getFmpData(normalizedTicker, "analyst price targets", [
-      "/api/v4/price-target?symbol={ticker}",
-      "/stable/price-target-news?symbol={ticker}&limit=12"
-    ]).catch(() => null),
-    getFmpData(normalizedTicker, "analyst grades", [
-      "/stable/grades-historical?symbol={ticker}&limit=12",
-      "/api/v3/grade/{ticker}?limit=12"
-    ]).catch(() => null),
+  const benzingaRows = await withTimeout(
     fetchBenzingaAnalystActions(normalizedTicker),
-    fetchMarketBeatAnalystActions(normalizedTicker)
-  ]);
+    ANALYST_ACTIONS_FAST_TIMEOUT_MS,
+    []
+  ).catch(() => []);
+  const shouldUseBackupSources = benzingaRows.length < 4;
+  const [targetRows, gradeRows, marketBeatRows] = shouldUseBackupSources
+    ? await Promise.all([
+        withTimeout(getFmpData(normalizedTicker, "analyst price targets", [
+          "/api/v4/price-target?symbol={ticker}",
+          "/stable/price-target-news?symbol={ticker}&limit=12"
+        ]), ANALYST_ACTIONS_FAST_TIMEOUT_MS, null).catch(() => null),
+        withTimeout(getFmpData(normalizedTicker, "analyst grades", [
+          "/stable/grades-historical?symbol={ticker}&limit=12",
+          "/api/v3/grade/{ticker}?limit=12"
+        ]), ANALYST_ACTIONS_FAST_TIMEOUT_MS, null).catch(() => null),
+        withTimeout(fetchMarketBeatAnalystActions(normalizedTicker), ANALYST_ACTIONS_FAST_TIMEOUT_MS, []).catch(() => [])
+      ])
+    : [null, null, []];
   const cleanMarketBeatRows = marketBeatRows.filter((row) => {
     const firm = String(row?.firm || "");
     const rating = String(row?.rating || "");
@@ -6514,6 +6638,44 @@ async function buildAnalystActions(ticker) {
 
   analystActionsCache.set(normalizedTicker, { fetchedAt: Date.now(), data });
   return data;
+}
+
+async function buildAnalystActions(ticker) {
+  const normalizedTicker = normalizePeerSymbol(ticker);
+  const cached = analystActionsCache.get(normalizedTicker);
+  if (cached && Date.now() - cached.fetchedAt < 30 * 60 * 1000) return cached.data;
+
+  const inFlight = analystActionsInFlight.get(normalizedTicker);
+  if (inFlight) return inFlight;
+
+  const promise = buildAnalystActionsData(normalizedTicker)
+    .finally(() => analystActionsInFlight.delete(normalizedTicker));
+  analystActionsInFlight.set(normalizedTicker, promise);
+  return promise;
+}
+
+async function buildFastAnalystActionsFallback(ticker) {
+  const normalizedTicker = normalizePeerSymbol(ticker);
+  const stock = await Stock.findOne({ ticker: normalizedTicker }).lean().catch(() => null);
+  const stockData = stock?.data || {};
+  return {
+    symbol: normalizedTicker,
+    actions: [
+      normalizeAnalystActionRow({}, {
+        firm: "Consensus",
+        priceTarget: stockData.targetMean,
+        rating: stockData.analystRatingText || stockData.recommendationKey,
+        action: "Current consensus",
+        date: stock?.updatedAt
+      })
+    ],
+    summary: {
+      targetMean: firstFiniteNumber(stockData.targetMean),
+      rating: stockData.analystRatingText || stockData.recommendationKey || null
+    },
+    partial: true,
+    updatedAt: new Date().toISOString()
+  };
 }
 
 // =========================
@@ -7228,14 +7390,16 @@ app.get("/api/earnings-tracker/:ticker", async (req, res) => {
   }
 
   try {
-    const data = await buildEarningsTracker(ticker);
+    const data = await withTimeout(buildEarningsTracker(ticker), EARNINGS_TRACKER_FAST_TIMEOUT_MS + 1500, null);
+    if (!data) {
+      const cached = earningsTrackerCache.get(normalizePeerSymbol(ticker));
+      return res.json(cached?.data ? { ...cached.data, stale: true } : await buildFastEarningsTrackerFallback(ticker));
+    }
     return res.json(data);
   } catch (err) {
     console.error("Earnings tracker failed:", ticker, err.response?.status || err.message);
-    return res.status(502).json({
-      symbol: ticker,
-      error: "Quarterly earnings tracker is temporarily unavailable"
-    });
+    const cached = earningsTrackerCache.get(normalizePeerSymbol(ticker));
+    return res.json(cached?.data ? { ...cached.data, stale: true } : await buildFastEarningsTrackerFallback(ticker));
   }
 });
 
@@ -7246,15 +7410,16 @@ app.get("/api/analyst-actions/:ticker", async (req, res) => {
   }
 
   try {
-    const data = await buildAnalystActions(ticker);
+    const data = await withTimeout(buildAnalystActions(ticker), ANALYST_ACTIONS_FAST_TIMEOUT_MS + 1000, null);
+    if (!data) {
+      const cached = analystActionsCache.get(normalizePeerSymbol(ticker));
+      return res.json(cached?.data ? { ...cached.data, stale: true } : await buildFastAnalystActionsFallback(ticker));
+    }
     return res.json(data);
   } catch (err) {
     console.error("Analyst actions failed:", ticker, err.response?.status || err.message);
-    return res.status(502).json({
-      symbol: ticker,
-      actions: [],
-      error: "Analyst actions are temporarily unavailable"
-    });
+    const cached = analystActionsCache.get(normalizePeerSymbol(ticker));
+    return res.json(cached?.data ? { ...cached.data, stale: true } : await buildFastAnalystActionsFallback(ticker));
   }
 });
 

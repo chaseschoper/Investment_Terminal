@@ -1780,7 +1780,7 @@ useEffect(() => {
     let isActive = true;
     setIsEarningsTrackerLoading(true);
 
-    axios.get(`${API_URL}/api/earnings-tracker/${ticker}`, { timeout: 22000 })
+    axios.get(`${API_URL}/api/earnings-tracker/${ticker}`, { timeout: 8000 })
       .then((response) => {
         if (isActive) {
           setEarningsTracker(response.data);
@@ -1809,7 +1809,7 @@ useEffect(() => {
     let isActive = true;
     setIsAnalystActionsLoading(true);
 
-    axios.get(`${API_URL}/api/analyst-actions/${ticker}`, { timeout: 15000 })
+    axios.get(`${API_URL}/api/analyst-actions/${ticker}`, { timeout: 8000 })
       .then((response) => {
         if (isActive) {
           setAnalystActions(response.data?.actions || []);
