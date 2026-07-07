@@ -3758,6 +3758,18 @@ return (
         </div>
 
         <div className="quarterly-tracker-card">
+          <span>Last quarter revenue</span>
+          <strong>{formatTrackerMoney(earningsTracker?.lastQuarterActuals?.revenue)}</strong>
+          <small>{earningsTracker?.lastQuarterActuals?.source?.revenue || "Reported revenue"}</small>
+        </div>
+
+        <div className="quarterly-tracker-card">
+          <span>Last quarter EPS</span>
+          <strong>{formatTrackerEps(earningsTracker?.lastQuarterActuals?.eps)}</strong>
+          <small>{earningsTracker?.lastQuarterActuals?.source?.eps || "Reported EPS"}</small>
+        </div>
+
+        <div className="quarterly-tracker-card">
           <span>Next quarter expectations</span>
           <strong>{formatTrackerMoney(earningsTracker?.nextQuarterExpectations?.revenue)}</strong>
           <small>

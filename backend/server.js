@@ -43,6 +43,7 @@ const earningsTrackerInFlight = new Map();
 const analystActionsCache = new Map();
 const analystActionsInFlight = new Map();
 const earningsReleaseTextCache = new Map();
+const stockAnalysisQuarterlyActualsCache = new Map();
 const similarCompanyMetricCache = new Map();
 const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
@@ -5923,6 +5924,73 @@ const formatQuarterLabel = (row = {}) => {
   return row.period || null;
 };
 
+function parseStockAnalysisFinancialNumber(value = "") {
+  const text = String(value || "").trim().replace(/,/g, "");
+  if (!text || text === "-" || /^N\/A$/i.test(text)) return null;
+  const negative = /^\(.+\)$/.test(text) || text.startsWith("-");
+  const number = Number(text.replace(/[$%()]/g, "").replace(/^-/, ""));
+  return Number.isFinite(number) ? (negative ? -number : number) : null;
+}
+
+async function fetchStockAnalysisLatestQuarterActuals(ticker, expectedCompanyName = "") {
+  const normalized = normalizeTickerForStockAnalysis(ticker);
+  const cached = stockAnalysisQuarterlyActualsCache.get(normalized);
+  if (cached && Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1000) return cached.data;
+
+  try {
+    const response = await axios.get(
+      `https://stockanalysis.com/stocks/${encodeURIComponent(normalized.toLowerCase())}/financials/?p=quarterly`,
+      {
+        headers: {
+          "User-Agent": "Mozilla/5.0",
+          Accept: "text/html,application/xhtml+xml"
+        },
+        timeout: 4500
+      }
+    );
+    const $ = cheerio.load(response.data || "");
+    const title = $("title").text().toLowerCase();
+    const expectedTokens = String(expectedCompanyName || "")
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((token) => token.length >= 4 && !/^(corp|inc|company|limited|holdings|class)$/i.test(token));
+    if (expectedTokens.length && !expectedTokens.some((token) => title.includes(token))) {
+      return null;
+    }
+    const table = $("table").first();
+    if (!table.length) return null;
+
+    const rows = {};
+    table.find("tr").each((_, row) => {
+      const cells = $(row).find("th,td").map((__, cell) =>
+        $(cell).text().replace(/\s+/g, " ").trim()
+      ).get();
+      if (cells[0]) rows[cells[0].toLowerCase()] = cells;
+    });
+
+    const quarter = rows["fiscal quarter"]?.[1] || null;
+    const reportDate = rows["period ending"]?.[1]?.match(/[A-Z][a-z]{2} \d{1,2}, \d{4}/)?.[0] || null;
+    const revenue = parseStockAnalysisFinancialNumber(rows.revenue?.[1]);
+    const eps = parseStockAnalysisFinancialNumber(
+      rows["eps (diluted)"]?.[1] ?? rows["eps (basic)"]?.[1]
+    );
+    if (!quarter && revenue === null && eps === null) return null;
+
+    const data = {
+      quarter,
+      reportDate,
+      revenue: revenue !== null ? revenue * 1000000 : null,
+      eps,
+      source: "StockAnalysis quarterly financials"
+    };
+    stockAnalysisQuarterlyActualsCache.set(normalized, { fetchedAt: Date.now(), data });
+    return data;
+  } catch (err) {
+    console.log("StockAnalysis quarterly actuals skipped:", ticker, err.response?.status || err.message);
+    return null;
+  }
+}
+
 function buildTrackerHighlightFromTranscript(cachedTranscript = null) {
   const sections = cachedTranscript?.data?.transcript || [];
   if (!Array.isArray(sections) || !sections.length) return null;
@@ -6271,16 +6339,11 @@ async function buildEarningsTrackerData(ticker) {
   const stock = await Stock.findOne({ ticker: normalizedTicker }).lean().catch(() => null);
   const stockData = stock?.data || {};
   const company = stockData.name || normalizedTicker;
-  const quarterlyExpectations = await withTimeout(
-    fetchYahooQuarterlyExpectations(normalizedTicker),
-    EARNINGS_TRACKER_FAST_TIMEOUT_MS,
-    {}
-  ).catch(() => ({}));
-  const companyEarningsResponse = await withTimeout(
-    getFinnhub(`https://finnhub.io/api/v1/stock/earnings?symbol=${normalizedTicker}`),
-    EARNINGS_TRACKER_FAST_TIMEOUT_MS,
-    []
-  ).catch(() => []);
+  const [quarterlyExpectations, companyEarningsResponse, stockAnalysisActuals] = await Promise.all([
+    withTimeout(fetchYahooQuarterlyExpectations(normalizedTicker), EARNINGS_TRACKER_FAST_TIMEOUT_MS, {}).catch(() => ({})),
+    withTimeout(getFinnhub(`https://finnhub.io/api/v1/stock/earnings?symbol=${normalizedTicker}`), EARNINGS_TRACKER_FAST_TIMEOUT_MS, []).catch(() => []),
+    withTimeout(fetchStockAnalysisLatestQuarterActuals(normalizedTicker, company), EARNINGS_TRACKER_FAST_TIMEOUT_MS, null).catch(() => null)
+  ]);
   const companyEarnings = Array.isArray(companyEarningsResponse) ? companyEarningsResponse : [];
   const latestEpsRow = companyEarnings
     .filter((row) => row.period || row.year)
@@ -6301,7 +6364,16 @@ async function buildEarningsTrackerData(ticker) {
     stockData.consensusCurrentYearEps,
     stockData.consensusNextYearEps
   );
-  const latestReportedQuarter = latestInterimRevenueRow?.period || latestEpsLabel || stockData.latestInterimPeriod || null;
+  const latestReportedQuarter = stockAnalysisActuals?.quarter || latestInterimRevenueRow?.period || latestEpsLabel || stockData.latestInterimPeriod || null;
+  const lastQuarterRevenue = firstFiniteNumber(
+    stockAnalysisActuals?.revenue,
+    latestInterimRevenueRow?.revenue !== undefined ? toNumberOrNull(latestInterimRevenueRow.revenue) * 1000000000 : null
+  );
+  const lastQuarterEps = firstFiniteNumber(
+    stockAnalysisActuals?.eps,
+    !latestInterimRevenueRow?.period || latestEpsLabel === latestInterimRevenueRow.period ? latestEpsRow?.actual : null,
+    latestInterimRevenueRow?.eps
+  );
   const hasQuarterlyExpectation =
     firstFiniteNumber(
       quarterlyExpectations?.nextQuarter?.revenue,
@@ -6323,7 +6395,21 @@ async function buildEarningsTrackerData(ticker) {
     symbol: normalizedTicker,
     company,
     latestReportedQuarter,
-    reportDate: latestInterimRevenueRow?.endDate || latestEpsRow?.period || null,
+    reportDate: stockAnalysisActuals?.reportDate || latestInterimRevenueRow?.endDate || latestEpsRow?.period || null,
+    lastQuarterActuals: {
+      revenue: lastQuarterRevenue,
+      eps: lastQuarterEps,
+      source: {
+        revenue: stockAnalysisActuals?.revenue !== null && stockAnalysisActuals?.revenue !== undefined
+          ? stockAnalysisActuals.source
+          : latestInterimRevenueRow?.source || null,
+        eps: stockAnalysisActuals?.eps !== null && stockAnalysisActuals?.eps !== undefined
+          ? stockAnalysisActuals.source
+          : latestEpsRow
+            ? "Finnhub company earnings"
+            : latestInterimRevenueRow?.source || null
+      }
+    },
     nextQuarterExpectations: {
       revenue: nextQuarterRevenue,
       eps: nextQuarterEps,
@@ -6383,6 +6469,14 @@ async function buildFastEarningsTrackerFallback(ticker) {
     company: stockData.name || normalizedTicker,
     latestReportedQuarter: latestInterimRevenueRow?.period || stockData.latestInterimPeriod || null,
     reportDate: latestInterimRevenueRow?.endDate || null,
+    lastQuarterActuals: {
+      revenue: latestInterimRevenueRow?.revenue !== undefined ? toNumberOrNull(latestInterimRevenueRow.revenue) * 1000000000 : null,
+      eps: toNumberOrNull(latestInterimRevenueRow?.eps),
+      source: {
+        revenue: latestInterimRevenueRow ? latestInterimRevenueRow.source : null,
+        eps: latestInterimRevenueRow ? latestInterimRevenueRow.source : null
+      }
+    },
     nextQuarterExpectations: {
       revenue: currentYearRevenue !== null ? currentYearRevenue / 4 : null,
       eps: currentYearEps !== null ? currentYearEps / 4 : null,
@@ -6511,53 +6605,66 @@ async function fetchBenzingaAnalystActions(ticker) {
 async function fetchMarketBeatAnalystActions(ticker) {
   try {
     const normalized = normalizeTickerForStockAnalysis(ticker).replace(".", "-");
-    const response = await axios.get(
-      `https://www.marketbeat.com/stocks/NASDAQ/${encodeURIComponent(normalized.toUpperCase())}/forecast/`,
-      {
-        headers: {
-          "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
-          Accept: "text/html,application/xhtml+xml"
-        },
-        timeout: ANALYST_ACTIONS_FAST_TIMEOUT_MS
-      }
-    );
-    const $ = cheerio.load(response.data || "");
+    const exchanges = ["NASDAQ", "NYSE", "AMEX", "OTCMKTS"];
     const rows = [];
-    $("table").each((_, table) => {
-      const headers = $(table).find("tr").first().find("th,td").map((__, cell) =>
-        $(cell).text().replace(/\s+/g, " ").trim().toLowerCase()
-      ).get();
-      if (!headers.includes("brokerage") || !headers.includes("price target")) return;
+    for (const exchange of exchanges) {
+      let response;
+      try {
+        response = await axios.get(
+          `https://www.marketbeat.com/stocks/${exchange}/${encodeURIComponent(normalized.toUpperCase())}/forecast/`,
+          {
+            headers: {
+              "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
+              Accept: "text/html,application/xhtml+xml"
+            },
+            timeout: ANALYST_ACTIONS_FAST_TIMEOUT_MS
+          }
+        );
+      } catch (err) {
+        continue;
+      }
 
-      $(table).find("tr").slice(1).each((__, row) => {
-        if (rows.length >= 16) return;
-        const cells = $(row).find("td").map((___, cell) =>
-          $(cell).text().replace(/\s+/g, " ").trim()
+      const $ = cheerio.load(response.data || "");
+      const pageTitle = $("title").text();
+      if (!new RegExp(`\\b${normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(pageTitle)) continue;
+
+      $("table").each((_, table) => {
+        const headers = $(table).find("tr").first().find("th,td").map((__, cell) =>
+          $(cell).text().replace(/\s+/g, " ").trim().toLowerCase()
         ).get();
-        if (cells.length < 6) return;
+        if (!headers.includes("brokerage") || !headers.includes("price target")) return;
 
-        const date = parseMmDdYyyy(cells[0]) || isoDateOnly(cells[0]);
-        const firm = cleanAnalystProviderText(cells[1]);
-        const analyst = cleanAnalystProviderText(cells[2]);
-        const action = cleanAnalystProviderText(cells[3]);
-        const rating = cleanAnalystProviderText(cells[4]);
-        const target = parsePriceTargetCell(cells[5]);
-        if (!firm || (!target.priceTarget && !rating)) return;
+        $(table).find("tr").slice(1).each((__, row) => {
+          if (rows.length >= 16) return;
+          const cells = $(row).find("td").map((___, cell) =>
+            $(cell).text().replace(/\s+/g, " ").trim()
+          ).get();
+          if (cells.length < 6) return;
 
-        rows.push({
-          firm,
-          analyst: analyst || null,
-          priceTarget: target.priceTarget,
-          previousPriceTarget: target.previousPriceTarget,
-          rating: rating || "N/A",
-          previousRating: null,
-          action: action || "Latest rating",
-          date,
-          url: null,
-          title: `${firm} ${action || "updates"} ${rating || "rating"}`
+          const date = parseMmDdYyyy(cells[0]) || isoDateOnly(cells[0]);
+          const firm = cleanAnalystProviderText(cells[1]);
+          const analyst = cleanAnalystProviderText(cells[2]);
+          const action = cleanAnalystProviderText(cells[3]);
+          const rating = cleanAnalystProviderText(cells[4]);
+          const target = parsePriceTargetCell(cells[5]);
+          if (!firm || (!target.priceTarget && !rating)) return;
+
+          rows.push({
+            firm,
+            analyst: analyst || null,
+            priceTarget: target.priceTarget,
+            previousPriceTarget: target.previousPriceTarget,
+            rating: rating || "N/A",
+            previousRating: null,
+            action: action || "Latest rating",
+            date,
+            url: null,
+            title: `${firm} ${action || "updates"} ${rating || "rating"}`
+          });
         });
       });
-    });
+      if (rows.length) break;
+    }
     return rows;
   } catch (err) {
     console.log("MarketBeat analyst actions skipped:", ticker, err.response?.status || err.message);
