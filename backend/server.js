@@ -41,7 +41,7 @@ const companyDocumentsInFlight = new Map();
 const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 130;
+const FINANCIAL_HISTORY_VERSION = 131;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -3130,6 +3130,18 @@ function withGuaranteedAnalystSection(data = {}) {
   const consensusNextRevenue = toNumberOrNull(data.consensusNextYearRevenue);
   const consensusCurrentEpsForEstimate = toNumberOrNull(data.consensusCurrentYearEps);
   const consensusNextEpsForEstimate = toNumberOrNull(data.consensusNextYearEps);
+  const repairEstimateEarnings = (earnings, eps, consensusEps) => {
+    const earningsNumber = toNumberOrNull(earnings);
+    const epsNumber = firstNumber(eps, consensusEps);
+    const epsImplied =
+      epsNumber !== null && sharesOutstanding
+        ? epsNumber * sharesOutstanding * 1000000
+        : null;
+    if (epsImplied === null) return earningsNumber;
+    if (earningsNumber === null) return epsImplied;
+    const ratio = Math.abs(earningsNumber / epsImplied);
+    return ratio > 2 || ratio < 0.5 ? epsImplied : earningsNumber;
+  };
   const currentEpsNeedsRepair =
     consensusCurrentYearEps !== null &&
     suppliedCurrentEps !== null &&
@@ -3145,22 +3157,20 @@ function withGuaranteedAnalystSection(data = {}) {
           ...(data.analystEstimates?.currentYear || {}),
           revenue: firstNumber(data.analystEstimates?.currentYear?.revenue, consensusCurrentRevenue),
           eps: firstNumber(data.analystEstimates?.currentYear?.eps, consensusCurrentEpsForEstimate),
-          earnings: firstNumber(
+          earnings: repairEstimateEarnings(
             data.analystEstimates?.currentYear?.earnings,
-            consensusCurrentEpsForEstimate !== null && sharesOutstanding
-              ? consensusCurrentEpsForEstimate * sharesOutstanding * 1000000
-              : null
+            data.analystEstimates?.currentYear?.eps,
+            consensusCurrentEpsForEstimate
           )
         },
         nextYear: {
           ...(data.analystEstimates?.nextYear || {}),
           revenue: firstNumber(data.analystEstimates?.nextYear?.revenue, consensusNextRevenue),
           eps: firstNumber(data.analystEstimates?.nextYear?.eps, consensusNextEpsForEstimate),
-          earnings: firstNumber(
+          earnings: repairEstimateEarnings(
             data.analystEstimates?.nextYear?.earnings,
-            consensusNextEpsForEstimate !== null && sharesOutstanding
-              ? consensusNextEpsForEstimate * sharesOutstanding * 1000000
-              : null
+            data.analystEstimates?.nextYear?.eps,
+            consensusNextEpsForEstimate
           )
         }
       }
@@ -5320,11 +5330,16 @@ async function fetchStockData(ticker) {
     yahooCurrentRevenueEstimate ?? previousYahooEstimates?.currentYear?.revenue ?? consensusCurrentRevenueValue;
   const displayedCurrentEpsValue =
     yahooCurrentEpsRaw ?? previousYahooEstimates?.currentYear?.eps ?? consensusCurrentEpsValue;
+  const estimateSharesOutstanding = normalizeSharesOutstandingMillions(
+    modeledSharesOutstanding,
+    marketCap,
+    quote.c
+  );
   const displayedCurrentEarningsValue =
     yahooCurrentEarningsValue ??
     previousYahooEstimates?.currentYear?.earnings ??
-    (displayedCurrentEpsValue !== null && modeledSharesOutstanding
-      ? displayedCurrentEpsValue * modeledSharesOutstanding * 1000000
+    (displayedCurrentEpsValue !== null && estimateSharesOutstanding
+      ? displayedCurrentEpsValue * estimateSharesOutstanding * 1000000
       : null);
   const displayedNextRevenueValue =
     yahooNextRevenueEstimate ?? previousYahooEstimates?.nextYear?.revenue ?? consensusNextRevenueValue;
@@ -5333,8 +5348,8 @@ async function fetchStockData(ticker) {
   const displayedNextEarningsValue =
     yahooNextEarningsValue ??
     previousYahooEstimates?.nextYear?.earnings ??
-    (displayedNextEpsValue !== null && modeledSharesOutstanding
-      ? displayedNextEpsValue * modeledSharesOutstanding * 1000000
+    (displayedNextEpsValue !== null && estimateSharesOutstanding
+      ? displayedNextEpsValue * estimateSharesOutstanding * 1000000
       : null);
 
   const data = preserveBankMargins(withGuaranteedAnalystSection({
