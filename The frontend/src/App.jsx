@@ -2653,14 +2653,6 @@ const formatTrackerMoney = (value) =>
   isNumber(value) ? formatBillions(value) : "N/A";
 const formatTrackerEps = (value) =>
   isNumber(value) ? `$${value.toFixed(2)}` : "N/A";
-const trackerResultClass = (result) =>
-  result === "beat" ? "positive-text" : result === "miss" ? "negative-text" : "";
-const formatTrackerBeatMiss = (item, formatter = formatTrackerMoney) => {
-  if (!item || item.result === "unavailable") return "No estimate";
-  const label = item.result === "beat" ? "Beat" : item.result === "miss" ? "Miss" : "Met";
-  const percent = isNumber(item.surprisePercent) ? ` (${item.surprisePercent > 0 ? "+" : ""}${item.surprisePercent.toFixed(1)}%)` : "";
-  return `${label} by ${formatter(Math.abs(item.surprise || 0))}${percent}`;
-};
 const selectedEarningsDay = (earnings?.days || []).find(
   (day) => day.date === selectedEarningsDate
 ) || { date: selectedEarningsDate, events: [] };
@@ -3763,44 +3755,6 @@ return (
           <span>Latest reported quarter</span>
           <strong>{earningsTracker?.latestReportedQuarter || "N/A"}</strong>
           <small>{earningsTracker?.reportDate || "Report date unavailable"}</small>
-        </div>
-
-        <div className="quarterly-tracker-card">
-          <span>Revenue beat/miss</span>
-          <strong className={trackerResultClass(earningsTracker?.revenue?.result)}>
-            {formatTrackerBeatMiss(earningsTracker?.revenue, formatTrackerMoney)}
-          </strong>
-          <small>
-            Actual {formatTrackerMoney(earningsTracker?.revenue?.actual)} • Est. {formatTrackerMoney(earningsTracker?.revenue?.estimate)}
-          </small>
-        </div>
-
-        <div className="quarterly-tracker-card">
-          <span>EPS beat/miss</span>
-          <strong className={trackerResultClass(earningsTracker?.eps?.result)}>
-            {formatTrackerBeatMiss(earningsTracker?.eps, formatTrackerEps)}
-          </strong>
-          <small>
-            Actual {formatTrackerEps(earningsTracker?.eps?.actual)} • Est. {formatTrackerEps(earningsTracker?.eps?.estimate)}
-          </small>
-        </div>
-
-        <div className="quarterly-tracker-card">
-          <span>{earningsTracker?.marginChange?.label || "Margin change"}</span>
-          <strong className={isNumber(earningsTracker?.marginChange?.change) ? earningsTracker.marginChange.change >= 0 ? "positive-text" : "negative-text" : ""}>
-            {isNumber(earningsTracker?.marginChange?.change)
-              ? `${earningsTracker.marginChange.change > 0 ? "+" : ""}${earningsTracker.marginChange.change.toFixed(1)} pts`
-              : "N/A"}
-          </strong>
-          <small>
-            {formatPercent(earningsTracker?.marginChange?.current)} vs {formatPercent(earningsTracker?.marginChange?.previous)}
-          </small>
-        </div>
-
-        <div className="quarterly-tracker-card">
-          <span>Next earnings date</span>
-          <strong>{earningsTracker?.nextEarningsDate || "N/A"}</strong>
-          <small>{earningsTracker?.nextEarningsTime || "Time not supplied"}</small>
         </div>
 
         <div className="quarterly-tracker-card">

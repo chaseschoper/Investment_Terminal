@@ -3103,11 +3103,6 @@ body {
   border-bottom: none;
 }
 
-.analyst-actions-table a {
-  color: #7dd3fc;
-  text-decoration: none;
-}
-
 .analyst-actions-table small {
   display: block;
   margin-top: 4px;

@@ -6271,10 +6271,16 @@ async function buildEarningsTrackerData(ticker) {
   const stock = await Stock.findOne({ ticker: normalizedTicker }).lean().catch(() => null);
   const stockData = stock?.data || {};
   const company = stockData.name || normalizedTicker;
-  const [companyEarningsResponse, quarterlyExpectations] = await Promise.all([
-    withTimeout(getFinnhub(`https://finnhub.io/api/v1/stock/earnings?symbol=${normalizedTicker}`), EARNINGS_TRACKER_FAST_TIMEOUT_MS, []).catch(() => []),
-    withTimeout(fetchYahooQuarterlyExpectations(normalizedTicker), EARNINGS_TRACKER_FAST_TIMEOUT_MS, {}).catch(() => ({}))
-  ]);
+  const quarterlyExpectations = await withTimeout(
+    fetchYahooQuarterlyExpectations(normalizedTicker),
+    EARNINGS_TRACKER_FAST_TIMEOUT_MS,
+    {}
+  ).catch(() => ({}));
+  const companyEarningsResponse = await withTimeout(
+    getFinnhub(`https://finnhub.io/api/v1/stock/earnings?symbol=${normalizedTicker}`),
+    EARNINGS_TRACKER_FAST_TIMEOUT_MS,
+    []
+  ).catch(() => []);
   const companyEarnings = Array.isArray(companyEarningsResponse) ? companyEarningsResponse : [];
   const latestEpsRow = companyEarnings
     .filter((row) => row.period || row.year)
@@ -6282,33 +6288,7 @@ async function buildEarningsTrackerData(ticker) {
       String(b.period || `${b.year}-${b.quarter || 1}`).localeCompare(String(a.period || `${a.year}-${a.quarter || 1}`))
     )[0] || null;
   const latestEpsLabel = formatQuarterLabel(latestEpsRow);
-  const [calendarEvent, nextEvent] = await Promise.all([
-    withTimeout(fetchLatestEarningsCalendarEvent(normalizedTicker, latestEpsRow?.period), EARNINGS_TRACKER_FAST_TIMEOUT_MS, null).catch(() => null),
-    withTimeout(fetchNextEarningsDate(normalizedTicker), EARNINGS_TRACKER_FAST_TIMEOUT_MS, null).catch(() => null)
-  ]);
-
   const latestInterimRevenueRow = getLatestInterimQuarterSnapshot(stockData.revenueData || []);
-  const latestMarginRow = [...(stockData.marginHistory || [])]
-    .filter((row) => toNumberOrNull(row.operatingMargin ?? row.profitMargin) !== null)
-    .sort((a, b) => {
-      const yearDiff = Number(a.year || 0) - Number(b.year || 0);
-      if (yearDiff !== 0) return yearDiff;
-      return String(a.period || "").localeCompare(String(b.period || ""));
-    })
-    .at(-1) || null;
-  const previousMarginRow = [...(stockData.marginHistory || [])]
-    .filter((row) =>
-      row !== latestMarginRow &&
-      toNumberOrNull(row.operatingMargin ?? row.profitMargin) !== null
-    )
-    .sort((a, b) => {
-      const yearDiff = Number(a.year || 0) - Number(b.year || 0);
-      if (yearDiff !== 0) return yearDiff;
-      return String(a.period || "").localeCompare(String(b.period || ""));
-    })
-    .at(-1) || null;
-  const latestMargin = firstFiniteNumber(latestMarginRow?.operatingMargin, latestMarginRow?.profitMargin);
-  const previousMargin = firstFiniteNumber(previousMarginRow?.operatingMargin, previousMarginRow?.profitMargin);
   const runRateRevenueEstimate = firstFiniteNumber(
     stockData.analystEstimates?.currentYear?.revenue,
     stockData.analystEstimates?.nextYear?.revenue,
@@ -6320,18 +6300,6 @@ async function buildEarningsTrackerData(ticker) {
     stockData.analystEstimates?.nextYear?.eps,
     stockData.consensusCurrentYearEps,
     stockData.consensusNextYearEps
-  );
-  const latestRevenueEstimate = firstFiniteNumber(
-    calendarEvent?.revenueEstimate
-  );
-  const latestEpsEstimate = firstFiniteNumber(
-    !latestInterimRevenueRow?.period || latestEpsLabel === latestInterimRevenueRow.period ? latestEpsRow?.estimate : null,
-    calendarEvent?.epsEstimate
-  );
-  const latestEpsActual = firstFiniteNumber(
-    !latestInterimRevenueRow?.period || latestEpsLabel === latestInterimRevenueRow.period ? latestEpsRow?.actual : null,
-    latestInterimRevenueRow?.eps,
-    calendarEvent?.epsActual
   );
   const latestReportedQuarter = latestInterimRevenueRow?.period || latestEpsLabel || stockData.latestInterimPeriod || null;
   const hasQuarterlyExpectation =
@@ -6355,15 +6323,7 @@ async function buildEarningsTrackerData(ticker) {
     symbol: normalizedTicker,
     company,
     latestReportedQuarter,
-    reportDate: latestInterimRevenueRow?.endDate || calendarEvent?.date || latestEpsRow?.period || null,
-    revenue: calculateBeatMiss(
-      firstFiniteNumber(calendarEvent?.revenueActual, latestInterimRevenueRow?.revenue !== undefined ? latestInterimRevenueRow.revenue * 1000000000 : null),
-      latestRevenueEstimate
-    ),
-    eps: calculateBeatMiss(
-      latestEpsActual,
-      latestEpsEstimate
-    ),
+    reportDate: latestInterimRevenueRow?.endDate || latestEpsRow?.period || null,
     nextQuarterExpectations: {
       revenue: nextQuarterRevenue,
       eps: nextQuarterEps,
@@ -6374,23 +6334,9 @@ async function buildEarningsTrackerData(ticker) {
           ? "Annual consensus run-rate"
           : null
     },
-    marginChange: {
-      label: latestMarginRow?.operatingMargin !== undefined ? "Operating margin" : "Profit margin",
-      current: latestMargin,
-      previous: previousMargin,
-      change: latestMargin !== null && previousMargin !== null ? latestMargin - previousMargin : null,
-      currentPeriod: latestMarginRow?.period || null,
-      previousPeriod: previousMarginRow?.period || null
-    },
-    nextEarningsDate: nextEvent?.date || null,
-    nextEarningsTime: nextEvent?.hour || null,
     source: {
       eps: latestEpsRow ? "Finnhub company earnings" : null,
-      revenue: calendarEvent?.revenueActual || calendarEvent?.revenueEstimate
-        ? "Finnhub earnings calendar"
-        : latestInterimRevenueRow
-          ? latestInterimRevenueRow.source
-          : null,
+      revenue: latestInterimRevenueRow ? latestInterimRevenueRow.source : null,
       documents: null
     },
     updatedAt: new Date().toISOString()
@@ -6419,15 +6365,6 @@ async function buildFastEarningsTrackerFallback(ticker) {
   const stock = await Stock.findOne({ ticker: normalizedTicker }).lean().catch(() => null);
   const stockData = stock?.data || {};
   const latestInterimRevenueRow = getLatestInterimQuarterSnapshot(stockData.revenueData || []);
-  const marginRows = [...(stockData.marginHistory || [])]
-    .filter((row) => toNumberOrNull(row.operatingMargin ?? row.profitMargin) !== null)
-    .sort((a, b) => {
-      const yearDiff = Number(a.year || 0) - Number(b.year || 0);
-      if (yearDiff !== 0) return yearDiff;
-      return String(a.period || "").localeCompare(String(b.period || ""));
-    });
-  const latestMarginRow = marginRows.at(-1) || null;
-  const previousMarginRow = marginRows.at(-2) || null;
   const currentYearRevenue = firstFiniteNumber(
     stockData.analystEstimates?.currentYear?.revenue,
     stockData.consensusCurrentYearRevenue,
@@ -6440,38 +6377,18 @@ async function buildFastEarningsTrackerFallback(ticker) {
     stockData.analystEstimates?.nextYear?.eps,
     stockData.consensusNextYearEps
   );
-  const latestMargin = firstFiniteNumber(latestMarginRow?.operatingMargin, latestMarginRow?.profitMargin);
-  const previousMargin = firstFiniteNumber(previousMarginRow?.operatingMargin, previousMarginRow?.profitMargin);
 
   return {
     symbol: normalizedTicker,
     company: stockData.name || normalizedTicker,
     latestReportedQuarter: latestInterimRevenueRow?.period || stockData.latestInterimPeriod || null,
     reportDate: latestInterimRevenueRow?.endDate || null,
-    revenue: calculateBeatMiss(
-      latestInterimRevenueRow?.revenue !== undefined ? latestInterimRevenueRow.revenue * 1000000000 : null,
-      currentYearRevenue !== null ? currentYearRevenue / 4 : null
-    ),
-    eps: calculateBeatMiss(
-      latestInterimRevenueRow?.eps,
-      currentYearEps !== null ? currentYearEps / 4 : null
-    ),
     nextQuarterExpectations: {
       revenue: currentYearRevenue !== null ? currentYearRevenue / 4 : null,
       eps: currentYearEps !== null ? currentYearEps / 4 : null,
       period: "Next quarter",
       source: currentYearRevenue !== null || currentYearEps !== null ? "Annual consensus run-rate" : null
     },
-    marginChange: {
-      label: latestMarginRow?.operatingMargin !== undefined ? "Operating margin" : "Profit margin",
-      current: latestMargin,
-      previous: previousMargin,
-      change: latestMargin !== null && previousMargin !== null ? latestMargin - previousMargin : null,
-      currentPeriod: latestMarginRow?.period || null,
-      previousPeriod: previousMarginRow?.period || null
-    },
-    nextEarningsDate: null,
-    nextEarningsTime: null,
     source: {
       eps: latestInterimRevenueRow ? latestInterimRevenueRow.source : null,
       revenue: latestInterimRevenueRow ? latestInterimRevenueRow.source : null,
@@ -6694,21 +6611,25 @@ async function buildAnalystActionsData(ticker) {
     .filter(isUsableAnalystAction);
   const uniqueRows = [];
   const seen = new Set();
-  for (const row of rows) {
+  const addUniqueAnalystRow = (row) => {
     const key = `${row.firm}:${row.analyst || ""}:${row.priceTarget || ""}:${row.rating}:${row.date || ""}`;
-    if (seen.has(key)) continue;
+    if (seen.has(key)) return;
     seen.add(key);
     uniqueRows.push(row);
+  };
+  for (const row of rows) {
+    addUniqueAnalystRow(row);
   }
 
-  if (!uniqueRows.length) {
-    uniqueRows.push(normalizeAnalystActionRow({}, {
+  const consensusRow = normalizeAnalystActionRow({}, {
       firm: "Consensus",
       priceTarget: stockData.targetMean,
       rating: stockData.analystRatingText || stockData.recommendationKey,
       action: "Current consensus",
       date: stock?.updatedAt
-    }));
+    });
+  if (!uniqueRows.length || uniqueRows.length < 3) {
+    addUniqueAnalystRow(consensusRow);
   }
 
   const data = {
