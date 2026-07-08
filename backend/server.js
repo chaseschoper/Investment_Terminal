@@ -43,7 +43,7 @@ const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 136;
+const FINANCIAL_HISTORY_VERSION = 137;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -2124,6 +2124,21 @@ const normalizeFinnhubMoney = (value) => {
   return Math.abs(number) < 10000000 ? toDollarsFromMillions(number) : number;
 };
 
+const impliedNextQuarterFromAnnualEstimate = (annualEstimate, latestYtdActual, latestYtdQuarter) => {
+  const annual = toNumberOrNull(annualEstimate);
+  if (annual === null || annual <= 0) return null;
+
+  const quarter = Number(latestYtdQuarter);
+  const actual = toNumberOrNull(latestYtdActual);
+  if (Number.isInteger(quarter) && quarter >= 1 && quarter <= 3 && actual !== null) {
+    const remainingQuarters = 4 - quarter;
+    const remainingEstimate = annual - actual;
+    if (remainingEstimate > 0) return remainingEstimate / remainingQuarters;
+  }
+
+  return annual / 4;
+};
+
 const fmpEstimateField = (row, ...keys) =>
   firstNumber(
     ...keys.map((key) => row?.[key]),
@@ -2836,10 +2851,13 @@ function hasCompleteChartHistory(stock) {
 function hasCompleteSupplementalData(stock) {
   const data = stock?.data || {};
   const requiresIndustrialMetrics = !data.isFinancialCompany;
+  const nextQuarter = data.analystEstimates?.nextQuarter || {};
   const currentYear = data.analystEstimates?.currentYear || {};
   const nextYear = data.analystEstimates?.nextYear || {};
   const hasCompleteYahooEstimates =
     data.analystEstimatesSource === "Yahoo Finance" &&
+    toNumberOrNull(nextQuarter.revenue) !== null &&
+    toNumberOrNull(nextQuarter.eps) !== null &&
     toNumberOrNull(currentYear.revenue) !== null &&
     toNumberOrNull(currentYear.eps) !== null &&
     toNumberOrNull(nextYear.revenue) !== null &&
@@ -5836,16 +5854,28 @@ async function fetchStockData(ticker) {
     (displayedNextEpsValue !== null && estimateSharesOutstanding
       ? displayedNextEpsValue * estimateSharesOutstanding * 1000000
       : null);
+  const impliedNextQuarterRevenue = impliedNextQuarterFromAnnualEstimate(
+    firstNumber(displayedCurrentRevenueValue, currentRevenueValue),
+    latestInterimRevenue,
+    latestInterimQuarter
+  );
+  const impliedNextQuarterEps = impliedNextQuarterFromAnnualEstimate(
+    firstNumber(displayedCurrentEpsValue, currentEpsValue),
+    latestInterimPeRow?.eps,
+    latestInterimQuarter
+  );
   const displayedNextQuarterRevenueValue = normalizeStatementDollars(
     firstNumber(
       yahooNextQuarterEstimate.revenue,
-      fmpEstimateField(fmpNextQuarterEstimate, "revenueAvg", "estimatedRevenueAvg")
+      fmpEstimateField(fmpNextQuarterEstimate, "revenueAvg", "estimatedRevenueAvg"),
+      impliedNextQuarterRevenue
     )
   );
   const displayedNextQuarterEpsValue = firstNumber(
     yahooNextQuarterEstimate.eps,
     fmpEstimateField(fmpNextQuarterEstimate, "epsAvg", "estimatedEpsAvg"),
-    nasdaqData.nextQuarterEps
+    nasdaqData.nextQuarterEps,
+    impliedNextQuarterEps
   );
   const displayedNextQuarterEarningsValue =
     displayedNextQuarterEpsValue !== null && estimateSharesOutstanding
