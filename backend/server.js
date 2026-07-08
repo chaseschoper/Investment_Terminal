@@ -43,7 +43,7 @@ const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 137;
+const FINANCIAL_HISTORY_VERSION = 140;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -2537,13 +2537,6 @@ function removeStaleModeledFallbackRows(rows = []) {
   });
 }
 
-function isFullYearInterimRow(row = {}) {
-  const period = String(row.period || "");
-  const quarterMatch = period.match(/\bQ([1-4])\b/i);
-  if (quarterMatch) return Number(quarterMatch[1]) === 4;
-  return /\b(FY|full year|annual)\b/i.test(period);
-}
-
 function removeDuplicateInterimAnnualRows(rows) {
   const annualRowsByYear = new Map();
   (rows || [])
@@ -2573,11 +2566,10 @@ function removeDuplicateInterimAnnualRows(rows) {
 
     if (row.isInterim) {
       if (/current metric fallback|modeled fallback/i.test(source)) return false;
-      if (!isFullYearInterimRow(row)) return true;
-      return !/sec annual filing|earnings release/i.test(annualSource);
+      return /current metric fallback|modeled fallback/i.test(annualSource);
     }
 
-    return /sec annual filing|earnings release/i.test(source);
+    return true;
   });
 }
 
