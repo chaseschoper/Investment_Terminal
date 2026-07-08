@@ -34,6 +34,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
+const earningsEstimateCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
 const companyDocumentsCache = new Map();
@@ -44,6 +45,7 @@ const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 140;
+const STOCK_ESTIMATE_VERSION = 1;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -512,6 +514,94 @@ const parseNasdaqNumber = (value) => {
   const number = Number(String(value).replace(/[$,%\s,]/g, ""));
   return Number.isFinite(number) ? number : null;
 };
+
+const parseApiNumber = (value) => {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const number = Number(String(value).replace(/[$,%\s,]/g, ""));
+  return Number.isFinite(number) ? number : null;
+};
+
+async function fetchCalendarQuarterEstimate(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !process.env.FINNHUB_API_KEY) return {};
+
+  const cached = earningsEstimateCalendarCache.get(symbol);
+  if (cached && Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1000) {
+    return cached.data;
+  }
+
+  try {
+    const today = new Date();
+    const from = new Date(today);
+    from.setUTCDate(from.getUTCDate() - 45);
+    const to = new Date(today);
+    to.setUTCDate(to.getUTCDate() + 520);
+    const todayNoon = new Date(today);
+    todayNoon.setUTCHours(12, 0, 0, 0);
+
+    const { data } = await axios.get("https://finnhub.io/api/v1/calendar/earnings", {
+      params: {
+        from: from.toISOString().slice(0, 10),
+        to: to.toISOString().slice(0, 10),
+        symbol,
+        token: process.env.FINNHUB_API_KEY
+      },
+      timeout: 15000
+    });
+
+    const rows = (data?.earningsCalendar || [])
+      .filter((row) => String(row.symbol || "").toUpperCase() === symbol)
+      .map((row) => ({
+        ...row,
+        reportDate: new Date(`${row.date}T12:00:00Z`),
+        epsEstimate: parseApiNumber(row.epsEstimate),
+        revenueEstimate: parseApiNumber(row.revenueEstimate)
+      }))
+      .filter((row) =>
+        !Number.isNaN(row.reportDate.getTime()) &&
+        row.reportDate >= todayNoon &&
+        (row.epsEstimate !== null || row.revenueEstimate !== null)
+      )
+      .sort((a, b) => a.reportDate - b.reportDate);
+
+    const bestRow = rows.find((row) =>
+      row.epsEstimate !== null && row.revenueEstimate !== null
+    ) || rows[0] || null;
+    const result = bestRow
+      ? {
+          revenue: bestRow.revenueEstimate,
+          earnings: null,
+          eps: bestRow.epsEstimate,
+          date: bestRow.date || null,
+          fiscalQuarter: bestRow.quarter && bestRow.year
+            ? `Q${bestRow.quarter} ${bestRow.year}`
+            : null,
+          source: "Earnings calendar"
+        }
+      : {
+          revenue: null,
+          earnings: null,
+          eps: null,
+          date: null,
+          fiscalQuarter: null,
+          source: "Earnings calendar"
+        };
+
+    earningsEstimateCalendarCache.set(symbol, { data: result, fetchedAt: Date.now() });
+    return result;
+  } catch (err) {
+    console.log("Ticker earnings estimate calendar skipped:", symbol, err.response?.status || err.message);
+    return {
+      revenue: null,
+      earnings: null,
+      eps: null,
+      date: null,
+      fiscalQuarter: null,
+      source: "Earnings calendar"
+    };
+  }
+}
 
 async function fetchNasdaqData(ticker) {
   const headers = {
@@ -4878,6 +4968,7 @@ async function fetchStockData(ticker) {
     fmpAnalystEstimateData,
     fmpRatingData,
     stockAnalysisFinancialData,
+    calendarQuarterEstimate,
     recommendation,
     epsEstimate,
     revenueEstimate
@@ -4906,6 +4997,7 @@ async function fetchStockData(ticker) {
       "/api/v3/rating/{ticker}"
     ]), STOCK_PROVIDER_TIMEOUT_MS, null),
     resolveWithin(fetchStockAnalysisIncomeStatementHistory(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
+    resolveWithin(fetchCalendarQuarterEstimate(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, {}),
     resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/recommendation?symbol=${ticker}`).catch((err) => {
       console.log("Recommendation skipped:", ticker, err.message);
       return [];
@@ -5928,11 +6020,20 @@ async function fetchStockData(ticker) {
     analystRatingText,
     analystEstimatesSource: "Yahoo Finance",
     analystEstimatesSources: {
+      nextQuarter: "Earnings calendar",
       currentYear: "Yahoo Finance",
       nextYear: "Yahoo Finance",
       followingYear: "Yahoo Finance"
     },
     analystEstimates: {
+      nextQuarter: {
+        revenue: normalizeStatementDollars(calendarQuarterEstimate.revenue),
+        earnings: null,
+        eps: toNumberOrNull(calendarQuarterEstimate.eps),
+        date: calendarQuarterEstimate.date || null,
+        fiscalQuarter: calendarQuarterEstimate.fiscalQuarter || null,
+        source: "Earnings calendar"
+      },
       currentYear: {
         revenue: displayedCurrentRevenueValue,
         earnings: displayedCurrentEarningsValue,
@@ -5949,6 +6050,7 @@ async function fetchStockData(ticker) {
         eps: null
       }
     },
+    estimateDataVersion: STOCK_ESTIMATE_VERSION,
     financialHistoryVersion: FINANCIAL_HISTORY_VERSION,
     interimHistoryCheckedAt: new Date().toISOString(),
     hasInterimHistory: revenueData.some((row) => row.isInterim),
@@ -6986,7 +7088,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
     if (stock.status === "ready") {
       const updatedAt = stock.updatedAt ? new Date(stock.updatedAt) : null;
       const isOutdated =
-        stock.data?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION;
+        stock.data?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
+        stock.data?.estimateDataVersion !== STOCK_ESTIMATE_VERSION;
       const isIncomplete =
         !hasCompleteChartHistory(stock);
       const isStale =

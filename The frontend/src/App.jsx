@@ -793,6 +793,7 @@ const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
 const FINANCIAL_HISTORY_VERSION = 140;
+const STOCK_ESTIMATE_VERSION = 1;
 
 const getDefaultCompanyLogoUrl = (symbol) => {
   const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
@@ -2405,6 +2406,25 @@ const previousYearEstimate = estimateFromHistoryYear(
   latestCompletedEstimateYear,
   stockData?.analystEstimates?.currentYear
 );
+const nextQuarterSource =
+  stockData?.analystEstimates?.nextQuarter || {};
+const nextQuarterEstimate = {
+  revenue: isNumber(nextQuarterSource.revenue) ? nextQuarterSource.revenue : null,
+  eps: isNumber(nextQuarterSource.eps) ? nextQuarterSource.eps : null,
+  date: nextQuarterSource.date || null,
+  fiscalQuarter: nextQuarterSource.fiscalQuarter || null
+};
+const nextQuarterDate = nextQuarterEstimate.date
+  ? new Date(`${nextQuarterEstimate.date}T12:00:00`)
+  : null;
+const nextQuarterDateLabel =
+  nextQuarterDate && !Number.isNaN(nextQuarterDate.getTime())
+    ? nextQuarterDate.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric"
+    })
+    : null;
 const currentYearEstimate =
   stockData?.analystEstimates?.currentYear || {};
 const nextYearSource =
@@ -2561,8 +2581,11 @@ const projectionCases = PROJECTION_CASES.map((projectionCase) => {
 });
 const areEstimatesRefreshing =
   (isStockLoading ||
-    stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION) &&
+    stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
+    stockData?.estimateDataVersion !== STOCK_ESTIMATE_VERSION) &&
   (
+    !isNumber(nextQuarterEstimate?.revenue) ||
+    !isNumber(nextQuarterEstimate?.eps) ||
     !isNumber(currentYearEstimate?.revenue) ||
     !isNumber(currentYearEstimate?.eps) ||
     !isNumber(nextYearEstimate?.revenue) ||
@@ -4370,6 +4393,75 @@ return (
             {estimateValue(formatEstimateEps(
               previousYearEstimate?.eps
             ))}
+          </span>
+        </div>
+
+      </div>
+
+    </div>
+
+    {/* Next Quarter */}
+    <div
+  style={{
+    padding: "20px",
+    borderRadius: "14px",
+    background: "#111827",
+    border: "1px solid #1f2937",
+  }}
+>
+
+      <h3 className="text-lg font-semibold mb-3">
+        Next Quarter
+      </h3>
+
+      <div className="space-y-2">
+
+<div
+  style={{
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "20px",
+    marginBottom: "10px",
+  }}
+>
+          <span>Revenue</span>
+
+          <span>
+            {estimateValue(formatEstimateMoney(
+              nextQuarterEstimate?.revenue
+            ))}
+          </span>
+        </div>
+
+<div
+  style={{
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "20px",
+    marginBottom: "10px",
+  }}
+>
+          <span>EPS</span>
+
+          <span>
+            {estimateValue(formatEstimateEps(
+              nextQuarterEstimate?.eps
+            ))}
+          </span>
+        </div>
+
+<div
+  style={{
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "20px",
+    marginBottom: "10px",
+  }}
+>
+          <span>Report</span>
+
+          <span>
+            {estimateValue(nextQuarterDateLabel || nextQuarterEstimate?.fiscalQuarter || "N/A")}
           </span>
         </div>
 
