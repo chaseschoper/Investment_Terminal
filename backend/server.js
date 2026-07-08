@@ -3340,6 +3340,59 @@ function withGuaranteedAnalystSection(data = {}) {
   };
 }
 
+async function repairHistoricalPeIfNeeded(ticker, data = {}) {
+  const currentRows = Array.isArray(data.historicalPe) ? data.historicalPe : [];
+  if (currentRows.filter((row) => !row?.isCurrent && toNumberOrNull(row?.pe) !== null).length >= 3) {
+    return data;
+  }
+
+  const annualRows = Array.isArray(data.revenueData)
+    ? data.revenueData.filter((row) =>
+        !row?.isInterim &&
+        row?.year &&
+        toNumberOrNull(row.eps) !== null &&
+        toNumberOrNull(row.eps) !== 0
+      )
+    : [];
+  if (!annualRows.length) return data;
+
+  const yearEndPrices = await fetchYahooYearEndPrices(ticker).catch(() => []);
+  const priceByYear = new Map(
+    (yearEndPrices || [])
+      .filter((row) => toNumberOrNull(row.close) !== null)
+      .map((row) => [Number(row.year), toNumberOrNull(row.close)])
+  );
+  if (!priceByYear.size) return data;
+
+  const rebuiltRows = annualRows
+    .map((row) => {
+      const price = priceByYear.get(Number(row.year));
+      const eps = toNumberOrNull(row.eps);
+      const pe = price !== undefined && eps !== null && eps !== 0 ? price / eps : null;
+      return {
+        year: row.year,
+        period: row.period || String(row.year),
+        isInterim: false,
+        pe,
+        price,
+        eps,
+        source: "Yahoo year-end price"
+      };
+    })
+    .filter((row) => row.pe !== null && Number.isFinite(row.pe) && Math.abs(row.pe) < 1000)
+    .slice(-6);
+
+  if (!rebuiltRows.length) return data;
+
+  const nonAnnualRows = currentRows.filter((row) => row?.isInterim || row?.isCurrent);
+  return {
+    ...data,
+    historicalPe: [...rebuiltRows, ...nonAnnualRows]
+      .filter((row) => toNumberOrNull(row.pe) !== null && Math.abs(toNumberOrNull(row.pe)) < 1000)
+      .slice(-7)
+  };
+}
+
 async function fetchYahooTimeSeriesFinancials(ticker) {
   try {
     const period1 = Math.floor(new Date("2016-01-01").getTime() / 1000);
@@ -6574,7 +6627,10 @@ app.get("/api/stock/:ticker", async (req, res) => {
       }
 
       if (stock.data && Object.keys(stock.data).length) {
-        const responseData = withGuaranteedAnalystSection(stock.data);
+        const responseData = await repairHistoricalPeIfNeeded(
+          ticker,
+          withGuaranteedAnalystSection(stock.data)
+        );
 
         return res.json({
           ticker: stock.ticker,
@@ -6620,7 +6676,10 @@ app.get("/api/stock/:ticker", async (req, res) => {
 
       if (isStale) {
         startStockFetch(ticker);
-        const responseData = withGuaranteedAnalystSection(stock.data);
+        const responseData = await repairHistoricalPeIfNeeded(
+          ticker,
+          withGuaranteedAnalystSection(stock.data)
+        );
 
         return res.json({
           ticker: stock.ticker,
@@ -6667,7 +6726,10 @@ app.get("/api/stock/:ticker", async (req, res) => {
           });
         }
 
-        const responseData = withGuaranteedAnalystSection(fallbackData);
+        const responseData = await repairHistoricalPeIfNeeded(
+          ticker,
+          withGuaranteedAnalystSection(fallbackData)
+        );
         const shouldKeepPolling =
           !hasCompleteChartHistory({ data: responseData }) ||
           !hasCompleteSupplementalData({ data: responseData });
@@ -6694,7 +6756,10 @@ app.get("/api/stock/:ticker", async (req, res) => {
       startStockFetch(ticker);
 
       if (stock.data && Object.keys(stock.data).length) {
-        const responseData = withGuaranteedAnalystSection(stock.data);
+        const responseData = await repairHistoricalPeIfNeeded(
+          ticker,
+          withGuaranteedAnalystSection(stock.data)
+        );
 
         return res.json({
           ticker: stock.ticker,
@@ -6726,7 +6791,10 @@ app.get("/api/stock/:ticker", async (req, res) => {
       });
     }
 
-    const responseData = withGuaranteedAnalystSection(stock.data);
+    const responseData = await repairHistoricalPeIfNeeded(
+      ticker,
+      withGuaranteedAnalystSection(stock.data)
+    );
 
     return res.json({
       ticker: stock.ticker,
