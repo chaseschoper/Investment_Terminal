@@ -43,7 +43,7 @@ const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 134;
+const FINANCIAL_HISTORY_VERSION = 137;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -2386,7 +2386,18 @@ const getStatementYear = (value) => {
 
 function limitHistoricalFinancialRows(rows, limit = 7) {
   const dedupedRows = removeDuplicateInterimAnnualRows(rows);
-  return Number.isFinite(limit) ? dedupedRows.slice(-limit) : dedupedRows;
+  if (!Number.isFinite(limit)) return dedupedRows;
+
+  const annualRows = dedupedRows.filter((row) => !row?.isInterim).slice(-limit);
+  const interimRows = dedupedRows.filter((row) => row?.isInterim).slice(-3);
+  const mergedRows = [...annualRows, ...interimRows].sort((a, b) => {
+    const yearDiff = Number(a.year) - Number(b.year);
+    if (yearDiff !== 0) return yearDiff;
+    if (Boolean(a.isInterim) !== Boolean(b.isInterim)) return a.isInterim ? 1 : -1;
+    return String(a.period || "").localeCompare(String(b.period || ""));
+  });
+
+  return mergedRows;
 }
 
 function mergeHistoricalFinancials(primary = [], fallback = [], limit = 7) {
@@ -2526,6 +2537,13 @@ function removeStaleModeledFallbackRows(rows = []) {
   });
 }
 
+function isFullYearInterimRow(row = {}) {
+  const period = String(row.period || "");
+  const quarterMatch = period.match(/\bQ([1-4])\b/i);
+  if (quarterMatch) return Number(quarterMatch[1]) === 4;
+  return /\b(FY|full year|annual)\b/i.test(period);
+}
+
 function removeDuplicateInterimAnnualRows(rows) {
   const annualRowsByYear = new Map();
   (rows || [])
@@ -2555,6 +2573,7 @@ function removeDuplicateInterimAnnualRows(rows) {
 
     if (row.isInterim) {
       if (/current metric fallback|modeled fallback/i.test(source)) return false;
+      if (!isFullYearInterimRow(row)) return true;
       return !/sec annual filing|earnings release/i.test(annualSource);
     }
 
@@ -3956,13 +3975,30 @@ const parseStockAnalysisNumber = (value) => {
 async function fetchStockAnalysisIncomeStatementHistory(ticker) {
   try {
     const stockAnalysisTicker = normalizeTickerForStockAnalysis(ticker);
-    const { data } = await axios.get(
-      `https://stockanalysis.com/stocks/${stockAnalysisTicker}/financials/income-statement/`,
-      {
-        headers: { "User-Agent": "Mozilla/5.0" },
-        timeout: STOCK_PROVIDER_TIMEOUT_MS
-      }
-    );
+    const [annualResponse, quarterlyResponse, quarterlyCashFlowResponse] = await Promise.all([
+      axios.get(
+        `https://stockanalysis.com/stocks/${stockAnalysisTicker}/financials/income-statement/`,
+        {
+          headers: { "User-Agent": "Mozilla/5.0" },
+          timeout: STOCK_PROVIDER_TIMEOUT_MS
+        }
+      ),
+      axios.get(
+        `https://stockanalysis.com/stocks/${stockAnalysisTicker}/financials/income-statement/?p=quarterly`,
+        {
+          headers: { "User-Agent": "Mozilla/5.0" },
+          timeout: STOCK_PROVIDER_TIMEOUT_MS
+        }
+      ).catch(() => ({ data: "" })),
+      axios.get(
+        `https://stockanalysis.com/stocks/${stockAnalysisTicker}/financials/cash-flow-statement/?p=quarterly`,
+        {
+          headers: { "User-Agent": "Mozilla/5.0" },
+          timeout: STOCK_PROVIDER_TIMEOUT_MS
+        }
+      ).catch(() => ({ data: "" }))
+    ]);
+    const { data } = annualResponse;
     const $ = cheerio.load(data);
     const table = $("table").first();
     if (!table.length) return [];
@@ -3999,7 +4035,7 @@ async function fetchStockAnalysisIncomeStatementHistory(ticker) {
     const operatingIncomeValues = valuesFor("Operating Income", "Pretax Income");
     const epsValues = valuesFor("EPS (Diluted)", "EPS Diluted", "Diluted EPS");
 
-    return headers
+    const annualRows = headers
       .map((header, index) => {
         const year = Number(String(header.id).slice(0, 4));
         if (!Number.isFinite(year)) return null;
@@ -4017,6 +4053,127 @@ async function fetchStockAnalysisIncomeStatementHistory(ticker) {
       })
       .filter((row) => row?.year)
       .sort((a, b) => a.year - b.year);
+
+    const quarterly = cheerio.load(quarterlyResponse.data || "");
+    const quarterlyTable = quarterly("table").first();
+    const quarterHeaders = quarterlyTable.find("thead tr").first().find("th").toArray()
+      .slice(1)
+      .map((cell) => {
+        const text = quarterly(cell).text().trim();
+        const match = text.match(/\bQ([1-4])\s+(\d{4})\b/i);
+        return {
+          quarter: match ? Number(match[1]) : null,
+          year: match ? Number(match[2]) : null
+        };
+      });
+    const quarterValuesByLabel = new Map();
+
+    quarterlyTable.find("tbody tr").each((_, row) => {
+      const cells = quarterly(row).find("td").toArray();
+      const label = quarterly(cells[0]).text().trim().replace(/\s+/g, " ");
+      if (!label) return;
+      quarterValuesByLabel.set(
+        label.toLowerCase(),
+        cells.slice(1).map((cell) => parseStockAnalysisNumber(quarterly(cell).text()))
+      );
+    });
+
+    const quarterValuesFor = (...labels) => {
+      for (const label of labels) {
+        const values = quarterValuesByLabel.get(label.toLowerCase());
+        if (values) return values;
+      }
+      return [];
+    };
+    const quarterRevenueValues = quarterValuesFor("Revenue");
+    const quarterEarningsValues = quarterValuesFor("Net Income");
+    const quarterGrossProfitValues = quarterValuesFor("Gross Profit", "Net Interest Income");
+    const quarterOperatingIncomeValues = quarterValuesFor("Operating Income", "Pretax Income");
+    const quarterEpsValues = quarterValuesFor("EPS (Diluted)", "EPS Diluted", "Diluted EPS");
+    const quarterlyCashFlow = cheerio.load(quarterlyCashFlowResponse.data || "");
+    const quarterCashValuesByLabel = new Map();
+
+    quarterlyCashFlow("table").first().find("tbody tr").each((_, row) => {
+      const cells = quarterlyCashFlow(row).find("td").toArray();
+      const label = quarterlyCashFlow(cells[0]).text().trim().replace(/\s+/g, " ");
+      if (!label) return;
+      quarterCashValuesByLabel.set(
+        label.toLowerCase(),
+        cells.slice(1).map((cell) => parseStockAnalysisNumber(quarterlyCashFlow(cell).text()))
+      );
+    });
+
+    const quarterCashValuesFor = (...labels) => {
+      for (const label of labels) {
+        const values = quarterCashValuesByLabel.get(label.toLowerCase());
+        if (values) return values;
+      }
+      return [];
+    };
+    const quarterOperatingCashflowValues = quarterCashValuesFor("Operating Cash Flow");
+    const quarterFreeCashflowValues = quarterCashValuesFor("Free Cash Flow");
+    const runningByFiscalYear = new Map();
+    const quarterlyRows = quarterHeaders
+      .map((header, index) => ({
+        ...header,
+        revenue: quarterRevenueValues[index],
+        earnings: quarterEarningsValues[index],
+        grossProfit: quarterGrossProfitValues[index],
+        operatingIncome: quarterOperatingIncomeValues[index],
+        eps: quarterEpsValues[index],
+        operatingCashflow: quarterOperatingCashflowValues[index],
+        freeCashflow: quarterFreeCashflowValues[index]
+      }))
+      .filter((row) => row.year && row.quarter && row.quarter < 4)
+      .sort((a, b) => {
+        const yearDiff = a.year - b.year;
+        if (yearDiff !== 0) return yearDiff;
+        return a.quarter - b.quarter;
+      })
+      .map((row) => {
+        const previous = runningByFiscalYear.get(row.year) || {};
+        const add = (field, value) => {
+          const number = toNumberOrNull(value);
+          return number !== null ? (previous[field] || 0) + number / 1000 : previous[field] ?? null;
+        };
+        const next = {
+          revenue: add("revenue", row.revenue),
+          earnings: add("earnings", row.earnings),
+          grossProfit: add("grossProfit", row.grossProfit),
+          operatingIncome: add("operatingIncome", row.operatingIncome),
+          operatingCashflow: add("operatingCashflow", row.operatingCashflow),
+          freeCashflow: add("freeCashflow", row.freeCashflow),
+          eps: toNumberOrNull(row.eps) !== null
+            ? (previous.eps || 0) + toNumberOrNull(row.eps)
+            : previous.eps ?? null
+        };
+        runningByFiscalYear.set(row.year, next);
+
+        return {
+          year: row.year,
+          period: `${row.year} Q${row.quarter} YTD`,
+          isInterim: true,
+          ...next,
+          source: "StockAnalysis quarterly financials"
+        };
+      })
+      .filter((row) =>
+        row.revenue !== null ||
+        row.earnings !== null ||
+        row.eps !== null ||
+        row.grossProfit !== null ||
+        row.operatingIncome !== null ||
+        row.operatingCashflow !== null ||
+        row.freeCashflow !== null
+      )
+      .slice(-3);
+
+    return [...annualRows, ...quarterlyRows].sort((a, b) => {
+      const yearDiff = Number(a.year) - Number(b.year);
+      if (yearDiff !== 0) return yearDiff;
+      if (Boolean(a.isInterim) !== Boolean(b.isInterim)) return a.isInterim ? 1 : -1;
+      return String(a.period || "").localeCompare(String(b.period || ""));
+    });
   } catch (err) {
     console.log("StockAnalysis financials skipped:", ticker, err.response?.status || err.message);
     return [];
