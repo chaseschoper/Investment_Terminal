@@ -34,6 +34,7 @@ const activeStockFetches = new Set();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
+const earningsEstimateCalendarCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
 const companyDocumentsCache = new Map();
@@ -43,7 +44,7 @@ const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 137;
+const FINANCIAL_HISTORY_VERSION = 139;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -512,6 +513,78 @@ const parseNasdaqNumber = (value) => {
   const number = Number(String(value).replace(/[$,%\s,]/g, ""));
   return Number.isFinite(number) ? number : null;
 };
+
+const parseApiNumber = (value) => {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
+async function fetchCalendarQuarterEstimate(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !process.env.FINNHUB_API_KEY) return {};
+
+  const cached = earningsEstimateCalendarCache.get(symbol);
+  if (cached && Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1000) {
+    return cached.data;
+  }
+
+  try {
+    const now = new Date();
+    const from = new Date(now);
+    from.setUTCDate(from.getUTCDate() - 45);
+    const to = new Date(now);
+    to.setUTCDate(to.getUTCDate() + 520);
+    const { data } = await axios.get("https://finnhub.io/api/v1/calendar/earnings", {
+      params: {
+        from: from.toISOString().slice(0, 10),
+        to: to.toISOString().slice(0, 10),
+        symbol,
+        token: process.env.FINNHUB_API_KEY
+      },
+      timeout: 15000
+    });
+    const todayNoon = new Date();
+    todayNoon.setUTCHours(12, 0, 0, 0);
+    const rows = (data?.earningsCalendar || [])
+      .filter((row) => String(row.symbol || "").toUpperCase() === symbol)
+      .map((row) => ({
+        ...row,
+        reportDate: new Date(`${row.date}T12:00:00Z`),
+        epsEstimate: parseApiNumber(row.epsEstimate),
+        revenueEstimate: parseApiNumber(row.revenueEstimate)
+      }))
+      .filter((row) =>
+        !Number.isNaN(row.reportDate.getTime()) &&
+        row.reportDate >= todayNoon &&
+        (row.epsEstimate !== null || row.revenueEstimate !== null)
+      )
+      .sort((a, b) => a.reportDate - b.reportDate);
+
+    const bestRow =
+      rows.find((row) => row.epsEstimate !== null && row.revenueEstimate !== null) ||
+      rows[0] ||
+      null;
+    const result = bestRow
+      ? {
+          revenue: bestRow.revenueEstimate,
+          earnings: null,
+          eps: bestRow.epsEstimate,
+          date: bestRow.date || null,
+          fiscalQuarter: bestRow.quarter && bestRow.year
+            ? `Q${bestRow.quarter} ${bestRow.year}`
+            : null,
+          source: "Finnhub earnings calendar"
+        }
+      : {};
+
+    earningsEstimateCalendarCache.set(symbol, { data: result, fetchedAt: Date.now() });
+    return result;
+  } catch (err) {
+    console.log("Ticker earnings estimate calendar skipped:", symbol, err.response?.status || err.message);
+    return {};
+  }
+}
 
 async function fetchNasdaqData(ticker) {
   const headers = {
@@ -4094,6 +4167,133 @@ async function fetchStockAnalysisIncomeStatementHistory(ticker) {
   }
 }
 
+async function fetchStockAnalysisQuarterlyFinancialHistory(ticker) {
+  try {
+    const stockAnalysisTicker = normalizeTickerForStockAnalysis(ticker);
+    const headers = {
+      "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36"
+    };
+    const [incomeResponse, cashResponse] = await Promise.all([
+      axios.get(`https://stockanalysis.com/stocks/${stockAnalysisTicker}/financials/income-statement/?p=quarterly`, {
+        headers,
+        timeout: STOCK_SLOW_PROVIDER_TIMEOUT_MS
+      }),
+      axios.get(`https://stockanalysis.com/stocks/${stockAnalysisTicker}/financials/cash-flow-statement/?p=quarterly`, {
+        headers,
+        timeout: STOCK_SLOW_PROVIDER_TIMEOUT_MS
+      }).catch(() => ({ data: "" }))
+    ]);
+
+    const parseQuarterlyTable = (html) => {
+      const $ = cheerio.load(html || "");
+      const table = $("table").first();
+      if (!table.length) return { periods: [], valuesByLabel: new Map() };
+
+      const periods = table.find("thead tr").first().find("th").toArray()
+        .slice(1)
+        .map((cell, index) => {
+          const text = $(cell).text().trim();
+          const match = text.match(/Q([1-4])\s+(\d{4})/i);
+          if (!match) return null;
+          return {
+            index,
+            quarter: Number(match[1]),
+            year: Number(match[2]),
+            label: `Q${match[1]} ${match[2]}`
+          };
+        })
+        .filter(Boolean);
+      const valuesByLabel = new Map();
+
+      table.find("tbody tr").each((_, row) => {
+        const cells = $(row).find("td").toArray();
+        const label = $(cells[0]).text().trim().replace(/\s+/g, " ");
+        if (!label) return;
+        valuesByLabel.set(
+          label.toLowerCase(),
+          cells.slice(1).map((cell) => parseStockAnalysisNumber($(cell).text()))
+        );
+      });
+
+      return { periods, valuesByLabel };
+    };
+
+    const incomeTable = parseQuarterlyTable(incomeResponse.data);
+    const cashTable = parseQuarterlyTable(cashResponse.data);
+    const valueFor = (table, index, ...labels) => {
+      for (const label of labels) {
+        const values = table.valuesByLabel.get(label.toLowerCase());
+        if (values && values[index] !== undefined) return values[index];
+      }
+      return null;
+    };
+
+    const quarterlyRows = incomeTable.periods
+      .map((period) => ({
+        year: period.year,
+        quarter: period.quarter,
+        revenue: valueFor(incomeTable, period.index, "Revenue"),
+        earnings: valueFor(incomeTable, period.index, "Net Income"),
+        grossProfit: valueFor(incomeTable, period.index, "Gross Profit"),
+        operatingIncome: valueFor(incomeTable, period.index, "Operating Income"),
+        eps: valueFor(incomeTable, period.index, "EPS (Diluted)", "EPS Diluted", "Diluted EPS"),
+        operatingCashflow: valueFor(cashTable, period.index, "Operating Cash Flow", "Cash Flow from Operations"),
+        freeCashflow: valueFor(cashTable, period.index, "Free Cash Flow")
+      }))
+      .filter((row) => row.year && row.quarter && row.quarter < 4)
+      .sort((a, b) => {
+        const yearDiff = a.year - b.year;
+        if (yearDiff !== 0) return yearDiff;
+        return a.quarter - b.quarter;
+      });
+
+    const runningByYear = new Map();
+    return quarterlyRows
+      .map((row) => {
+        const previous = runningByYear.get(row.year) || {};
+        const add = (field) => {
+          const value = toNumberOrNull(row[field]);
+          return value !== null ? (previous[field] || 0) + value : previous[field] ?? null;
+        };
+        const next = {
+          revenue: add("revenue"),
+          earnings: add("earnings"),
+          grossProfit: add("grossProfit"),
+          operatingIncome: add("operatingIncome"),
+          operatingCashflow: add("operatingCashflow"),
+          freeCashflow: add("freeCashflow"),
+          eps: add("eps")
+        };
+        runningByYear.set(row.year, next);
+
+        return {
+          year: row.year,
+          period: `${row.year} Q${row.quarter} YTD`,
+          isInterim: true,
+          revenue: toNumberOrNull(next.revenue) !== null ? next.revenue / 1000 : null,
+          earnings: toNumberOrNull(next.earnings) !== null ? next.earnings / 1000 : null,
+          grossProfit: toNumberOrNull(next.grossProfit) !== null ? next.grossProfit / 1000 : null,
+          operatingIncome: toNumberOrNull(next.operatingIncome) !== null ? next.operatingIncome / 1000 : null,
+          operatingCashflow: toNumberOrNull(next.operatingCashflow) !== null ? next.operatingCashflow / 1000 : null,
+          freeCashflow: toNumberOrNull(next.freeCashflow) !== null ? next.freeCashflow / 1000 : null,
+          eps: next.eps,
+          source: "StockAnalysis quarterly financials"
+        };
+      })
+      .filter((row) =>
+        row.revenue !== null ||
+        row.earnings !== null ||
+        row.eps !== null ||
+        row.operatingCashflow !== null ||
+        row.freeCashflow !== null
+      )
+      .slice(-6);
+  } catch (err) {
+    console.log("StockAnalysis quarterly financials skipped:", ticker, err.response?.status || err.message);
+    return [];
+  }
+}
+
 const selectYahooAnnualEstimateTrends = (trends = []) => {
   const annualEstimateTrends = trends.filter((item) =>
     /y$/i.test(String(item?.period || ""))
@@ -4864,6 +5064,8 @@ async function fetchStockData(ticker) {
     fmpQuarterlyAnalystEstimateData,
     fmpRatingData,
     stockAnalysisFinancialData,
+    stockAnalysisQuarterlyFinancialData,
+    calendarQuarterEstimate,
     recommendation,
     epsEstimate,
     revenueEstimate
@@ -4896,6 +5098,8 @@ async function fetchStockData(ticker) {
       "/api/v3/rating/{ticker}"
     ]), STOCK_PROVIDER_TIMEOUT_MS, null),
     resolveWithin(fetchStockAnalysisIncomeStatementHistory(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
+    resolveWithin(fetchStockAnalysisQuarterlyFinancialHistory(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, []),
+    resolveWithin(fetchCalendarQuarterEstimate(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, {}),
     resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/recommendation?symbol=${ticker}`).catch((err) => {
       console.log("Recommendation skipped:", ticker, err.message);
       return [];
@@ -4909,14 +5113,11 @@ async function fetchStockData(ticker) {
       return {};
     }), STOCK_PROVIDER_TIMEOUT_MS, {})
   ]);
-  const hasSecInterimRows = (secAnnualMargins.history || []).some((row) => row?.isInterim);
-  const fmpQuarterlyFinancialData = hasSecInterimRows
-    ? []
-    : await resolveWithin(
-        fetchFmpQuarterlyFinancialHistory(ticker),
-        STOCK_PROVIDER_TIMEOUT_MS,
-        []
-      );
+  const fmpQuarterlyFinancialData = await resolveWithin(
+    fetchFmpQuarterlyFinancialHistory(ticker),
+    STOCK_SLOW_PROVIDER_TIMEOUT_MS,
+    []
+  );
   fmpCashFlow = Array.isArray(fmpCashFlowData)
     ? fmpCashFlowData
     : fmpCashFlowData
@@ -4974,6 +5175,7 @@ async function fetchStockData(ticker) {
   const supplementalAnnualData = mergeAllHistoricalFinancials(
     fmpCashFlowHistory,
     stockAnalysisFinancialData,
+    stockAnalysisQuarterlyFinancialData,
     fmpQuarterlyFinancialData,
     secAnnualMargins.history || []
   );
@@ -5866,12 +6068,14 @@ async function fetchStockData(ticker) {
   );
   const displayedNextQuarterRevenueValue = normalizeStatementDollars(
     firstNumber(
+      calendarQuarterEstimate.revenue,
       yahooNextQuarterEstimate.revenue,
       fmpEstimateField(fmpNextQuarterEstimate, "revenueAvg", "estimatedRevenueAvg"),
       impliedNextQuarterRevenue
     )
   );
   const displayedNextQuarterEpsValue = firstNumber(
+    calendarQuarterEstimate.eps,
     yahooNextQuarterEstimate.eps,
     fmpEstimateField(fmpNextQuarterEstimate, "epsAvg", "estimatedEpsAvg"),
     nasdaqData.nextQuarterEps,
@@ -5969,7 +6173,21 @@ async function fetchStockData(ticker) {
       nextQuarter: {
         revenue: displayedNextQuarterRevenueValue,
         earnings: displayedNextQuarterEarningsValue,
-        eps: displayedNextQuarterEpsValue
+        eps: displayedNextQuarterEpsValue,
+        date: calendarQuarterEstimate.date || yahooNextQuarterEstimate.date || null,
+        fiscalQuarter: calendarQuarterEstimate.fiscalQuarter || yahooNextQuarterEstimate.fiscalQuarter || null,
+        source: toNumberOrNull(calendarQuarterEstimate.revenue) !== null ||
+            toNumberOrNull(calendarQuarterEstimate.eps) !== null
+          ? calendarQuarterEstimate.source
+          : toNumberOrNull(yahooNextQuarterEstimate.revenue) !== null ||
+              toNumberOrNull(yahooNextQuarterEstimate.eps) !== null
+            ? "Yahoo Finance"
+            : fmpEstimateField(fmpNextQuarterEstimate, "revenueAvg", "estimatedRevenueAvg") !== null ||
+                fmpEstimateField(fmpNextQuarterEstimate, "epsAvg", "estimatedEpsAvg") !== null
+              ? "FMP quarterly analyst estimates"
+              : nasdaqData.nextQuarterEps !== null && nasdaqData.nextQuarterEps !== undefined
+                ? "Nasdaq quarterly EPS forecast"
+                : "Consensus-derived quarterly estimate"
       },
       currentYear: {
         revenue: displayedCurrentRevenueValue,
