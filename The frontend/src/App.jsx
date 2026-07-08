@@ -792,7 +792,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 131;
+const FINANCIAL_HISTORY_VERSION = 134;
 
 const getDefaultCompanyLogoUrl = (symbol) => {
   const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
@@ -2261,23 +2261,25 @@ if (!stockData) {
 
 const financialHistory =
   stockData?.revenueData || [];
+const annualFinancialHistory =
+  financialHistory.filter((row) => !row?.isInterim);
 const revenueHistorySource =
-  buildChartRows(stockData?.revenueHistory || [], "revenue");
+  buildChartRows((stockData?.revenueHistory || []).filter((row) => !row?.isInterim), "revenue");
 
 const revenueHistory =
   mergeChartRows(
     [
-      ...buildChartRows(financialHistory, "revenue"),
+      ...buildChartRows(annualFinancialHistory, "revenue"),
       ...revenueHistorySource,
     ],
     "revenue"
   );
 
 const earningsHistory =
-  buildChartRows(financialHistory, "earnings");
+  buildChartRows(annualFinancialHistory, "earnings");
 
 const epsHistory =
-  buildChartRows(financialHistory, "eps");
+  buildChartRows(annualFinancialHistory, "eps");
 const currentChartYear = new Date().getFullYear();
 const currentPoint = (key, value, transform = (item) => item) =>
   isNumber(value)
@@ -2293,14 +2295,14 @@ const chartRowsWithCurrentFallback = (rows, key, value, transform) =>
   rows.length ? rows : currentPoint(key, value, transform);
 const operatingCashflowHistory =
   chartRowsWithCurrentFallback(
-    buildChartRows(financialHistory, "operatingCashflow"),
+    buildChartRows(annualFinancialHistory, "operatingCashflow"),
     "operatingCashflow",
     stockData?.operatingCashflow,
     (value) => value / 1e9
   );
 const freeCashflowHistory =
   chartRowsWithCurrentFallback(
-    buildChartRows(financialHistory, "freeCashflow"),
+    buildChartRows(annualFinancialHistory, "freeCashflow"),
     "freeCashflow",
     stockData?.freeCashflow,
     (value) => value / 1e9
@@ -2330,7 +2332,7 @@ const latestOperatingCashflowFromChart = latestChartMetricDollars(
 );
 const sharesOutstandingHistory =
   chartRowsWithCurrentFallback(
-    buildChartRows(financialHistory, "sharesOutstanding"),
+    buildChartRows(annualFinancialHistory, "sharesOutstanding"),
     "sharesOutstanding",
     stockData?.sharesOutstanding
   );
@@ -2338,7 +2340,8 @@ const historicalPeHistoryBase = (stockData?.historicalPe || [])
   .map((row) => ({ ...row, period: row.period || String(row.year) }))
   .filter((row) =>
     row?.year &&
-    (row.isInterim || row.isCurrent || row.year <= new Date().getFullYear()) &&
+    (!row.isInterim || row.isCurrent) &&
+    (row.isCurrent || row.year <= new Date().getFullYear()) &&
     isNumber(row.pe)
   );
 const historicalPeHistory =
@@ -2347,7 +2350,8 @@ const annualMarginHistory = (stockData?.marginHistory || [])
   .map((row) => ({ ...row, period: row.period || String(row.year) }))
   .filter((row) =>
     row?.year &&
-    (row.isInterim || row.year <= new Date().getFullYear())
+    !row.isInterim &&
+    row.year <= new Date().getFullYear()
   );
 const grossMarginHistory = chartRowsWithCurrentFallback(
   annualMarginHistory.filter((row) => isNumber(row.grossMargin)),

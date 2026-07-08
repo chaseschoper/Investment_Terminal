@@ -43,7 +43,7 @@ const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 133;
+const FINANCIAL_HISTORY_VERSION = 134;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -4807,16 +4807,14 @@ async function fetchStockData(ticker) {
     }))
     .filter((row) => row.year)
     .sort((a, b) => a.year - b.year);
-  const previousRealRevenueData = (previousData?.revenueData || []).filter(
-    (row) =>
-      row?.source !== "Modeled fallback" &&
-      row?.source !== "Current metric fallback" &&
-      !(
-        previousData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION &&
-        row?.isInterim &&
-        row?.source === "SEC interim filing"
-      )
-  );
+  const previousRealRevenueData =
+    previousData?.financialHistoryVersion === FINANCIAL_HISTORY_VERSION
+      ? (previousData?.revenueData || []).filter(
+          (row) =>
+            row?.source !== "Modeled fallback" &&
+            row?.source !== "Current metric fallback"
+        )
+      : [];
 
   const reportedAnnualData = mergeAllHistoricalFinancials(
     previousRealRevenueData,
