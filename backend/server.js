@@ -44,7 +44,7 @@ const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 139;
+const FINANCIAL_HISTORY_VERSION = 140;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -2650,38 +2650,27 @@ function removeStaleModeledFallbackRows(rows = []) {
 }
 
 function removeDuplicateInterimAnnualRows(rows) {
-  const annualRowsByYear = new Map();
-  (rows || [])
+  const annualYears = (rows || [])
     .filter((row) => row?.year && !row?.isInterim)
-    .forEach((row) => {
-      annualRowsByYear.set(Number(row.year), row);
-    });
-  const annualYears = new Set(
-    (rows || [])
-      .filter((row) => row?.year && !row?.isInterim)
-      .map((row) => Number(row.year))
-  );
-  const duplicateInterimYears = new Set(
-    (rows || [])
-      .filter((row) => row?.isInterim)
-      .map((row) => Number(row.year))
-      .filter((year) => annualYears.has(year))
-  );
+    .map((row) => Number(row.year))
+    .filter((year) => Number.isFinite(year));
+  const latestAnnualYear = annualYears.length ? Math.max(...annualYears) : null;
 
-  if (!duplicateInterimYears.size) return rows;
+  if (latestAnnualYear === null) return rows;
+
+  const interimYearsAfterLatestAnnual = (rows || [])
+    .filter((row) => row?.isInterim)
+    .map((row) => Number(row.year))
+    .filter((year) => Number.isFinite(year) && year > latestAnnualYear);
+  const latestInterimYear =
+    interimYearsAfterLatestAnnual.length ? Math.max(...interimYearsAfterLatestAnnual) : null;
 
   return (rows || []).filter((row) => {
-    if (!row?.year || !duplicateInterimYears.has(Number(row.year))) return true;
-
-    const source = String(row.source || "");
-    const annualSource = String(annualRowsByYear.get(Number(row.year))?.source || "");
-
-    if (row.isInterim) {
-      if (/current metric fallback|modeled fallback/i.test(source)) return false;
-      return !/sec annual filing|earnings release/i.test(annualSource);
-    }
-
-    return /sec annual filing|earnings release/i.test(source);
+    if (!row?.isInterim) return true;
+    const rowYear = Number(row.year);
+    if (!Number.isFinite(rowYear)) return false;
+    if (rowYear <= latestAnnualYear) return false;
+    return latestInterimYear === null || rowYear === latestInterimYear;
   });
 }
 
