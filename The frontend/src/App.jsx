@@ -1402,7 +1402,8 @@ useEffect(() => {
     }
     try {
       const response = await axios.get(`${API_URL}/api/market-indices`, {
-        timeout: 4200,
+        params: { t: Date.now() },
+        timeout: 6000,
       });
       if (isActive) {
         const indices = response.data.indices || [];
@@ -1433,7 +1434,7 @@ useEffect(() => {
   };
 
   loadMarketIndices();
-  const refreshTimer = window.setInterval(loadMarketIndices, 30 * 1000);
+  const refreshTimer = window.setInterval(loadMarketIndices, 15 * 1000);
   return () => {
     isActive = false;
     window.clearInterval(refreshTimer);
@@ -2407,6 +2408,13 @@ const previousYearEstimate = estimateFromHistoryYear(
 );
 const currentYearEstimate =
   stockData?.analystEstimates?.currentYear || {};
+const nextQuarterSource =
+  stockData?.analystEstimates?.nextQuarter || {};
+const nextQuarterEstimate = {
+  revenue: isNumber(nextQuarterSource.revenue) ? nextQuarterSource.revenue : null,
+  earnings: isNumber(nextQuarterSource.earnings) ? nextQuarterSource.earnings : null,
+  eps: isNumber(nextQuarterSource.eps) ? nextQuarterSource.eps : null
+};
 const nextYearSource =
   stockData?.analystEstimates?.nextYear || {};
 const nextYearEstimate = {
@@ -4440,6 +4448,60 @@ return (
           <span>
             {estimateValue(formatEstimateEps(
               currentYearEstimate?.eps
+            ))}
+          </span>
+        </div>
+
+      </div>
+
+    </div>
+
+    {/* Next Quarter */}
+    <div
+  style={{
+    padding: "20px",
+    borderRadius: "14px",
+    background: "#111827",
+    border: "1px solid #1f2937",
+  }}
+>
+
+      <h3 className="text-lg font-semibold mb-3">
+        Next Quarter
+      </h3>
+
+      <div className="space-y-2">
+
+<div
+  style={{
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "20px",
+    marginBottom: "10px",
+  }}
+>
+          <span>Revenue</span>
+
+          <span>
+            {estimateValue(formatEstimateMoney(
+              nextQuarterEstimate?.revenue
+            ))}
+          </span>
+        </div>
+
+<div
+  style={{
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "20px",
+    marginBottom: "10px",
+  }}
+>
+          <span>EPS</span>
+
+          <span>
+            {estimateValue(formatEstimateEps(
+              nextQuarterEstimate?.eps
             ))}
           </span>
         </div>
