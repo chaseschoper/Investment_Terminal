@@ -43,7 +43,7 @@ const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 134;
+const FINANCIAL_HISTORY_VERSION = 136;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -533,12 +533,14 @@ async function fetchNasdaqData(ticker) {
       }).catch(() => ({ data: {} }))
     ]);
     const forecasts = forecastResponse.data?.data?.yearlyForecast?.rows || [];
+    const quarterlyForecasts = forecastResponse.data?.data?.quarterlyForecast?.rows || [];
     const summary = summaryResponse.data?.data?.summaryData || {};
     const rangeValues = String(summary.FiftTwoWeekHighLow?.value || "")
       .split("/")
       .map(parseNasdaqNumber);
 
     return {
+      nextQuarterEps: parseNasdaqNumber(quarterlyForecasts[0]?.consensusEPSForecast),
       currentYearEps: parseNasdaqNumber(forecasts[0]?.consensusEPSForecast),
       nextYearEps: parseNasdaqNumber(forecasts[1]?.consensusEPSForecast),
       marketCap: parseNasdaqNumber(summary.MarketCap?.value),
@@ -1698,7 +1700,16 @@ async function normalizeForeignAdrStockData(ticker, data = {}) {
 
   const localMarketCap = toNumberOrNull(data.marketCap);
   const price = toNumberOrNull(data.price);
-  const marketCap = localMarketCap !== null ? localMarketCap * usdRate : null;
+  const impliedSharesFromRawMarketCap =
+    localMarketCap !== null && price ? localMarketCap / price / 1000000 : null;
+  const marketCapLooksLocalCurrency =
+    impliedSharesFromRawMarketCap !== null &&
+    impliedSharesFromRawMarketCap > 10000;
+  const marketCap = localMarketCap !== null
+    ? marketCapLooksLocalCurrency
+      ? localMarketCap * usdRate
+      : localMarketCap
+    : null;
   const sharesOutstanding =
     marketCap !== null && price
       ? marketCap / price / 1000000
@@ -4081,11 +4092,43 @@ const selectYahooAnnualEstimateTrends = (trends = []) => {
   return { currentYear, nextYear };
 };
 
+const selectYahooQuarterEstimateTrends = (trends = []) => {
+  const quarterEstimateTrends = trends.filter((item) =>
+    /q$/i.test(String(item?.period || ""))
+  );
+  const currentQuarter =
+    trends.find((item) => item.period === "0q") ||
+    quarterEstimateTrends[0] ||
+    {};
+  const nextQuarter =
+    trends.find((item) => item.period === "+1q") ||
+    quarterEstimateTrends.find((item) => item !== currentQuarter) ||
+    {};
+
+  return { currentQuarter, nextQuarter };
+};
+
 const estimateFromYahooTrend = (trend = {}) => ({
   revenue: firstYahooNumber(trend?.revenueEstimate?.avg),
   earnings: null,
   eps: firstYahooNumber(trend?.earningsEstimate?.avg)
 });
+
+const mergeEstimatePeriod = (...periods) => ({
+  revenue: firstNumber(...periods.map((period) => period?.revenue)),
+  earnings: firstFiniteNumber(...periods.map((period) => period?.earnings)),
+  eps: firstFiniteNumber(...periods.map((period) => period?.eps))
+});
+
+const mergeAnalystEstimateSets = (...sets) => {
+  const validSets = sets.filter(Boolean);
+  return {
+    currentQuarter: mergeEstimatePeriod(...validSets.map((set) => set.currentQuarter)),
+    nextQuarter: mergeEstimatePeriod(...validSets.map((set) => set.nextQuarter)),
+    currentYear: mergeEstimatePeriod(...validSets.map((set) => set.currentYear)),
+    nextYear: mergeEstimatePeriod(...validSets.map((set) => set.nextYear))
+  };
+};
 
 const parseYahooAnalysisNumber = (value, { money = false } = {}) => {
   const text = String(value || "").trim().replace(/,/g, "");
@@ -4226,8 +4269,11 @@ async function fetchYahooEarningsTrendEstimates(ticker) {
     });
     const trends = summary?.earningsTrend?.trend || [];
     const { currentYear, nextYear } = selectYahooAnnualEstimateTrends(trends);
+    const { currentQuarter, nextQuarter } = selectYahooQuarterEstimateTrends(trends);
 
     return {
+      currentQuarter: estimateFromYahooTrend(currentQuarter),
+      nextQuarter: estimateFromYahooTrend(nextQuarter),
       currentYear: estimateFromYahooTrend(currentYear),
       nextYear: estimateFromYahooTrend(nextYear)
     };
@@ -4314,10 +4360,18 @@ async function fetchYahooSupplementalData(ticker) {
       .sort((a, b) => a.year - b.year);
 
     const { currentYear, nextYear } = selectYahooAnnualEstimateTrends(trends);
-    const analystEstimates = analysisPageEstimates || earningsTrendEstimates || {
+    const { currentQuarter, nextQuarter } = selectYahooQuarterEstimateTrends(trends);
+    const quoteSummaryTrendEstimates = {
+      currentQuarter: estimateFromYahooTrend(currentQuarter),
+      nextQuarter: estimateFromYahooTrend(nextQuarter),
       currentYear: estimateFromYahooTrend(currentYear),
       nextYear: estimateFromYahooTrend(nextYear)
     };
+    const analystEstimates = mergeAnalystEstimateSets(
+      analysisPageEstimates,
+      earningsTrendEstimates,
+      quoteSummaryTrendEstimates
+    );
 
     return {
       name: quoteData.longName || quoteData.shortName || ticker,
@@ -4798,10 +4852,10 @@ async function fetchStockData(ticker) {
   ] = await Promise.all([
     resolveWithin(fetchYahooFinancialHistory(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(fetchFmpIncomeStatementHistory(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, []),
-    resolveWithin(getYahooSupplementalData(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
+    resolveWithin(getYahooSupplementalData(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, {}),
     resolveWithin(fetchYahooYearEndPrices(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
-    resolveWithin(fetchNasdaqData(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
-    resolveWithin(fetchStockAnalysisForecast(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
+    resolveWithin(fetchNasdaqData(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, {}),
+    resolveWithin(fetchStockAnalysisForecast(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, {}),
     earlySecAnnualMargins,
     resolveWithin(getFmpData(ticker, "cash flow", [
       "/stable/cash-flow-statement?symbol={ticker}&period=annual&limit=6",
@@ -5790,7 +5844,8 @@ async function fetchStockData(ticker) {
   );
   const displayedNextQuarterEpsValue = firstNumber(
     yahooNextQuarterEstimate.eps,
-    fmpEstimateField(fmpNextQuarterEstimate, "epsAvg", "estimatedEpsAvg")
+    fmpEstimateField(fmpNextQuarterEstimate, "epsAvg", "estimatedEpsAvg"),
+    nasdaqData.nextQuarterEps
   );
   const displayedNextQuarterEarningsValue =
     displayedNextQuarterEpsValue !== null && estimateSharesOutstanding
