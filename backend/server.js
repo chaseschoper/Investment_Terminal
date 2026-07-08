@@ -43,7 +43,7 @@ const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 134;
+const FINANCIAL_HISTORY_VERSION = 133;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -1706,30 +1706,6 @@ async function normalizeForeignAdrStockData(ticker, data = {}) {
   const analystEstimates = data.analystEstimates
     ? {
         ...data.analystEstimates,
-        currentQuarter: {
-          ...(data.analystEstimates.currentQuarter || {}),
-          revenue: toNumberOrNull(data.analystEstimates.currentQuarter?.revenue) !== null
-            ? data.analystEstimates.currentQuarter.revenue * usdRate
-            : data.analystEstimates.currentQuarter?.revenue,
-          earnings:
-            toNumberOrNull(data.analystEstimates.currentQuarter?.eps) !== null && sharesOutstanding
-              ? data.analystEstimates.currentQuarter.eps * sharesOutstanding * 1000000
-              : toNumberOrNull(data.analystEstimates.currentQuarter?.earnings) !== null
-                ? data.analystEstimates.currentQuarter.earnings * usdRate
-                : data.analystEstimates.currentQuarter?.earnings
-        },
-        nextQuarter: {
-          ...(data.analystEstimates.nextQuarter || {}),
-          revenue: toNumberOrNull(data.analystEstimates.nextQuarter?.revenue) !== null
-            ? data.analystEstimates.nextQuarter.revenue * usdRate
-            : data.analystEstimates.nextQuarter?.revenue,
-          earnings:
-            toNumberOrNull(data.analystEstimates.nextQuarter?.eps) !== null && sharesOutstanding
-              ? data.analystEstimates.nextQuarter.eps * sharesOutstanding * 1000000
-              : toNumberOrNull(data.analystEstimates.nextQuarter?.earnings) !== null
-                ? data.analystEstimates.nextQuarter.earnings * usdRate
-                : data.analystEstimates.nextQuarter?.earnings
-        },
         currentYear: {
           ...(data.analystEstimates.currentYear || {}),
           revenue: toNumberOrNull(data.analystEstimates.currentYear?.revenue) !== null
@@ -3362,12 +3338,6 @@ function withGuaranteedAnalystSection(data = {}) {
         source: row.source
       }));
   const fallbackAnalystEstimates = {
-    currentQuarter: {
-      ...(data.analystEstimates?.currentQuarter || {})
-    },
-    nextQuarter: {
-      ...(data.analystEstimates?.nextQuarter || {})
-    },
     currentYear: {
       revenue: currentRevenue,
       earnings: currentEarnings,
@@ -3474,12 +3444,6 @@ function withGuaranteedAnalystSection(data = {}) {
   const yahooRepairedAnalystEstimates = yahooLockedEstimates
     ? {
         ...(data.analystEstimates || {}),
-        currentQuarter: {
-          ...(data.analystEstimates?.currentQuarter || {})
-        },
-        nextQuarter: {
-          ...(data.analystEstimates?.nextQuarter || {})
-        },
         currentYear: {
           ...(data.analystEstimates?.currentYear || {}),
           revenue: firstNumber(data.analystEstimates?.currentYear?.revenue, consensusCurrentRevenue),
@@ -3507,12 +3471,6 @@ function withGuaranteedAnalystSection(data = {}) {
     : currentEpsNeedsRepair
     ? {
         ...(data.analystEstimates || {}),
-        currentQuarter: {
-          ...(data.analystEstimates?.currentQuarter || {})
-        },
-        nextQuarter: {
-          ...(data.analystEstimates?.nextQuarter || {})
-        },
         currentYear: {
           ...(data.analystEstimates?.currentYear || {}),
           earnings: currentEarnings,
@@ -4121,8 +4079,6 @@ const extractYahooAnalysisAverageRow = ($, sectionTestId, { money = false } = {}
   if (!row.length) return null;
 
   return {
-    currentQuarter: parseYahooAnalysisNumber(row.find('td[data-testid-cell="0q"]').text(), { money }),
-    nextQuarter: parseYahooAnalysisNumber(row.find('td[data-testid-cell="+1q"]').text(), { money }),
     currentYear: parseYahooAnalysisNumber(row.find('td[data-testid-cell="0y"]').text(), { money }),
     nextYear: parseYahooAnalysisNumber(row.find('td[data-testid-cell="+1y"]').text(), { money })
   };
@@ -4189,16 +4145,6 @@ async function fetchYahooAnalysisPageEstimates(ticker) {
     if (!revenue && !eps) return null;
 
     return {
-      currentQuarter: {
-        revenue: revenue?.currentQuarter ?? null,
-        earnings: null,
-        eps: eps?.currentQuarter ?? null
-      },
-      nextQuarter: {
-        revenue: revenue?.nextQuarter ?? null,
-        earnings: null,
-        eps: eps?.nextQuarter ?? null
-      },
       currentYear: {
         revenue: revenue?.currentYear ?? null,
         earnings: null,
@@ -4530,14 +4476,6 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     Object.entries(data).filter(([, value]) => value !== null && value !== undefined)
   );
   const analystEstimates = {
-    currentQuarter: {
-      ...(previousData.analystEstimates?.currentQuarter || {}),
-      ...definedValues(fastData.analystEstimates?.currentQuarter)
-    },
-    nextQuarter: {
-      ...(previousData.analystEstimates?.nextQuarter || {}),
-      ...definedValues(fastData.analystEstimates?.nextQuarter)
-    },
     currentYear: {
       ...(previousData.analystEstimates?.currentYear || {}),
       ...definedValues(fastData.analystEstimates?.currentYear)
@@ -4789,7 +4727,6 @@ async function fetchStockData(ticker) {
     fmpCashFlowData,
     fmpPriceTargetData,
     fmpAnalystEstimateData,
-    fmpQuarterlyAnalystEstimateData,
     fmpRatingData,
     stockAnalysisFinancialData,
     recommendation,
@@ -4814,10 +4751,6 @@ async function fetchStockData(ticker) {
     resolveWithin(getFmpData(ticker, "analyst estimates", [
       "/stable/analyst-estimates?symbol={ticker}&period=annual&limit=3",
       "/api/v3/analyst-estimates/{ticker}?period=annual&limit=3"
-    ]), STOCK_PROVIDER_TIMEOUT_MS, null),
-    resolveWithin(getFmpData(ticker, "quarterly analyst estimates", [
-      "/stable/analyst-estimates?symbol={ticker}&period=quarter&limit=2",
-      "/api/v3/analyst-estimates/{ticker}?period=quarter&limit=2"
     ]), STOCK_PROVIDER_TIMEOUT_MS, null),
     resolveWithin(getFmpData(ticker, "rating", [
       "/stable/ratings-snapshot?symbol={ticker}",
@@ -4857,11 +4790,6 @@ async function fetchStockData(ticker) {
     ? fmpAnalystEstimateData
     : fmpAnalystEstimateData
       ? [fmpAnalystEstimateData]
-      : [];
-  const fmpQuarterlyAnalystEstimates = Array.isArray(fmpQuarterlyAnalystEstimateData)
-    ? fmpQuarterlyAnalystEstimateData
-    : fmpQuarterlyAnalystEstimateData
-      ? [fmpQuarterlyAnalystEstimateData]
       : [];
   fmpRating = Array.isArray(fmpRatingData)
     ? fmpRatingData[0] || {}
@@ -5112,7 +5040,6 @@ async function fetchStockData(ticker) {
   const fmpCurrentEstimate = fmpAnalystEstimates[0] || {};
   const fmpNextEstimate = fmpAnalystEstimates[1] || {};
   const fmpFollowingEstimate = fmpAnalystEstimates[2] || {};
-  const fmpNextQuarterEstimate = fmpQuarterlyAnalystEstimates[0] || {};
   const isFinancialCompany =
     secAnnualMargins.isFinancialCompany === true ||
     (knownFinancialInstitution && needsFinancialMarginFallback);
@@ -5223,7 +5150,6 @@ async function fetchStockData(ticker) {
   const historicalForwardEps = estimateForwardEpsFromHistory(revenueData);
   const yahooCurrentEstimate = yahooSupplementalData.analystEstimates?.currentYear || {};
   const yahooNextEstimate = yahooSupplementalData.analystEstimates?.nextYear || {};
-  const yahooNextQuarterEstimate = yahooSupplementalData.analystEstimates?.nextQuarter || {};
   const currentEps =
     yahooCurrentEstimate.eps ??
     fmpEstimateField(fmpCurrentEstimate, "epsAvg", "estimatedEpsAvg") ??
@@ -5782,20 +5708,6 @@ async function fetchStockData(ticker) {
     (displayedNextEpsValue !== null && estimateSharesOutstanding
       ? displayedNextEpsValue * estimateSharesOutstanding * 1000000
       : null);
-  const displayedNextQuarterRevenueValue = normalizeStatementDollars(
-    firstNumber(
-      yahooNextQuarterEstimate.revenue,
-      fmpEstimateField(fmpNextQuarterEstimate, "revenueAvg", "estimatedRevenueAvg")
-    )
-  );
-  const displayedNextQuarterEpsValue = firstNumber(
-    yahooNextQuarterEstimate.eps,
-    fmpEstimateField(fmpNextQuarterEstimate, "epsAvg", "estimatedEpsAvg")
-  );
-  const displayedNextQuarterEarningsValue =
-    displayedNextQuarterEpsValue !== null && estimateSharesOutstanding
-      ? displayedNextQuarterEpsValue * estimateSharesOutstanding * 1000000
-      : null;
 
   const data = await normalizeForeignAdrStockData(ticker, preserveBankMargins(withGuaranteedAnalystSection({
     isFinancialCompany,
@@ -5869,23 +5781,11 @@ async function fetchStockData(ticker) {
     analystRatingText,
     analystEstimatesSource: "Yahoo Finance",
     analystEstimatesSources: {
-      currentQuarter: "Yahoo Finance",
-      nextQuarter: "Yahoo Finance",
       currentYear: "Yahoo Finance",
       nextYear: "Yahoo Finance",
       followingYear: "Yahoo Finance"
     },
     analystEstimates: {
-      currentQuarter: {
-        revenue: normalizeStatementDollars(yahooSupplementalData.analystEstimates?.currentQuarter?.revenue),
-        earnings: null,
-        eps: toNumberOrNull(yahooSupplementalData.analystEstimates?.currentQuarter?.eps)
-      },
-      nextQuarter: {
-        revenue: displayedNextQuarterRevenueValue,
-        earnings: displayedNextQuarterEarningsValue,
-        eps: displayedNextQuarterEpsValue
-      },
       currentYear: {
         revenue: displayedCurrentRevenueValue,
         earnings: displayedCurrentEarningsValue,
@@ -6318,8 +6218,8 @@ app.get("/api/prices", async (req, res) => {
 app.get("/api/market-indices", async (req, res) => {
   const cached = marketIndexCache.get("latest");
   const cachedAge = cached ? Date.now() - cached.fetchedAt : Infinity;
-  const freshCacheMs = 12 * 1000;
-  const staleCacheMs = 2 * 60 * 1000;
+  const freshCacheMs = 45 * 1000;
+  const staleCacheMs = 30 * 60 * 1000;
   const cachedByKey = new Map((cached?.data?.indices || []).map((index) => [index.key, index]));
 
   const buildIndexQuote = (index, symbol, price, change, percentChange, source, extra = {}) => {
@@ -6574,8 +6474,6 @@ app.get("/api/market-indices", async (req, res) => {
 
   if (cached?.data?.indices?.length && cachedAge < staleCacheMs) {
     startBackgroundRefresh();
-    const data = await resolveWithin(fetchFreshIndices(), 2200, null);
-    if (data?.indices?.length) return res.json(data);
     return res.json({ ...cached.data, stale: true, refreshing: true });
   }
 
