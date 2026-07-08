@@ -4689,9 +4689,10 @@ async function publishFastStockSnapshot(ticker) {
 }
 
 async function buildFastStockSnapshot(ticker, previousData = {}) {
-  const [yahooData, chartQuote] = await Promise.all([
+  const [yahooData, chartQuote, calendarQuarterEstimate] = await Promise.all([
     resolveWithin(fetchYahooQuickQuote(ticker), 900, {}),
-    resolveWithin(fetchYahooChartQuote(ticker), 1200, {})
+    resolveWithin(fetchYahooChartQuote(ticker), 1200, {}),
+    resolveWithin(fetchCalendarQuarterEstimate(ticker), 1400, previousData.analystEstimates?.nextQuarter || {})
   ]);
   const chartData = chartQuote?.c
     ? {
@@ -4715,6 +4716,14 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     Object.entries(data).filter(([, value]) => value !== null && value !== undefined)
   );
   const analystEstimates = {
+    nextQuarter: {
+      revenue: normalizeStatementDollars(calendarQuarterEstimate.revenue),
+      earnings: null,
+      eps: toNumberOrNull(calendarQuarterEstimate.eps),
+      date: calendarQuarterEstimate.date || null,
+      fiscalQuarter: calendarQuarterEstimate.fiscalQuarter || null,
+      source: "Earnings calendar"
+    },
     currentYear: {
       ...(previousData.analystEstimates?.currentYear || {}),
       ...definedValues(fastData.analystEstimates?.currentYear)
@@ -4733,7 +4742,12 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
       nextEps > 0 ? fastData.price / nextEps : null,
       previousData.forwardPE
     ),
-    analystEstimates
+    analystEstimates,
+    analystEstimatesSources: {
+      ...(previousData.analystEstimatesSources || {}),
+      nextQuarter: "Earnings calendar"
+    },
+    estimateDataVersion: STOCK_ESTIMATE_VERSION
   });
 }
 
@@ -7100,7 +7114,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
 
       if (isStale) {
         startStockFetch(ticker);
-        const responseData = await prepareStockResponseData(ticker, stock.data);
+        const fastData = await getImmediateStockSnapshot(ticker, stock.data || {});
+        const responseData = await prepareStockResponseData(ticker, fastData || stock.data);
 
         return res.json({
           ticker: stock.ticker,
