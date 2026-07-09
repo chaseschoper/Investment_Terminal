@@ -792,7 +792,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 141;
+const FINANCIAL_HISTORY_VERSION = 143;
 const STOCK_ESTIMATE_VERSION = 2;
 
 const getDefaultCompanyLogoUrl = (symbol) => {

@@ -45,7 +45,7 @@ const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 141;
+const FINANCIAL_HISTORY_VERSION = 143;
 const STOCK_ESTIMATE_VERSION = 2;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
@@ -2534,29 +2534,49 @@ const getStatementYear = (value) => {
   return Number.isNaN(date.getTime()) ? Number(value) || null : date.getFullYear();
 };
 
-function removeStalePriorInterimRows(rows = []) {
-  const realInterimYears = (rows || [])
-    .filter((row) =>
-      row?.isInterim &&
-      row?.period !== "Current" &&
-      !/current metric fallback|modeled fallback/i.test(String(row.source || ""))
-    )
+function keepLatestInterimRowPerMissingAnnualYear(rows = []) {
+  const annualYears = new Set(
+    (rows || [])
+      .filter((row) => row?.year && !row?.isInterim)
+      .map((row) => Number(row.year))
+  );
+  const interimYears = (rows || [])
+    .filter((row) => row?.isInterim && row?.period !== "Current")
     .map((row) => Number(row.year))
     .filter((year) => Number.isFinite(year));
+  const latestInterimYear = interimYears.length ? Math.max(...interimYears) : null;
+  const latestInterimByYear = new Map();
+  (rows || []).forEach((row, index) => {
+    if (!row?.isInterim || row?.period === "Current") return;
+    const rowYear = Number(row.year);
+    if (!Number.isFinite(rowYear) || annualYears.has(rowYear) || rowYear === latestInterimYear) return;
 
-  if (!realInterimYears.length) return rows;
+    const existing = latestInterimByYear.get(rowYear);
+    const rowRank = Number(String(row.period || "").match(/Q([1-4])/i)?.[1] || 0);
+    if (!existing || rowRank >= existing.rank) {
+      latestInterimByYear.set(rowYear, { index, rank: rowRank });
+    }
+  });
 
-  const latestInterimYear = Math.max(...realInterimYears);
+  if (!latestInterimByYear.size) return rows;
+
+  const keptInterimIndexes = new Set(
+    [...latestInterimByYear.values()].map((entry) => entry.index)
+  );
   return (rows || []).filter((row) => {
     if (!row?.isInterim || row?.period === "Current") return true;
 
     const rowYear = Number(row.year);
-    return !Number.isFinite(rowYear) || rowYear === latestInterimYear;
+    if (!Number.isFinite(rowYear) || annualYears.has(rowYear)) return true;
+    if (rowYear === latestInterimYear) return true;
+
+    const rowIndex = rows.indexOf(row);
+    return keptInterimIndexes.has(rowIndex);
   });
 }
 
 function cleanFinancialHistoryRows(rows = []) {
-  return removeStalePriorInterimRows(removeDuplicateInterimAnnualRows(rows));
+  return keepLatestInterimRowPerMissingAnnualYear(removeDuplicateInterimAnnualRows(rows));
 }
 
 function limitHistoricalFinancialRows(rows, limit = 7) {
