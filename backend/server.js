@@ -35,6 +35,7 @@ const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
 const earningsEstimateCalendarCache = new Map();
+const nasdaqEarningsDateCache = new Map();
 const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
 const companyDocumentsCache = new Map();
@@ -44,8 +45,8 @@ const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 140;
-const STOCK_ESTIMATE_VERSION = 1;
+const FINANCIAL_HISTORY_VERSION = 141;
+const STOCK_ESTIMATE_VERSION = 2;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -522,6 +523,62 @@ const parseApiNumber = (value) => {
   return Number.isFinite(number) ? number : null;
 };
 
+const formatIsoDate = (date) => date.toISOString().slice(0, 10);
+
+async function fetchNasdaqEarningsDate(ticker, referenceDate) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !referenceDate) return null;
+
+  const cacheKey = `${symbol}:${referenceDate}`;
+  const cached = nasdaqEarningsDateCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1000) {
+    return cached.date;
+  }
+
+  const centerDate = new Date(`${referenceDate}T12:00:00Z`);
+  if (Number.isNaN(centerDate.getTime())) return null;
+
+  const nasdaqHeaders = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+    Accept: "application/json, text/plain, */*",
+    Origin: "https://www.nasdaq.com",
+    Referer: "https://www.nasdaq.com/"
+  };
+  const dates = [-2, -1, 0, 1, 2].map((offset) => {
+    const date = new Date(centerDate);
+    date.setUTCDate(date.getUTCDate() + offset);
+    return formatIsoDate(date);
+  });
+
+  try {
+    const responses = await Promise.all(dates.map((date) =>
+      axios.get("https://api.nasdaq.com/api/calendar/earnings", {
+        params: { date },
+        headers: nasdaqHeaders,
+        timeout: 3500
+      }).then((response) => ({
+        date,
+        rows: response.data?.data?.rows || []
+      })).catch(() => ({ date, rows: [] }))
+    ));
+
+    const matches = responses.flatMap((day) =>
+      day.rows
+        .filter((row) => String(row.symbol || "").trim().toUpperCase() === symbol)
+        .map(() => ({
+          date: day.date,
+          distance: Math.abs(new Date(`${day.date}T12:00:00Z`) - centerDate)
+        }))
+    );
+    const bestMatch = matches.sort((a, b) => a.distance - b.distance)[0] || null;
+    const date = bestMatch?.date || null;
+    nasdaqEarningsDateCache.set(cacheKey, { date, fetchedAt: Date.now() });
+    return date;
+  } catch (err) {
+    return null;
+  }
+}
+
 async function fetchCalendarQuarterEstimate(ticker) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol || !process.env.FINNHUB_API_KEY) return {};
@@ -568,12 +625,15 @@ async function fetchCalendarQuarterEstimate(ticker) {
     const bestRow = rows.find((row) =>
       row.epsEstimate !== null && row.revenueEstimate !== null
     ) || rows[0] || null;
+    const confirmedDate = bestRow
+      ? await fetchNasdaqEarningsDate(symbol, bestRow.date)
+      : null;
     const result = bestRow
       ? {
           revenue: bestRow.revenueEstimate,
           earnings: null,
           eps: bestRow.epsEstimate,
-          date: bestRow.date || null,
+          date: confirmedDate || bestRow.date || null,
           fiscalQuarter: bestRow.quarter && bestRow.year
             ? `Q${bestRow.quarter} ${bestRow.year}`
             : null,
@@ -2474,8 +2534,33 @@ const getStatementYear = (value) => {
   return Number.isNaN(date.getTime()) ? Number(value) || null : date.getFullYear();
 };
 
+function removeStalePriorInterimRows(rows = []) {
+  const realInterimYears = (rows || [])
+    .filter((row) =>
+      row?.isInterim &&
+      row?.period !== "Current" &&
+      !/current metric fallback|modeled fallback/i.test(String(row.source || ""))
+    )
+    .map((row) => Number(row.year))
+    .filter((year) => Number.isFinite(year));
+
+  if (!realInterimYears.length) return rows;
+
+  const latestInterimYear = Math.max(...realInterimYears);
+  return (rows || []).filter((row) => {
+    if (!row?.isInterim || row?.period === "Current") return true;
+
+    const rowYear = Number(row.year);
+    return !Number.isFinite(rowYear) || rowYear === latestInterimYear;
+  });
+}
+
+function cleanFinancialHistoryRows(rows = []) {
+  return removeStalePriorInterimRows(removeDuplicateInterimAnnualRows(rows));
+}
+
 function limitHistoricalFinancialRows(rows, limit = 7) {
-  const dedupedRows = removeDuplicateInterimAnnualRows(rows);
+  const dedupedRows = cleanFinancialHistoryRows(rows);
   if (!Number.isFinite(limit)) return dedupedRows;
 
   const annualRows = dedupedRows.filter((row) => !row?.isInterim).slice(-limit);
@@ -3276,7 +3361,7 @@ function withGuaranteedAnalystSection(data = {}) {
       .filter((row) => row?.isInterim && row?.period !== "Current")
       .map((row) => Number(row.year))
   );
-  const guaranteedRevenueData = removeDuplicateInterimAnnualRows(
+  const guaranteedRevenueData = cleanFinancialHistoryRows(
     removeStaleModeledFallbackRows(guaranteedRevenueRows)
       .filter((row) =>
         !(
@@ -4769,7 +4854,7 @@ const getImmediateStockSnapshot = async (ticker, previousData = {}) =>
 async function publishChartHistorySnapshot(ticker, previousData = {}, secAnnualMargins = {}, sharesOutstanding = null) {
   if (!Array.isArray(secAnnualMargins.history) || !secAnnualMargins.history.length) return;
 
-  const revenueData = removeDuplicateInterimAnnualRows(finalizeFinancialHistory(
+  const revenueData = cleanFinancialHistoryRows(finalizeFinancialHistory(
     mergeHistoricalFinancials(secAnnualMargins.history, previousData.revenueData || []),
     sharesOutstanding
   ));
@@ -4778,7 +4863,7 @@ async function publishChartHistorySnapshot(ticker, previousData = {}, secAnnualM
     return;
   }
 
-  const revenueHistory = removeDuplicateInterimAnnualRows(finalizeRevenueHistory(revenueData));
+  const revenueHistory = cleanFinancialHistoryRows(finalizeRevenueHistory(revenueData));
   const annualMargin = (numerator, revenue) => {
     const numeratorNumber = toNumberOrNull(numerator);
     const revenueNumber = toNumberOrNull(revenue);
@@ -4811,7 +4896,7 @@ async function publishChartHistorySnapshot(ticker, previousData = {}, secAnnualM
     });
   });
 
-  const marginHistory = removeDuplicateInterimAnnualRows([...marginRowsByPeriod.values()]
+  const marginHistory = cleanFinancialHistoryRows([...marginRowsByPeriod.values()]
     .filter((row) =>
       row.grossMargin !== null ||
       row.operatingMargin !== null ||
@@ -5117,7 +5202,7 @@ async function fetchStockData(ticker) {
       )
     )
   );
-  const revenueHistory = removeDuplicateInterimAnnualRows(finalizeRevenueHistory(
+  const revenueHistory = cleanFinancialHistoryRows(finalizeRevenueHistory(
     revenueData
   ));
   const annualRowsAll = [...revenueData]
@@ -5183,7 +5268,7 @@ async function fetchStockData(ticker) {
       source: row.source || existing.source
     });
   });
-  let marginHistory = removeDuplicateInterimAnnualRows([...marginRowsByPeriod.values()]
+  let marginHistory = cleanFinancialHistoryRows([...marginRowsByPeriod.values()]
     .filter((row) =>
       row.grossMargin !== null ||
       row.operatingMargin !== null ||
