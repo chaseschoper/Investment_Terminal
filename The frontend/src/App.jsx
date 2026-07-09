@@ -728,6 +728,9 @@ const normalizeSymbolList = (symbols = []) =>
     .map((symbol) => String(symbol || "").trim().toUpperCase())
     .filter(Boolean))];
 
+const getUserStorageId = (user) =>
+  String(user?._id || user?.id || "");
+
 const normalizePortfolios = (items = []) => {
   if (!Array.isArray(items) || !items.length) return [];
   return items.map((item, index) => ({
@@ -1925,6 +1928,8 @@ useEffect(() => {
   localStorage.setItem(
     SAVED_LISTS_STORAGE_KEY,
     JSON.stringify({
+      userId: getUserStorageId(user),
+      savedAt: new Date().toISOString(),
       watchlist,
       portfolios,
       activePortfolioId,
@@ -2008,18 +2013,28 @@ const loadUserData = async () => {
           ...DEFAULT_PORTFOLIO,
           positions: response.data.portfolio || []
         }];
-    const mergedWatchlist = normalizeSymbolList([
-      ...(localSavedLists.watchlist || []),
-      ...remoteWatchlist
-    ]);
-    const mergedPortfolios = mergePortfolios(
-      localSavedLists.portfolios || [],
-      remotePortfolios
-    );
-    const mergedNamedWatchlists = mergeNamedWatchlists(
-      localSavedLists.namedWatchlists || [],
-      response.data.namedWatchlists || []
-    );
+    const savedUser = JSON.parse(localStorage.getItem("user") || "null");
+    const localBelongsToUser =
+      Boolean(localSavedLists.userId) &&
+      localSavedLists.userId === getUserStorageId(savedUser);
+    const mergedWatchlist = localBelongsToUser && Array.isArray(localSavedLists.watchlist)
+      ? normalizeSymbolList(localSavedLists.watchlist)
+      : normalizeSymbolList([
+          ...(localSavedLists.watchlist || []),
+          ...remoteWatchlist
+        ]);
+    const mergedPortfolios = localBelongsToUser && Array.isArray(localSavedLists.portfolios)
+      ? normalizePortfolios(localSavedLists.portfolios)
+      : mergePortfolios(
+          localSavedLists.portfolios || [],
+          remotePortfolios
+        );
+    const mergedNamedWatchlists = localBelongsToUser && Array.isArray(localSavedLists.namedWatchlists)
+      ? mergeNamedWatchlists(localSavedLists.namedWatchlists, [])
+      : mergeNamedWatchlists(
+          localSavedLists.namedWatchlists || [],
+          response.data.namedWatchlists || []
+        );
     const mergedProjections = {
       ...normalizeStockProjections(response.data.projections || {}),
       ...normalizeStockProjections(localSavedLists.projections || {})
@@ -3143,8 +3158,8 @@ return (
 
                 e.stopPropagation();
 
-                setWatchlist(
-                  watchlist.filter(
+                setWatchlist((items) =>
+                  items.filter(
                     (t) => t !== item
                   )
                 );
@@ -5416,7 +5431,7 @@ return (
                   title="Remove ticker"
                   onClick={() => setNamedWatchlists((lists) =>
                     lists.map((item) => item.id === list.id
-                      ? { ...item, symbols: item.symbols.filter((itemSymbol) => itemSymbol !== symbol) }
+                      ? { ...item, symbols: (item.symbols || []).filter((itemSymbol) => itemSymbol !== symbol) }
                       : item
                     )
                   )}

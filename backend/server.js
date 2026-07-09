@@ -10883,23 +10883,6 @@ const cleanNamedWatchlists = Array.isArray(namedWatchlists)
     }))
   : [];
 const cleanSavedProjections = cleanProjections(projections);
-const hasIncomingData =
-  cleanSymbols(watchlist).length > 0 ||
-  savedPortfolios.some((item) => item.positions.length > 0) ||
-  cleanNamedWatchlists.some((list) => list.symbols.length > 0) ||
-  Object.keys(cleanSavedProjections).length > 0;
-const hasExistingData =
-  (req.user.watchlist || []).length > 0 ||
-  (req.user.portfolios || []).some((item) => (item.positions || []).length > 0) ||
-  (req.user.namedWatchlists || []).some((list) => (list.symbols || []).length > 0) ||
-  Object.keys(req.user.projections || {}).length > 0;
-
-if (!hasIncomingData && hasExistingData) {
-  return res.json({
-    success: true,
-    skippedEmptyOverwrite: true
-  });
-}
 
 req.user.watchlist = cleanSymbols(watchlist);
 req.user.portfolios = savedPortfolios;
