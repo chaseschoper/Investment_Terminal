@@ -567,6 +567,41 @@ const calculateEstimateGrowth = (estimate, actual) => {
   return ((estimate - actual) / Math.abs(actual)) * 100;
 };
 
+const formatChartPeriodLabel = (period) => {
+  const value = String(period || "").trim();
+  const quarterMatch = value.match(/(\d{4})\s+Q([1-4])/i);
+  if (quarterMatch) return `Q${quarterMatch[2]} ${quarterMatch[1]}`;
+  return value || "N/A";
+};
+
+const formatGrowthPercent = (value) =>
+  isNumber(value) ? `${value > 0 ? "+" : ""}${value.toFixed(1)}%` : "N/A";
+
+const calculateChartGrowth = (current, previous) => {
+  if (!isNumber(current) || !isNumber(previous) || previous === 0) return null;
+  return ((current - previous) / Math.abs(previous)) * 100;
+};
+
+const buildAnnualGrowthRows = (rows, key) => {
+  const annualRows = (rows || [])
+    .filter((row) =>
+      row?.year &&
+      !row?.isInterim &&
+      !row?.isCurrent &&
+      isNumber(row[key])
+    )
+    .sort((a, b) => Number(a.year) - Number(b.year));
+
+  return annualRows.slice(1).map((row, index) => {
+    const previous = annualRows[index];
+    return {
+      year: row.year,
+      previousYear: previous.year,
+      growth: calculateChartGrowth(row[key], previous[key])
+    };
+  });
+};
+
 const buildChartRows = (rows, key) =>
   (rows || [])
     .map((item) => ({
@@ -834,6 +869,32 @@ function StockDataLoading({ label = "Loading financial data..." }) {
   );
 }
 
+function ChartGrowthStrip({ label, rows }) {
+  if (!rows?.length) return null;
+
+  return (
+    <div className="chart-growth-strip" aria-label={label}>
+      <span className="chart-growth-title">{label}</span>
+      <div className="chart-growth-items">
+        {rows.map((row) => (
+          <span className="chart-growth-pill" key={`${label}-${row.year}`}>
+            <span>{row.year} vs {row.previousYear}</span>
+            <strong className={
+              !isNumber(row.growth)
+                ? "chart-growth-neutral"
+                : row.growth >= 0
+                  ? "chart-growth-positive"
+                  : "chart-growth-negative"
+            }>
+              {formatGrowthPercent(row.growth)}
+            </strong>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function HistoricalLineChart({ title, data, dataKey, color, formatter, valueLabel, loading = false }) {
   return (
     <section className="historical-chart-panel">
@@ -850,7 +911,10 @@ function HistoricalLineChart({ title, data, dataKey, color, formatter, valueLabe
               <CartesianGrid stroke="#273244" />
               <XAxis dataKey="period" />
               <YAxis tickFormatter={formatter} width={58} />
-              <Tooltip formatter={(value) => [formatter(value), valueLabel]} />
+              <Tooltip
+                labelFormatter={formatChartPeriodLabel}
+                formatter={(value) => [formatter(value), valueLabel]}
+              />
               <Line
                 type="monotone"
                 dataKey={dataKey}
@@ -2294,6 +2358,9 @@ const earningsHistory =
 
 const epsHistory =
   buildChartRows(financialHistory, "eps");
+const revenueGrowthRows = buildAnnualGrowthRows(revenueHistory, "revenue");
+const earningsGrowthRows = buildAnnualGrowthRows(earningsHistory, "earnings");
+const epsGrowthRows = buildAnnualGrowthRows(epsHistory, "eps");
 const currentChartYear = new Date().getFullYear();
 const currentPoint = (key, value, transform = (item) => item) =>
   isNumber(value)
@@ -3855,6 +3922,7 @@ return (
 
 ) : revenueHistory.length ? (
 
+  <>
 <ResponsiveContainer
   width="100%"
   height={400}
@@ -3883,6 +3951,7 @@ return (
 />
 
         <Tooltip
+  labelFormatter={formatChartPeriodLabel}
   formatter={(value) => [
     formatChartBillions(value),
     "Revenue"
@@ -3898,6 +3967,12 @@ return (
       </BarChart>
 
     </ResponsiveContainer>
+
+    <ChartGrowthStrip
+      label="Revenue growth"
+      rows={revenueGrowthRows}
+    />
+  </>
 
   ) : (
 
@@ -3931,6 +4006,7 @@ return (
 
     ) : earningsHistory.length ? (
 
+      <>
       <ResponsiveContainer
         width="100%"
         height={400}
@@ -3957,6 +4033,7 @@ return (
           />
 
           <Tooltip
+            labelFormatter={formatChartPeriodLabel}
             formatter={(value) => [
               formatChartBillions(value),
               "Net Income"
@@ -3976,6 +4053,12 @@ return (
         </LineChart>
 
       </ResponsiveContainer>
+
+      <ChartGrowthStrip
+        label="Net income growth"
+        rows={earningsGrowthRows}
+      />
+      </>
 
     ) : (
 
@@ -4010,6 +4093,7 @@ return (
 
     ) : epsHistory.length ? (
 
+      <>
       <ResponsiveContainer
         width="100%"
         height={400}
@@ -4036,6 +4120,7 @@ return (
           />
 
           <Tooltip
+            labelFormatter={formatChartPeriodLabel}
             formatter={(value) => [
               formatChartEps(value),
               "EPS"
@@ -4055,6 +4140,12 @@ return (
         </LineChart>
 
       </ResponsiveContainer>
+
+      <ChartGrowthStrip
+        label="EPS growth"
+        rows={epsGrowthRows}
+      />
+      </>
 
     ) : (
 

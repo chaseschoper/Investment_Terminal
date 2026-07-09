@@ -2914,6 +2914,59 @@ body {
   text-align: center;
 }
 
+.chart-growth-strip {
+  display: grid;
+  gap: 10px;
+  margin: 16px 18px 4px;
+  padding: 14px 16px;
+  border: 1px solid #233047;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.78);
+}
+
+.chart-growth-title {
+  color: #cbd5e1;
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.chart-growth-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.chart-growth-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid #273244;
+  border-radius: 8px;
+  background: #111827;
+  color: #d1d5db;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.chart-growth-pill strong {
+  font-size: 14px;
+}
+
+.chart-growth-positive {
+  color: #34d399;
+}
+
+.chart-growth-negative {
+  color: #f87171;
+}
+
+.chart-growth-neutral {
+  color: #9ca3af;
+}
+
 .estimate-growth-card {
   display: grid;
   gap: 6px;
