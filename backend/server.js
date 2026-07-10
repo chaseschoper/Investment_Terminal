@@ -50,7 +50,7 @@ const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 144;
-const STOCK_ESTIMATE_VERSION = 8;
+const STOCK_ESTIMATE_VERSION = 10;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -4578,8 +4578,30 @@ async function fetchFinnhubEpsSurprises(ticker) {
   }
 }
 
+const mergeEpsBeatMissRows = (...rowSets) => {
+  const byPeriod = new Map();
+  rowSets.flat().forEach((row) => {
+    if (!row?.period) return;
+    const existing = byPeriod.get(row.period) || {};
+    byPeriod.set(row.period, {
+      ...existing,
+      ...Object.fromEntries(
+        Object.entries(row).filter(([, value]) => value !== null && value !== undefined && value !== "")
+      ),
+      estimate: toNumberOrNull(row.estimate) ?? toNumberOrNull(existing.estimate),
+      actual: toNumberOrNull(row.actual) ?? toNumberOrNull(existing.actual),
+      gaapActual: toNumberOrNull(row.gaapActual) ?? toNumberOrNull(existing.gaapActual),
+      surprise: toNumberOrNull(row.surprise) ?? toNumberOrNull(existing.surprise),
+      gaapSurprise: toNumberOrNull(row.gaapSurprise) ?? toNumberOrNull(existing.gaapSurprise),
+      surprisePercent: toNumberOrNull(row.surprisePercent) ?? toNumberOrNull(existing.surprisePercent)
+    });
+  });
+
+  return [...byPeriod.values()].sort((a, b) => String(a.period).localeCompare(String(b.period)));
+};
+
 const buildEpsBeatMissSeries = (reportedRows = [], nextQuarterEstimate = {}) => {
-  const rows = [...(reportedRows || [])];
+  const rows = mergeEpsBeatMissRows(reportedRows || []);
   const nextEstimate = toNumberOrNull(nextQuarterEstimate?.eps);
   const nextDate = yahooDateToIso(nextQuarterEstimate?.date);
   if (nextEstimate !== null && !rows.some((row) => row.period === nextDate)) {
@@ -4733,6 +4755,17 @@ const parseMarketBeatPercent = (value) => {
   return match ? toNumberOrNull(match[1]) : null;
 };
 
+const parseMarketBeatMoneyNumber = (value) => {
+  const text = String(value || "").replace(/,/g, "").trim();
+  if (!text || /^-+$/.test(text) || /^N\/A$/i.test(text)) return null;
+  const normalized = text
+    .replace(/[−–—]/g, "-")
+    .replace(/\$/g, "")
+    .replace(/\s+/g, "");
+  const match = normalized.match(/([+-]?\d+(?:\.\d+)?)/);
+  return match ? toNumberOrNull(match[1]) : null;
+};
+
 const MARKETBEAT_EXCHANGES = ["NASDAQ", "NYSE", "AMEX"];
 const MARKETBEAT_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -4740,8 +4773,13 @@ const MARKETBEAT_HEADERS = {
 };
 
 async function fetchMarketBeatRows(symbol, page, tableMatcher, rowMapper) {
-  const pathSymbol = encodeURIComponent(symbol.replace(/-/g, "."));
-  const attempts = MARKETBEAT_EXCHANGES.map(async (exchange) => {
+  const pathSymbols = [...new Set([
+    symbol,
+    symbol.replace(/-/g, "."),
+    symbol.replace(/-/g, "")
+  ])].filter(Boolean);
+  const attempts = MARKETBEAT_EXCHANGES.flatMap((exchange) => pathSymbols.map(async (pathSymbolRaw) => {
+    const pathSymbol = encodeURIComponent(pathSymbolRaw);
     const url = `https://www.marketbeat.com/stocks/${exchange}/${pathSymbol}/${page}/`;
     try {
       const response = await axios.get(url, {
@@ -4773,7 +4811,7 @@ async function fetchMarketBeatRows(symbol, page, tableMatcher, rowMapper) {
       }
       throw err;
     }
-  });
+  }));
 
   try {
     return await Promise.any(attempts);
@@ -4855,6 +4893,61 @@ async function fetchMarketBeatAnalystUpdates(ticker) {
   return writeCachedMarketActivity(
     marketBeatAnalystCache,
     symbol,
+    result,
+    result.length ? 6 * 60 * 60 * 1000 : 20 * 60 * 1000
+  );
+}
+
+async function fetchMarketBeatEpsSurprises(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol) return [];
+
+  const cacheKey = `${symbol}:eps`;
+  const cached = readCachedMarketActivity(epsSurpriseCache, cacheKey);
+  if (cached) return cached;
+
+  const rows = await fetchMarketBeatRows(
+    symbol,
+    "earnings",
+    (headerText) =>
+      /Consensus Estimate/i.test(headerText) &&
+      /Reported EPS/i.test(headerText) &&
+      /GAAP EPS/i.test(headerText),
+    (cells) => {
+      const date = marketBeatDateToIso(cells[0]);
+      const isUpcoming = /\(Estimated\)|\(Confirmed\)/i.test(`${cells[0]} ${cells[1]}`);
+      const estimate = parseMarketBeatMoneyNumber(cells[2]);
+      const actual = parseMarketBeatMoneyNumber(cells[3]);
+      const surprise = parseMarketBeatMoneyNumber(cells[4]) ?? (
+        actual !== null && estimate !== null ? actual - estimate : null
+      );
+      const gaapActual = parseMarketBeatMoneyNumber(cells[5]);
+      if (!date || (estimate === null && actual === null && gaapActual === null)) return null;
+
+      return {
+        period: date,
+        fiscalYear: null,
+        fiscalQuarter: null,
+        label: isUpcoming ? "Next Quarter" : firstText(cells[1], null),
+        estimate,
+        actual,
+        gaapActual,
+        surprise,
+        gaapSurprise: gaapActual !== null && estimate !== null ? gaapActual - estimate : null,
+        surprisePercent: null,
+        source: "MarketBeat"
+      };
+    }
+  );
+
+  const result = rows
+    .filter((row) => row.period && (row.estimate !== null || row.actual !== null || row.gaapActual !== null))
+    .sort((a, b) => String(a.period).localeCompare(String(b.period)))
+    .slice(-8);
+
+  return writeCachedMarketActivity(
+    epsSurpriseCache,
+    cacheKey,
     result,
     result.length ? 6 * 60 * 60 * 1000 : 20 * 60 * 1000
   );
@@ -5738,6 +5831,7 @@ async function fetchStockData(ticker) {
     marketBeatInstitutionalHolders,
     secInsiderTransactions,
     epsSurprises,
+    marketBeatEpsSurprises,
     recommendation,
     epsEstimate,
     revenueEstimate
@@ -5773,6 +5867,7 @@ async function fetchStockData(ticker) {
     resolveWithin(fetchMarketBeatInstitutionalHolders(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(fetchSecInsiderTransactions(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(fetchFinnhubEpsSurprises(ticker), STOCK_PROVIDER_TIMEOUT_MS, previousData?.epsBeatMiss || []),
+    resolveWithin(fetchMarketBeatEpsSurprises(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/recommendation?symbol=${ticker}`).catch((err) => {
       console.log("Recommendation skipped:", ticker, err.message);
       return [];
@@ -6816,7 +6911,12 @@ async function fetchStockData(ticker) {
       : previousData?.insiderTransactions || [],
     holderSummary: yahooSupplementalData.holderSummary || previousData?.holderSummary || {},
     analystTargets: yahooSupplementalData.analystTargets || previousData?.analystTargets || {},
-    epsBeatMiss: buildEpsBeatMissSeries(epsSurprises, calendarQuarterEstimate),
+    epsBeatMiss: buildEpsBeatMissSeries(
+      marketBeatEpsSurprises?.length >= 3
+        ? marketBeatEpsSurprises
+        : mergeEpsBeatMissRows(previousData?.epsBeatMiss || [], epsSurprises),
+      calendarQuarterEstimate
+    ),
     analystEstimatesSource: "Yahoo Finance",
     analystEstimatesSources: {
       nextQuarter: "Earnings calendar",

@@ -3139,10 +3139,14 @@ body {
   background: #0f172a;
 }
 
-.eps-beat-miss-toggle strong {
+.eps-beat-miss-toggle button {
+  border: 0;
   padding: 8px 12px;
+  background: transparent;
   color: #e5e7eb;
   font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
 }
 
 .eps-beat-miss-toggle .active {

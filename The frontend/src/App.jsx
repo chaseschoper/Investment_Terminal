@@ -853,7 +853,7 @@ const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
 const FINANCIAL_HISTORY_VERSION = 144;
-const STOCK_ESTIMATE_VERSION = 8;
+const STOCK_ESTIMATE_VERSION = 10;
 
 const getDefaultCompanyLogoUrl = (symbol) => {
   const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
@@ -981,13 +981,29 @@ const formatSignedEpsSurprise = (value) => {
 };
 
 function EpsBeatMissChart({ rows = [] }) {
+  const [epsMode, setEpsMode] = useState("normalized");
   const chartRows = rows
-    .filter((row) => isNumber(row?.estimate) || isNumber(row?.actual))
+    .filter((row) => isNumber(row?.estimate) || isNumber(row?.actual) || isNumber(row?.gaapActual))
     .slice(-5);
   if (!chartRows.length) return null;
+  const hasGaapRows = chartRows.some((row) => isNumber(row?.gaapActual));
+  const actualValueFor = (row) =>
+    epsMode === "gaap" && isNumber(row?.gaapActual) ? row.gaapActual : row.actual;
+  const surpriseValueFor = (row) =>
+    epsMode === "gaap" && isNumber(row?.gaapActual)
+      ? isNumber(row.gaapSurprise)
+        ? row.gaapSurprise
+        : isNumber(row.estimate)
+          ? row.gaapActual - row.estimate
+          : null
+      : isNumber(row.surprise)
+        ? row.surprise
+        : isNumber(row.actual) && isNumber(row.estimate)
+          ? row.actual - row.estimate
+          : null;
 
   const values = chartRows
-    .flatMap((row) => [row.estimate, row.actual])
+    .flatMap((row) => [row.estimate, actualValueFor(row)])
     .filter(isNumber);
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -1009,11 +1025,24 @@ function EpsBeatMissChart({ rows = [] }) {
           <h3>EPS Beat / Miss</h3>
           <span>
             {formatEpsBeatMissLabel(chartRows.at(-1))} estimate {formatEstimateEps(referenceEstimate)}
+            {epsMode === "gaap" && !hasGaapRows ? " • GAAP not available" : ""}
           </span>
         </div>
         <div className="eps-beat-miss-toggle">
-          <strong>GAAP</strong>
-          <strong className="active">Normalized</strong>
+          <button
+            type="button"
+            className={epsMode === "gaap" ? "active" : ""}
+            onClick={() => setEpsMode("gaap")}
+          >
+            GAAP
+          </button>
+          <button
+            type="button"
+            className={epsMode === "normalized" ? "active" : ""}
+            onClick={() => setEpsMode("normalized")}
+          >
+            Normalized
+          </button>
         </div>
       </div>
 
@@ -1028,18 +1057,16 @@ function EpsBeatMissChart({ rows = [] }) {
         {chartRows.map((row, index) => {
           const x = xFor(index);
           const estimateY = yFor(row.estimate);
-          const actualY = yFor(row.actual);
-          const missed = isNumber(row.surprise)
-            ? row.surprise < 0
-            : isNumber(row.actual) && isNumber(row.estimate)
-              ? row.actual < row.estimate
-              : false;
+          const actualValue = actualValueFor(row);
+          const actualY = yFor(actualValue);
+          const surprise = surpriseValueFor(row);
+          const missed = isNumber(surprise) ? surprise < 0 : false;
           return (
             <g key={`${row.period || index}-${index}`}>
               {isNumber(row.estimate) && (
                 <circle cx={x} cy={estimateY} r="1.65" className="eps-estimate-dot" />
               )}
-              {isNumber(row.actual) && (
+              {isNumber(actualValue) && (
                 <circle cx={x} cy={actualY} r="1.95" className={missed ? "eps-miss-dot" : "eps-beat-dot"} />
               )}
             </g>
@@ -1052,11 +1079,7 @@ function EpsBeatMissChart({ rows = [] }) {
         style={{ gridTemplateColumns: `repeat(${chartRows.length}, minmax(0, 1fr))` }}
       >
         {chartRows.map((row, index) => {
-          const surprise = isNumber(row.surprise)
-            ? row.surprise
-            : isNumber(row.actual) && isNumber(row.estimate)
-              ? row.actual - row.estimate
-              : null;
+          const surprise = surpriseValueFor(row);
           const isMiss = isNumber(surprise) && surprise < 0;
           return (
             <div key={`${row.period || index}-label`} className="eps-beat-miss-label">
