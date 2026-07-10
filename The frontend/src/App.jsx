@@ -63,48 +63,56 @@ const COMPANY_DOCUMENT_TABS = [
 const HOME_FEATURES = [
   {
     id: "overview",
+    badge: "STK",
     label: "Stock Overview",
     title: "Everything on one company page",
     text: "Search a ticker and review live pricing, financial charts, metrics, estimates, peer comps, AI analysis, transcripts, and company documents together."
   },
   {
     id: "projections",
+    badge: "PRO",
     label: "Projections",
     title: "Build your own stock cases",
     text: "Run bear, base, and bull scenarios with clean inputs for growth, margins, valuation, and expected return."
   },
   {
     id: "comparison",
+    badge: "CMP",
     label: "Compare",
     title: "Line companies up side by side",
     text: "Compare several stocks at once so differences in price, performance, valuation, and fundamentals are easier to spot."
   },
   {
     id: "portfolio",
+    badge: "PFT",
     label: "Portfolio",
     title: "Track positions and performance",
     text: "Keep your holdings organized, see your portfolio value, and follow performance without leaving your research flow."
   },
   {
     id: "watchlists",
+    badge: "WCH",
     label: "Watchlists",
     title: "Keep ideas close",
     text: "Save companies you want to monitor and jump back into research quickly when a stock starts moving."
   },
   {
     id: "earnings-calendar",
+    badge: "CAL",
     label: "Calendar",
     title: "Know what reports next",
     text: "Use the earnings calendar to see upcoming reports, expected EPS, expected revenue, and recent market events."
   },
   {
     id: "overview",
+    badge: "DOC",
     label: "Documents",
     title: "Read the actual company releases",
     text: "Open the latest 10-K, 10-Q, earnings release, income statement, balance sheet, and cash flow documents from the stock page."
   },
   {
     id: "mr-rally",
+    badge: "AI",
     label: "Mr. Rally",
     title: "Ask questions while you research",
     text: "Use the built-in stock chat to ask about companies, filings, earnings, metrics, risks, and the data behind the business."
@@ -3706,7 +3714,8 @@ return (
               onClick={() => openPage(feature.id)}
             >
               <span className={`home-feature-mark mark-${index % 8}`} aria-hidden="true">
-                <span />
+                <img src="/mrktrally-icon.png" alt="" />
+                <span>{feature.badge}</span>
               </span>
               <span className="home-feature-copy">
                 <span className="home-feature-label">{feature.label}</span>
