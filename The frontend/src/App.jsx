@@ -60,6 +60,57 @@ const COMPANY_DOCUMENT_TABS = [
   { id: "all", label: "All Documents" }
 ];
 
+const HOME_FEATURES = [
+  {
+    id: "overview",
+    label: "Stock Overview",
+    title: "Everything on one company page",
+    text: "Search a ticker and review live pricing, financial charts, metrics, estimates, peer comps, AI analysis, transcripts, and company documents together."
+  },
+  {
+    id: "projections",
+    label: "Projections",
+    title: "Build your own stock cases",
+    text: "Run bear, base, and bull scenarios with clean inputs for growth, margins, valuation, and expected return."
+  },
+  {
+    id: "comparison",
+    label: "Compare",
+    title: "Line companies up side by side",
+    text: "Compare several stocks at once so differences in price, performance, valuation, and fundamentals are easier to spot."
+  },
+  {
+    id: "portfolio",
+    label: "Portfolio",
+    title: "Track positions and performance",
+    text: "Keep your holdings organized, see your portfolio value, and follow performance without leaving your research flow."
+  },
+  {
+    id: "watchlists",
+    label: "Watchlists",
+    title: "Keep ideas close",
+    text: "Save companies you want to monitor and jump back into research quickly when a stock starts moving."
+  },
+  {
+    id: "earnings-calendar",
+    label: "Calendar",
+    title: "Know what reports next",
+    text: "Use the earnings calendar to see upcoming reports, expected EPS, expected revenue, and recent market events."
+  },
+  {
+    id: "overview",
+    label: "Documents",
+    title: "Read the actual company releases",
+    text: "Open the latest 10-K, 10-Q, earnings release, income statement, balance sheet, and cash flow documents from the stock page."
+  },
+  {
+    id: "mr-rally",
+    label: "Mr. Rally",
+    title: "Ask questions while you research",
+    text: "Use the built-in stock chat to ask about companies, filings, earnings, metrics, risks, and the data behind the business."
+  }
+];
+
 const formatDividendYield = (value) =>
   isNumber(value) ? `${(Math.abs(value) > 1 ? value : value * 100).toFixed(2)}%` : "N/A";
 
@@ -3618,23 +3669,55 @@ return (
     <div className="main">
 
     {activePage === "home" && (
-    <section className="welcome-hero" id="home" aria-labelledby="welcome-title">
-      <div className="welcome-hero-content">
-        <div className="welcome-kicker">Market research, focused</div>
-        <div className="welcome-title-row">
-          <h1 id="welcome-title">Welcome to MrktRally</h1>
-          <img
-            className="welcome-logo"
-            src="/mrktrally-icon.png"
-            alt="MrktRally logo"
-          />
+    <>
+      <section className="welcome-hero" id="home" aria-labelledby="welcome-title">
+        <div className="welcome-hero-content">
+          <div className="welcome-kicker">Market research, focused</div>
+          <div className="welcome-title-row">
+            <h1 id="welcome-title">Welcome to MrktRally</h1>
+            <img
+              className="welcome-logo"
+              src="/mrktrally-icon.png"
+              alt="MrktRally logo"
+            />
+          </div>
+          <p>Track companies, study the numbers, and keep your market view in one place.</p>
+          <button className="welcome-action" type="button" onClick={() => openPage("overview")}>
+            Explore the market
+          </button>
         </div>
-        <p>Track companies, study the numbers, and keep your market view in one place.</p>
-        <button className="welcome-action" type="button" onClick={() => openPage("overview")}>
-          Explore the market
-        </button>
-      </div>
-    </section>
+      </section>
+
+      <section className="home-features" aria-labelledby="home-features-title">
+        <div className="home-features-heading">
+          <div className="welcome-kicker">Built for sharper research</div>
+          <h2 id="home-features-title">Move from market idea to full company view.</h2>
+          <p>
+            MrktRally keeps the tools you use most close together, so you can move through a stock without losing the thread.
+          </p>
+        </div>
+
+        <div className="home-feature-grid">
+          {HOME_FEATURES.map((feature, index) => (
+            <button
+              className="home-feature-card"
+              key={`${feature.label}-${index}`}
+              type="button"
+              onClick={() => openPage(feature.id)}
+            >
+              <span className={`home-feature-mark mark-${index % 8}`} aria-hidden="true">
+                <span />
+              </span>
+              <span className="home-feature-copy">
+                <span className="home-feature-label">{feature.label}</span>
+                <strong>{feature.title}</strong>
+                <span>{feature.text}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </section>
+    </>
     )}
 
 
