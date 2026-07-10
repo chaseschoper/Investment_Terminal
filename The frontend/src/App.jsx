@@ -853,7 +853,7 @@ const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
 const FINANCIAL_HISTORY_VERSION = 144;
-const STOCK_ESTIMATE_VERSION = 7;
+const STOCK_ESTIMATE_VERSION = 8;
 
 const getDefaultCompanyLogoUrl = (symbol) => {
   const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
@@ -956,6 +956,124 @@ function DataMiniTable({ title, subtitle, columns, rows, emptyText, loading = fa
         <div className="data-mini-table-empty">{emptyText}</div>
       )}
     </section>
+  );
+}
+
+const formatEpsBeatMissDate = (value) => {
+  if (!value) return "";
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString([], { month: "short", day: "2-digit" });
+};
+
+const formatEpsBeatMissLabel = (row) => {
+  if (row?.label) return row.label;
+  if (isNumber(row?.fiscalQuarter) && isNumber(row?.fiscalYear)) {
+    return `Q${row.fiscalQuarter} FY${String(row.fiscalYear).slice(-2)}`;
+  }
+  return row?.period ? formatEpsBeatMissDate(row.period) : "Quarter";
+};
+
+const formatSignedEpsSurprise = (value) => {
+  if (!isNumber(value)) return "-";
+  const sign = value < 0 ? "-" : "+";
+  return `${sign}$${Math.abs(value).toFixed(2)}`;
+};
+
+function EpsBeatMissChart({ rows = [] }) {
+  const chartRows = rows
+    .filter((row) => isNumber(row?.estimate) || isNumber(row?.actual))
+    .slice(-5);
+  if (!chartRows.length) return null;
+
+  const values = chartRows
+    .flatMap((row) => [row.estimate, row.actual])
+    .filter(isNumber);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const padding = Math.max((max - min) * 0.22, 0.12);
+  const yMin = min - padding;
+  const yMax = max + padding;
+  const yFor = (value) => {
+    if (!isNumber(value) || yMax === yMin) return 28;
+    return 50 - ((value - yMin) / (yMax - yMin)) * 42;
+  };
+  const xFor = (index) =>
+    chartRows.length === 1 ? 50 : 8 + (index / (chartRows.length - 1)) * 84;
+  const referenceEstimate = chartRows.at(-1)?.estimate;
+
+  return (
+    <div className="eps-beat-miss-card">
+      <div className="eps-beat-miss-header">
+        <div>
+          <h3>EPS Beat / Miss</h3>
+          <span>
+            {formatEpsBeatMissLabel(chartRows.at(-1))} estimate {formatEstimateEps(referenceEstimate)}
+          </span>
+        </div>
+        <div className="eps-beat-miss-toggle">
+          <strong>GAAP</strong>
+          <strong className="active">Normalized</strong>
+        </div>
+      </div>
+
+      <svg className="eps-beat-miss-plot" viewBox="0 0 100 62" aria-hidden="true">
+        {[0, 1, 2, 3].map((line) => {
+          const y = 10 + line * 12;
+          return <line key={line} x1="3" x2="97" y1={y} y2={y} className="eps-beat-miss-grid" />;
+        })}
+        {isNumber(referenceEstimate) && (
+          <line x1="3" x2="97" y1={yFor(referenceEstimate)} y2={yFor(referenceEstimate)} className="eps-beat-miss-reference" />
+        )}
+        {chartRows.map((row, index) => {
+          const x = xFor(index);
+          const estimateY = yFor(row.estimate);
+          const actualY = yFor(row.actual);
+          const missed = isNumber(row.surprise)
+            ? row.surprise < 0
+            : isNumber(row.actual) && isNumber(row.estimate)
+              ? row.actual < row.estimate
+              : false;
+          return (
+            <g key={`${row.period || index}-${index}`}>
+              {isNumber(row.estimate) && (
+                <circle cx={x} cy={estimateY} r="1.65" className="eps-estimate-dot" />
+              )}
+              {isNumber(row.actual) && (
+                <circle cx={x} cy={actualY} r="1.95" className={missed ? "eps-miss-dot" : "eps-beat-dot"} />
+              )}
+            </g>
+          );
+        })}
+      </svg>
+
+      <div
+        className="eps-beat-miss-labels"
+        style={{ gridTemplateColumns: `repeat(${chartRows.length}, minmax(0, 1fr))` }}
+      >
+        {chartRows.map((row, index) => {
+          const surprise = isNumber(row.surprise)
+            ? row.surprise
+            : isNumber(row.actual) && isNumber(row.estimate)
+              ? row.actual - row.estimate
+              : null;
+          const isMiss = isNumber(surprise) && surprise < 0;
+          return (
+            <div key={`${row.period || index}-label`} className="eps-beat-miss-label">
+              <span>{formatEpsBeatMissLabel(row)}</span>
+              {isNumber(surprise) ? (
+                <strong className={isMiss ? "miss" : "beat"}>
+                  {isMiss ? "Missed" : "Beat"} {formatSignedEpsSurprise(surprise)}
+                </strong>
+              ) : (
+                <strong className="upcoming">-</strong>
+              )}
+              <small>{formatEpsBeatMissDate(row.period)}</small>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -2423,6 +2541,9 @@ const earningsHistory =
 
 const epsHistory =
   buildChartRows(financialHistory, "eps");
+const epsBeatMissRows = Array.isArray(stockData?.epsBeatMiss)
+  ? stockData.epsBeatMiss
+  : [];
 const revenueGrowthRows = buildAnnualGrowthRows(revenueHistory, "revenue");
 const earningsGrowthRows = buildAnnualGrowthRows(earningsHistory, "earnings");
 const epsGrowthRows = buildAnnualGrowthRows(epsHistory, "eps");
@@ -4206,6 +4327,8 @@ return (
 
       </ResponsiveContainer>
 
+      <EpsBeatMissChart rows={epsBeatMissRows} />
+
       <ChartGrowthStrip
         label="EPS growth"
         rows={epsGrowthRows}
@@ -4869,7 +4992,7 @@ return (
 
     <DataMiniTable
       title="Insider Tracker"
-      subtitle="Recent insider buys, sells, and gifts"
+      subtitle="Latest insider moves"
       emptyText="No recent insider rows found yet."
       loading={Boolean(stockData.refreshing)}
       rows={stockData.insiderTransactions || []}

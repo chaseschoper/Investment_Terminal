@@ -44,12 +44,13 @@ const similarCompanyMetricCache = new Map();
 const fmpMarketActivityCache = new Map();
 const marketBeatAnalystCache = new Map();
 const secInsiderTransactionCache = new Map();
+const epsSurpriseCache = new Map();
 const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 144;
-const STOCK_ESTIMATE_VERSION = 7;
+const STOCK_ESTIMATE_VERSION = 8;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -4532,6 +4533,74 @@ async function fetchFinnhubAnalystUpdates(ticker) {
   }
 }
 
+async function fetchFinnhubEpsSurprises(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !process.env.FINNHUB_API_KEY) return [];
+
+  const cached = readCachedMarketActivity(epsSurpriseCache, symbol);
+  if (cached) return cached;
+
+  try {
+    const rows = await getFinnhub(
+      `https://finnhub.io/api/v1/stock/earnings?symbol=${encodeURIComponent(symbol)}`
+    );
+    const result = (Array.isArray(rows) ? rows : [])
+      .map((item) => {
+        const estimate = toNumberOrNull(item.estimate);
+        const actual = toNumberOrNull(item.actual);
+        const surprise = toNumberOrNull(item.surprise) ?? (
+          actual !== null && estimate !== null ? actual - estimate : null
+        );
+        return {
+          period: yahooDateToIso(item.period),
+          fiscalYear: toNumberOrNull(item.year),
+          fiscalQuarter: toNumberOrNull(item.quarter),
+          estimate,
+          actual,
+          surprise,
+          surprisePercent: toNumberOrNull(item.surprisePercent),
+          source: "Finnhub"
+        };
+      })
+      .filter((item) => item.period && (item.estimate !== null || item.actual !== null))
+      .sort((a, b) => String(a.period).localeCompare(String(b.period)))
+      .slice(-5);
+
+    return writeCachedMarketActivity(
+      epsSurpriseCache,
+      symbol,
+      result,
+      result.length ? 6 * 60 * 60 * 1000 : 20 * 60 * 1000
+    );
+  } catch (err) {
+    console.log("Finnhub EPS surprises skipped:", symbol, err.response?.status || err.message);
+    return writeCachedMarketActivity(epsSurpriseCache, symbol, [], 15 * 60 * 1000);
+  }
+}
+
+const buildEpsBeatMissSeries = (reportedRows = [], nextQuarterEstimate = {}) => {
+  const rows = [...(reportedRows || [])];
+  const nextEstimate = toNumberOrNull(nextQuarterEstimate?.eps);
+  const nextDate = yahooDateToIso(nextQuarterEstimate?.date);
+  if (nextEstimate !== null && !rows.some((row) => row.period === nextDate)) {
+    rows.push({
+      period: nextDate,
+      fiscalYear: null,
+      fiscalQuarter: null,
+      label: firstText(nextQuarterEstimate?.fiscalQuarter, "Next Quarter"),
+      estimate: nextEstimate,
+      actual: null,
+      surprise: null,
+      surprisePercent: null,
+      source: "Earnings calendar"
+    });
+  }
+
+  return rows
+    .filter((row) => row.estimate !== null || row.actual !== null)
+    .slice(-5);
+};
+
 const readCachedMarketActivity = (cache, key) => {
   const cached = cache.get(key);
   if (!cached) return null;
@@ -5668,6 +5737,7 @@ async function fetchStockData(ticker) {
     marketBeatAnalystUpdates,
     marketBeatInstitutionalHolders,
     secInsiderTransactions,
+    epsSurprises,
     recommendation,
     epsEstimate,
     revenueEstimate
@@ -5702,6 +5772,7 @@ async function fetchStockData(ticker) {
     resolveWithin(fetchMarketBeatAnalystUpdates(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(fetchMarketBeatInstitutionalHolders(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(fetchSecInsiderTransactions(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
+    resolveWithin(fetchFinnhubEpsSurprises(ticker), STOCK_PROVIDER_TIMEOUT_MS, previousData?.epsBeatMiss || []),
     resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/recommendation?symbol=${ticker}`).catch((err) => {
       console.log("Recommendation skipped:", ticker, err.message);
       return [];
@@ -6745,6 +6816,7 @@ async function fetchStockData(ticker) {
       : previousData?.insiderTransactions || [],
     holderSummary: yahooSupplementalData.holderSummary || previousData?.holderSummary || {},
     analystTargets: yahooSupplementalData.analystTargets || previousData?.analystTargets || {},
+    epsBeatMiss: buildEpsBeatMissSeries(epsSurprises, calendarQuarterEstimate),
     analystEstimatesSource: "Yahoo Finance",
     analystEstimatesSources: {
       nextQuarter: "Earnings calendar",
