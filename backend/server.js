@@ -50,7 +50,7 @@ const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 144;
-const STOCK_ESTIMATE_VERSION = 14;
+const STOCK_ESTIMATE_VERSION = 15;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -210,6 +210,12 @@ const FOREIGN_ADR_CONFIG = {
     adrRatio: 5,
     localSymbols: ["2330.TW"],
     fallbackUsdRate: 0.031
+  }
+};
+
+const EARNINGS_DATE_OVERRIDES = {
+  NVDA: {
+    "2027:2": "2026-08-26"
   }
 };
 
@@ -530,6 +536,59 @@ const parseApiNumber = (value) => {
 
 const formatIsoDate = (date) => date.toISOString().slice(0, 10);
 
+function fiscalQuarterKey(fiscalQuarter, fiscalYear) {
+  const quarter = toNumberOrNull(fiscalQuarter);
+  const year = toNumberOrNull(fiscalYear);
+  if (quarter !== null && year !== null) return `${year}:${quarter}`;
+  const parsed = parseEpsBeatMissFiscalLabel(`Q${fiscalQuarter || ""} ${fiscalYear || ""}`);
+  return parsed.fiscalYear && parsed.fiscalQuarter
+    ? `${parsed.fiscalYear}:${parsed.fiscalQuarter}`
+    : null;
+}
+
+function calendarEstimateFiscalKey(estimate = {}) {
+  const parsed = parseEpsBeatMissFiscalLabel(estimate.fiscalQuarter);
+  const fiscalQuarterNumber = toNumberOrNull(estimate.fiscalQuarter);
+  const fiscalYearNumber = toNumberOrNull(estimate.fiscalYear);
+  return fiscalQuarterKey(
+    estimate.quarter ?? fiscalQuarterNumber ?? parsed.fiscalQuarter,
+    estimate.year ?? fiscalYearNumber ?? parsed.fiscalYear
+  );
+}
+
+function applyEarningsDateOverride(ticker, estimate = {}) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  const key = calendarEstimateFiscalKey(estimate);
+  const overrideDate = key ? EARNINGS_DATE_OVERRIDES[symbol]?.[key] : null;
+  return overrideDate ? { ...estimate, date: overrideDate } : estimate;
+}
+
+function applyStockEarningsDateOverrides(ticker, data = {}) {
+  const nextQuarter = data.analystEstimates?.nextQuarter;
+  const correctedNextQuarter = applyEarningsDateOverride(ticker, nextQuarter);
+  if (correctedNextQuarter === nextQuarter) return data;
+
+  const correctedKey = calendarEstimateFiscalKey(correctedNextQuarter);
+  const epsBeatMiss = Array.isArray(data.epsBeatMiss)
+    ? data.epsBeatMiss.map((row) => {
+        const rowKey = calendarEstimateFiscalKey(row);
+        const isUpcoming = toNumberOrNull(row.actual) === null && toNumberOrNull(row.gaapActual) === null;
+        return isUpcoming && rowKey && rowKey === correctedKey
+          ? { ...row, period: correctedNextQuarter.date }
+          : row;
+      })
+    : data.epsBeatMiss;
+
+  return {
+    ...data,
+    analystEstimates: {
+      ...(data.analystEstimates || {}),
+      nextQuarter: correctedNextQuarter
+    },
+    epsBeatMiss
+  };
+}
+
 async function fetchNasdaqEarningsDate(ticker, referenceDate) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol || !referenceDate) return null;
@@ -660,8 +719,9 @@ async function fetchCalendarQuarterEstimate(ticker) {
           source: "Earnings calendar"
         };
 
-    earningsEstimateCalendarCache.set(symbol, { data: result, fetchedAt: Date.now() });
-    return result;
+    const correctedResult = applyEarningsDateOverride(symbol, result);
+    earningsEstimateCalendarCache.set(symbol, { data: correctedResult, fetchedAt: Date.now() });
+    return correctedResult;
   } catch (err) {
     console.log("Ticker earnings estimate calendar skipped:", symbol, err.response?.status || err.message);
     return {
@@ -3897,7 +3957,7 @@ async function repairHistoricalPeIfNeeded(ticker, data = {}) {
 async function prepareStockResponseData(ticker, data = {}) {
   const repairedData = await repairHistoricalPeIfNeeded(
     ticker,
-    withGuaranteedAnalystSection(data)
+    withGuaranteedAnalystSection(applyStockEarningsDateOverrides(ticker, data))
   );
   return normalizeForeignAdrStockData(ticker, repairedData);
 }
