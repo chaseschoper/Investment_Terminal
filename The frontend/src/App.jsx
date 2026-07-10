@@ -1997,18 +1997,38 @@ useEffect(() => {
     const requestId = ++latestEarningsCallRequest.current;
     const periodOptions = buildTranscriptPeriodOptions(stockData?.latestInterimPeriod);
     const selectedPeriod = periodOptions.find((period) => period.value === selectedTranscriptPeriod);
+    const latestExplicitPeriod = periodOptions.find((period) => period.value !== "latest");
+    const requestedPeriod =
+      selectedTranscriptPeriod === "latest"
+        ? selectedPeriod?.year && selectedPeriod?.quarter
+          ? selectedPeriod
+          : latestExplicitPeriod
+        : selectedPeriod;
     const delay = selectedTranscriptPeriod === "latest" ? 250 : 100;
     const timer = window.setTimeout(() => {
       setIsEarningsCallLoading(true);
 
       axios.get(`${API_URL}/api/earnings-call/${ticker}`, {
-        params: selectedPeriod?.year && selectedPeriod?.quarter
-          ? { year: selectedPeriod.year, quarter: selectedPeriod.quarter }
+        params: requestedPeriod?.year && requestedPeriod?.quarter
+          ? { year: requestedPeriod.year, quarter: requestedPeriod.quarter }
           : undefined,
-        timeout: 20000
+        timeout: selectedTranscriptPeriod === "latest" ? 32000 : 22000
       })
         .then((response) => {
           if (requestId === latestEarningsCallRequest.current) {
+            if (
+              selectedTranscriptPeriod === "latest" &&
+              !response.data?.available &&
+              requestedPeriod?.value !== "latest"
+            ) {
+              return axios.get(`${API_URL}/api/earnings-call/${ticker}`, {
+                timeout: 32000
+              }).then((fallbackResponse) => {
+                if (requestId === latestEarningsCallRequest.current) {
+                  setEarningsCall(fallbackResponse.data);
+                }
+              });
+            }
             setEarningsCall(response.data);
           }
         })
