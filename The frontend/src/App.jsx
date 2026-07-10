@@ -1984,7 +1984,7 @@ useEffect(() => {
     let isActive = true;
     setIsTranscriptPeriodsLoading(true);
 
-    axios.get(`${API_URL}/api/earnings-call-periods/${ticker}`, { timeout: 26000 })
+    axios.get(`${API_URL}/api/earnings-call-periods/${ticker}`, { timeout: 35000 })
       .then((response) => {
         if (!isActive) return;
         const periods = normalizeTranscriptPeriodOptions(response.data?.periods || []);
@@ -2040,7 +2040,7 @@ useEffect(() => {
 
       axios.get(`${API_URL}/api/earnings-call/${ticker}`, {
         params: { year: selectedPeriod.year, quarter: selectedPeriod.quarter },
-        timeout: 26000
+        timeout: 45000
       })
         .then((response) => {
           if (requestId === latestEarningsCallRequest.current) {
