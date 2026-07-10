@@ -101,6 +101,23 @@ const formatSharesMillions = (value) => {
     : `${value.toFixed(1)}M`;
 };
 
+const formatSharesCount = (value) => {
+  if (!isNumber(value)) return "N/A";
+  if (Math.abs(value) >= 1e9) return `${(value / 1e9).toFixed(2)}B`;
+  if (Math.abs(value) >= 1e6) return `${(value / 1e6).toFixed(2)}M`;
+  if (Math.abs(value) >= 1e3) return `${(value / 1e3).toFixed(1)}K`;
+  return value.toLocaleString();
+};
+
+const formatLargeDollars = (value) => {
+  if (!isNumber(value)) return "N/A";
+  if (Math.abs(value) >= 1e12) return `$${(value / 1e12).toFixed(2)}T`;
+  if (Math.abs(value) >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
+  if (Math.abs(value) >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
+  if (Math.abs(value) >= 1e3) return `$${(value / 1e3).toFixed(1)}K`;
+  return `$${value.toFixed(0)}`;
+};
+
 const formatPlain = (value) =>
   isNumber(value) ? value.toFixed(2) : "N/A";
 
@@ -831,7 +848,7 @@ const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
 const FINANCIAL_HISTORY_VERSION = 143;
-const STOCK_ESTIMATE_VERSION = 2;
+const STOCK_ESTIMATE_VERSION = 3;
 
 const getDefaultCompanyLogoUrl = (symbol) => {
   const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
@@ -892,6 +909,43 @@ function ChartGrowthStrip({ label, rows }) {
         ))}
       </div>
     </div>
+  );
+}
+
+function DataMiniTable({ title, subtitle, columns, rows, emptyText }) {
+  return (
+    <section className="data-mini-table-card">
+      <div className="data-mini-table-heading">
+        <h3>{title}</h3>
+        {subtitle && <span>{subtitle}</span>}
+      </div>
+      {rows?.length ? (
+        <div className="data-mini-table-scroll">
+          <table className="data-mini-table">
+            <thead>
+              <tr>
+                {columns.map((column) => (
+                  <th key={column.key}>{column.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, rowIndex) => (
+                <tr key={`${title}-${rowIndex}`}>
+                  {columns.map((column) => (
+                    <td key={column.key} data-label={column.label}>
+                      {column.render ? column.render(row) : row[column.key] || "N/A"}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="data-mini-table-empty">{emptyText}</div>
+      )}
+    </section>
   );
 }
 
@@ -4751,6 +4805,75 @@ return (
       </strong>
       <span className="estimate-growth-period">Next estimate vs. current estimate</span>
     </div>
+  </div>
+
+  <div className="market-intel-grid">
+    <DataMiniTable
+      title="Analyst Updates"
+      subtitle="Latest firm actions from Yahoo Finance"
+      emptyText="No firm-level analyst updates available yet."
+      rows={stockData.analystUpdates || []}
+      columns={[
+        { key: "firm", label: "Institution" },
+        { key: "latestRating", label: "Latest Rating" },
+        {
+          key: "priceTarget",
+          label: "Price Target",
+          render: (row) => formatPrice(row.priceTarget)
+        },
+        {
+          key: "date",
+          label: "Date",
+          render: (row) => row.date || "N/A"
+        }
+      ]}
+    />
+
+    <DataMiniTable
+      title="Top Institutional Holders"
+      subtitle="Largest reported institutional holders"
+      emptyText="No institutional holder data available yet."
+      rows={stockData.institutionalHolders || []}
+      columns={[
+        { key: "institution", label: "Institution" },
+        {
+          key: "shares",
+          label: "Shares",
+          render: (row) => formatSharesCount(row.shares)
+        },
+        {
+          key: "percentHeld",
+          label: "% Held",
+          render: (row) => formatPercent(isNumber(row.percentHeld) && Math.abs(row.percentHeld) <= 1 ? row.percentHeld * 100 : row.percentHeld)
+        },
+        {
+          key: "value",
+          label: "Value",
+          render: (row) => formatLargeDollars(row.value)
+        }
+      ]}
+    />
+
+    <DataMiniTable
+      title="Insider Tracker"
+      subtitle="Recent insider buys, sells, and gifts"
+      emptyText="No insider transaction data available yet."
+      rows={stockData.insiderTransactions || []}
+      columns={[
+        { key: "filerName", label: "Insider" },
+        { key: "transaction", label: "Action" },
+        {
+          key: "shares",
+          label: "Shares",
+          render: (row) => formatSharesCount(row.shares)
+        },
+        {
+          key: "date",
+          label: "Date",
+          render: (row) => row.date || "N/A"
+        }
+      ]}
+    />
   </div>
 
 </div>

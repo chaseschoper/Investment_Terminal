@@ -46,7 +46,7 @@ const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 143;
-const STOCK_ESTIMATE_VERSION = 2;
+const STOCK_ESTIMATE_VERSION = 3;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -4389,6 +4389,108 @@ const estimateFromYahooTrend = (trend = {}) => ({
   eps: firstYahooNumber(trend?.earningsEstimate?.avg)
 });
 
+const yahooDateToIso = (value) => {
+  if (!value) return null;
+  const numeric = Number(value);
+  const date = value instanceof Date
+    ? value
+    : Number.isFinite(numeric) && String(value).trim() !== ""
+      ? new Date(numeric < 10000000000 ? numeric * 1000 : numeric)
+      : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+};
+
+const buildYahooMarketActivity = (summary = {}, financialData = {}) => {
+  const analystUpdates = (summary.upgradeDowngradeHistory?.history || [])
+    .map((item) => ({
+      firm: firstText(item.firm),
+      latestRating: firstText(item.toGrade),
+      previousRating: firstText(item.fromGrade),
+      action: firstText(item.action),
+      priceTarget: toNumberOrNull(item.priceTarget),
+      date: yahooDateToIso(item.epochGradeDate),
+      source: "Yahoo Finance"
+    }))
+    .filter((item) => item.firm || item.latestRating)
+    .slice(0, 12);
+
+  const institutionalHolders = (summary.institutionOwnership?.ownershipList || [])
+    .map((item) => ({
+      institution: firstText(item.organization),
+      shares: toNumberOrNull(item.position),
+      value: toNumberOrNull(item.value),
+      percentHeld: toNumberOrNull(item.pctHeld),
+      percentChange: toNumberOrNull(item.pctChange),
+      reportDate: yahooDateToIso(item.reportDate),
+      source: "Yahoo Finance"
+    }))
+    .filter((item) => item.institution)
+    .slice(0, 10);
+
+  const insiderTransactions = (summary.insiderTransactions?.transactions || [])
+    .map((item) => ({
+      filerName: firstText(item.filerName),
+      relation: firstText(item.filerRelation),
+      transaction: firstText(item.transactionText),
+      shares: toNumberOrNull(item.shares),
+      value: toNumberOrNull(item.value),
+      moneyText: firstText(item.moneyText),
+      ownership: firstText(item.ownership),
+      date: yahooDateToIso(item.startDate),
+      source: "Yahoo Finance"
+    }))
+    .filter((item) => item.filerName || item.transaction)
+    .slice(0, 12);
+
+  const holders = summary.majorHoldersBreakdown || {};
+
+  return {
+    analystUpdates,
+    institutionalHolders,
+    insiderTransactions,
+    holderSummary: {
+      insidersPercentHeld: toNumberOrNull(holders.insidersPercentHeld),
+      institutionsPercentHeld: toNumberOrNull(holders.institutionsPercentHeld),
+      institutionsFloatPercentHeld: toNumberOrNull(holders.institutionsFloatPercentHeld),
+      institutionsCount: toNumberOrNull(holders.institutionsCount)
+    },
+    analystTargets: {
+      mean: firstYahooNumber(financialData.targetMeanPrice),
+      median: firstYahooNumber(financialData.targetMedianPrice),
+      high: firstYahooNumber(financialData.targetHighPrice),
+      low: firstYahooNumber(financialData.targetLowPrice),
+      recommendationMean: firstYahooNumber(financialData.recommendationMean),
+      recommendationKey: firstText(financialData.recommendationKey)
+    }
+  };
+};
+
+async function fetchFinnhubAnalystUpdates(ticker) {
+  if (!process.env.FINNHUB_API_KEY) return [];
+
+  try {
+    const rows = await getFinnhub(
+      `https://finnhub.io/api/v1/stock/upgrade-downgrade?symbol=${encodeURIComponent(ticker)}`
+    );
+
+    return (Array.isArray(rows) ? rows : [])
+      .map((item) => ({
+        firm: firstText(item.company),
+        latestRating: firstText(item.toGrade),
+        previousRating: firstText(item.fromGrade),
+        action: firstText(item.action),
+        priceTarget: toNumberOrNull(item.priceTarget),
+        date: yahooDateToIso(item.gradeTime),
+        source: "Finnhub"
+      }))
+      .filter((item) => item.firm || item.latestRating)
+      .slice(0, 12);
+  } catch (err) {
+    console.log("Finnhub analyst updates skipped:", ticker, err.response?.status || err.message);
+    return [];
+  }
+}
+
 const parseYahooAnalysisNumber = (value, { money = false } = {}) => {
   const text = String(value || "").trim().replace(/,/g, "");
   if (!text || text === "--" || /^N\/A$/i.test(text)) return null;
@@ -4540,7 +4642,11 @@ async function fetchYahooSupplementalData(ticker) {
                 "financialData",
                 "defaultKeyStatistics",
                 "summaryDetail",
-                "recommendationTrend"
+                "recommendationTrend",
+                "upgradeDowngradeHistory",
+                "institutionOwnership",
+                "insiderTransactions",
+                "majorHoldersBreakdown"
               ]
             })
             .catch((err) => {
@@ -4574,6 +4680,7 @@ async function fetchYahooSupplementalData(ticker) {
     const detail = summary?.summaryDetail || {};
     const trends = summary?.earningsTrend?.trend || [];
     const recommendationTrend = summary?.recommendationTrend?.trend || [];
+    const marketActivity = buildYahooMarketActivity(summary, financialData);
     const chartQuotes = chartData?.quotes || [];
     const recentCutoff = Date.now() - 365 * 24 * 60 * 60 * 1000;
     const recentChartQuotes = chartQuotes.filter((row) => {
@@ -4686,7 +4793,12 @@ async function fetchYahooSupplementalData(ticker) {
       ),
       recommendationMean: firstYahooNumber(financialData.recommendationMean),
       recommendationTrend,
-      analystEstimates
+      analystEstimates,
+      analystUpdates: marketActivity.analystUpdates,
+      institutionalHolders: marketActivity.institutionalHolders,
+      insiderTransactions: marketActivity.insiderTransactions,
+      holderSummary: marketActivity.holderSummary,
+      analystTargets: marketActivity.analystTargets
     };
   } catch (err) {
     setYahooCooldown(err, "supplemental data", ticker);
@@ -5088,6 +5200,7 @@ async function fetchStockData(ticker) {
     fmpRatingData,
     stockAnalysisFinancialData,
     calendarQuarterEstimate,
+    finnhubAnalystUpdates,
     recommendation,
     epsEstimate,
     revenueEstimate
@@ -5117,6 +5230,7 @@ async function fetchStockData(ticker) {
     ]), STOCK_PROVIDER_TIMEOUT_MS, null),
     resolveWithin(fetchStockAnalysisIncomeStatementHistory(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(fetchCalendarQuarterEstimate(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, {}),
+    resolveWithin(fetchFinnhubAnalystUpdates(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/recommendation?symbol=${ticker}`).catch((err) => {
       console.log("Recommendation skipped:", ticker, err.message);
       return [];
@@ -6137,6 +6251,19 @@ async function fetchStockData(ticker) {
     targetMean,
     recommendationKey,
     analystRatingText,
+    analystUpdates: yahooSupplementalData.analystUpdates?.length
+      ? yahooSupplementalData.analystUpdates
+      : finnhubAnalystUpdates?.length
+        ? finnhubAnalystUpdates
+        : previousData?.analystUpdates || [],
+    institutionalHolders: yahooSupplementalData.institutionalHolders?.length
+      ? yahooSupplementalData.institutionalHolders
+      : previousData?.institutionalHolders || [],
+    insiderTransactions: yahooSupplementalData.insiderTransactions?.length
+      ? yahooSupplementalData.insiderTransactions
+      : previousData?.insiderTransactions || [],
+    holderSummary: yahooSupplementalData.holderSummary || previousData?.holderSummary || {},
+    analystTargets: yahooSupplementalData.analystTargets || previousData?.analystTargets || {},
     analystEstimatesSource: "Yahoo Finance",
     analystEstimatesSources: {
       nextQuarter: "Earnings calendar",
