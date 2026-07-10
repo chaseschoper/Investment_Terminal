@@ -50,7 +50,7 @@ const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 144;
-const STOCK_ESTIMATE_VERSION = 10;
+const STOCK_ESTIMATE_VERSION = 13;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -208,6 +208,7 @@ const FOREIGN_ADR_CONFIG = {
     sourceCurrency: "TWD",
     displayCurrency: "USD",
     adrRatio: 5,
+    localSymbols: ["2330.TW"],
     fallbackUsdRate: 0.031
   }
 };
@@ -586,6 +587,10 @@ async function fetchNasdaqEarningsDate(ticker, referenceDate) {
 async function fetchCalendarQuarterEstimate(ticker) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol || !process.env.FINNHUB_API_KEY) return {};
+  const calendarSymbols = new Set([
+    symbol,
+    ...(FOREIGN_ADR_CONFIG[symbol]?.localSymbols || [])
+  ].map((value) => String(value || "").trim().toUpperCase()).filter(Boolean));
 
   const cached = earningsEstimateCalendarCache.get(symbol);
   if (cached && Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1000) {
@@ -612,7 +617,7 @@ async function fetchCalendarQuarterEstimate(ticker) {
     });
 
     const rows = (data?.earningsCalendar || [])
-      .filter((row) => String(row.symbol || "").toUpperCase() === symbol)
+      .filter((row) => calendarSymbols.has(String(row.symbol || "").toUpperCase()))
       .map((row) => ({
         ...row,
         reportDate: new Date(`${row.date}T12:00:00Z`),
@@ -1846,6 +1851,79 @@ function convertForeignAdrRow(row, config, usdRate) {
   return next;
 }
 
+function normalizeForeignAdrEpsEstimate(value, config, usdRate, options = {}) {
+  const number = toNumberOrNull(value);
+  if (number === null) return value;
+  const localCurrencyThreshold =
+    options.localCurrencyThreshold ||
+    config.localCurrencyEpsThreshold ||
+    40;
+  return Math.abs(number) >= localCurrencyThreshold
+    ? number * config.adrRatio * usdRate
+    : number;
+}
+
+function normalizeForeignAdrMoneyEstimate(value, usdRate, threshold) {
+  const number = toNumberOrNull(value);
+  if (number === null) return value;
+  return Math.abs(number) >= threshold ? number * usdRate : number;
+}
+
+function normalizeForeignAdrMarketCap(value, usdRate) {
+  const number = toNumberOrNull(value);
+  if (number === null) return null;
+  return Math.abs(number) >= 10000000000000 ? number * usdRate : number;
+}
+
+function normalizeForeignAdrEstimateBlock(block, config, usdRate, sharesOutstanding, options = {}) {
+  if (!block) return block;
+  const revenueThreshold = options.quarterly ? 300000000000 : 1000000000000;
+  const earningsThreshold = options.quarterly ? 100000000000 : 500000000000;
+  const eps = normalizeForeignAdrEpsEstimate(block.eps, config, usdRate, {
+    localCurrencyThreshold: options.quarterly ? 8 : 40
+  });
+  const revenue = normalizeForeignAdrMoneyEstimate(block.revenue, usdRate, revenueThreshold);
+  const rawEarnings = normalizeForeignAdrMoneyEstimate(block.earnings, usdRate, earningsThreshold);
+  const earnings =
+    toNumberOrNull(rawEarnings) !== null
+      ? rawEarnings
+      : toNumberOrNull(eps) !== null && sharesOutstanding
+        ? eps * sharesOutstanding * 1000000
+        : block.earnings;
+
+  return {
+    ...block,
+    revenue,
+    earnings,
+    eps
+  };
+}
+
+function normalizeForeignAdrEpsBeatMissRows(rows, config, usdRate) {
+  if (!Array.isArray(rows)) return rows;
+  return rows.map((row) => {
+    const epsOptions = { localCurrencyThreshold: 8 };
+    const estimate = normalizeForeignAdrEpsEstimate(row.estimate, config, usdRate, epsOptions);
+    const actual = normalizeForeignAdrEpsEstimate(row.actual, config, usdRate, epsOptions);
+    const gaapActual = normalizeForeignAdrEpsEstimate(row.gaapActual, config, usdRate, epsOptions);
+    const surprise = toNumberOrNull(actual) !== null && toNumberOrNull(estimate) !== null
+      ? actual - estimate
+      : normalizeForeignAdrEpsEstimate(row.surprise, config, usdRate, epsOptions);
+    const gaapSurprise = toNumberOrNull(gaapActual) !== null && toNumberOrNull(estimate) !== null
+      ? gaapActual - estimate
+      : normalizeForeignAdrEpsEstimate(row.gaapSurprise, config, usdRate, epsOptions);
+
+    return {
+      ...row,
+      estimate,
+      actual,
+      gaapActual,
+      surprise,
+      gaapSurprise
+    };
+  });
+}
+
 function recalculatedHistoricalPe(rows = [], yearEndPrices = []) {
   const priceByYear = new Map(
     (yearEndPrices || [])
@@ -1888,9 +1966,9 @@ async function normalizeForeignAdrStockData(ticker, data = {}) {
     ? data.revenueHistory.map((row) => convertMoneyFields(row, usdRate, ["value", "revenue"]))
     : data.revenueHistory;
 
-  const localMarketCap = toNumberOrNull(data.marketCap);
+  const rawMarketCap = toNumberOrNull(data.marketCap);
   const price = toNumberOrNull(data.price);
-  const marketCap = localMarketCap !== null ? localMarketCap * usdRate : null;
+  const marketCap = normalizeForeignAdrMarketCap(rawMarketCap, usdRate);
   const sharesOutstanding =
     marketCap !== null && price
       ? marketCap / price / 1000000
@@ -1898,32 +1976,34 @@ async function normalizeForeignAdrStockData(ticker, data = {}) {
   const analystEstimates = data.analystEstimates
     ? {
         ...data.analystEstimates,
-        currentYear: {
-          ...(data.analystEstimates.currentYear || {}),
-          revenue: toNumberOrNull(data.analystEstimates.currentYear?.revenue) !== null
-            ? data.analystEstimates.currentYear.revenue * usdRate
-            : data.analystEstimates.currentYear?.revenue,
-          earnings:
-            toNumberOrNull(data.analystEstimates.currentYear?.eps) !== null && sharesOutstanding
-              ? data.analystEstimates.currentYear.eps * sharesOutstanding * 1000000
-              : toNumberOrNull(data.analystEstimates.currentYear?.earnings) !== null
-                ? data.analystEstimates.currentYear.earnings * usdRate
-                : data.analystEstimates.currentYear?.earnings
-        },
-        nextYear: {
-          ...(data.analystEstimates.nextYear || {}),
-          revenue: toNumberOrNull(data.analystEstimates.nextYear?.revenue) !== null
-            ? data.analystEstimates.nextYear.revenue * usdRate
-            : data.analystEstimates.nextYear?.revenue,
-          earnings:
-            toNumberOrNull(data.analystEstimates.nextYear?.eps) !== null && sharesOutstanding
-              ? data.analystEstimates.nextYear.eps * sharesOutstanding * 1000000
-              : toNumberOrNull(data.analystEstimates.nextYear?.earnings) !== null
-                ? data.analystEstimates.nextYear.earnings * usdRate
-                : data.analystEstimates.nextYear?.earnings
-        }
+        nextQuarter: normalizeForeignAdrEstimateBlock(
+          data.analystEstimates.nextQuarter,
+          config,
+          usdRate,
+          sharesOutstanding,
+          { quarterly: true }
+        ),
+        currentYear: normalizeForeignAdrEstimateBlock(
+          data.analystEstimates.currentYear,
+          config,
+          usdRate,
+          sharesOutstanding
+        ),
+        nextYear: normalizeForeignAdrEstimateBlock(
+          data.analystEstimates.nextYear,
+          config,
+          usdRate,
+          sharesOutstanding
+        ),
+        followingYear: normalizeForeignAdrEstimateBlock(
+          data.analystEstimates.followingYear,
+          config,
+          usdRate,
+          sharesOutstanding
+        )
       }
     : data.analystEstimates;
+  const epsBeatMiss = normalizeForeignAdrEpsBeatMissRows(data.epsBeatMiss, config, usdRate);
   const yearEndPrices = await fetchYahooYearEndPrices(ticker).catch(() => []);
   const annualHistoricalPe = Array.isArray(revenueData)
     ? recalculatedHistoricalPe(revenueData, yearEndPrices)
@@ -1944,6 +2024,7 @@ async function normalizeForeignAdrStockData(ticker, data = {}) {
         ? marketCap / currentRevenue
         : data.priceToSales,
     analystEstimates,
+    epsBeatMiss,
     historicalPe: [...annualHistoricalPe, ...currentPeRows].slice(-7),
     financialCurrency: config.displayCurrency,
     sourceFinancialCurrency: config.sourceCurrency,
