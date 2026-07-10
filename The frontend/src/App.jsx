@@ -4033,7 +4033,7 @@ return (
       </select>
     </div>
 
-    {isEarningsCallLoading ? (
+    {isEarningsCallLoading || (!earningsCall && stockData?.refreshing) ? (
       <div className="earnings-call-empty">Loading earnings calls...</div>
     ) : earningsCall?.available && (earningsCall?.transcript?.length || earningsCall?.transcriptUrl) ? (
       <>
@@ -4117,7 +4117,7 @@ return (
       ))}
     </div>
 
-    {isCompanyDocumentsLoading && !companyDocuments ? (
+    {isCompanyDocumentsLoading && !companyDocuments || (!companyDocuments && stockData?.refreshing) ? (
       <StockDataLoading label="Loading company documents..." />
     ) : !companyDocuments?.available ? (
       <div className="company-documents-empty">
