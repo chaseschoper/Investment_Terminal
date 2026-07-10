@@ -50,7 +50,7 @@ const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 144;
-const STOCK_ESTIMATE_VERSION = 13;
+const STOCK_ESTIMATE_VERSION = 14;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -576,7 +576,10 @@ async function fetchNasdaqEarningsDate(ticker, referenceDate) {
         }))
     );
     const bestMatch = matches.sort((a, b) => a.distance - b.distance)[0] || null;
-    const date = bestMatch?.date || null;
+    const date =
+      bestMatch?.date && bestMatch.date < referenceDate
+        ? referenceDate
+        : bestMatch?.date || null;
     nasdaqEarningsDateCache.set(cacheKey, { date, fetchedAt: Date.now() });
     return date;
   } catch (err) {
@@ -4659,22 +4662,68 @@ async function fetchFinnhubEpsSurprises(ticker) {
   }
 }
 
+const parseEpsBeatMissFiscalLabel = (value) => {
+  const text = String(value || "").trim();
+  if (!text) return {};
+  const match = text.match(/\bQ\s*([1-4])\b(?:\s*(?:FY)?)?\s*'?(\d{2,4})/i);
+  if (!match) return {};
+  const quarter = Number(match[1]);
+  const rawYear = Number(match[2]);
+  const year = rawYear < 100 ? 2000 + rawYear : rawYear;
+  return Number.isFinite(quarter) && Number.isFinite(year)
+    ? { fiscalQuarter: quarter, fiscalYear: year }
+    : {};
+};
+
+const epsBeatMissKey = (row = {}) => {
+  const fiscalYear = toNumberOrNull(row.fiscalYear);
+  const fiscalQuarter = toNumberOrNull(row.fiscalQuarter);
+  if (fiscalYear !== null && fiscalQuarter !== null) {
+    return `fq:${fiscalYear}:q${fiscalQuarter}`;
+  }
+  const labelFiscal = parseEpsBeatMissFiscalLabel(row.label);
+  if (labelFiscal.fiscalYear && labelFiscal.fiscalQuarter) {
+    return `fq:${labelFiscal.fiscalYear}:q${labelFiscal.fiscalQuarter}`;
+  }
+  return row.period ? `date:${row.period}` : null;
+};
+
+const isReportedEpsRow = (row = {}) =>
+  toNumberOrNull(row.actual) !== null || toNumberOrNull(row.gaapActual) !== null;
+
+const chooseEpsBeatMissPeriod = (existing = {}, row = {}) => {
+  if (!existing.period) return row.period;
+  if (!row.period) return existing.period;
+  if (isReportedEpsRow(row) && !isReportedEpsRow(existing)) return row.period;
+  if (isReportedEpsRow(existing) && !isReportedEpsRow(row)) return existing.period;
+  return row.period > existing.period ? row.period : existing.period;
+};
+
 const mergeEpsBeatMissRows = (...rowSets) => {
   const byPeriod = new Map();
   rowSets.flat().forEach((row) => {
     if (!row?.period) return;
-    const existing = byPeriod.get(row.period) || {};
-    byPeriod.set(row.period, {
+    const labelFiscal = parseEpsBeatMissFiscalLabel(row.label);
+    const hydratedRow = {
+      ...row,
+      fiscalYear: toNumberOrNull(row.fiscalYear) ?? labelFiscal.fiscalYear ?? row.fiscalYear,
+      fiscalQuarter: toNumberOrNull(row.fiscalQuarter) ?? labelFiscal.fiscalQuarter ?? row.fiscalQuarter
+    };
+    const key = epsBeatMissKey(hydratedRow);
+    if (!key) return;
+    const existing = byPeriod.get(key) || {};
+    byPeriod.set(key, {
       ...existing,
       ...Object.fromEntries(
-        Object.entries(row).filter(([, value]) => value !== null && value !== undefined && value !== "")
+        Object.entries(hydratedRow).filter(([, value]) => value !== null && value !== undefined && value !== "")
       ),
-      estimate: toNumberOrNull(row.estimate) ?? toNumberOrNull(existing.estimate),
-      actual: toNumberOrNull(row.actual) ?? toNumberOrNull(existing.actual),
-      gaapActual: toNumberOrNull(row.gaapActual) ?? toNumberOrNull(existing.gaapActual),
-      surprise: toNumberOrNull(row.surprise) ?? toNumberOrNull(existing.surprise),
-      gaapSurprise: toNumberOrNull(row.gaapSurprise) ?? toNumberOrNull(existing.gaapSurprise),
-      surprisePercent: toNumberOrNull(row.surprisePercent) ?? toNumberOrNull(existing.surprisePercent)
+      period: chooseEpsBeatMissPeriod(existing, hydratedRow),
+      estimate: toNumberOrNull(hydratedRow.estimate) ?? toNumberOrNull(existing.estimate),
+      actual: toNumberOrNull(hydratedRow.actual) ?? toNumberOrNull(existing.actual),
+      gaapActual: toNumberOrNull(hydratedRow.gaapActual) ?? toNumberOrNull(existing.gaapActual),
+      surprise: toNumberOrNull(hydratedRow.surprise) ?? toNumberOrNull(existing.surprise),
+      gaapSurprise: toNumberOrNull(hydratedRow.gaapSurprise) ?? toNumberOrNull(existing.gaapSurprise),
+      surprisePercent: toNumberOrNull(hydratedRow.surprisePercent) ?? toNumberOrNull(existing.surprisePercent)
     });
   });
 
@@ -4685,12 +4734,27 @@ const buildEpsBeatMissSeries = (reportedRows = [], nextQuarterEstimate = {}) => 
   const rows = mergeEpsBeatMissRows(reportedRows || []);
   const nextEstimate = toNumberOrNull(nextQuarterEstimate?.eps);
   const nextDate = yahooDateToIso(nextQuarterEstimate?.date);
-  if (nextEstimate !== null && !rows.some((row) => row.period === nextDate)) {
+  const nextLabel = firstText(nextQuarterEstimate?.fiscalQuarter, "Next Quarter");
+  const nextFiscal = parseEpsBeatMissFiscalLabel(nextLabel);
+  const nextKey = epsBeatMissKey({
+    period: nextDate,
+    label: nextLabel,
+    fiscalYear: nextFiscal.fiscalYear,
+    fiscalQuarter: nextFiscal.fiscalQuarter
+  });
+  if (
+    nextEstimate !== null &&
+    nextDate &&
+    !rows.some((row) =>
+      (nextKey && epsBeatMissKey(row) === nextKey) ||
+      row.period === nextDate
+    )
+  ) {
     rows.push({
       period: nextDate,
-      fiscalYear: null,
-      fiscalQuarter: null,
-      label: firstText(nextQuarterEstimate?.fiscalQuarter, "Next Quarter"),
+      fiscalYear: nextFiscal.fiscalYear || null,
+      fiscalQuarter: nextFiscal.fiscalQuarter || null,
+      label: nextLabel,
       estimate: nextEstimate,
       actual: null,
       surprise: null,
@@ -5656,6 +5720,7 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
       ...definedValues(fastData.analystEstimates?.nextYear)
     }
   };
+  const epsBeatMiss = buildEpsBeatMissSeries(previousData.epsBeatMiss || [], calendarQuarterEstimate);
   const nextEps = toNumberOrNull(analystEstimates.nextYear.eps);
   return withGuaranteedAnalystSection({
     ...previousData,
@@ -5666,6 +5731,7 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
       previousData.forwardPE
     ),
     analystEstimates,
+    epsBeatMiss,
     analystEstimatesSources: {
       ...(previousData.analystEstimatesSources || {}),
       nextQuarter: "Earnings calendar"
