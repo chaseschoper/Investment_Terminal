@@ -54,10 +54,13 @@ const normalizeTranscriptPeriodOptions = (periods = []) =>
 
 const COMPANY_DOCUMENT_TABS = [
   { id: "results", label: "Latest Results" },
-  { id: "tenK", label: "10-K" },
-  { id: "tenQ", label: "10-Q" },
-  { id: "exhibits", label: "8-K / Exhibits" },
-  { id: "all", label: "All Documents" }
+  { id: "annual", label: "Annual Reports" },
+  { id: "quarterly", label: "Quarterly Reports" },
+  { id: "current", label: "8-K / Current" },
+  { id: "proxy", label: "Proxy" },
+  { id: "ownership", label: "Ownership" },
+  { id: "registration", label: "Registration" },
+  { id: "all", label: "All SEC Filings" }
 ];
 
 const HOME_FEATURES = [
@@ -3130,27 +3133,34 @@ const exhibitDocumentCards = [
   document?.url &&
   documents.findIndex((item) => item?.url === document.url) === index
 );
+const allSecDocumentCards = (companyDocuments?.allSecFilings || [])
+  .filter((document) => document?.url || document?.indexUrl);
 const companyDocumentCards = [
   companyDocuments?.filings?.tenK,
   companyDocuments?.filings?.tenQ,
   companyDocuments?.filings?.earningsRelease,
   companyDocuments?.filings?.latest8K,
   ...(companyDocuments?.resultDocuments || []),
-  ...(companyDocuments?.earningsExhibits || [])
+  ...(companyDocuments?.earningsExhibits || []),
+  ...allSecDocumentCards
 ].filter((document, index, documents) =>
-  document?.url &&
-  documents.findIndex((item) => item?.url === document.url) === index
+  (document?.url || document?.indexUrl) &&
+  documents.findIndex((item) => (item?.url || item?.indexUrl) === (document.url || document.indexUrl)) === index
 );
 const activeCompanyDocumentCards =
   activeCompanyDocumentTab === "results"
     ? resultDocumentCards
-    : activeCompanyDocumentTab === "tenK"
-      ? [companyDocuments?.filings?.tenK].filter((document) => document?.url)
-      : activeCompanyDocumentTab === "tenQ"
-        ? [companyDocuments?.filings?.tenQ].filter((document) => document?.url)
-        : activeCompanyDocumentTab === "exhibits"
-          ? exhibitDocumentCards
-          : companyDocumentCards;
+    : activeCompanyDocumentTab === "current"
+      ? [
+          ...exhibitDocumentCards,
+          ...allSecDocumentCards.filter((document) => document.category === "current")
+        ].filter((document, index, documents) =>
+          (document?.url || document?.indexUrl) &&
+          documents.findIndex((item) => (item?.url || item?.indexUrl) === (document.url || document.indexUrl)) === index
+        )
+      : activeCompanyDocumentTab === "all"
+        ? companyDocumentCards
+        : allSecDocumentCards.filter((document) => document.category === activeCompanyDocumentTab);
 
 const stopComputerRead = () => {
   window.speechSynthesis?.cancel();
@@ -4324,9 +4334,19 @@ return (
           onClick={() => setActiveCompanyDocumentTab(tab.id)}
         >
           {tab.label}
+          {companyDocuments?.filingCounts?.[tab.id] ? (
+            <span>{companyDocuments.filingCounts[tab.id]}</span>
+          ) : null}
         </button>
       ))}
     </div>
+
+    {companyDocuments?.allSecFilings?.length ? (
+      <div className="company-documents-summary">
+        <strong>{companyDocuments.allSecFilings.length}</strong>
+        <span>recent SEC filings organized from EDGAR for {companyDocuments.companyName || ticker}</span>
+      </div>
+    ) : null}
 
     {isCompanyDocumentsLoading && !companyDocuments || (!companyDocuments && stockData?.refreshing) ? (
       <StockDataLoading label="Loading company documents..." />
@@ -4344,14 +4364,14 @@ return (
                 : ""
             }`}
             key={`${document.form || document.type || "document"}-${document.url}`}
-            href={document.url}
+            href={document.url || document.indexUrl}
             target="_blank"
             rel="noreferrer"
           >
             <span>{document.form || document.type || document.source || "Document"}</span>
             <strong>{document.title}</strong>
             <small>
-              {[document.reportDate, document.filingDate, document.items ? `Items ${document.items}` : null, document.source]
+              {[document.categoryLabel, document.reportDate ? `Report ${document.reportDate}` : null, document.filingDate ? `Filed ${document.filingDate}` : null, document.items ? `Items ${document.items}` : null, document.source]
                 .filter(Boolean)
                 .join(" • ")}
             </small>

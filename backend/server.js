@@ -1105,6 +1105,43 @@ const buildSecDocumentItem = (filing, cik, fallbackTitle = null) => ({
   accessionNumber: filing?.accessionNumber || null
 });
 
+const getSecFilingCategory = (form = "") => {
+  const normalized = String(form || "").toUpperCase();
+  if (/^10-K/.test(normalized) || /^20-F/.test(normalized) || /^40-F/.test(normalized)) return "annual";
+  if (/^10-Q/.test(normalized) || /^6-K/.test(normalized)) return "quarterly";
+  if (/^8-K/.test(normalized)) return "current";
+  if (/^(DEF 14A|DEFA14A|PRE 14A|PREC14A|DEFM14A|PREM14A)/.test(normalized)) return "proxy";
+  if (/^(3|4|5|SC 13|SC 13D|SC 13G|13F|NPORT|N-PORT)/.test(normalized)) return "ownership";
+  if (/^(S-|F-|424|FWP|POS|EFFECT|CORRESP|UPLOAD)/.test(normalized)) return "registration";
+  return "other";
+};
+
+const getSecFilingCategoryLabel = (category = "other") => ({
+  annual: "Annual reports",
+  quarterly: "Quarterly reports",
+  current: "8-K and current reports",
+  proxy: "Proxy statements",
+  ownership: "Ownership and holders",
+  registration: "Registration and prospectus",
+  other: "Other SEC filings"
+}[category] || "SEC filings");
+
+const buildSecFilingList = (filings, cik, limit = 90) =>
+  filings
+    .slice(0, limit)
+    .map((filing) => {
+      const category = getSecFilingCategory(filing.form);
+      return {
+        ...buildSecDocumentItem(filing, cik),
+        title: filing.primaryDocDescription || `${filing.form} filing`,
+        type: "SEC",
+        source: "SEC EDGAR",
+        category,
+        categoryLabel: getSecFilingCategoryLabel(category)
+      };
+    })
+    .filter((document) => document.url || document.indexUrl);
+
 const findLatestSecFact = (companyFacts, concepts, {
   units = ["USD"],
   formTypes = ["10-Q", "10-Q/A", "10-K", "10-K/A"],
@@ -1294,6 +1331,12 @@ async function fetchCompanyDocuments(ticker) {
     });
 
     const filings = normalizeSecRecentFilings(submissionsResponse.data?.filings?.recent || {});
+    const allSecFilings = buildSecFilingList(filings, cik);
+    const filingCounts = allSecFilings.reduce((counts, filing) => {
+      counts[filing.category] = (counts[filing.category] || 0) + 1;
+      counts.all = (counts.all || 0) + 1;
+      return counts;
+    }, { all: 0 });
     const latest10k = filings.find((filing) => /^10-K/i.test(filing.form));
     const latest10q = filings.find((filing) => /^10-Q/i.test(filing.form));
     const latest8k = filings.find((filing) => filing.form === "8-K" || filing.form === "8-K/A");
@@ -1333,6 +1376,8 @@ async function fetchCompanyDocuments(ticker) {
         earningsRelease: latestEarnings8k ? buildSecDocumentItem(latestEarnings8k, cik, "Latest earnings/results 8-K") : null,
         latest8K: latest8k ? buildSecDocumentItem(latest8k, cik, "Latest 8-K") : null
       },
+      allSecFilings,
+      filingCounts,
       resultDocuments: [...resultDocumentMap.values()],
       investorRelationsDocuments,
       earningsExhibits
