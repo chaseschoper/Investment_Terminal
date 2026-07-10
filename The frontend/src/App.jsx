@@ -63,61 +63,142 @@ const COMPANY_DOCUMENT_TABS = [
 const HOME_FEATURES = [
   {
     id: "overview",
-    badge: "STK",
+    icon: "overview",
     label: "Stock Overview",
     title: "Everything on one company page",
     text: "Search a ticker and review live pricing, financial charts, metrics, estimates, peer comps, AI analysis, transcripts, and company documents together."
   },
   {
     id: "projections",
-    badge: "PRO",
+    icon: "projections",
     label: "Projections",
     title: "Build your own stock cases",
     text: "Run bear, base, and bull scenarios with clean inputs for growth, margins, valuation, and expected return."
   },
   {
     id: "comparison",
-    badge: "CMP",
+    icon: "comparison",
     label: "Compare",
     title: "Line companies up side by side",
     text: "Compare several stocks at once so differences in price, performance, valuation, and fundamentals are easier to spot."
   },
   {
     id: "portfolio",
-    badge: "PFT",
+    icon: "portfolio",
     label: "Portfolio",
     title: "Track positions and performance",
     text: "Keep your holdings organized, see your portfolio value, and follow performance without leaving your research flow."
   },
   {
     id: "watchlists",
-    badge: "WCH",
+    icon: "watchlists",
     label: "Watchlists",
     title: "Keep ideas close",
     text: "Save companies you want to monitor and jump back into research quickly when a stock starts moving."
   },
   {
     id: "earnings-calendar",
-    badge: "CAL",
+    icon: "calendar",
     label: "Calendar",
     title: "Know what reports next",
     text: "Use the earnings calendar to see upcoming reports, expected EPS, expected revenue, and recent market events."
   },
   {
     id: "overview",
-    badge: "DOC",
+    icon: "documents",
     label: "Documents",
     title: "Read the actual company releases",
     text: "Open the latest 10-K, 10-Q, earnings release, income statement, balance sheet, and cash flow documents from the stock page."
   },
   {
     id: "mr-rally",
-    badge: "AI",
+    icon: "mr-rally",
     label: "Mr. Rally",
     title: "Ask questions while you research",
     text: "Use the built-in stock chat to ask about companies, filings, earnings, metrics, risks, and the data behind the business."
   }
 ];
+
+const renderHomeFeatureIcon = (icon) => {
+  const commonProps = {
+    className: `home-feature-icon icon-${icon}`,
+    viewBox: "0 0 64 64",
+    fill: "none",
+    xmlns: "http://www.w3.org/2000/svg",
+    focusable: "false"
+  };
+
+  switch (icon) {
+    case "overview":
+      return (
+        <svg {...commonProps}>
+          <path className="icon-muted" d="M12 48V16M12 48H54" />
+          <path className="icon-blue" d="M18 42L28 31L38 36L52 18" />
+          <path className="icon-green" d="M44 18H52V26" />
+          <circle className="icon-dot" cx="28" cy="31" r="3" />
+        </svg>
+      );
+    case "projections":
+      return (
+        <svg {...commonProps}>
+          <path className="icon-muted" d="M14 48H52" />
+          <path className="icon-red" d="M16 42L27 35L38 39L50 30" />
+          <path className="icon-blue" d="M16 34L27 28L38 29L50 20" />
+          <path className="icon-green" d="M16 26L27 20L38 18L50 10" />
+        </svg>
+      );
+    case "comparison":
+      return (
+        <svg {...commonProps}>
+          <path className="icon-muted" d="M12 50H54" />
+          <rect className="icon-blue-fill" x="16" y="24" width="8" height="22" rx="2" />
+          <rect className="icon-green-fill" x="29" y="14" width="8" height="32" rx="2" />
+          <rect className="icon-red-fill" x="42" y="31" width="8" height="15" rx="2" />
+        </svg>
+      );
+    case "portfolio":
+      return (
+        <svg {...commonProps}>
+          <path className="icon-blue-fill" d="M32 12C43 12 52 21 52 32H32V12Z" />
+          <path className="icon-green" d="M32 32L45 48C41.5 51 37 52 32 52C21 52 12 43 12 32C12 22.5 18.5 14.5 27 12.5V32H32Z" />
+          <path className="icon-muted" d="M32 32H52C52 37.5 49.5 43 45 48L32 32Z" />
+        </svg>
+      );
+    case "watchlists":
+      return (
+        <svg {...commonProps}>
+          <path className="icon-green" d="M32 11L38 24L52 26L42 36L44 50L32 43L20 50L22 36L12 26L26 24L32 11Z" />
+          <path className="icon-blue" d="M43 15H54M48.5 9.5V20.5" />
+        </svg>
+      );
+    case "calendar":
+      return (
+        <svg {...commonProps}>
+          <rect className="icon-muted" x="13" y="16" width="38" height="36" rx="5" />
+          <path className="icon-blue" d="M13 26H51M23 11V20M41 11V20" />
+          <path className="icon-green" d="M22 34H26M31 34H35M40 34H44M22 42H26M31 42H35M40 42H44" />
+        </svg>
+      );
+    case "documents":
+      return (
+        <svg {...commonProps}>
+          <path className="icon-muted" d="M18 10H38L50 22V54H18V10Z" />
+          <path className="icon-blue" d="M38 10V22H50" />
+          <path className="icon-green" d="M25 33H43M25 41H43M25 49H36" />
+        </svg>
+      );
+    case "mr-rally":
+    default:
+      return (
+        <svg {...commonProps}>
+          <path className="icon-muted" d="M13 16H51V42H34L23 52V42H13V16Z" />
+          <path className="icon-green" d="M22 34L30 26L36 31L45 22" />
+          <path className="icon-blue" d="M45 22V30M45 22H37" />
+          <path className="icon-dot" d="M22 22H31" />
+        </svg>
+      );
+  }
+};
 
 const formatDividendYield = (value) =>
   isNumber(value) ? `${(Math.abs(value) > 1 ? value : value * 100).toFixed(2)}%` : "N/A";
@@ -3714,8 +3795,7 @@ return (
               onClick={() => openPage(feature.id)}
             >
               <span className={`home-feature-mark mark-${index % 8}`} aria-hidden="true">
-                <img src="/mrktrally-icon.png" alt="" />
-                <span>{feature.badge}</span>
+                {renderHomeFeatureIcon(feature.icon)}
               </span>
               <span className="home-feature-copy">
                 <span className="home-feature-label">{feature.label}</span>

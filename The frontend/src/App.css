@@ -236,50 +236,65 @@ body {
   box-shadow: 0 0 24px rgba(20, 184, 166, 0.12);
 }
 
-.home-feature-mark img {
+.home-feature-icon {
   width: 48px;
   height: 48px;
   display: block;
-  object-fit: contain;
-  filter: drop-shadow(0 0 10px rgba(94, 234, 212, 0.22));
+  overflow: visible;
+  filter: drop-shadow(0 0 10px rgba(94, 234, 212, 0.18));
 }
 
-.home-feature-mark span {
-  min-width: 28px;
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  position: absolute;
-  right: -7px;
-  bottom: -7px;
-  padding: 0 6px;
-  border: 1px solid rgba(125, 211, 252, 0.46);
-  border-radius: 5px;
-  background: #07111f;
-  color: #7dd3fc;
-  font-size: 10px;
-  font-weight: 900;
-  line-height: 1;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.34);
+.home-feature-icon path,
+.home-feature-icon rect,
+.home-feature-icon circle {
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
-.home-feature-mark.mark-1 span,
-.home-feature-mark.mark-5 span {
-  border-color: rgba(94, 234, 212, 0.5);
-  color: #5eead4;
+.home-feature-icon .icon-muted {
+  stroke: #334155;
 }
 
-.home-feature-mark.mark-2 span,
-.home-feature-mark.mark-6 span {
-  border-color: rgba(251, 113, 133, 0.5);
-  color: #fb7185;
+.home-feature-icon .icon-blue {
+  stroke: #38bdf8;
 }
 
-.home-feature-mark.mark-3 span,
-.home-feature-mark.mark-7 span {
-  border-color: rgba(167, 139, 250, 0.5);
-  color: #a78bfa;
+.home-feature-icon .icon-green {
+  stroke: #22c55e;
+}
+
+.home-feature-icon .icon-red {
+  stroke: #fb7185;
+}
+
+.home-feature-icon .icon-dot {
+  stroke: #5eead4;
+}
+
+.home-feature-icon .icon-blue-fill {
+  fill: rgba(56, 189, 248, 0.34);
+  stroke: #38bdf8;
+}
+
+.home-feature-icon .icon-green-fill {
+  fill: rgba(34, 197, 94, 0.32);
+  stroke: #22c55e;
+}
+
+.home-feature-icon .icon-red-fill {
+  fill: rgba(251, 113, 133, 0.3);
+  stroke: #fb7185;
+}
+
+.home-feature-icon.icon-documents .icon-muted,
+.home-feature-icon.icon-calendar .icon-muted,
+.home-feature-icon.icon-mr-rally .icon-muted {
+  stroke: #4b6584;
+}
+
+.home-feature-icon.icon-portfolio .icon-blue-fill {
+  stroke-width: 3;
 }
 
 .home-feature-copy {
@@ -2798,18 +2813,9 @@ body {
     height: 58px;
   }
 
-  .home-feature-mark img {
+  .home-feature-icon {
     width: 36px;
     height: 36px;
-  }
-
-  .home-feature-mark span {
-    min-width: 24px;
-    height: 18px;
-    right: -5px;
-    bottom: -5px;
-    padding: 0 5px;
-    font-size: 9px;
   }
 
   .home-feature-copy strong {
