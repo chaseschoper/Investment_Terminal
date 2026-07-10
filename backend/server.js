@@ -48,7 +48,7 @@ const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 143;
+const FINANCIAL_HISTORY_VERSION = 144;
 const STOCK_ESTIMATE_VERSION = 7;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
@@ -1149,6 +1149,14 @@ const CASH_FLOW_DEFINITIONS = [
   { label: "Cash Change", concepts: ["CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseIncludingExchangeRateEffect", "CashAndCashEquivalentsPeriodIncreaseDecrease"] }
 ];
 
+const INSURANCE_BENEFIT_EXPENSE_CONCEPTS = [
+  "PolicyholderBenefitsAndClaimsIncurredNet",
+  "PolicyholderBenefitsAndClaimsIncurredHealthCare",
+  "BenefitsLossesAndExpenses",
+  "LiabilityForUnpaidClaimsAndClaimsAdjustmentExpenseIncurredClaims1",
+  "SupplementalInformationForPropertyCasualtyInsuranceUnderwritersCurrentYearClaimsAndClaimsAdjustmentExpense"
+];
+
 async function fetchSecFilingExhibits(cik, filing) {
   if (!filing?.accessionNumber) return [];
   try {
@@ -1371,6 +1379,7 @@ async function fetchSecAnnualMargins(ticker) {
       "CostOfGoodsAndServicesSold",
       "CostOfRevenue"
     ], endDate);
+    const insuranceBenefitExpense = latestSecAnnualFact(facts, INSURANCE_BENEFIT_EXPENSE_CONCEPTS, endDate);
     const operatingIncome = latestSecAnnualFact(facts, ["OperatingIncomeLoss"], endDate);
     const netIncome = latestSecAnnualFact(facts, [
       "NetIncomeLoss",
@@ -1426,6 +1435,12 @@ async function fetchSecAnnualMargins(ticker) {
         "CostOfGoodsAndServicesSold",
         "CostOfRevenue"
       ], interimEnd, interimRevenueEntry);
+      const interimInsuranceBenefitExpense = latestSecInterimFact(
+        facts,
+        INSURANCE_BENEFIT_EXPENSE_CONCEPTS,
+        interimEnd,
+        interimRevenueEntry
+      );
       const interimOperatingIncome = latestSecInterimFact(
         facts,
         ["OperatingIncomeLoss"],
@@ -1463,6 +1478,7 @@ async function fetchSecAnnualMargins(ticker) {
         netIncome: interimNetIncome,
         grossProfit: interimGrossProfit,
         costOfRevenue: interimCostOfRevenue,
+        insuranceBenefitExpense: interimInsuranceBenefitExpense,
         operatingIncome: interimOperatingIncome,
         netInterestIncome: interimNetInterestIncome,
         preTaxIncome: interimPreTaxIncome,
@@ -1485,6 +1501,11 @@ async function fetchSecAnnualMargins(ticker) {
         "CostOfGoodsAndServicesSold",
         "CostOfRevenue"
       ], yearEnd);
+      const annualInsuranceBenefitExpense = latestSecAnnualFact(
+        facts,
+        INSURANCE_BENEFIT_EXPENSE_CONCEPTS,
+        yearEnd
+      );
       const annualOperatingIncome = latestSecAnnualFact(
         facts,
         ["OperatingIncomeLoss"],
@@ -1508,6 +1529,8 @@ async function fetchSecAnnualMargins(ticker) {
       const annualGrossProfitValue = annualGrossProfit?.val ?? (
         annualCostOfRevenue?.val !== undefined
           ? revenueEntry.val - annualCostOfRevenue.val
+          : annualInsuranceBenefitExpense?.val !== undefined
+            ? revenueEntry.val - annualInsuranceBenefitExpense.val
           : null
       );
       const percentageOfRevenue = (value) =>
@@ -1534,6 +1557,8 @@ async function fetchSecAnnualMargins(ticker) {
         const interimGrossProfitValue = interimFacts?.grossProfit?.val ?? (
           interimFacts?.costOfRevenue?.val !== undefined
             ? interimRevenueEntry.val - interimFacts.costOfRevenue.val
+            : interimFacts?.insuranceBenefitExpense?.val !== undefined
+              ? interimRevenueEntry.val - interimFacts.insuranceBenefitExpense.val
             : null
         );
         const percentageOfInterimRevenue = (value) =>
@@ -1559,7 +1584,11 @@ async function fetchSecAnnualMargins(ticker) {
     const grossProfitValue = isFinancialCompany
       ? null
       : grossProfit?.val ?? (
-          costOfRevenue?.val !== undefined ? revenue.val - costOfRevenue.val : null
+          costOfRevenue?.val !== undefined
+            ? revenue.val - costOfRevenue.val
+            : insuranceBenefitExpense?.val !== undefined
+              ? revenue.val - insuranceBenefitExpense.val
+              : null
         );
     const annualHistoryRows = revenueEntries.slice(-6).map((revenueEntry) => {
       const yearEnd = revenueEntry.end;
@@ -1573,6 +1602,11 @@ async function fetchSecAnnualMargins(ticker) {
         "CostOfGoodsAndServicesSold",
         "CostOfRevenue"
       ], yearEnd);
+      const annualInsuranceBenefitExpense = latestSecAnnualFact(
+        facts,
+        INSURANCE_BENEFIT_EXPENSE_CONCEPTS,
+        yearEnd
+      );
       const annualOperatingIncome = latestSecAnnualFact(
         facts,
         ["OperatingIncomeLoss"],
@@ -1596,6 +1630,8 @@ async function fetchSecAnnualMargins(ticker) {
       const annualGrossProfitValue = annualGrossProfit?.val ?? (
         annualCostOfRevenue?.val !== undefined
           ? revenueEntry.val - annualCostOfRevenue.val
+          : annualInsuranceBenefitExpense?.val !== undefined
+            ? revenueEntry.val - annualInsuranceBenefitExpense.val
           : null
       );
 
@@ -1652,6 +1688,8 @@ async function fetchSecAnnualMargins(ticker) {
           const interimGrossProfitValue = interimFacts?.grossProfit?.val ?? (
             interimFacts?.costOfRevenue?.val !== undefined
               ? interimRevenueEntry.val - interimFacts.costOfRevenue.val
+              : interimFacts?.insuranceBenefitExpense?.val !== undefined
+                ? interimRevenueEntry.val - interimFacts.insuranceBenefitExpense.val
               : null
           );
 
@@ -5280,6 +5318,56 @@ async function publishFastStockSnapshot(ticker) {
   );
 }
 
+async function buildMarketActivitySnapshot(ticker, previousData = {}) {
+  const [
+    marketBeatAnalystUpdates,
+    marketBeatInstitutionalHolders,
+    secInsiderTransactions
+  ] = await Promise.all([
+    resolveWithin(fetchMarketBeatAnalystUpdates(ticker), 4500, []),
+    resolveWithin(fetchMarketBeatInstitutionalHolders(ticker), 4500, []),
+    resolveWithin(fetchSecInsiderTransactions(ticker), 4500, [])
+  ]);
+
+  return {
+    analystUpdates: marketBeatAnalystUpdates.length
+      ? marketBeatAnalystUpdates
+      : previousData.analystUpdates || [],
+    institutionalHolders: marketBeatInstitutionalHolders.length
+      ? marketBeatInstitutionalHolders
+      : previousData.institutionalHolders || [],
+    insiderTransactions: secInsiderTransactions.length
+      ? secInsiderTransactions
+      : previousData.insiderTransactions || [],
+    marketActivityUpdatedAt: new Date().toISOString()
+  };
+}
+
+async function publishMarketActivitySnapshot(ticker) {
+  const stock = await Stock.findOne({ ticker }).lean();
+  if (!stock) return;
+  const marketActivity = await buildMarketActivitySnapshot(ticker, stock.data || {});
+  if (
+    !marketActivity.analystUpdates.length &&
+    !marketActivity.institutionalHolders.length &&
+    !marketActivity.insiderTransactions.length
+  ) {
+    return;
+  }
+
+  await Stock.findOneAndUpdate(
+    { ticker },
+    {
+      $set: {
+        "data.analystUpdates": marketActivity.analystUpdates,
+        "data.institutionalHolders": marketActivity.institutionalHolders,
+        "data.insiderTransactions": marketActivity.insiderTransactions,
+        "data.marketActivityUpdatedAt": marketActivity.marketActivityUpdatedAt
+      }
+    }
+  );
+}
+
 async function buildFastStockSnapshot(ticker, previousData = {}) {
   const [yahooData, chartQuote, calendarQuarterEstimate] = await Promise.all([
     resolveWithin(fetchYahooQuickQuote(ticker), 900, {}),
@@ -6732,6 +6820,9 @@ function startStockFetch(ticker) {
 
   publishFastStockSnapshot(ticker).catch((err) => {
     console.log("Fast stock snapshot skipped:", ticker, err.message);
+  });
+  publishMarketActivitySnapshot(ticker).catch((err) => {
+    console.log("Market activity snapshot skipped:", ticker, err.message);
   });
 
   fetchStockData(ticker)

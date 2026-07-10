@@ -670,6 +670,11 @@ const hasStableChartData = (stock = {}) =>
   (Array.isArray(stock.revenueData) && stock.revenueData.length > 0) ||
   (Array.isArray(stock.revenueHistory) && stock.revenueHistory.length > 0);
 
+const hasMarketActivityData = (stock = {}) =>
+  (Array.isArray(stock.analystUpdates) && stock.analystUpdates.length > 0) ||
+  (Array.isArray(stock.institutionalHolders) && stock.institutionalHolders.length > 0) ||
+  (Array.isArray(stock.insiderTransactions) && stock.insiderTransactions.length > 0);
+
 const stabilizeRefreshingStockData = (previous, incoming) => {
   if (
     !previous ||
@@ -847,7 +852,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 143;
+const FINANCIAL_HISTORY_VERSION = 144;
 const STOCK_ESTIMATE_VERSION = 7;
 
 const getDefaultCompanyLogoUrl = (symbol) => {
@@ -2006,9 +2011,10 @@ useEffect(() => {
         response.data.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
         !Array.isArray(stableResponse.revenueData) ||
         stableResponse.revenueData.length === 0;
+      const needsMarketActivity = !hasMarketActivityData(stableResponse);
 
-      if (response.data.refreshing && needsFreshHistory && attempt < 90) {
-        scheduleRetry(attempt < 30 ? 1000 : 2500);
+      if (response.data.refreshing && (needsFreshHistory || needsMarketActivity) && attempt < 90) {
+        scheduleRetry(needsMarketActivity && attempt < 20 ? 750 : attempt < 30 ? 1000 : 2500);
       }
 
       setPortfolioPrices((prev) => ({
@@ -4816,7 +4822,7 @@ return (
     <DataMiniTable
       title="Analyst Updates"
       subtitle="Latest firm actions from available market sources"
-      emptyText="Loading latest data..."
+      emptyText="No recent analyst rows found yet."
       loading={Boolean(stockData.refreshing)}
       rows={stockData.analystUpdates || []}
       columns={[
@@ -4838,7 +4844,7 @@ return (
     <DataMiniTable
       title="Top Institutional Holders"
       subtitle="Latest reported institutional holders"
-      emptyText="Loading latest data..."
+      emptyText="No recent holder rows found yet."
       loading={Boolean(stockData.refreshing)}
       rows={stockData.institutionalHolders || []}
       columns={[
@@ -4864,7 +4870,7 @@ return (
     <DataMiniTable
       title="Insider Tracker"
       subtitle="Recent insider buys, sells, and gifts"
-      emptyText="Loading latest data..."
+      emptyText="No recent insider rows found yet."
       loading={Boolean(stockData.refreshing)}
       rows={stockData.insiderTransactions || []}
       columns={[
