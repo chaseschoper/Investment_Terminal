@@ -41,12 +41,15 @@ const priceHistoryCache = new Map();
 const companyDocumentsCache = new Map();
 const companyDocumentsInFlight = new Map();
 const similarCompanyMetricCache = new Map();
+const fmpMarketActivityCache = new Map();
+const marketBeatAnalystCache = new Map();
+const secInsiderTransactionCache = new Map();
 const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 143;
-const STOCK_ESTIMATE_VERSION = 3;
+const STOCK_ESTIMATE_VERSION = 7;
 const EARNINGS_CALL_VERSION = 16;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -4491,6 +4494,383 @@ async function fetchFinnhubAnalystUpdates(ticker) {
   }
 }
 
+const readCachedMarketActivity = (cache, key) => {
+  const cached = cache.get(key);
+  if (!cached) return null;
+  if (Date.now() > cached.expiresAt) {
+    cache.delete(key);
+    return null;
+  }
+  return cached.data;
+};
+
+const writeCachedMarketActivity = (cache, key, data, ttlMs) => {
+  cache.set(key, {
+    data,
+    expiresAt: Date.now() + ttlMs
+  });
+  return data;
+};
+
+const normalizeFmpMarketActivityRows = (data) => {
+  if (Array.isArray(data)) return data;
+  if (!data || typeof data !== "object") return [];
+  for (const key of ["data", "results", "items", "ownership", "transactions", "history"]) {
+    if (Array.isArray(data[key])) return data[key];
+  }
+  return [data];
+};
+
+async function fetchFmpMarketActivity(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !process.env.FMP_API_KEY) {
+    return { analystUpdates: [], institutionalHolders: [] };
+  }
+
+  const cached = readCachedMarketActivity(fmpMarketActivityCache, symbol);
+  if (cached) return cached;
+
+  const emptyResult = { analystUpdates: [], institutionalHolders: [] };
+  const [gradesData, holdersData] = await Promise.all([
+    resolveWithin(getFmpData(symbol, "analyst actions", [
+      "/stable/grades-historical?symbol={ticker}",
+      "/api/v3/grade/{ticker}"
+    ]), STOCK_PROVIDER_TIMEOUT_MS, null),
+    resolveWithin(getFmpData(symbol, "institutional ownership", [
+      "/stable/institutional-ownership/latest?symbol={ticker}",
+      "/api/v4/institutional-ownership/symbol-ownership?symbol={ticker}",
+      "/api/v4/institutional-ownership/institutional-holders/symbol-ownership?symbol={ticker}"
+    ]), STOCK_PROVIDER_TIMEOUT_MS, null)
+  ]);
+
+  const analystUpdates = normalizeFmpMarketActivityRows(gradesData)
+    .map((item) => ({
+      firm: firstText(item.gradingCompany, item.company, item.firm, item.analyst, item.institution),
+      latestRating: firstText(item.newGrade, item.toGrade, item.rating, item.grade, item.newRating),
+      previousRating: firstText(item.previousGrade, item.fromGrade, item.oldGrade, item.previousRating),
+      action: firstText(item.action, item.newsTitle, item.type),
+      priceTarget: toNumberOrNull(item.priceTarget ?? item.targetPrice ?? item.priceTargetNew ?? item.newPriceTarget),
+      date: yahooDateToIso(item.date || item.publishedDate || item.gradeTime || item.updatedAt),
+      source: "FMP"
+    }))
+    .filter((item) => item.firm || item.latestRating)
+    .slice(0, 12);
+
+  const institutionalHolders = normalizeFmpMarketActivityRows(holdersData)
+    .map((item) => ({
+      institution: firstText(item.investorName, item.holder, item.name, item.institution, item.ownerName, item.cik),
+      shares: toNumberOrNull(item.sharesNumber ?? item.shares ?? item.position ?? item.share),
+      value: toNumberOrNull(item.value ?? item.marketValue ?? item.marketValueHolding ?? item.marketValueUsd),
+      percentHeld: toNumberOrNull(item.ownership ?? item.percentHeld ?? item.weight ?? item.portfolioWeight),
+      percentChange: toNumberOrNull(item.changeInSharesPercentage ?? item.percentChange ?? item.change),
+      reportDate: yahooDateToIso(item.date || item.filingDate || item.reportDate || item.asOfDate),
+      source: "FMP"
+    }))
+    .filter((item) => item.institution)
+    .slice(0, 10);
+
+  const result = { analystUpdates, institutionalHolders };
+  const hasData = analystUpdates.length || institutionalHolders.length;
+  return writeCachedMarketActivity(
+    fmpMarketActivityCache,
+    symbol,
+    hasData ? result : emptyResult,
+    hasData ? 6 * 60 * 60 * 1000 : 20 * 60 * 1000
+  );
+}
+
+const cleanMarketBeatCellText = (value) =>
+  String(value || "")
+    .replace(/Subscribe to MarketBeat All Access.*?rating/gi, "")
+    .replace(/\d+\s+of\s+5\s+stars/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const marketBeatDateToIso = (value) => {
+  const match = String(value || "").trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) return yahooDateToIso(value);
+  const [, month, day, year] = match;
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+};
+
+const parseMarketBeatPriceTarget = (value) => {
+  const matches = [...String(value || "").matchAll(/\$?(-?\d+(?:,\d{3})*(?:\.\d+)?)/g)];
+  if (!matches.length) return null;
+  return toNumberOrNull(matches.at(-1)?.[1]?.replace(/,/g, ""));
+};
+
+const parseMarketBeatCompactNumber = (value) => {
+  const text = String(value || "").trim().replace(/,/g, "");
+  if (!text || /^N\/A$/i.test(text)) return null;
+  const match = text.match(/(-?\$?\d+(?:\.\d+)?)([KMBT])?/i);
+  if (!match) return null;
+  const number = toNumberOrNull(match[1].replace("$", ""));
+  if (number === null) return null;
+  const suffix = String(match[2] || "").toUpperCase();
+  const multiplier = suffix === "T"
+    ? 1000000000000
+    : suffix === "B"
+      ? 1000000000
+      : suffix === "M"
+        ? 1000000
+        : suffix === "K"
+          ? 1000
+          : 1;
+  return number * multiplier;
+};
+
+const parseMarketBeatPercent = (value) => {
+  const text = String(value || "").replace(/,/g, "").trim();
+  if (!text || /^N\/A$/i.test(text)) return null;
+  const match = text.match(/(-?\+?\d+(?:\.\d+)?)%/);
+  return match ? toNumberOrNull(match[1]) : null;
+};
+
+async function fetchMarketBeatInstitutionalHolders(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol) return [];
+
+  const cacheKey = `${symbol}:holders`;
+  const cached = readCachedMarketActivity(marketBeatAnalystCache, cacheKey);
+  if (cached) return cached;
+
+  const pathSymbol = encodeURIComponent(symbol.replace(/-/g, "."));
+  const exchanges = ["NASDAQ", "NYSE", "AMEX"];
+
+  for (const exchange of exchanges) {
+    const url = `https://www.marketbeat.com/stocks/${exchange}/${pathSymbol}/institutional-ownership/`;
+    try {
+      const response = await axios.get(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        },
+        timeout: 10000
+      });
+      const $ = cheerio.load(response.data || "");
+      const targetTable = $("table").filter((_, table) => {
+        const headerText = $(table).find("th").text().replace(/\s+/g, " ").trim();
+        return /Major Shareholder|Institution|Holder/i.test(headerText) && /Shares Held/i.test(headerText);
+      }).first();
+
+      if (!targetTable.length) continue;
+
+      const rows = [];
+      targetTable.find("tbody tr").each((_, row) => {
+        const cells = $(row).find("td").map((__, cell) =>
+          cleanMarketBeatCellText($(cell).text())
+        ).get();
+        const institution = cells[1];
+        if (!institution) return;
+        rows.push({
+          institution,
+          shares: parseMarketBeatCompactNumber(cells[2]),
+          value: parseMarketBeatCompactNumber(cells[3]),
+          percentHeld: parseMarketBeatPercent(cells[6]),
+          percentChange: parseMarketBeatPercent(cells[5]),
+          reportDate: marketBeatDateToIso(cells[0]),
+          source: "MarketBeat"
+        });
+      });
+
+      const result = rows
+        .filter((item) => item.institution)
+        .sort((a, b) => (toNumberOrNull(b.value) || 0) - (toNumberOrNull(a.value) || 0))
+        .slice(0, 10);
+      return writeCachedMarketActivity(
+        marketBeatAnalystCache,
+        cacheKey,
+        result,
+        result.length ? 6 * 60 * 60 * 1000 : 30 * 60 * 1000
+      );
+    } catch (err) {
+      if (err.response?.status === 404) continue;
+      console.log("MarketBeat institutional holders skipped:", symbol, exchange, err.response?.status || err.message);
+    }
+  }
+
+  return writeCachedMarketActivity(marketBeatAnalystCache, cacheKey, [], 20 * 60 * 1000);
+}
+
+async function fetchMarketBeatAnalystUpdates(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol) return [];
+
+  const cached = readCachedMarketActivity(marketBeatAnalystCache, symbol);
+  if (cached) return cached;
+
+  const pathSymbol = encodeURIComponent(symbol.replace(/-/g, "."));
+  const exchanges = ["NASDAQ", "NYSE", "AMEX"];
+
+  for (const exchange of exchanges) {
+    const url = `https://www.marketbeat.com/stocks/${exchange}/${pathSymbol}/forecast/`;
+    try {
+      const response = await axios.get(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        },
+        timeout: 10000
+      });
+      const $ = cheerio.load(response.data || "");
+      const targetTable = $("table").filter((_, table) => {
+        const headerText = $(table).find("th").text().replace(/\s+/g, " ").trim();
+        return /Date/i.test(headerText) && /Brokerage/i.test(headerText) && /Price Target/i.test(headerText);
+      }).first();
+
+      if (!targetTable.length) continue;
+
+      const rows = [];
+      targetTable.find("tbody tr").each((_, row) => {
+        const cells = $(row).find("td").map((__, cell) =>
+          cleanMarketBeatCellText($(cell).text())
+        ).get();
+        const firm = cells[1];
+        const action = cells[3];
+        const latestRating = cells[4];
+        const priceTarget = parseMarketBeatPriceTarget(cells[5]);
+        const date = marketBeatDateToIso(cells[0]);
+        if (!firm || (!latestRating && priceTarget === null && !action)) return;
+        rows.push({
+          firm,
+          latestRating,
+          previousRating: null,
+          action,
+          priceTarget,
+          date,
+          source: "MarketBeat"
+        });
+      });
+
+      const result = rows.slice(0, 12);
+      return writeCachedMarketActivity(
+        marketBeatAnalystCache,
+        symbol,
+        result,
+        result.length ? 6 * 60 * 60 * 1000 : 30 * 60 * 1000
+      );
+    } catch (err) {
+      if (err.response?.status === 404) continue;
+      console.log("MarketBeat analyst updates skipped:", symbol, exchange, err.response?.status || err.message);
+    }
+  }
+
+  return writeCachedMarketActivity(marketBeatAnalystCache, symbol, [], 20 * 60 * 1000);
+}
+
+const SEC_TRANSACTION_LABELS = {
+  P: "Buy",
+  S: "Sell",
+  A: "Award",
+  G: "Gift",
+  M: "Option exercise",
+  F: "Tax withholding",
+  D: "Disposition",
+  C: "Conversion",
+  J: "Other"
+};
+
+const secBoolean = ($, root, selector) => {
+  const text = $(root).find(selector).first().text().trim();
+  return text === "1" || /^true$/i.test(text);
+};
+
+async function fetchSecInsiderTransactions(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol) return [];
+
+  const cached = readCachedMarketActivity(secInsiderTransactionCache, symbol);
+  if (cached) return cached;
+
+  try {
+    const tickerMap = await getSecTickerMap();
+    const cik = tickerMap.get(symbol);
+    if (!cik) return [];
+
+    const submissionsResponse = await axios.get(`https://data.sec.gov/submissions/CIK${cik}.json`, {
+      headers: { "User-Agent": "InvestmentTerminal/1.0 contact@investmentterminal.app" },
+      timeout: 10000
+    });
+
+    const filings = normalizeSecRecentFilings(submissionsResponse.data?.filings?.recent || {})
+      .filter((filing) => /^4(?:\/A)?$/i.test(filing.form) && filing.primaryDocument)
+      .slice(0, 12);
+
+    const batches = await Promise.all(filings.map(async (filing) => {
+      const rawPrimaryDocument = String(filing.primaryDocument || "").split("/").pop();
+      const url = secArchivesDocumentUrl(cik, filing.accessionNumber, rawPrimaryDocument);
+      if (!url) return [];
+
+      try {
+        const response = await axios.get(url, {
+          headers: {
+            "User-Agent": "InvestmentTerminal/1.0 contact@investmentterminal.app",
+            Accept: "application/xml,text/xml,text/html,*/*"
+          },
+          timeout: 8000,
+          responseType: "text",
+          transformResponse: [(data) => data]
+        });
+        const $ = cheerio.load(response.data || "", { xmlMode: true });
+        const owner = $("reportingOwner").first();
+        const filerName = owner.find("reportingOwnerId rptOwnerName").first().text().trim();
+        const relationParts = [];
+        const relationship = owner.find("reportingOwnerRelationship").first();
+        if (secBoolean($, relationship, "isDirector")) relationParts.push("Director");
+        if (secBoolean($, relationship, "isOfficer")) relationParts.push("Officer");
+        if (secBoolean($, relationship, "isTenPercentOwner")) relationParts.push("10% owner");
+        const officerTitle = relationship.find("officerTitle").first().text().trim();
+        if (officerTitle) relationParts.push(officerTitle);
+        const relation = [...new Set(relationParts)].join(", ");
+
+        const rows = [];
+        $("nonDerivativeTransaction").each((_, element) => {
+          const code = $(element).find("transactionCoding transactionCode").first().text().trim().toUpperCase();
+          const shares = toNumberOrNull($(element).find("transactionAmounts transactionShares value").first().text());
+          const price = toNumberOrNull($(element).find("transactionAmounts transactionPricePerShare value").first().text());
+          const date = $(element).find("transactionDate value").first().text().trim() || filing.reportDate || filing.filingDate;
+          const ownership = $(element).find("ownershipNature directOrIndirectOwnership value").first().text().trim();
+          const acquiredDisposed = $(element).find("transactionAmounts transactionAcquiredDisposedCode value").first().text().trim();
+          if (!shares && !code) return;
+          const value = shares !== null && price !== null ? shares * price : null;
+          const transaction = SEC_TRANSACTION_LABELS[code] || code || firstText(acquiredDisposed === "A" ? "Acquired" : null, acquiredDisposed === "D" ? "Disposed" : null, "Transaction");
+          rows.push({
+            filerName,
+            relation,
+            transaction,
+            shares,
+            value,
+            moneyText: price !== null ? `$${price.toFixed(2)}/share` : null,
+            ownership,
+            date: yahooDateToIso(date),
+            source: "SEC Form 4"
+          });
+        });
+        return rows;
+      } catch (err) {
+        console.log("SEC insider filing skipped:", symbol, filing.accessionNumber, err.response?.status || err.message);
+        return [];
+      }
+    }));
+
+    const transactions = batches
+      .flat()
+      .filter((item) => item.filerName || item.transaction)
+      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
+      .slice(0, 12);
+
+    return writeCachedMarketActivity(
+      secInsiderTransactionCache,
+      symbol,
+      transactions,
+      transactions.length ? 6 * 60 * 60 * 1000 : 30 * 60 * 1000
+    );
+  } catch (err) {
+    console.log("SEC insider transactions skipped:", symbol, err.response?.status || err.message);
+    return writeCachedMarketActivity(secInsiderTransactionCache, symbol, [], 15 * 60 * 1000);
+  }
+}
+
 const parseYahooAnalysisNumber = (value, { money = false } = {}) => {
   const text = String(value || "").trim().replace(/,/g, "");
   if (!text || text === "--" || /^N\/A$/i.test(text)) return null;
@@ -4901,7 +5281,7 @@ async function publishFastStockSnapshot(ticker) {
   await Stock.findOneAndUpdate(
     { ticker, ...(stock?.updatedAt ? { updatedAt: stock.updatedAt } : {}) },
     update,
-    { upsert: true }
+    { upsert: !stock }
   );
 }
 
@@ -5201,6 +5581,10 @@ async function fetchStockData(ticker) {
     stockAnalysisFinancialData,
     calendarQuarterEstimate,
     finnhubAnalystUpdates,
+    fmpMarketActivity,
+    marketBeatAnalystUpdates,
+    marketBeatInstitutionalHolders,
+    secInsiderTransactions,
     recommendation,
     epsEstimate,
     revenueEstimate
@@ -5231,6 +5615,10 @@ async function fetchStockData(ticker) {
     resolveWithin(fetchStockAnalysisIncomeStatementHistory(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(fetchCalendarQuarterEstimate(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, {}),
     resolveWithin(fetchFinnhubAnalystUpdates(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
+    resolveWithin(fetchFmpMarketActivity(ticker), STOCK_PROVIDER_TIMEOUT_MS, { analystUpdates: [], institutionalHolders: [] }),
+    resolveWithin(fetchMarketBeatAnalystUpdates(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
+    resolveWithin(fetchMarketBeatInstitutionalHolders(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
+    resolveWithin(fetchSecInsiderTransactions(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/recommendation?symbol=${ticker}`).catch((err) => {
       console.log("Recommendation skipped:", ticker, err.message);
       return [];
@@ -6253,14 +6641,24 @@ async function fetchStockData(ticker) {
     analystRatingText,
     analystUpdates: yahooSupplementalData.analystUpdates?.length
       ? yahooSupplementalData.analystUpdates
+      : fmpMarketActivity?.analystUpdates?.length
+        ? fmpMarketActivity.analystUpdates
+      : marketBeatAnalystUpdates?.length
+        ? marketBeatAnalystUpdates
       : finnhubAnalystUpdates?.length
         ? finnhubAnalystUpdates
         : previousData?.analystUpdates || [],
     institutionalHolders: yahooSupplementalData.institutionalHolders?.length
       ? yahooSupplementalData.institutionalHolders
+      : fmpMarketActivity?.institutionalHolders?.length
+        ? fmpMarketActivity.institutionalHolders
+      : marketBeatInstitutionalHolders?.length
+        ? marketBeatInstitutionalHolders
       : previousData?.institutionalHolders || [],
     insiderTransactions: yahooSupplementalData.insiderTransactions?.length
       ? yahooSupplementalData.insiderTransactions
+      : secInsiderTransactions?.length
+        ? secInsiderTransactions
       : previousData?.insiderTransactions || [],
     holderSummary: yahooSupplementalData.holderSummary || previousData?.holderSummary || {},
     analystTargets: yahooSupplementalData.analystTargets || previousData?.analystTargets || {},

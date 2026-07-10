@@ -848,7 +848,7 @@ const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
 const FINANCIAL_HISTORY_VERSION = 143;
-const STOCK_ESTIMATE_VERSION = 3;
+const STOCK_ESTIMATE_VERSION = 7;
 
 const getDefaultCompanyLogoUrl = (symbol) => {
   const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
@@ -4810,7 +4810,7 @@ return (
   <div className="market-intel-grid">
     <DataMiniTable
       title="Analyst Updates"
-      subtitle="Latest firm actions from Yahoo Finance"
+      subtitle="Latest firm actions from available market sources"
       emptyText="No firm-level analyst updates available yet."
       rows={stockData.analystUpdates || []}
       columns={[
@@ -4831,7 +4831,7 @@ return (
 
     <DataMiniTable
       title="Top Institutional Holders"
-      subtitle="Largest reported institutional holders"
+      subtitle="Latest reported institutional holders"
       emptyText="No institutional holder data available yet."
       rows={stockData.institutionalHolders || []}
       columns={[
