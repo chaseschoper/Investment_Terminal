@@ -75,6 +75,35 @@ let yahooAnalysisPageCooldownUntil = 0;
 let fmpCooldownUntil = 0;
 let secTickerMapPromise;
 let secTickerMapRetryAfter = 0;
+const COMMON_SEC_CIKS = new Map(Object.entries({
+  AAPL: "0000320193",
+  MSFT: "0000789019",
+  NVDA: "0001045810",
+  AMD: "0000002488",
+  AMZN: "0001018724",
+  GOOGL: "0001652044",
+  GOOG: "0001652044",
+  META: "0001326801",
+  TSLA: "0001318605",
+  TSM: "0001046179",
+  BRK_B: "0001067983",
+  "BRK-B": "0001067983",
+  "BRK.B": "0001067983",
+  BRK_A: "0001067983",
+  "BRK-A": "0001067983",
+  "BRK.A": "0001067983",
+  CRM: "0001108524",
+  ORCL: "0001341439",
+  NFLX: "0001065280",
+  COST: "0000909832",
+  HD: "0000354950",
+  NKE: "0000320187",
+  FDX: "0001048911",
+  CAKE: "0000887596",
+  ELF: "0001600033",
+  CELH: "0001341766",
+  CCL: "0000815097"
+}));
 const TICKER_ALIASES = {
   ADVANCEDMICRODEVICES: "AMD",
   ALPHABET: "GOOGL",
@@ -904,6 +933,46 @@ async function getSecTickerMap() {
   return secTickerMapPromise;
 }
 
+async function resolveSecCikForTicker(symbol) {
+  const normalized = String(symbol || "").trim().toUpperCase();
+  const aliasKey = normalized.replace(/[.]/g, "-");
+  const compactKey = normalized.replace(/[-.]/g, "_");
+
+  try {
+    const tickerMap = await getSecTickerMap();
+    const cik = tickerMap.get(normalized) || tickerMap.get(aliasKey);
+    if (cik) return cik;
+  } catch (err) {
+    console.log("SEC ticker map lookup skipped:", normalized, err.response?.status || err.message);
+  }
+
+  const commonCik = COMMON_SEC_CIKS.get(normalized) || COMMON_SEC_CIKS.get(aliasKey) || COMMON_SEC_CIKS.get(compactKey);
+  if (commonCik) return commonCik;
+
+  try {
+    const response = await axios.get("https://www.sec.gov/cgi-bin/browse-edgar", {
+      params: {
+        CIK: normalized,
+        owner: "exclude",
+        action: "getcompany",
+        output: "atom"
+      },
+      headers: { "User-Agent": "InvestmentTerminal/1.0 contact@investmentterminal.app" },
+      timeout: 10000,
+      responseType: "text",
+      transformResponse: [(data) => data],
+      validateStatus: (status) => status >= 200 && status < 500
+    });
+    const cikMatch = String(response.data || "").match(/CIK=(\d{1,10})/i) ||
+      String(response.data || "").match(/<cik>(\d{1,10})<\/cik>/i);
+    if (cikMatch?.[1]) return String(cikMatch[1]).padStart(10, "0");
+  } catch (err) {
+    console.log("SEC ticker browse lookup skipped:", normalized, err.response?.status || err.message);
+  }
+
+  return null;
+}
+
 function latestSecAnnualFact(companyFacts, concepts, endDate) {
   let latestFact = null;
   for (const concept of concepts) {
@@ -1319,16 +1388,34 @@ async function fetchCompanyDocuments(ticker) {
   if (inFlight) return inFlight;
 
   const fetchPromise = (async () => {
-    const tickerMap = await getSecTickerMap();
-    const cik = tickerMap.get(symbol);
+    const cik = await resolveSecCikForTicker(symbol);
     if (!cik) {
       return { available: false, symbol, message: "SEC documents are not available for this ticker yet." };
     }
 
-    const submissionsResponse = await axios.get(`https://data.sec.gov/submissions/CIK${cik}.json`, {
-      headers: { "User-Agent": "InvestmentTerminal/1.0 contact@investmentterminal.app" },
-      timeout: 12000
-    });
+    let submissionsResponse;
+    try {
+      submissionsResponse = await axios.get(`https://data.sec.gov/submissions/CIK${cik}.json`, {
+        headers: { "User-Agent": "InvestmentTerminal/1.0 contact@investmentterminal.app" },
+        timeout: 16000
+      });
+    } catch (err) {
+      console.log("SEC submissions skipped:", symbol, cik, err.response?.status || err.message);
+      return {
+        available: false,
+        symbol,
+        cik,
+        companyName: symbol,
+        updatedAt: new Date().toISOString(),
+        filings: {},
+        allSecFilings: [],
+        filingCounts: { all: 0 },
+        resultDocuments: [],
+        investorRelationsDocuments: [],
+        earningsExhibits: [],
+        message: "SEC filings are temporarily unavailable for this ticker."
+      };
+    }
 
     const filings = normalizeSecRecentFilings(submissionsResponse.data?.filings?.recent || {});
     const allSecFilings = buildSecFilingList(filings, cik);
@@ -11428,7 +11515,7 @@ app.get("/api/company-documents/:ticker", async (req, res) => {
     return res.json(data);
   } catch (err) {
     console.error("Company documents fetch failed:", ticker, err.response?.status || err.message);
-    return res.status(502).json({
+    return res.json({
       available: false,
       symbol: ticker,
       error: "Company documents are temporarily unavailable"
@@ -11695,7 +11782,11 @@ async function fetchAvailableEarningsCallPeriods(ticker) {
     periods,
     updatedAt: new Date().toISOString()
   };
-  earningsCallPeriodsCache.set(symbol, { data, fetchedAt: Date.now() });
+  if (periods.length) {
+    earningsCallPeriodsCache.set(symbol, { data, fetchedAt: Date.now() });
+  } else {
+    earningsCallPeriodsCache.set(symbol, { data, fetchedAt: Date.now() - (58 * 60 * 1000) });
+  }
   return data;
 }
 

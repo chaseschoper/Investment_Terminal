@@ -2125,41 +2125,65 @@ useEffect(() => {
   useEffect(() => {
     if (!loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
     let isActive = true;
+    let retryTimer;
     setIsTranscriptPeriodsLoading(true);
 
-    axios.get(`${API_URL}/api/earnings-call-periods/${ticker}`, { timeout: 35000 })
-      .then((response) => {
-        if (!isActive) return;
-        const periods = normalizeTranscriptPeriodOptions(response.data?.periods || []);
-        setTranscriptPeriodOptions(periods);
-        setSelectedTranscriptPeriod((current) =>
-          periods.some((period) => period.value === current)
-            ? current
-            : periods[0]?.value || ""
-        );
-        if (!periods.length) {
+    const loadEarningsCallPeriods = (attempt = 0) => {
+      if (!isActive) return;
+      let willRetry = false;
+      axios.get(`${API_URL}/api/earnings-call-periods/${ticker}`, { timeout: 35000 })
+        .then((response) => {
+          if (!isActive) return;
+          const periods = normalizeTranscriptPeriodOptions(response.data?.periods || []);
+          if (!periods.length && attempt < 4) {
+            willRetry = true;
+            retryTimer = window.setTimeout(
+              () => loadEarningsCallPeriods(attempt + 1),
+              Math.min(12000, 1800 + attempt * 2200)
+            );
+            return;
+          }
+          setTranscriptPeriodOptions(periods);
+          setSelectedTranscriptPeriod((current) =>
+            periods.some((period) => period.value === current)
+              ? current
+              : periods[0]?.value || ""
+          );
+          if (!periods.length) {
+            setEarningsCall({
+              available: false,
+              message: "No conference call transcripts are available for this ticker yet."
+            });
+          }
+        })
+        .catch((error) => {
+          console.error("Earnings call periods failed", error);
+          if (!isActive) return;
+          if (attempt < 4) {
+            willRetry = true;
+            retryTimer = window.setTimeout(
+              () => loadEarningsCallPeriods(attempt + 1),
+              Math.min(12000, 1800 + attempt * 2200)
+            );
+            return;
+          }
+          setTranscriptPeriodOptions([]);
+          setSelectedTranscriptPeriod("");
           setEarningsCall({
             available: false,
-            message: "No conference call transcripts are available for this ticker yet."
+            message: "Conference call options are temporarily unavailable."
           });
-        }
-      })
-      .catch((error) => {
-        console.error("Earnings call periods failed", error);
-        if (!isActive) return;
-        setTranscriptPeriodOptions([]);
-        setSelectedTranscriptPeriod("");
-        setEarningsCall({
-          available: false,
-          message: "Conference call options are temporarily unavailable."
+        })
+        .finally(() => {
+          if (isActive && !willRetry) setIsTranscriptPeriodsLoading(false);
         });
-      })
-      .finally(() => {
-        if (isActive) setIsTranscriptPeriodsLoading(false);
-      });
+    };
+
+    loadEarningsCallPeriods();
 
     return () => {
       isActive = false;
+      if (retryTimer) window.clearTimeout(retryTimer);
     };
   }, [ticker, loadedStockSymbol, isStockLoading]);
 
