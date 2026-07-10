@@ -40,6 +40,7 @@ const marketIndexCache = new Map();
 const priceHistoryCache = new Map();
 const companyDocumentsCache = new Map();
 const companyDocumentsInFlight = new Map();
+const earningsCallPeriodsCache = new Map();
 const similarCompanyMetricCache = new Map();
 const fmpMarketActivityCache = new Map();
 const marketBeatAnalystCache = new Map();
@@ -11326,6 +11327,185 @@ function normalizeCachedEarningsCall(cached, ticker, cachedTranscriptUrl) {
     transcriptSourceUrl: cached.data.transcriptSourceUrl || null
   };
 }
+
+function normalizeEarningsCallPeriodItem(item = {}, provider = "") {
+  const quarterRaw =
+    item.quarter ??
+    item.fiscalQuarter ??
+    String(item.fiscalPeriod || "").match(/Q([1-4])/i)?.[1];
+  const yearRaw = item.year ?? item.fiscalYear;
+  const year = toNumberOrNull(yearRaw);
+  const quarter = toNumberOrNull(quarterRaw);
+  if (year === null || quarter === null || quarter < 1 || quarter > 4) return null;
+  const date = item.conference_date || item.time || item.date || null;
+  return {
+    value: `${year}-Q${quarter}`,
+    label: `${year} Q${quarter}`,
+    year,
+    quarter,
+    date,
+    provider
+  };
+}
+
+function mergeEarningsCallPeriods(...periodSets) {
+  const byPeriod = new Map();
+  periodSets.flat().forEach((period) => {
+    if (!period?.value) return;
+    const existing = byPeriod.get(period.value);
+    if (!existing) {
+      byPeriod.set(period.value, period);
+      return;
+    }
+    byPeriod.set(period.value, {
+      ...existing,
+      ...Object.fromEntries(
+        Object.entries(period).filter(([, value]) => value !== null && value !== undefined && value !== "")
+      ),
+      provider: existing.provider || period.provider
+    });
+  });
+
+  return [...byPeriod.values()]
+    .sort((a, b) => (b.year * 4 + b.quarter) - (a.year * 4 + a.quarter))
+    .slice(0, 20);
+}
+
+async function fetchEarningsCallBizPeriods(ticker) {
+  if (!process.env.EARNINGSCALL_API_KEY) return [];
+  const quote = await yahooFinance.quote(ticker).catch(() => ({}));
+  const preferredExchange = normalizeEarningsCallExchange(quote.exchange);
+  const exchanges = preferredExchange
+    ? [preferredExchange, ...EARNINGS_CALL_EXCHANGES.filter((item) => item !== preferredExchange)]
+    : EARNINGS_CALL_EXCHANGES;
+
+  for (const exchange of exchanges.slice(0, 4)) {
+    try {
+      const response = await axios.get("https://v2.api.earningscall.biz/events", {
+        params: {
+          apikey: process.env.EARNINGSCALL_API_KEY,
+          exchange: exchange.toLowerCase(),
+          symbol: ticker.toLowerCase()
+        },
+        timeout: 10000
+      });
+      const periods = (Array.isArray(response.data?.events) ? response.data.events : [])
+        .filter((event) => event.is_published !== false)
+        .map((event) => normalizeEarningsCallPeriodItem(event, "EarningsCall"))
+        .filter(Boolean);
+      if (periods.length) return periods;
+    } catch (err) {
+      if (![401, 403, 404].includes(err.response?.status)) {
+        console.log("EarningsCall periods skipped:", ticker, exchange, err.response?.status || err.message);
+      }
+      if ([401, 403].includes(err.response?.status)) break;
+    }
+  }
+  return [];
+}
+
+async function fetchFinnhubEarningsCallPeriods(ticker) {
+  if (!process.env.FINNHUB_API_KEY) return [];
+  try {
+    const response = await axios.get(
+      "https://finnhub.io/api/v1/stock/transcripts/list",
+      {
+        params: { symbol: ticker, token: process.env.FINNHUB_API_KEY },
+        timeout: 12000
+      }
+    );
+    return (response.data?.transcripts || response.data || [])
+      .map((item) => normalizeEarningsCallPeriodItem(item, "Finnhub"))
+      .filter(Boolean);
+  } catch (err) {
+    console.log("Finnhub transcript periods skipped:", ticker, err.response?.status || err.message);
+    return [];
+  }
+}
+
+async function fetchStockAnalysisEarningsCallPeriods(ticker) {
+  const symbol = String(ticker || "").trim().toLowerCase();
+  if (!symbol || !/^[a-z0-9.-]{1,15}$/.test(symbol)) return [];
+  try {
+    const response = await axios.get(`https://stockanalysis.com/stocks/${encodeURIComponent(symbol)}/transcripts/`, {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+      },
+      timeout: 12000,
+      validateStatus: (status) => status >= 200 && status < 500
+    });
+    if (response.status >= 400) return [];
+    const matches = [...String(response.data || "").matchAll(/Earnings Call:\s*Q([1-4])\s+(20\d{2})/gi)];
+    return mergeEarningsCallPeriods(
+      matches.map((match) =>
+        normalizeEarningsCallPeriodItem(
+          { quarter: Number(match[1]), year: Number(match[2]) },
+          "StockAnalysis"
+        )
+      ).filter(Boolean)
+    );
+  } catch (err) {
+    console.log("StockAnalysis transcript periods skipped:", ticker, err.response?.status || err.message);
+    return [];
+  }
+}
+
+function cachedEarningsCallPeriod(cached, ticker) {
+  const cachedData = normalizeCachedEarningsCall(cached, ticker, cached?.data?.rawTranscriptUrl);
+  return cachedData
+    ? [normalizeEarningsCallPeriodItem(cachedData, cachedData.provider || "Cached transcript")].filter(Boolean)
+    : [];
+}
+
+async function fetchAvailableEarningsCallPeriods(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  const cached = earningsCallPeriodsCache.get(symbol);
+  if (cached && Date.now() - cached.fetchedAt < 60 * 60 * 1000) {
+    return cached.data;
+  }
+
+  const savedCall = await EarningsCall.findOne({ ticker: symbol }).catch(() => null);
+  const [stockAnalysisPeriods, earningsCallPeriods, finnhubPeriods] = await Promise.all([
+    resolveWithin(fetchStockAnalysisEarningsCallPeriods(symbol), 12000, []),
+    resolveWithin(fetchEarningsCallBizPeriods(symbol), 12000, []),
+    resolveWithin(fetchFinnhubEarningsCallPeriods(symbol), 12000, [])
+  ]);
+  const periods = mergeEarningsCallPeriods(
+    stockAnalysisPeriods,
+    earningsCallPeriods,
+    finnhubPeriods,
+    cachedEarningsCallPeriod(savedCall, symbol)
+  );
+  const data = {
+    available: periods.length > 0,
+    symbol,
+    periods,
+    updatedAt: new Date().toISOString()
+  };
+  earningsCallPeriodsCache.set(symbol, { data, fetchedAt: Date.now() });
+  return data;
+}
+
+app.get("/api/earnings-call-periods/:ticker", async (req, res) => {
+  const ticker = req.params.ticker.trim().toUpperCase();
+  if (!/^[A-Z0-9.-]{1,15}$/.test(ticker)) {
+    return res.status(400).json({ available: false, periods: [], error: "Invalid ticker" });
+  }
+
+  try {
+    const data = await fetchAvailableEarningsCallPeriods(ticker);
+    return res.json(data);
+  } catch (err) {
+    console.error("Earnings call periods fetch failed:", ticker, err.response?.status || err.message);
+    return res.status(502).json({
+      available: false,
+      symbol: ticker,
+      periods: [],
+      error: "Earnings call periods are temporarily unavailable"
+    });
+  }
+});
 
 app.get("/api/earnings-call/:ticker", async (req, res) => {
   const ticker = req.params.ticker.trim().toUpperCase();

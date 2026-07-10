@@ -34,51 +34,23 @@ const isNumber = (value) =>
 const formatPercent = (value) =>
   isNumber(value) ? `${value.toFixed(1)}%` : "N/A";
 
-const buildTranscriptPeriodOptions = (latestFiscalPeriod = null) => {
-  const now = new Date();
-  const currentQuarter = Math.floor(now.getMonth() / 3) + 1;
-  const latestReportedQuarter = currentQuarter === 1 ? 4 : currentQuarter - 1;
-  const latestReportedYear = currentQuarter === 1 ? now.getFullYear() - 1 : now.getFullYear();
-  const fiscalPeriodMatch = String(latestFiscalPeriod || "").match(/(20\d{2}).*Q([1-4])/i);
-  const fiscalPeriod = fiscalPeriodMatch
-    ? {
-        year: Number(fiscalPeriodMatch[1]),
-        quarter: Number(fiscalPeriodMatch[2])
-      }
-    : null;
-  const calendarSerial = latestReportedYear * 4 + latestReportedQuarter;
-  const fiscalSerial = fiscalPeriod
-    ? fiscalPeriod.year * 4 + fiscalPeriod.quarter
-    : null;
-  const startingYear =
-    fiscalSerial !== null && fiscalSerial > calendarSerial
-      ? fiscalPeriod.year
-      : latestReportedYear;
-  const startingQuarter =
-    fiscalSerial !== null && fiscalSerial > calendarSerial
-      ? fiscalPeriod.quarter
-      : latestReportedQuarter;
-
-  return [
-    {
-      value: "latest",
-      label: "Latest call",
-      year: fiscalPeriod ? fiscalPeriod.year : null,
-      quarter: fiscalPeriod ? fiscalPeriod.quarter : null
-    },
-    ...Array.from({ length: 20 }, (_, index) => {
-      const zeroBasedQuarter = startingQuarter - 1 - index;
-      const year = startingYear + Math.floor(zeroBasedQuarter / 4);
-      const quarter = ((zeroBasedQuarter % 4) + 4) % 4 + 1;
+const normalizeTranscriptPeriodOptions = (periods = []) =>
+  (Array.isArray(periods) ? periods : [])
+    .map((period) => {
+      const year = Number(period?.year);
+      const quarter = Number(period?.quarter);
+      if (!Number.isInteger(year) || !Number.isInteger(quarter)) return null;
       return {
-        value: `${year}-Q${quarter}`,
-        label: `${year} Q${quarter}`,
+        value: period.value || `${year}-Q${quarter}`,
+        label: period.label || `${year} Q${quarter}`,
         year,
-        quarter
+        quarter,
+        date: period.date || null,
+        provider: period.provider || null
       };
     })
-  ];
-};
+    .filter(Boolean)
+    .sort((a, b) => (b.year * 4 + b.quarter) - (a.year * 4 + a.quarter));
 
 const COMPANY_DOCUMENT_TABS = [
   { id: "results", label: "Latest Results" },
@@ -1516,7 +1488,13 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
     useState(false);
 
   const [selectedTranscriptPeriod, setSelectedTranscriptPeriod] =
-    useState("latest");
+    useState("");
+
+  const [transcriptPeriodOptions, setTranscriptPeriodOptions] =
+    useState([]);
+
+  const [isTranscriptPeriodsLoading, setIsTranscriptPeriodsLoading] =
+    useState(false);
 
   const [isEarningsCallLoading, setIsEarningsCallLoading] =
     useState(false);
@@ -1925,7 +1903,8 @@ useEffect(() => {
     setCompanyDocuments(null);
     setSimilarCompanies([]);
     setActiveCompanyDocumentTab("results");
-    setSelectedTranscriptPeriod("latest");
+    setTranscriptPeriodOptions([]);
+    setSelectedTranscriptPeriod("");
     window.speechSynthesis?.cancel();
     setIsSpeechPlaying(false);
     setIsSpeechPaused(false);
@@ -1958,6 +1937,14 @@ useEffect(() => {
       axios.get(`${API_URL}/api/company-documents/${ticker}`, { timeout: 45000 })
         .then((response) => {
           if (isActive) {
+            if (!response.data?.available && attempt < 3) {
+              willRetry = true;
+              retryTimer = window.setTimeout(
+                () => loadCompanyDocuments(attempt + 1),
+                Math.min(10000, 1600 + attempt * 2200)
+              );
+              return;
+            }
             setCompanyDocuments(response.data);
           }
         })
@@ -1994,41 +1981,69 @@ useEffect(() => {
 
   useEffect(() => {
     if (!loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
+    let isActive = true;
+    setIsTranscriptPeriodsLoading(true);
+
+    axios.get(`${API_URL}/api/earnings-call-periods/${ticker}`, { timeout: 26000 })
+      .then((response) => {
+        if (!isActive) return;
+        const periods = normalizeTranscriptPeriodOptions(response.data?.periods || []);
+        setTranscriptPeriodOptions(periods);
+        setSelectedTranscriptPeriod((current) =>
+          periods.some((period) => period.value === current)
+            ? current
+            : periods[0]?.value || ""
+        );
+        if (!periods.length) {
+          setEarningsCall({
+            available: false,
+            message: "No conference call transcripts are available for this ticker yet."
+          });
+        }
+      })
+      .catch((error) => {
+        console.error("Earnings call periods failed", error);
+        if (!isActive) return;
+        setTranscriptPeriodOptions([]);
+        setSelectedTranscriptPeriod("");
+        setEarningsCall({
+          available: false,
+          message: "Conference call options are temporarily unavailable."
+        });
+      })
+      .finally(() => {
+        if (isActive) setIsTranscriptPeriodsLoading(false);
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [ticker, loadedStockSymbol, isStockLoading]);
+
+  useEffect(() => {
+    if (!loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading || isTranscriptPeriodsLoading) return;
     const requestId = ++latestEarningsCallRequest.current;
-    const periodOptions = buildTranscriptPeriodOptions(stockData?.latestInterimPeriod);
-    const selectedPeriod = periodOptions.find((period) => period.value === selectedTranscriptPeriod);
-    const latestExplicitPeriod = periodOptions.find((period) => period.value !== "latest");
-    const requestedPeriod =
-      selectedTranscriptPeriod === "latest"
-        ? selectedPeriod?.year && selectedPeriod?.quarter
-          ? selectedPeriod
-          : latestExplicitPeriod
-        : selectedPeriod;
-    const delay = selectedTranscriptPeriod === "latest" ? 250 : 100;
+    const selectedPeriod = transcriptPeriodOptions.find((period) => period.value === selectedTranscriptPeriod);
+    if (!selectedPeriod) {
+      setIsEarningsCallLoading(false);
+      if (!transcriptPeriodOptions.length) {
+        setEarningsCall({
+          available: false,
+          message: "No conference call transcripts are available for this ticker yet."
+        });
+      }
+      return;
+    }
+    const delay = 100;
     const timer = window.setTimeout(() => {
       setIsEarningsCallLoading(true);
 
       axios.get(`${API_URL}/api/earnings-call/${ticker}`, {
-        params: requestedPeriod?.year && requestedPeriod?.quarter
-          ? { year: requestedPeriod.year, quarter: requestedPeriod.quarter }
-          : undefined,
-        timeout: selectedTranscriptPeriod === "latest" ? 32000 : 22000
+        params: { year: selectedPeriod.year, quarter: selectedPeriod.quarter },
+        timeout: 26000
       })
         .then((response) => {
           if (requestId === latestEarningsCallRequest.current) {
-            if (
-              selectedTranscriptPeriod === "latest" &&
-              !response.data?.available &&
-              requestedPeriod?.value !== "latest"
-            ) {
-              return axios.get(`${API_URL}/api/earnings-call/${ticker}`, {
-                timeout: 32000
-              }).then((fallbackResponse) => {
-                if (requestId === latestEarningsCallRequest.current) {
-                  setEarningsCall(fallbackResponse.data);
-                }
-              });
-            }
             setEarningsCall(response.data);
           }
         })
@@ -2046,7 +2061,7 @@ useEffect(() => {
       });
 
     return () => window.clearTimeout(timer);
-  }, [ticker, loadedStockSymbol, isStockLoading, selectedTranscriptPeriod, stockData?.latestInterimPeriod]);
+  }, [ticker, loadedStockSymbol, isStockLoading, isTranscriptPeriodsLoading, selectedTranscriptPeriod, transcriptPeriodOptions]);
 
   useEffect(() => {
     if (!stockData?.price || stockData.symbol !== ticker) return;
@@ -2958,7 +2973,6 @@ const totalPortfolioValue = portfolioAllocationData.reduce(
   (total, position) => total + position.value,
   0
 );
-const transcriptPeriodOptions = buildTranscriptPeriodOptions(stockData?.latestInterimPeriod);
 const primaryResultDocuments = companyDocuments?.resultDocuments || [];
 const resultDocumentCards = (
   primaryResultDocuments.length
@@ -4039,21 +4053,26 @@ return (
       <select
         id="transcript-period"
         value={selectedTranscriptPeriod}
+        disabled={isTranscriptPeriodsLoading || !transcriptPeriodOptions.length}
         onChange={(event) => {
           stopComputerRead();
           setEarningsCall(null);
           setSelectedTranscriptPeriod(event.target.value);
         }}
       >
-        {transcriptPeriodOptions.map((period) => (
+        {isTranscriptPeriodsLoading ? (
+          <option value="">Loading calls...</option>
+        ) : transcriptPeriodOptions.length ? transcriptPeriodOptions.map((period) => (
           <option key={period.value} value={period.value}>
-            {period.label}
+            {period.label}{period.provider ? ` · ${period.provider}` : ""}
           </option>
-        ))}
+        )) : (
+          <option value="">No calls found</option>
+        )}
       </select>
     </div>
 
-    {isEarningsCallLoading || (!earningsCall && stockData?.refreshing) ? (
+    {isTranscriptPeriodsLoading || isEarningsCallLoading || (!earningsCall && stockData?.refreshing) ? (
       <div className="earnings-call-empty">Loading earnings calls...</div>
     ) : earningsCall?.available && (earningsCall?.transcript?.length || earningsCall?.transcriptUrl) ? (
       <>
