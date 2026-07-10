@@ -1456,6 +1456,8 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
 
   const [searchInput, setSearchInput] =
     useState("NVDA");
+  const [activePage, setActivePage] =
+    useState("home");
   const [savedProjections, setSavedProjections] =
     useState({});
 
@@ -1628,7 +1630,7 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   useState(() => toLocalIsoDate(new Date()));
 
     const [compareTickers, setCompareTickers] =
-  useState([]);
+  useState(["AAPL", "MSFT", "NVDA"]);
 
   const [compareData, setCompareData] =
     useState([]);
@@ -3361,6 +3363,34 @@ const comparisonSection = (
   </div>
 );
 
+const handleStockSearchSubmit = (event, destinationPage = "overview") => {
+  event.preventDefault();
+  const symbol = searchInput.trim().toUpperCase();
+  if (!symbol) return;
+
+  setActivePage(destinationPage);
+
+  if (symbol !== ticker) {
+    setTicker(symbol);
+    return;
+  }
+
+  if (stockRetryTimerRef.current) {
+    window.clearTimeout(stockRetryTimerRef.current);
+    stockRetryTimerRef.current = null;
+  }
+  const requestId = ++latestStockRequest.current;
+  const cachedStock = stockMemoryCacheRef.current.get(symbol) || null;
+  setStockData(cachedStock);
+  setIsStockLoading(!cachedStock);
+  loadStock(symbol, 0, requestId);
+};
+
+const openPage = (page) => {
+  setActivePage(page);
+  window.scrollTo({ top: 0, behavior: "smooth" });
+};
+
 
  
 
@@ -3410,6 +3440,7 @@ return (
             onClick={() => {
               setSearchInput(item);
               setTicker(item);
+              setActivePage("overview");
             }}
           >
 
@@ -3526,27 +3557,33 @@ return (
 
     </div>
 
-    <nav className="section-tabs" aria-label="Page sections">
-      <a href="#home">Home</a>
-      <a href="#overview">Overview</a>
-      <a href="#financials">Financials</a>
-      <a href="#metrics">Metrics</a>
-      <a href="#comparison">Compare</a>
-      <a href="#similar-companies">Similar Companies</a>
-      <a href="#projections">Projections</a>
-      <a href="#ai-analysis">AI Analysis</a>
-      <a href="#earnings-calls">Transcript</a>
-      <a href="#company-documents">Documents</a>
-      <a href="#portfolio">Portfolio</a>
-      <a href="#watchlists">Watchlists</a>
-      <a href="#earnings-calendar">Calendar</a>
-      <a href="#mr-rally">Mr. Rally</a>
+    <nav className="section-tabs" aria-label="MrktRally pages">
+      {[
+        ["home", "Home"],
+        ["overview", "Stock Overview"],
+        ["projections", "Projections"],
+        ["comparison", "Compare"],
+        ["portfolio", "Portfolio"],
+        ["watchlists", "Watchlists"],
+        ["earnings-calendar", "Calendar"],
+        ["mr-rally", "Mr. Rally"]
+      ].map(([page, label]) => (
+        <button
+          key={page}
+          type="button"
+          className={activePage === page ? "active" : ""}
+          onClick={() => openPage(page)}
+        >
+          {label}
+        </button>
+      ))}
     </nav>
 
     {/* MAIN */}
 
     <div className="main">
 
+    {activePage === "home" && (
     <section className="welcome-hero" id="home" aria-labelledby="welcome-title">
       <div className="welcome-hero-content">
         <div className="welcome-kicker">Market research, focused</div>
@@ -3559,37 +3596,23 @@ return (
           />
         </div>
         <p>Track companies, study the numbers, and keep your market view in one place.</p>
-        <a className="welcome-action" href="#overview">Explore the market</a>
+        <button className="welcome-action" type="button" onClick={() => openPage("overview")}>
+          Explore the market
+        </button>
       </div>
     </section>
+    )}
 
 
 
     {/* SEARCH */}
+    {activePage === "overview" && (
+    <>
 
 <form
   className="topbar"
   id="overview"
-  onSubmit={(event) => {
-    event.preventDefault();
-    const symbol = searchInput.trim().toUpperCase();
-    if (!symbol) return;
-
-    if (symbol !== ticker) {
-      setTicker(symbol);
-      return;
-    }
-
-    if (stockRetryTimerRef.current) {
-      window.clearTimeout(stockRetryTimerRef.current);
-      stockRetryTimerRef.current = null;
-    }
-    const requestId = ++latestStockRequest.current;
-    const cachedStock = stockMemoryCacheRef.current.get(symbol) || null;
-    setStockData(cachedStock);
-    setIsStockLoading(!cachedStock);
-    loadStock(symbol, 0, requestId);
-  }}
+  onSubmit={handleStockSearchSubmit}
 >
 
   <input
@@ -5079,7 +5102,11 @@ return (
           key={company.symbol}
           type="button"
           className="similar-company-card"
-          onClick={() => setTicker(company.symbol)}
+          onClick={() => {
+            setSearchInput(company.symbol);
+            setTicker(company.symbol);
+            setActivePage("overview");
+          }}
         >
           <span className="similar-company-symbol">
             {company.symbol}
@@ -5108,8 +5135,27 @@ return (
     </div>
   )}
 </section>
+    </>
+    )}
 
 {/* STOCK PROJECTIONS */}
+
+{activePage === "projections" && (
+<>
+<form className="topbar page-searchbar" onSubmit={(event) => handleStockSearchSubmit(event, "projections")}>
+  <input
+    className="search"
+    value={searchInput}
+    onChange={(event) => setSearchInput(event.target.value.toUpperCase())}
+    placeholder="Search ticker for projections..."
+  />
+  <button className="stock-search-button" type="submit">
+    Search
+  </button>
+  {isStockLoading && (
+    <span className="page-search-loading">Loading...</span>
+  )}
+</form>
 
 <section className="projections-section section-anchor" id="projections">
   <div className="projections-header">
@@ -5302,11 +5348,15 @@ return (
     ))}
   </div>
 </section>
+    </>
+    )}
 
-{comparisonSection}
+{activePage === "comparison" && comparisonSection}
 
 {/* PORTFOLIO TRACKER */}
 
+{activePage === "portfolio" && (
+<>
 <div className="portfolio-section" id="portfolio">
 
   <div className="portfolio-heading-row">
@@ -5708,7 +5758,10 @@ return (
 
 </div>
 {/* NAMED WATCHLISTS */}
+    </>
+    )}
 
+{activePage === "watchlists" && (
 <section className="chart-section named-watchlists-section" id="watchlists">
   <div className="named-watchlists-heading">
     <h2 className="section-title">Watchlists</h2>
@@ -5781,6 +5834,7 @@ return (
                   onClick={() => {
                     setSearchInput(symbol);
                     setTicker(symbol);
+                    setActivePage("overview");
                     window.scrollTo({ top: 0, behavior: "smooth" });
                   }}
                 >
@@ -5877,9 +5931,11 @@ return (
     <div className="named-watchlists-empty">Create a watchlist to organize stocks.</div>
   )}
 </section>
+)}
 
 {/* LIVE EARNINGS CALENDAR */}
 
+{activePage === "earnings-calendar" && (
 <div className="chart-section calendar-bottom-section" id="earnings-calendar">
 
   <div className="calendar-heading-row">
@@ -5954,6 +6010,7 @@ return (
             onClick={() => {
               setSearchInput(event.symbol);
               setTicker(event.symbol);
+              setActivePage("overview");
               window.scrollTo({ top: 0, behavior: "smooth" });
             }}
           >
@@ -5997,11 +6054,12 @@ return (
 
 
 </div>
+)}
 
 
 {/* MR. RALLY CHAT */}
 
-{mrRallySection}
+{activePage === "mr-rally" && mrRallySection}
 
 
 {/* AUTH POPUP */}
