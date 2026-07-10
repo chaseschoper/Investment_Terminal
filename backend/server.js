@@ -4626,6 +4626,55 @@ const parseMarketBeatPercent = (value) => {
   return match ? toNumberOrNull(match[1]) : null;
 };
 
+const MARKETBEAT_EXCHANGES = ["NASDAQ", "NYSE", "AMEX"];
+const MARKETBEAT_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+};
+
+async function fetchMarketBeatRows(symbol, page, tableMatcher, rowMapper) {
+  const pathSymbol = encodeURIComponent(symbol.replace(/-/g, "."));
+  const attempts = MARKETBEAT_EXCHANGES.map(async (exchange) => {
+    const url = `https://www.marketbeat.com/stocks/${exchange}/${pathSymbol}/${page}/`;
+    try {
+      const response = await axios.get(url, {
+        headers: MARKETBEAT_HEADERS,
+        timeout: 8000
+      });
+      const $ = cheerio.load(response.data || "");
+      const targetTable = $("table").filter((_, table) => {
+        const headerText = $(table).find("th").text().replace(/\s+/g, " ").trim();
+        return tableMatcher(headerText);
+      }).first();
+
+      if (!targetTable.length) throw new Error("MarketBeat table missing");
+
+      const rows = [];
+      targetTable.find("tbody tr").each((_, row) => {
+        const cells = $(row).find("td").map((__, cell) =>
+          cleanMarketBeatCellText($(cell).text())
+        ).get();
+        const mapped = rowMapper(cells);
+        if (mapped) rows.push(mapped);
+      });
+
+      if (!rows.length) throw new Error("MarketBeat rows missing");
+      return rows;
+    } catch (err) {
+      if (err.response?.status !== 404) {
+        console.log("MarketBeat page skipped:", symbol, page, exchange, err.response?.status || err.message);
+      }
+      throw err;
+    }
+  });
+
+  try {
+    return await Promise.any(attempts);
+  } catch {
+    return [];
+  }
+}
+
 async function fetchMarketBeatInstitutionalHolders(ticker) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol) return [];
@@ -4634,35 +4683,14 @@ async function fetchMarketBeatInstitutionalHolders(ticker) {
   const cached = readCachedMarketActivity(marketBeatAnalystCache, cacheKey);
   if (cached) return cached;
 
-  const pathSymbol = encodeURIComponent(symbol.replace(/-/g, "."));
-  const exchanges = ["NASDAQ", "NYSE", "AMEX"];
-
-  for (const exchange of exchanges) {
-    const url = `https://www.marketbeat.com/stocks/${exchange}/${pathSymbol}/institutional-ownership/`;
-    try {
-      const response = await axios.get(url, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-        },
-        timeout: 10000
-      });
-      const $ = cheerio.load(response.data || "");
-      const targetTable = $("table").filter((_, table) => {
-        const headerText = $(table).find("th").text().replace(/\s+/g, " ").trim();
-        return /Major Shareholder|Institution|Holder/i.test(headerText) && /Shares Held/i.test(headerText);
-      }).first();
-
-      if (!targetTable.length) continue;
-
-      const rows = [];
-      targetTable.find("tbody tr").each((_, row) => {
-        const cells = $(row).find("td").map((__, cell) =>
-          cleanMarketBeatCellText($(cell).text())
-        ).get();
+  const rows = await fetchMarketBeatRows(
+    symbol,
+    "institutional-ownership",
+    (headerText) => /Major Shareholder|Institution|Holder/i.test(headerText) && /Shares Held/i.test(headerText),
+    (cells) => {
         const institution = cells[1];
-        if (!institution) return;
-        rows.push({
+        if (!institution) return null;
+        return {
           institution,
           shares: parseMarketBeatCompactNumber(cells[2]),
           value: parseMarketBeatCompactNumber(cells[3]),
@@ -4670,26 +4698,20 @@ async function fetchMarketBeatInstitutionalHolders(ticker) {
           percentChange: parseMarketBeatPercent(cells[5]),
           reportDate: marketBeatDateToIso(cells[0]),
           source: "MarketBeat"
-        });
-      });
-
-      const result = rows
-        .filter((item) => item.institution)
-        .sort((a, b) => (toNumberOrNull(b.value) || 0) - (toNumberOrNull(a.value) || 0))
-        .slice(0, 10);
-      return writeCachedMarketActivity(
-        marketBeatAnalystCache,
-        cacheKey,
-        result,
-        result.length ? 6 * 60 * 60 * 1000 : 30 * 60 * 1000
-      );
-    } catch (err) {
-      if (err.response?.status === 404) continue;
-      console.log("MarketBeat institutional holders skipped:", symbol, exchange, err.response?.status || err.message);
+        };
     }
-  }
+  );
 
-  return writeCachedMarketActivity(marketBeatAnalystCache, cacheKey, [], 20 * 60 * 1000);
+  const result = rows
+    .filter((item) => item.institution)
+    .sort((a, b) => (toNumberOrNull(b.value) || 0) - (toNumberOrNull(a.value) || 0))
+    .slice(0, 10);
+  return writeCachedMarketActivity(
+    marketBeatAnalystCache,
+    cacheKey,
+    result,
+    result.length ? 6 * 60 * 60 * 1000 : 20 * 60 * 1000
+  );
 }
 
 async function fetchMarketBeatAnalystUpdates(ticker) {
@@ -4699,39 +4721,18 @@ async function fetchMarketBeatAnalystUpdates(ticker) {
   const cached = readCachedMarketActivity(marketBeatAnalystCache, symbol);
   if (cached) return cached;
 
-  const pathSymbol = encodeURIComponent(symbol.replace(/-/g, "."));
-  const exchanges = ["NASDAQ", "NYSE", "AMEX"];
-
-  for (const exchange of exchanges) {
-    const url = `https://www.marketbeat.com/stocks/${exchange}/${pathSymbol}/forecast/`;
-    try {
-      const response = await axios.get(url, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-        },
-        timeout: 10000
-      });
-      const $ = cheerio.load(response.data || "");
-      const targetTable = $("table").filter((_, table) => {
-        const headerText = $(table).find("th").text().replace(/\s+/g, " ").trim();
-        return /Date/i.test(headerText) && /Brokerage/i.test(headerText) && /Price Target/i.test(headerText);
-      }).first();
-
-      if (!targetTable.length) continue;
-
-      const rows = [];
-      targetTable.find("tbody tr").each((_, row) => {
-        const cells = $(row).find("td").map((__, cell) =>
-          cleanMarketBeatCellText($(cell).text())
-        ).get();
+  const rows = await fetchMarketBeatRows(
+    symbol,
+    "forecast",
+    (headerText) => /Date/i.test(headerText) && /Brokerage/i.test(headerText) && /Price Target/i.test(headerText),
+    (cells) => {
         const firm = cells[1];
         const action = cells[3];
         const latestRating = cells[4];
         const priceTarget = parseMarketBeatPriceTarget(cells[5]);
         const date = marketBeatDateToIso(cells[0]);
-        if (!firm || (!latestRating && priceTarget === null && !action)) return;
-        rows.push({
+        if (!firm || (!latestRating && priceTarget === null && !action)) return null;
+        return {
           firm,
           latestRating,
           previousRating: null,
@@ -4739,23 +4740,17 @@ async function fetchMarketBeatAnalystUpdates(ticker) {
           priceTarget,
           date,
           source: "MarketBeat"
-        });
-      });
-
-      const result = rows.slice(0, 12);
-      return writeCachedMarketActivity(
-        marketBeatAnalystCache,
-        symbol,
-        result,
-        result.length ? 6 * 60 * 60 * 1000 : 30 * 60 * 1000
-      );
-    } catch (err) {
-      if (err.response?.status === 404) continue;
-      console.log("MarketBeat analyst updates skipped:", symbol, exchange, err.response?.status || err.message);
+        };
     }
-  }
+  );
 
-  return writeCachedMarketActivity(marketBeatAnalystCache, symbol, [], 20 * 60 * 1000);
+  const result = rows.slice(0, 12);
+  return writeCachedMarketActivity(
+    marketBeatAnalystCache,
+    symbol,
+    result,
+    result.length ? 6 * 60 * 60 * 1000 : 20 * 60 * 1000
+  );
 }
 
 const SEC_TRANSACTION_LABELS = {

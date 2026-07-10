@@ -912,14 +912,19 @@ function ChartGrowthStrip({ label, rows }) {
   );
 }
 
-function DataMiniTable({ title, subtitle, columns, rows, emptyText }) {
+function DataMiniTable({ title, subtitle, columns, rows, emptyText, loading = false }) {
   return (
     <section className="data-mini-table-card">
       <div className="data-mini-table-heading">
         <h3>{title}</h3>
         {subtitle && <span>{subtitle}</span>}
       </div>
-      {rows?.length ? (
+      {loading && !rows?.length ? (
+        <div className="data-mini-table-loading" role="status">
+          <span className="stock-data-loading-dot" />
+          <strong>Loading latest data...</strong>
+        </div>
+      ) : rows?.length ? (
         <div className="data-mini-table-scroll">
           <table className="data-mini-table">
             <thead>
@@ -4811,7 +4816,8 @@ return (
     <DataMiniTable
       title="Analyst Updates"
       subtitle="Latest firm actions from available market sources"
-      emptyText="No firm-level analyst updates available yet."
+      emptyText="Loading latest data..."
+      loading={Boolean(stockData.refreshing)}
       rows={stockData.analystUpdates || []}
       columns={[
         { key: "firm", label: "Institution" },
@@ -4832,7 +4838,8 @@ return (
     <DataMiniTable
       title="Top Institutional Holders"
       subtitle="Latest reported institutional holders"
-      emptyText="No institutional holder data available yet."
+      emptyText="Loading latest data..."
+      loading={Boolean(stockData.refreshing)}
       rows={stockData.institutionalHolders || []}
       columns={[
         { key: "institution", label: "Institution" },
@@ -4857,7 +4864,8 @@ return (
     <DataMiniTable
       title="Insider Tracker"
       subtitle="Recent insider buys, sells, and gifts"
-      emptyText="No insider transaction data available yet."
+      emptyText="Loading latest data..."
+      loading={Boolean(stockData.refreshing)}
       rows={stockData.insiderTransactions || []}
       columns={[
         { key: "filerName", label: "Insider" },

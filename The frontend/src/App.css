@@ -3089,6 +3089,19 @@ body {
   text-align: center;
 }
 
+.data-mini-table-loading {
+  display: flex;
+  min-height: 120px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 18px;
+  color: #dbeafe;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+}
+
 .similar-companies-section {
   margin-top: 40px;
   padding: 28px;
