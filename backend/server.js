@@ -3467,6 +3467,8 @@ function hasCompleteSupplementalData(stock) {
     toNumberOrNull(data.targetMean) !== null &&
     toNumberOrNull(data.priceToSales) !== null &&
     toNumberOrNull(data.priceToBook) !== null &&
+    toNumberOrNull(data.totalCash) !== null &&
+    toNumberOrNull(data.totalDebt) !== null &&
     toNumberOrNull(data.pe) !== null &&
     toNumberOrNull(data.forwardPE) !== null &&
     (!requiresIndustrialMetrics || toNumberOrNull(data.grossMargins) !== null) &&
@@ -5874,6 +5876,93 @@ const resolveWithin = (promise, ms, fallback = null) =>
 async function fetchLatestBalanceSheetMetrics(ticker) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol) return {};
+  const hasBalanceSheetData = (result = {}) =>
+    toNumberOrNull(result.totalCash) !== null || toNumberOrNull(result.totalDebt) !== null;
+
+  const fromYahooTimeSeries = async () => {
+    if (!canUseYahoo()) return {};
+    const typeList = [
+      "quarterlyTotalDebt",
+      "quarterlyCashAndCashEquivalents",
+      "quarterlyCashCashEquivalentsAndShortTermInvestments",
+      "quarterlyLongTermDebt",
+      "quarterlyCurrentDebt",
+      "annualTotalDebt",
+      "annualCashAndCashEquivalents",
+      "annualCashCashEquivalentsAndShortTermInvestments",
+      "annualLongTermDebt",
+      "annualCurrentDebt"
+    ];
+    const period1 = Math.floor(Date.UTC(new Date().getUTCFullYear() - 4, 0, 1) / 1000);
+    const period2 = Math.floor(Date.now() / 1000);
+    const { data } = await axios.get(
+      `https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${encodeURIComponent(symbol)}`,
+      {
+        params: {
+          type: typeList.join(","),
+          period1,
+          period2
+        },
+        timeout: 3500,
+        headers: YAHOO_CHART_HEADERS
+      }
+    );
+    const readLatest = (field) => {
+      const row = data?.timeseries?.result?.find((item) => Array.isArray(item?.[field]));
+      const latest = row?.[field]
+        ?.filter((item) => item?.reportedValue?.raw !== undefined)
+        ?.sort((a, b) => String(a.asOfDate).localeCompare(String(b.asOfDate)))
+        ?.at(-1);
+      return {
+        value: latest ? firstYahooRawNumber(latest.reportedValue) : null,
+        asOf: latest?.asOfDate || null
+      };
+    };
+    const quarterlyCash = readLatest("quarterlyCashAndCashEquivalents");
+    const quarterlyCashAndShortTerm = readLatest("quarterlyCashCashEquivalentsAndShortTermInvestments");
+    const annualCash = readLatest("annualCashAndCashEquivalents");
+    const annualCashAndShortTerm = readLatest("annualCashCashEquivalentsAndShortTermInvestments");
+    const quarterlyDebt = readLatest("quarterlyTotalDebt");
+    const annualDebt = readLatest("annualTotalDebt");
+    const quarterlyLongTermDebt = readLatest("quarterlyLongTermDebt");
+    const annualLongTermDebt = readLatest("annualLongTermDebt");
+    const quarterlyCurrentDebt = readLatest("quarterlyCurrentDebt");
+    const annualCurrentDebt = readLatest("annualCurrentDebt");
+    const fallbackQuarterlyDebt =
+      quarterlyLongTermDebt.value !== null || quarterlyCurrentDebt.value !== null
+        ? (quarterlyLongTermDebt.value || 0) + (quarterlyCurrentDebt.value || 0)
+        : null;
+    const fallbackAnnualDebt =
+      annualLongTermDebt.value !== null || annualCurrentDebt.value !== null
+        ? (annualLongTermDebt.value || 0) + (annualCurrentDebt.value || 0)
+        : null;
+
+    return {
+      totalCash: firstFiniteNumber(
+        quarterlyCash.value,
+        quarterlyCashAndShortTerm.value,
+        annualCash.value,
+        annualCashAndShortTerm.value
+      ),
+      totalDebt: firstFiniteNumber(
+        quarterlyDebt.value,
+        annualDebt.value,
+        fallbackQuarterlyDebt,
+        fallbackAnnualDebt,
+        quarterlyLongTermDebt.value,
+        annualLongTermDebt.value
+      ),
+      balanceSheetAsOf:
+        quarterlyDebt.asOf ||
+        quarterlyCash.asOf ||
+        quarterlyCashAndShortTerm.asOf ||
+        annualDebt.asOf ||
+        annualCash.asOf ||
+        annualCashAndShortTerm.asOf ||
+        null,
+      balanceSheetSource: "Yahoo Finance latest balance sheet"
+    };
+  };
 
   const fromYahoo = async () => {
     if (!canUseYahooQuoteSummary()) return {};
@@ -5922,17 +6011,21 @@ async function fetchLatestBalanceSheetMetrics(ticker) {
     ]);
     const row = Array.isArray(data) ? data[0] : data;
     if (!row) return {};
+    const shortTermDebt = toNumberOrNull(row.shortTermDebt);
+    const longTermDebt = toNumberOrNull(row.longTermDebt);
+    const combinedDebt =
+      shortTermDebt !== null || longTermDebt !== null
+        ? (shortTermDebt || 0) + (longTermDebt || 0)
+        : null;
     return {
-      totalCash: firstNumber(
+      totalCash: firstFiniteNumber(
         row.cashAndCashEquivalents,
         row.cashAndShortTermInvestments,
         row.cash
       ),
-      totalDebt: firstNumber(
+      totalDebt: firstFiniteNumber(
         row.totalDebt,
-        row.shortTermDebt && row.longTermDebt
-          ? Number(row.shortTermDebt) + Number(row.longTermDebt)
-          : null,
+        combinedDebt,
         row.longTermDebt
       ),
       balanceSheetAsOf: row.date || row.fillingDate || null,
@@ -5941,10 +6034,16 @@ async function fetchLatestBalanceSheetMetrics(ticker) {
   };
 
   try {
+    const timeSeriesResult = await fromYahooTimeSeries();
+    if (hasBalanceSheetData(timeSeriesResult)) return timeSeriesResult;
+  } catch (err) {
+    setYahooCooldown(err, "balance sheet time series", symbol);
+    console.log("Yahoo balance sheet time series skipped:", symbol, err.response?.status || err.message);
+  }
+
+  try {
     const yahooResult = await fromYahoo();
-    if (toNumberOrNull(yahooResult.totalCash) !== null || toNumberOrNull(yahooResult.totalDebt) !== null) {
-      return yahooResult;
-    }
+    if (hasBalanceSheetData(yahooResult)) return yahooResult;
   } catch (err) {
     setYahooQuoteSummaryCooldown(err, "balance sheet metrics", symbol);
     console.log("Yahoo balance sheet metrics skipped:", symbol, err.response?.status || err.message);
@@ -7402,8 +7501,8 @@ async function fetchStockData(ticker) {
     fiftyTwoWeekHigh,
     fiftyTwoWeekLow,
     marketCap,
-    totalCash: firstNumber(balanceSheetMetrics.totalCash, previousData?.totalCash),
-    totalDebt: firstNumber(balanceSheetMetrics.totalDebt, previousData?.totalDebt),
+    totalCash: firstFiniteNumber(balanceSheetMetrics.totalCash, previousData?.totalCash),
+    totalDebt: firstFiniteNumber(balanceSheetMetrics.totalDebt, previousData?.totalDebt),
     balanceSheetAsOf: balanceSheetMetrics.balanceSheetAsOf || previousData?.balanceSheetAsOf || null,
     balanceSheetSource: balanceSheetMetrics.balanceSheetSource || previousData?.balanceSheetSource || null,
     priceToSales,
@@ -8560,7 +8659,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
         stock.data?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
         stock.data?.estimateDataVersion !== STOCK_ESTIMATE_VERSION;
       const isIncomplete =
-        !hasCompleteChartHistory(stock);
+        !hasCompleteChartHistory(stock) ||
+        !hasCompleteSupplementalData(stock);
       const isStale =
         isOutdated ||
         isIncomplete ||

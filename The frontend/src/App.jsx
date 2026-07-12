@@ -781,7 +781,11 @@ const CHART_STABLE_FIELDS = [
   "revenueHistory",
   "marginHistory",
   "historicalPe",
-  "analystEstimates"
+  "analystEstimates",
+  "totalCash",
+  "totalDebt",
+  "balanceSheetAsOf",
+  "balanceSheetSource"
 ];
 
 const hasStableChartData = (stock = {}) =>
@@ -2380,9 +2384,12 @@ useEffect(() => {
         !Array.isArray(stableResponse.revenueData) ||
         stableResponse.revenueData.length === 0;
       const needsMarketActivity = !hasMarketActivityData(stableResponse);
+      const needsBalanceSheetMetrics =
+        !isNumber(stableResponse.totalCash) &&
+        !isNumber(stableResponse.totalDebt);
 
-      if (response.data.refreshing && (needsFreshHistory || needsMarketActivity) && attempt < 90) {
-        scheduleRetry(needsMarketActivity && attempt < 20 ? 750 : attempt < 30 ? 1000 : 2500);
+      if (response.data.refreshing && (needsFreshHistory || needsMarketActivity || needsBalanceSheetMetrics) && attempt < 90) {
+        scheduleRetry((needsMarketActivity || needsBalanceSheetMetrics) && attempt < 20 ? 750 : attempt < 30 ? 1000 : 2500);
       }
 
       setPortfolioPrices((prev) => ({
@@ -3114,6 +3121,10 @@ const stockValue = (value) =>
   isInitialStockLoad
     ? "Loading..."
     : value;
+const balanceSheetValue = (value) =>
+  stockData?.refreshing && (value === "N/A" || value === null || value === undefined)
+    ? "Loading..."
+    : stockValue(value);
 const estimateValue = (value) =>
   (isInitialStockLoad || areEstimatesRefreshing) && (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
@@ -4762,7 +4773,7 @@ return (
     </div>
 
     <div className="card-value">
-{stockValue(formatBillions(stockData.totalCash))}
+{balanceSheetValue(formatBillions(stockData.totalCash))}
     </div>
   </div>
 
@@ -4772,7 +4783,7 @@ return (
     </div>
 
     <div className="card-value">
-{stockValue(formatBillions(stockData.totalDebt))}
+{balanceSheetValue(formatBillions(stockData.totalDebt))}
     </div>
   </div>
 
