@@ -976,7 +976,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 144;
+const FINANCIAL_HISTORY_VERSION = 146;
 const STOCK_ESTIMATE_VERSION = 15;
 
 const getDefaultCompanyLogoUrl = (symbol) => {
@@ -3119,6 +3119,13 @@ const areEstimatesRefreshing =
     !isNumber(nextYearEstimate?.revenue) ||
     !isNumber(nextYearEstimate?.eps)
   );
+const isNextQuarterRefreshing =
+  (isStockLoading || stockData?.refreshing || stockData?.estimateDataVersion !== STOCK_ESTIMATE_VERSION) &&
+  (
+    !isNumber(nextQuarterEstimate?.revenue) ||
+    !isNumber(nextQuarterEstimate?.eps) ||
+    !nextQuarterDateLabel
+  );
 const isInitialStockLoad = isStockLoading && !stockData?.symbol;
 const stockValue = (value) =>
   isInitialStockLoad
@@ -3132,6 +3139,10 @@ const balanceSheetValue = (value) =>
     : stockValue(value);
 const estimateValue = (value) =>
   (isInitialStockLoad || areEstimatesRefreshing) && (value === "N/A" || value === null || value === undefined)
+    ? "Loading..."
+    : stockValue(value);
+const nextQuarterValue = (value) =>
+  (isInitialStockLoad || isNextQuarterRefreshing) && (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
     : stockValue(value);
 const selectedEarningsDay = (earnings?.days || []).find(
@@ -5081,7 +5092,7 @@ return (
           <span>Revenue</span>
 
           <span>
-            {estimateValue(formatEstimateMoney(
+            {nextQuarterValue(formatEstimateMoney(
               nextQuarterEstimate?.revenue
             ))}
           </span>
@@ -5098,7 +5109,7 @@ return (
           <span>EPS</span>
 
           <span>
-            {estimateValue(formatEstimateEps(
+            {nextQuarterValue(formatEstimateEps(
               nextQuarterEstimate?.eps
             ))}
           </span>
@@ -5115,7 +5126,7 @@ return (
           <span>Report</span>
 
           <span>
-            {estimateValue(nextQuarterDateLabel || nextQuarterEstimate?.fiscalQuarter || "N/A")}
+            {nextQuarterValue(nextQuarterDateLabel || nextQuarterEstimate?.fiscalQuarter || "N/A")}
           </span>
         </div>
 

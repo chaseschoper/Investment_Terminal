@@ -54,7 +54,7 @@ const fxRateCache = new Map();
 const alphaVantageFundamentalCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 146;
 const STOCK_ESTIMATE_VERSION = 15;
-const BALANCE_SHEET_METRICS_VERSION = 7;
+const BALANCE_SHEET_METRICS_VERSION = 8;
 const EARNINGS_CALL_VERSION = 17;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -735,9 +735,10 @@ async function fetchNasdaqEarningsDate(ticker, referenceDate) {
   }
 }
 
-async function fetchCalendarQuarterEstimate(ticker) {
+async function fetchCalendarQuarterEstimate(ticker, options = {}) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol || !process.env.FINNHUB_API_KEY) return {};
+  const timeoutMs = options.fast ? 3500 : 8000;
   const calendarSymbols = new Set([
     symbol,
     ...(FOREIGN_ADR_CONFIG[symbol]?.localSymbols || [])
@@ -764,7 +765,7 @@ async function fetchCalendarQuarterEstimate(ticker) {
         symbol,
         token: process.env.FINNHUB_API_KEY
       },
-      timeout: 15000
+      timeout: timeoutMs
     });
 
     const rows = (data?.earningsCalendar || [])
@@ -786,7 +787,7 @@ async function fetchCalendarQuarterEstimate(ticker) {
       row.epsEstimate !== null && row.revenueEstimate !== null
     ) || rows[0] || null;
     const confirmedDate = bestRow
-      ? await fetchNasdaqEarningsDate(symbol, bestRow.date)
+      ? await resolveWithin(fetchNasdaqEarningsDate(symbol, bestRow.date), options.fast ? 1200 : 3500, null)
       : null;
     const result = bestRow
       ? {
@@ -3486,6 +3487,13 @@ function hasCompleteChartHistory(stock) {
 function hasCompleteSupplementalData(stock) {
   const data = stock?.data || {};
   const requiresIndustrialMetrics = !data.isFinancialCompany;
+  const hasBalanceSheetMetrics =
+    toNumberOrNull(data.totalCash) !== null || toNumberOrNull(data.totalDebt) !== null;
+  const balanceSheetCheckedAt = data.balanceSheetCheckedAt ? new Date(data.balanceSheetCheckedAt) : null;
+  const balanceSheetCheckedRecently =
+    balanceSheetCheckedAt &&
+    !Number.isNaN(balanceSheetCheckedAt.getTime()) &&
+    Date.now() - balanceSheetCheckedAt.getTime() < 5 * 60 * 1000;
   const currentYear = data.analystEstimates?.currentYear || {};
   const nextYear = data.analystEstimates?.nextYear || {};
   const hasCompleteYahooEstimates =
@@ -3500,11 +3508,7 @@ function hasCompleteSupplementalData(stock) {
     toNumberOrNull(data.targetMean) !== null &&
     toNumberOrNull(data.priceToSales) !== null &&
     toNumberOrNull(data.priceToBook) !== null &&
-    (
-      toNumberOrNull(data.totalCash) !== null ||
-      toNumberOrNull(data.totalDebt) !== null ||
-      Boolean(data.balanceSheetCheckedAt)
-    ) &&
+    (hasBalanceSheetMetrics || balanceSheetCheckedRecently) &&
     data.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION &&
     toNumberOrNull(data.pe) !== null &&
     toNumberOrNull(data.forwardPE) !== null &&
@@ -5925,8 +5929,9 @@ const resolveWithin = (promise, ms, fallback = null) =>
       .finally(() => clearTimeout(timer));
   });
 
-async function fetchLatestBalanceSheetMetrics(ticker) {
+async function fetchLatestBalanceSheetMetrics(ticker, options = {}) {
   const symbol = String(ticker || "").trim().toUpperCase();
+  const fast = Boolean(options.fast);
   const checkedAt = new Date().toISOString();
   if (!symbol) return { balanceSheetCheckedAt: checkedAt };
   const hasBalanceSheetData = (result = {}) =>
@@ -6040,7 +6045,7 @@ async function fetchLatestBalanceSheetMetrics(ticker) {
       `https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`,
       {
         headers: { "User-Agent": "InvestmentTerminal/1.0 contact@investmentterminal.app" },
-        timeout: 4500
+        timeout: fast ? 2500 : 4500
       }
     );
     const cash = latestSecInstantFact(data, [
@@ -6151,7 +6156,7 @@ async function fetchLatestBalanceSheetMetrics(ticker) {
           period1,
           period2
         },
-        timeout: 3500,
+        timeout: fast ? 2200 : 3500,
         headers: YAHOO_CHART_HEADERS
       }
     );
@@ -6404,6 +6409,8 @@ async function fetchLatestBalanceSheetMetrics(ticker) {
     console.log("Yahoo balance sheet time series skipped:", symbol, err.response?.status || err.message);
   }
 
+  if (fast) return withCheckedAt({});
+
   try {
     const yahooResult = await fromYahoo();
     if (hasBalanceSheetData(yahooResult)) return withCheckedAt(yahooResult);
@@ -6505,15 +6512,79 @@ async function publishFastStockSnapshot(ticker) {
   );
 }
 
+async function publishQuarterEstimateSnapshot(ticker) {
+  const stock = await Stock.findOne({ ticker }).lean();
+  if (!stock) return;
+  const estimate = await resolveWithin(
+    fetchCalendarQuarterEstimate(ticker, { fast: true }),
+    4500,
+    {}
+  );
+  const hasEstimate =
+    toNumberOrNull(estimate?.revenue) !== null ||
+    toNumberOrNull(estimate?.eps) !== null ||
+    Boolean(estimate?.date);
+  if (!hasEstimate) return;
+
+  const nextQuarter = {
+    revenue: normalizeStatementDollars(estimate.revenue),
+    earnings: null,
+    eps: toNumberOrNull(estimate.eps),
+    date: estimate.date || null,
+    fiscalQuarter: estimate.fiscalQuarter || null,
+    source: "Earnings calendar"
+  };
+
+  await Stock.findOneAndUpdate(
+    { ticker },
+    {
+      $set: {
+        "data.analystEstimates.nextQuarter": nextQuarter,
+        "data.analystEstimatesSources.nextQuarter": "Earnings calendar",
+        "data.estimateDataVersion": STOCK_ESTIMATE_VERSION,
+        "data.epsBeatMiss": buildEpsBeatMissSeries(stock.data?.epsBeatMiss || [], nextQuarter)
+      }
+    }
+  );
+}
+
+async function publishBalanceSheetSnapshot(ticker) {
+  const stock = await Stock.findOne({ ticker }).lean();
+  if (!stock) return;
+  const balanceSheetMetrics = await resolveWithin(
+    fetchLatestBalanceSheetMetrics(ticker, { fast: true }),
+    3200,
+    {}
+  );
+  const hasBalanceSheetData =
+    toNumberOrNull(balanceSheetMetrics.totalCash) !== null ||
+    toNumberOrNull(balanceSheetMetrics.totalDebt) !== null;
+  if (!hasBalanceSheetData) return;
+
+  await Stock.findOneAndUpdate(
+    { ticker },
+    {
+      $set: {
+        "data.totalCash": balanceSheetMetrics.totalCash ?? null,
+        "data.totalDebt": balanceSheetMetrics.totalDebt ?? null,
+        "data.balanceSheetAsOf": balanceSheetMetrics.balanceSheetAsOf || null,
+        "data.balanceSheetSource": balanceSheetMetrics.balanceSheetSource || null,
+        "data.balanceSheetCheckedAt": balanceSheetMetrics.balanceSheetCheckedAt || new Date().toISOString(),
+        "data.balanceSheetMetricsVersion": BALANCE_SHEET_METRICS_VERSION
+      }
+    }
+  );
+}
+
 async function buildMarketActivitySnapshot(ticker, previousData = {}) {
   const [
     marketBeatAnalystUpdates,
     marketBeatInstitutionalHolders,
     secInsiderTransactions
   ] = await Promise.all([
-    resolveWithin(fetchMarketBeatAnalystUpdates(ticker), 4500, []),
-    resolveWithin(fetchMarketBeatInstitutionalHolders(ticker), 4500, []),
-    resolveWithin(fetchSecInsiderTransactions(ticker), 4500, [])
+    resolveWithin(fetchMarketBeatAnalystUpdates(ticker), 2400, []),
+    resolveWithin(fetchMarketBeatInstitutionalHolders(ticker), 2400, []),
+    resolveWithin(fetchSecInsiderTransactions(ticker), 2800, [])
   ]);
 
   return {
@@ -6559,7 +6630,7 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
   const [yahooData, chartQuote, calendarQuarterEstimate] = await Promise.all([
     resolveWithin(fetchYahooQuickQuote(ticker), 900, {}),
     resolveWithin(fetchYahooChartQuote(ticker), 1200, {}),
-    resolveWithin(fetchCalendarQuarterEstimate(ticker), 1400, previousData.analystEstimates?.nextQuarter || {})
+    resolveWithin(fetchCalendarQuarterEstimate(ticker, { fast: true }), 1400, previousData.analystEstimates?.nextQuarter || {})
   ]);
   const chartData = chartQuote?.c
     ? {
@@ -8047,6 +8118,12 @@ function startStockFetch(ticker) {
 
   publishFastStockSnapshot(ticker).catch((err) => {
     console.log("Fast stock snapshot skipped:", ticker, err.message);
+  });
+  publishQuarterEstimateSnapshot(ticker).catch((err) => {
+    console.log("Quarter estimate snapshot skipped:", ticker, err.message);
+  });
+  publishBalanceSheetSnapshot(ticker).catch((err) => {
+    console.log("Balance sheet snapshot skipped:", ticker, err.message);
   });
   publishMarketActivitySnapshot(ticker).catch((err) => {
     console.log("Market activity snapshot skipped:", ticker, err.message);
