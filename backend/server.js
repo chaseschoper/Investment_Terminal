@@ -3467,8 +3467,11 @@ function hasCompleteSupplementalData(stock) {
     toNumberOrNull(data.targetMean) !== null &&
     toNumberOrNull(data.priceToSales) !== null &&
     toNumberOrNull(data.priceToBook) !== null &&
-    toNumberOrNull(data.totalCash) !== null &&
-    toNumberOrNull(data.totalDebt) !== null &&
+    (
+      toNumberOrNull(data.totalCash) !== null ||
+      toNumberOrNull(data.totalDebt) !== null ||
+      Boolean(data.balanceSheetCheckedAt)
+    ) &&
     toNumberOrNull(data.pe) !== null &&
     toNumberOrNull(data.forwardPE) !== null &&
     (!requiresIndustrialMetrics || toNumberOrNull(data.grossMargins) !== null) &&
@@ -5875,9 +5878,89 @@ const resolveWithin = (promise, ms, fallback = null) =>
 
 async function fetchLatestBalanceSheetMetrics(ticker) {
   const symbol = String(ticker || "").trim().toUpperCase();
-  if (!symbol) return {};
+  const checkedAt = new Date().toISOString();
+  if (!symbol) return { balanceSheetCheckedAt: checkedAt };
   const hasBalanceSheetData = (result = {}) =>
     toNumberOrNull(result.totalCash) !== null || toNumberOrNull(result.totalDebt) !== null;
+
+  const withCheckedAt = (result = {}) => ({
+    ...result,
+    balanceSheetCheckedAt: checkedAt
+  });
+
+  const latestSecInstantFact = (companyFacts, concepts = []) => {
+    let latest = null;
+    for (const concept of concepts) {
+      const entries = Object.values(companyFacts?.facts?.["us-gaap"]?.[concept]?.units || {})
+        .flat()
+        .filter((entry) =>
+          ["10-K", "10-K/A", "10-Q", "10-Q/A"].includes(entry?.form) &&
+          entry?.end &&
+          toNumberOrNull(entry?.val) !== null &&
+          !entry?.start
+        );
+      for (const entry of entries) {
+        if (
+          !latest ||
+          String(entry.end) > String(latest.end) ||
+          (String(entry.end) === String(latest.end) && String(entry.filed || "") > String(latest.filed || ""))
+        ) {
+          latest = entry;
+        }
+      }
+    }
+    return latest
+      ? {
+          value: toNumberOrNull(latest.val),
+          asOf: latest.end || null
+        }
+      : { value: null, asOf: null };
+  };
+
+  const fromSecCompanyFacts = async () => {
+    const tickerMap = await getSecTickerMap();
+    const cik = tickerMap.get(symbol);
+    if (!cik) return {};
+    const { data } = await axios.get(
+      `https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`,
+      {
+        headers: { "User-Agent": "InvestmentTerminal/1.0 contact@investmentterminal.app" },
+        timeout: 4500
+      }
+    );
+    const cash = latestSecInstantFact(data, [
+      "CashAndCashEquivalentsAtCarryingValue",
+      "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+      "CashCashEquivalentsAndShortTermInvestments"
+    ]);
+    const totalDebt = latestSecInstantFact(data, [
+      "Debt",
+      "DebtAndFinanceLeaseObligations",
+      "LongTermDebtAndFinanceLeaseObligations",
+      "ShortTermBorrowings"
+    ]);
+    const currentDebt = latestSecInstantFact(data, [
+      "DebtCurrent",
+      "LongTermDebtCurrent",
+      "ShortTermBorrowings",
+      "LongTermDebtAndFinanceLeaseObligationsCurrent"
+    ]);
+    const longTermDebt = latestSecInstantFact(data, [
+      "LongTermDebtNoncurrent",
+      "LongTermDebtAndFinanceLeaseObligationsNoncurrent"
+    ]);
+    const combinedDebt =
+      currentDebt.value !== null || longTermDebt.value !== null
+        ? (currentDebt.value || 0) + (longTermDebt.value || 0)
+        : null;
+
+    return {
+      totalCash: cash.value,
+      totalDebt: firstFiniteNumber(totalDebt.value, combinedDebt, longTermDebt.value),
+      balanceSheetAsOf: totalDebt.asOf || cash.asOf || currentDebt.asOf || longTermDebt.asOf || null,
+      balanceSheetSource: "SEC latest balance sheet"
+    };
+  };
 
   const fromYahooTimeSeries = async () => {
     if (!canUseYahoo()) return {};
@@ -6034,8 +6117,15 @@ async function fetchLatestBalanceSheetMetrics(ticker) {
   };
 
   try {
+    const secResult = await fromSecCompanyFacts();
+    if (hasBalanceSheetData(secResult)) return withCheckedAt(secResult);
+  } catch (err) {
+    console.log("SEC balance sheet metrics skipped:", symbol, err.response?.status || err.message);
+  }
+
+  try {
     const timeSeriesResult = await fromYahooTimeSeries();
-    if (hasBalanceSheetData(timeSeriesResult)) return timeSeriesResult;
+    if (hasBalanceSheetData(timeSeriesResult)) return withCheckedAt(timeSeriesResult);
   } catch (err) {
     setYahooCooldown(err, "balance sheet time series", symbol);
     console.log("Yahoo balance sheet time series skipped:", symbol, err.response?.status || err.message);
@@ -6043,17 +6133,17 @@ async function fetchLatestBalanceSheetMetrics(ticker) {
 
   try {
     const yahooResult = await fromYahoo();
-    if (hasBalanceSheetData(yahooResult)) return yahooResult;
+    if (hasBalanceSheetData(yahooResult)) return withCheckedAt(yahooResult);
   } catch (err) {
     setYahooQuoteSummaryCooldown(err, "balance sheet metrics", symbol);
     console.log("Yahoo balance sheet metrics skipped:", symbol, err.response?.status || err.message);
   }
 
   try {
-    return await fromFmp();
+    return withCheckedAt(await fromFmp());
   } catch (err) {
     console.log("FMP balance sheet metrics skipped:", symbol, err.response?.status || err.message);
-    return {};
+    return withCheckedAt({});
   }
 }
 
@@ -7505,6 +7595,7 @@ async function fetchStockData(ticker) {
     totalDebt: firstFiniteNumber(balanceSheetMetrics.totalDebt, previousData?.totalDebt),
     balanceSheetAsOf: balanceSheetMetrics.balanceSheetAsOf || previousData?.balanceSheetAsOf || null,
     balanceSheetSource: balanceSheetMetrics.balanceSheetSource || previousData?.balanceSheetSource || null,
+    balanceSheetCheckedAt: balanceSheetMetrics.balanceSheetCheckedAt || previousData?.balanceSheetCheckedAt || null,
     priceToSales,
     priceToBook,
     bookValuePerShare,

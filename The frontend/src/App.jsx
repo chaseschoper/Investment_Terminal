@@ -785,7 +785,8 @@ const CHART_STABLE_FIELDS = [
   "totalCash",
   "totalDebt",
   "balanceSheetAsOf",
-  "balanceSheetSource"
+  "balanceSheetSource",
+  "balanceSheetCheckedAt"
 ];
 
 const hasStableChartData = (stock = {}) =>
@@ -2385,6 +2386,7 @@ useEffect(() => {
         stableResponse.revenueData.length === 0;
       const needsMarketActivity = !hasMarketActivityData(stableResponse);
       const needsBalanceSheetMetrics =
+        !stableResponse.balanceSheetCheckedAt &&
         !isNumber(stableResponse.totalCash) &&
         !isNumber(stableResponse.totalDebt);
 
@@ -3122,7 +3124,9 @@ const stockValue = (value) =>
     ? "Loading..."
     : value;
 const balanceSheetValue = (value) =>
-  stockData?.refreshing && (value === "N/A" || value === null || value === undefined)
+  stockData?.refreshing &&
+  !stockData?.balanceSheetCheckedAt &&
+  (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
     : stockValue(value);
 const estimateValue = (value) =>
