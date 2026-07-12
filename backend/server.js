@@ -51,9 +51,10 @@ const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 144;
+const alphaVantageFundamentalCache = new Map();
+const FINANCIAL_HISTORY_VERSION = 146;
 const STOCK_ESTIMATE_VERSION = 15;
-const BALANCE_SHEET_METRICS_VERSION = 3;
+const BALANCE_SHEET_METRICS_VERSION = 4;
 const EARNINGS_CALL_VERSION = 17;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -575,6 +576,37 @@ async function getFmpData(ticker, label, endpoints) {
   }
 
   return null;
+}
+
+async function getAlphaVantageFundamentalData(ticker, fn) {
+  const apiKey = getAlphaVantageApiKey();
+  const symbol = String(ticker || "").trim().toUpperCase();
+  const functionName = String(fn || "").trim().toUpperCase();
+  if (!apiKey || !symbol || !functionName) return null;
+
+  const cacheKey = `${functionName}:${symbol}`;
+  const cached = alphaVantageFundamentalCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1000) {
+    return cached.data;
+  }
+
+  try {
+    const response = await axios.get("https://www.alphavantage.co/query", {
+      params: {
+        function: functionName,
+        symbol,
+        apikey: apiKey
+      },
+      timeout: 12000
+    });
+    const data = response.data || {};
+    if (data.Note || data.Information || data["Error Message"]) return null;
+    alphaVantageFundamentalCache.set(cacheKey, { data, fetchedAt: Date.now() });
+    return data;
+  } catch (err) {
+    console.log("Alpha Vantage fundamentals skipped:", symbol, functionName, err.response?.status || err.message);
+    return null;
+  }
 }
 
 const parseNasdaqNumber = (value) => {
@@ -4345,10 +4377,6 @@ async function fetchYahooFinancialHistory(ticker) {
   const timeSeriesHistory = await fetchYahooTimeSeriesFinancials(ticker);
 
   try {
-    if (hasCompleteChartHistory({ data: { revenueData: timeSeriesHistory } })) {
-      return timeSeriesHistory;
-    }
-
     const summary = await yahooFinance.quoteSummary(ticker, {
       modules: ["incomeStatementHistory", "earnings"]
     });
@@ -4492,6 +4520,25 @@ async function fetchFmpIncomeStatementHistory(ticker) {
   }
 
   return [];
+}
+
+async function fetchAlphaVantageIncomeStatementHistory(ticker) {
+  const data = await getAlphaVantageFundamentalData(ticker, "INCOME_STATEMENT");
+  const rows = Array.isArray(data?.annualReports) ? data.annualReports : [];
+
+  return rows
+    .map((row) => ({
+      year: Number(String(row.fiscalDateEnding || "").slice(0, 4)),
+      period: String(String(row.fiscalDateEnding || "").slice(0, 4)),
+      revenue: toBillions(row.totalRevenue),
+      earnings: toBillions(row.netIncome),
+      grossProfit: toBillions(row.grossProfit),
+      operatingIncome: toBillions(row.operatingIncome),
+      eps: null,
+      source: "Alpha Vantage income statement"
+    }))
+    .filter((row) => row.year && (row.revenue !== null || row.earnings !== null))
+    .sort((a, b) => a.year - b.year);
 }
 
 const fmpQuarterNumber = (row = {}) => {
@@ -6133,6 +6180,38 @@ async function fetchLatestBalanceSheetMetrics(ticker) {
     };
   };
 
+  const fromAlphaVantage = async () => {
+    const data = await getAlphaVantageFundamentalData(symbol, "BALANCE_SHEET");
+    const report = Array.isArray(data?.quarterlyReports) && data.quarterlyReports.length
+      ? data.quarterlyReports[0]
+      : Array.isArray(data?.annualReports) && data.annualReports.length
+        ? data.annualReports[0]
+        : null;
+    if (!report) return {};
+    const shortTermDebt = toNumberOrNull(report.shortTermDebt);
+    const currentLongTermDebt = toNumberOrNull(report.currentLongTermDebt);
+    const longTermDebt = toNumberOrNull(report.longTermDebt);
+    const combinedDebt =
+      shortTermDebt !== null || currentLongTermDebt !== null || longTermDebt !== null
+        ? (shortTermDebt || 0) + (currentLongTermDebt || 0) + (longTermDebt || 0)
+        : null;
+
+    return {
+      totalCash: firstFiniteNumber(
+        report.cashAndCashEquivalentsAtCarryingValue,
+        report.cashAndShortTermInvestments
+      ),
+      totalDebt: firstFiniteNumber(
+        report.shortLongTermDebtTotal,
+        report.totalDebt,
+        combinedDebt,
+        report.longTermDebt
+      ),
+      balanceSheetAsOf: report.fiscalDateEnding || null,
+      balanceSheetSource: "Alpha Vantage latest balance sheet"
+    };
+  };
+
   try {
     const secResult = await fromSecCompanyFacts();
     if (hasBalanceSheetData(secResult)) return withCheckedAt(secResult);
@@ -6154,6 +6233,13 @@ async function fetchLatestBalanceSheetMetrics(ticker) {
   } catch (err) {
     setYahooQuoteSummaryCooldown(err, "balance sheet metrics", symbol);
     console.log("Yahoo balance sheet metrics skipped:", symbol, err.response?.status || err.message);
+  }
+
+  try {
+    const alphaResult = await fromAlphaVantage();
+    if (hasBalanceSheetData(alphaResult)) return withCheckedAt(alphaResult);
+  } catch (err) {
+    console.log("Alpha Vantage balance sheet metrics skipped:", symbol, err.response?.status || err.message);
   }
 
   try {
@@ -6578,6 +6664,7 @@ async function fetchStockData(ticker) {
   const [
     yahooFinancialData,
     fmpIncomeStatementData,
+    alphaVantageIncomeStatementData,
     yahooSupplementalData,
     yahooYearEndPrices,
     nasdaqData,
@@ -6603,6 +6690,7 @@ async function fetchStockData(ticker) {
   ] = await Promise.all([
     resolveWithin(fetchYahooFinancialHistory(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(fetchFmpIncomeStatementHistory(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, []),
+    resolveWithin(fetchAlphaVantageIncomeStatementHistory(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(getYahooSupplementalData(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
     resolveWithin(fetchYahooYearEndPrices(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(fetchNasdaqData(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
@@ -6697,9 +6785,10 @@ async function fetchStockData(ticker) {
     previousRealRevenueData,
     finnhubMetricData,
     finnhubReportedData,
+    yahooFinancialData,
+    alphaVantageIncomeStatementData,
     fmpIncomeStatementData,
     stockAnalysisFinancialData,
-    yahooFinancialData,
     getRecentEarningsReleaseAnnualRows(ticker)
   );
   const supplementalAnnualData = mergeAllHistoricalFinancials(
