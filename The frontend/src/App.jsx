@@ -706,11 +706,8 @@ const formatChartPeriodLabel = (period) => {
   return value || "N/A";
 };
 
-const formatChartTooltipValue = (period, value, formatter) => {
-  const label = formatChartPeriodLabel(period);
-  const formattedValue = formatter(value);
-  return `${label} ${formattedValue}`;
-};
+const formatChartTooltipName = (period, valueLabel) =>
+  `${valueLabel} ${formatChartPeriodLabel(period)}`;
 
 const formatGrowthPercent = (value) =>
   isNumber(value) ? `${value > 0 ? "+" : ""}${value.toFixed(1)}%` : "N/A";
@@ -1257,8 +1254,8 @@ function HistoricalLineChart({ title, data, dataKey, color, formatter, valueLabe
               <Tooltip
                 labelFormatter={formatChartPeriodLabel}
                 formatter={(value, name, props) => [
-                  formatChartTooltipValue(props?.payload?.period, value, formatter),
-                  valueLabel
+                  formatter(value),
+                  formatChartTooltipName(props?.payload?.period, valueLabel)
                 ]}
               />
               <Line
@@ -4466,8 +4463,8 @@ return (
         <Tooltip
   labelFormatter={formatChartPeriodLabel}
   formatter={(value, name, props) => [
-    formatChartTooltipValue(props?.payload?.period, value, formatChartBillions),
-    "Revenue"
+    formatChartBillions(value),
+    formatChartTooltipName(props?.payload?.period, "Revenue")
   ]}
 />
 
@@ -4548,8 +4545,8 @@ return (
           <Tooltip
             labelFormatter={formatChartPeriodLabel}
             formatter={(value, name, props) => [
-              formatChartTooltipValue(props?.payload?.period, value, formatChartBillions),
-              "Net Income"
+              formatChartBillions(value),
+              formatChartTooltipName(props?.payload?.period, "Net Income")
             ]}
           />
 
@@ -4635,8 +4632,8 @@ return (
           <Tooltip
             labelFormatter={formatChartPeriodLabel}
             formatter={(value, name, props) => [
-              formatChartTooltipValue(props?.payload?.period, value, formatChartEps),
-              "EPS"
+              formatChartEps(value),
+              formatChartTooltipName(props?.payload?.period, "EPS")
             ]}
           />
 

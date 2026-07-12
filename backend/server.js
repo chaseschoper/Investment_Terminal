@@ -241,6 +241,13 @@ const FOREIGN_ADR_CONFIG = {
     adrRatio: 5,
     localSymbols: ["2330.TW"],
     fallbackUsdRate: 0.031
+  },
+  TM: {
+    sourceCurrency: "JPY",
+    displayCurrency: "USD",
+    adrRatio: 10,
+    localSymbols: ["7203.T"],
+    fallbackUsdRate: 0.0068
   }
 };
 
