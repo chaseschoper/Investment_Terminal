@@ -4758,6 +4758,26 @@ return (
 
   <div className="card">
     <div className="card-title">
+      Total Cash
+    </div>
+
+    <div className="card-value">
+{stockValue(formatBillions(stockData.totalCash))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      Total Debt
+    </div>
+
+    <div className="card-value">
+{stockValue(formatBillions(stockData.totalDebt))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
       Current P/E
     </div>
 

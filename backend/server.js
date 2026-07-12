@@ -2247,9 +2247,10 @@ async function normalizeForeignAdrStockData(ticker, data = {}) {
     price && toNumberOrNull(latestAnnualEps) !== null && latestAnnualEps !== 0
       ? price / latestAnnualEps
       : data.pe;
+  const topLevelMoney = convertMoneyFields(data, usdRate, ["totalCash", "totalDebt"]);
 
   return {
-    ...data,
+    ...topLevelMoney,
     revenueData,
     revenueHistory,
     marketCap: marketCap ?? data.marketCap,
@@ -2334,7 +2335,9 @@ async function normalizeForeignFinancialCurrencyStockData(ticker, data = {}) {
     "operatingCashflow",
     "freeCashflow",
     "consensusCurrentYearRevenue",
-    "consensusNextYearRevenue"
+    "consensusNextYearRevenue",
+    "totalCash",
+    "totalDebt"
   ]);
 
   return {
@@ -5868,6 +5871,93 @@ const resolveWithin = (promise, ms, fallback = null) =>
       .finally(() => clearTimeout(timer));
   });
 
+async function fetchLatestBalanceSheetMetrics(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol) return {};
+
+  const fromYahoo = async () => {
+    if (!canUseYahooQuoteSummary()) return {};
+    const summary = await yahooFinance.quoteSummary(symbol, {
+      modules: [
+        "financialData",
+        "balanceSheetHistory",
+        "balanceSheetHistoryQuarterly"
+      ]
+    });
+    const financialData = summary?.financialData || {};
+    const annualSheet = summary?.balanceSheetHistory?.balanceSheetStatements?.[0] || {};
+    const quarterlySheet = summary?.balanceSheetHistoryQuarterly?.balanceSheetStatements?.[0] || {};
+    const sheet = quarterlySheet && Object.keys(quarterlySheet).length ? quarterlySheet : annualSheet;
+    const totalCash = firstYahooRawNumber(
+      financialData.totalCash,
+      sheet.cash,
+      sheet.cashAndCashEquivalents,
+      sheet.cashCashEquivalentsAndShortTermInvestments
+    );
+    const totalDebt = firstYahooRawNumber(
+      financialData.totalDebt,
+      sheet.totalDebt,
+      sheet.longTermDebtAndCapitalLeaseObligation,
+      sheet.longTermDebt,
+      sheet.shortLongTermDebtTotal,
+      sheet.currentDebtAndCapitalLeaseObligation
+    );
+
+    return {
+      totalCash,
+      totalDebt,
+      balanceSheetAsOf: sheet.endDate
+        ? new Date(firstYahooRawNumber(sheet.endDate) * 1000).toISOString().slice(0, 10)
+        : null,
+      balanceSheetSource: "Yahoo Finance latest balance sheet"
+    };
+  };
+
+  const fromFmp = async () => {
+    const data = await getFmpData(symbol, "balance sheet", [
+      "/stable/balance-sheet-statement?symbol={ticker}&period=quarter&limit=1",
+      "/api/v3/balance-sheet-statement/{ticker}?period=quarter&limit=1",
+      "/stable/balance-sheet-statement?symbol={ticker}&period=annual&limit=1",
+      "/api/v3/balance-sheet-statement/{ticker}?period=annual&limit=1"
+    ]);
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) return {};
+    return {
+      totalCash: firstNumber(
+        row.cashAndCashEquivalents,
+        row.cashAndShortTermInvestments,
+        row.cash
+      ),
+      totalDebt: firstNumber(
+        row.totalDebt,
+        row.shortTermDebt && row.longTermDebt
+          ? Number(row.shortTermDebt) + Number(row.longTermDebt)
+          : null,
+        row.longTermDebt
+      ),
+      balanceSheetAsOf: row.date || row.fillingDate || null,
+      balanceSheetSource: "FMP latest balance sheet"
+    };
+  };
+
+  try {
+    const yahooResult = await fromYahoo();
+    if (toNumberOrNull(yahooResult.totalCash) !== null || toNumberOrNull(yahooResult.totalDebt) !== null) {
+      return yahooResult;
+    }
+  } catch (err) {
+    setYahooQuoteSummaryCooldown(err, "balance sheet metrics", symbol);
+    console.log("Yahoo balance sheet metrics skipped:", symbol, err.response?.status || err.message);
+  }
+
+  try {
+    return await fromFmp();
+  } catch (err) {
+    console.log("FMP balance sheet metrics skipped:", symbol, err.response?.status || err.message);
+    return {};
+  }
+}
+
 async function fetchYahooQuickQuote(ticker) {
   if (!canUseYahoo()) return {};
 
@@ -6300,6 +6390,7 @@ async function fetchStockData(ticker) {
     secInsiderTransactions,
     epsSurprises,
     marketBeatEpsSurprises,
+    balanceSheetMetrics,
     recommendation,
     epsEstimate,
     revenueEstimate
@@ -6336,6 +6427,7 @@ async function fetchStockData(ticker) {
     resolveWithin(fetchSecInsiderTransactions(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(fetchFinnhubEpsSurprises(ticker), STOCK_PROVIDER_TIMEOUT_MS, previousData?.epsBeatMiss || []),
     resolveWithin(fetchMarketBeatEpsSurprises(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
+    resolveWithin(fetchLatestBalanceSheetMetrics(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
     resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/recommendation?symbol=${ticker}`).catch((err) => {
       console.log("Recommendation skipped:", ticker, err.message);
       return [];
@@ -7310,6 +7402,10 @@ async function fetchStockData(ticker) {
     fiftyTwoWeekHigh,
     fiftyTwoWeekLow,
     marketCap,
+    totalCash: firstNumber(balanceSheetMetrics.totalCash, previousData?.totalCash),
+    totalDebt: firstNumber(balanceSheetMetrics.totalDebt, previousData?.totalDebt),
+    balanceSheetAsOf: balanceSheetMetrics.balanceSheetAsOf || previousData?.balanceSheetAsOf || null,
+    balanceSheetSource: balanceSheetMetrics.balanceSheetSource || previousData?.balanceSheetSource || null,
     priceToSales,
     priceToBook,
     bookValuePerShare,
