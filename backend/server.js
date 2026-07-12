@@ -12464,6 +12464,34 @@ function normalizeEarningsCallPeriodItem(item = {}, provider = "") {
   };
 }
 
+function parseEarningsCallPeriodFromText(value = "") {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  const direct = text.match(/\bQ\s*([1-4])\s*(?:FY\s*)?(20\d{2})\b/i);
+  if (direct) {
+    return {
+      quarter: Number(direct[1]),
+      year: Number(direct[2])
+    };
+  }
+  const reversed = text.match(/\b(20\d{2})\s*(?:FY\s*)?\s*Q\s*([1-4])\b/i);
+  if (reversed) {
+    return {
+      quarter: Number(reversed[2]),
+      year: Number(reversed[1])
+    };
+  }
+  const ordinal = text.match(/\b(first|second|third|fourth)\s+quarter\b.*?\b(20\d{2})\b/i);
+  if (ordinal) {
+    const quarterMap = { first: 1, second: 2, third: 3, fourth: 4 };
+    return {
+      quarter: quarterMap[ordinal[1].toLowerCase()],
+      year: Number(ordinal[2])
+    };
+  }
+  return null;
+}
+
 function mergeEarningsCallPeriods(...periodSets) {
   const byPeriod = new Map();
   periodSets.flat().forEach((period) => {
@@ -12557,7 +12585,16 @@ async function fetchEarningsCallPublicPeriods(ticker) {
           )
         )
         .filter(Boolean);
-      if (periods.length) return mergeEarningsCallPeriods(periods);
+      const uniquePeriods = mergeEarningsCallPeriods(periods).slice(0, 8);
+      const publishedPeriods = (await Promise.all(uniquePeriods.map(async (period) => {
+        const verified = await resolveWithin(
+          fetchEarningsCallPublicPage(ticker, period),
+          4500,
+          null
+        );
+        return verified?.transcript?.length ? period : null;
+      }))).filter(Boolean);
+      if (publishedPeriods.length) return mergeEarningsCallPeriods(publishedPeriods);
     } catch (err) {
       if (![401, 403, 404].includes(err.response?.status)) {
         console.log("EarningsCall public periods skipped:", ticker, exchange, err.response?.status || err.message);
@@ -12605,12 +12642,13 @@ async function fetchStockAnalysisEarningsCallPeriods(ticker) {
     const transcriptLinks = [];
     $("a").each((_, element) => {
       const text = $(element).text().replace(/\s+/g, " ").trim();
-      const match = text.match(/Earnings Call:\s*Q([1-4])\s+(20\d{2})/i);
       const href = $(element).attr("href");
-      if (!match || !href) return;
+      if (!href || !/transcripts?|earnings-call/i.test(`${href} ${text}`)) return;
+      const period = parseEarningsCallPeriodFromText(`${text} ${href}`);
+      if (!period) return;
       transcriptLinks.push({
-        quarter: Number(match[1]),
-        year: Number(match[2]),
+        quarter: period.quarter,
+        year: period.year,
         sourceUrl: new URL(href, indexUrl).toString()
       });
     });
@@ -12650,14 +12688,13 @@ async function fetchAvailableEarningsCallPeriods(ticker) {
     resolveWithin(fetchEarningsCallPublicPeriods(symbol), 12000, []),
     resolveWithin(fetchFinnhubEarningsCallPeriods(symbol), 12000, [])
   ]);
-  const periods = stockAnalysisPeriods.length
-    ? mergeEarningsCallPeriods(stockAnalysisPeriods)
-    : mergeEarningsCallPeriods(
-        earningsCallPeriods,
-        earningsCallPublicPeriods,
-        finnhubPeriods,
-        cachedEarningsCallPeriod(savedCall, symbol)
-      );
+  const periods = mergeEarningsCallPeriods(
+    stockAnalysisPeriods,
+    earningsCallPeriods,
+    earningsCallPublicPeriods,
+    finnhubPeriods,
+    cachedEarningsCallPeriod(savedCall, symbol)
+  );
   const data = {
     available: periods.length > 0,
     symbol,
@@ -12737,23 +12774,13 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
       return res.json(data);
     };
 
-    if (isSpecificPeriodRequest) {
-      const stockAnalysisData = await resolveWithin(
-        fetchStockAnalysisEarningsCall(ticker, requestedPeriod),
-        20000,
-        null
-      );
-      if (stockAnalysisData?.available && (stockAnalysisData.transcript?.length || stockAnalysisData.transcriptUrl)) {
-        return sendTranscriptData(stockAnalysisData);
-      }
-    }
-
     const transcriptProviders = [
+      ...(isSpecificPeriodRequest ? [["StockAnalysis", () => fetchStockAnalysisEarningsCall(ticker, requestedPeriod), 18000]] : []),
       ...(isSpecificPeriodRequest ? [["EarningsCall public", () => fetchEarningsCallPublicPage(ticker, requestedPeriod), 12000]] : []),
-      ["EarningsCall", () => fetchEarningsCallBiz(ticker, apiBaseUrl, requestedPeriod), 14000],
-      ...(isSpecificPeriodRequest ? [] : [["Quartr", () => fetchQuartrEarningsCall(ticker), 9000]]),
-      ["Alpha Vantage", () => fetchAlphaVantageEarningsCall(ticker, null, requestedPeriod), 12000],
-      ["Finnhub", () => fetchFinnhubEarningsCall(ticker, requestedPeriod), 12000],
+      ["EarningsCall", () => fetchEarningsCallBiz(ticker, apiBaseUrl, requestedPeriod), isSpecificPeriodRequest ? 18000 : 14000],
+      ...(isSpecificPeriodRequest ? [] : [["Quartr", () => fetchQuartrEarningsCall(ticker), 10000]]),
+      ["Alpha Vantage", () => fetchAlphaVantageEarningsCall(ticker, null, requestedPeriod), isSpecificPeriodRequest ? 18000 : 14000],
+      ["Finnhub", () => fetchFinnhubEarningsCall(ticker, requestedPeriod), isSpecificPeriodRequest ? 16000 : 12000],
       ...(isSpecificPeriodRequest
         ? []
         : [
@@ -12774,7 +12801,14 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
     ];
     const providerResults = await Promise.all(transcriptProviders.map(async ([providerName, fetchProvider, timeoutMs]) => {
       try {
-        const providerData = await resolveWithin(fetchProvider(), timeoutMs || 9000, null);
+        let providerData = await resolveWithin(fetchProvider(), timeoutMs || 9000, null);
+        if (
+          !providerData &&
+          providerName !== "Cached transcript" &&
+          (isSpecificPeriodRequest || providerName === "Investor Relations")
+        ) {
+          providerData = await resolveWithin(fetchProvider(), Math.min((timeoutMs || 9000) + 5000, 24000), null);
+        }
         if (providerData?.available && (providerData.transcript?.length || providerData.transcriptUrl)) {
           return {
             providerName,
