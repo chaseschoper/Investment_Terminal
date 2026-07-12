@@ -54,7 +54,7 @@ const fxRateCache = new Map();
 const alphaVantageFundamentalCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 146;
 const STOCK_ESTIMATE_VERSION = 15;
-const BALANCE_SHEET_METRICS_VERSION = 8;
+const BALANCE_SHEET_METRICS_VERSION = 9;
 const EARNINGS_CALL_VERSION = 17;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -4663,6 +4663,87 @@ const parseStockAnalysisNumber = (value) => {
   return Number.isFinite(number) ? number * multiplier : null;
 };
 
+async function fetchStockAnalysisBalanceSheetMetrics(ticker) {
+  try {
+    const stockAnalysisTicker = normalizeTickerForStockAnalysis(ticker);
+    const { data } = await axios.get(
+      `https://stockanalysis.com/stocks/${stockAnalysisTicker}/financials/balance-sheet/`,
+      {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        timeout: 4500
+      }
+    );
+    const $ = cheerio.load(data || "");
+    const table = $("table").first();
+    if (!table.length) return {};
+
+    const headers = table.find("thead tr").first().find("th").toArray()
+      .slice(1)
+      .map((cell) => $(cell).text().trim());
+    const selectedIndex = 0;
+
+    const rows = new Map();
+    table.find("tbody tr").each((_, row) => {
+      const cells = $(row).find("td").toArray();
+      const label = $(cells[0]).text().trim().replace(/\s+/g, " ").toLowerCase();
+      if (!label) return;
+      rows.set(label, cells.slice(1).map((cell) => parseStockAnalysisNumber($(cell).text())));
+    });
+
+    const read = (...labels) => {
+      for (const label of labels) {
+        const values = rows.get(label.toLowerCase());
+        if (!values) continue;
+        const value = toNumberOrNull(values[selectedIndex]);
+        if (value !== null) return value * 1000000;
+      }
+      return null;
+    };
+
+    const totalCash = read(
+      "Cash & Equivalents",
+      "Cash and Equivalents",
+      "Cash",
+      "Cash & Short-Term Investments",
+      "Cash and Short-Term Investments"
+    );
+    const totalDebt = firstFiniteNumber(
+      read("Total Debt", "Total Debt & Finance Lease Obligations"),
+      (() => {
+        const shortTermDebt = read(
+          "Short-Term Debt",
+          "Short Term Debt",
+          "Current Debt",
+          "Current Portion of Long-Term Debt",
+          "Current Portion of Long Term Debt"
+        );
+        const longTermDebt = read(
+          "Long-Term Debt",
+          "Long Term Debt",
+          "Long-Term Debt & Finance Lease Obligations",
+          "Long Term Debt & Finance Lease Obligations"
+        );
+        return shortTermDebt !== null || longTermDebt !== null
+          ? (shortTermDebt || 0) + (longTermDebt || 0)
+          : null;
+      })()
+    );
+    if (totalCash === null && totalDebt === null) return {};
+
+    const selectedHeader = headers[selectedIndex] || null;
+    const year = selectedHeader?.match(/\b(?:FY\s*)?(\d{4})\b/i)?.[1] || null;
+    return {
+      totalCash,
+      totalDebt,
+      balanceSheetAsOf: year ? `${year}-12-31` : null,
+      balanceSheetSource: "StockAnalysis latest balance sheet"
+    };
+  } catch (err) {
+    console.log("StockAnalysis balance sheet skipped:", ticker, err.response?.status || err.message);
+    return {};
+  }
+}
+
 async function fetchStockAnalysisIncomeStatementHistory(ticker) {
   try {
     const stockAnalysisTicker = normalizeTickerForStockAnalysis(ticker);
@@ -6407,6 +6488,15 @@ async function fetchLatestBalanceSheetMetrics(ticker, options = {}) {
   } catch (err) {
     setYahooCooldown(err, "balance sheet time series", symbol);
     console.log("Yahoo balance sheet time series skipped:", symbol, err.response?.status || err.message);
+  }
+
+  try {
+    if (!fast || !FOREIGN_ADR_CONFIG[symbol]) {
+      const stockAnalysisResult = await fetchStockAnalysisBalanceSheetMetrics(symbol);
+      if (hasBalanceSheetData(stockAnalysisResult)) return withCheckedAt(stockAnalysisResult);
+    }
+  } catch (err) {
+    console.log("StockAnalysis balance sheet metrics skipped:", symbol, err.response?.status || err.message);
   }
 
   if (fast) return withCheckedAt({});
