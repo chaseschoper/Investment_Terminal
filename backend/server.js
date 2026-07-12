@@ -2230,6 +2230,89 @@ async function normalizeForeignAdrStockData(ticker, data = {}) {
   };
 }
 
+function convertGenericForeignRowToUsd(row, usdRate) {
+  if (!row) return row;
+  const next = convertMoneyFields(row, usdRate, [
+    "revenue",
+    "earnings",
+    "grossProfit",
+    "operatingIncome",
+    "operatingCashflow",
+    "freeCashflow",
+    "value"
+  ]);
+  const eps = toNumberOrNull(row.eps);
+  if (eps !== null) next.eps = eps * usdRate;
+  next.sourceCurrency = row.sourceCurrency || null;
+  next.displayCurrency = "USD";
+  return next;
+}
+
+function convertGenericEstimateBlockToUsd(block, usdRate) {
+  if (!block) return block;
+  const next = convertMoneyFields(block, usdRate, ["revenue", "earnings"]);
+  const eps = toNumberOrNull(block.eps);
+  if (eps !== null) next.eps = eps * usdRate;
+  return next;
+}
+
+function convertGenericEpsBeatMissToUsd(rows, usdRate) {
+  if (!Array.isArray(rows)) return rows;
+  return rows.map((row) => {
+    const next = { ...row };
+    ["estimate", "actual", "gaapActual", "surprise", "gaapSurprise"].forEach((field) => {
+      const value = toNumberOrNull(next[field]);
+      if (value !== null) next[field] = value * usdRate;
+    });
+    return next;
+  });
+}
+
+async function normalizeForeignFinancialCurrencyStockData(ticker, data = {}) {
+  const sourceCurrency = firstText(data.financialCurrency, data.sourceFinancialCurrency);
+  if (!sourceCurrency || String(sourceCurrency).toUpperCase() === "USD") {
+    return data;
+  }
+  if (String(data.currencyAdjustedFor || "").includes("_USD_")) {
+    return data;
+  }
+
+  const usdRate = await fetchUsdRate(sourceCurrency, null);
+  if (!usdRate) return data;
+
+  const analystEstimates = data.analystEstimates
+    ? {
+        ...data.analystEstimates,
+        nextQuarter: convertGenericEstimateBlockToUsd(data.analystEstimates.nextQuarter, usdRate),
+        currentYear: convertGenericEstimateBlockToUsd(data.analystEstimates.currentYear, usdRate),
+        nextYear: convertGenericEstimateBlockToUsd(data.analystEstimates.nextYear, usdRate),
+        followingYear: convertGenericEstimateBlockToUsd(data.analystEstimates.followingYear, usdRate)
+      }
+    : data.analystEstimates;
+
+  const topLevelMoney = convertMoneyFields(data, usdRate, [
+    "operatingCashflow",
+    "freeCashflow",
+    "consensusCurrentYearRevenue",
+    "consensusNextYearRevenue"
+  ]);
+
+  return {
+    ...topLevelMoney,
+    revenueData: Array.isArray(data.revenueData)
+      ? data.revenueData.map((row) => convertGenericForeignRowToUsd({ ...row, sourceCurrency }, usdRate))
+      : data.revenueData,
+    revenueHistory: Array.isArray(data.revenueHistory)
+      ? data.revenueHistory.map((row) => convertGenericForeignRowToUsd({ ...row, sourceCurrency }, usdRate))
+      : data.revenueHistory,
+    analystEstimates,
+    epsBeatMiss: convertGenericEpsBeatMissToUsd(data.epsBeatMiss, usdRate),
+    financialCurrency: "USD",
+    sourceFinancialCurrency: sourceCurrency,
+    currencyAdjustedFor: `${ticker}_${sourceCurrency}_TO_USD`
+  };
+}
+
 const normalizePercent = (value) => {
   const number = toNumberOrNull(value);
   if (number === null) return null;
@@ -5633,6 +5716,8 @@ async function fetchYahooSupplementalData(ticker) {
     return {
       name: quoteData.longName || quoteData.shortName || ticker,
       symbol: quoteData.symbol || ticker,
+      currency: firstText(quoteData.currency),
+      financialCurrency: firstText(quoteData.financialCurrency, quoteData.currency),
       price: firstYahooNumber(quoteData.regularMarketPrice),
       change: firstFiniteNumber(quoteData.regularMarketChange),
       percentChange: firstFiniteNumber(quoteData.regularMarketChangePercent),
@@ -5751,6 +5836,8 @@ async function fetchYahooQuickQuote(ticker) {
     return {
       name: quoteData.longName || quoteData.shortName || ticker,
       symbol: quoteData.symbol || ticker,
+      currency: firstText(quoteData.currency),
+      financialCurrency: firstText(quoteData.financialCurrency, quoteData.currency),
       price: firstYahooNumber(quoteData.regularMarketPrice),
       change: firstFiniteNumber(quoteData.regularMarketChange),
       percentChange: firstFiniteNumber(quoteData.regularMarketChangePercent),
@@ -7159,13 +7246,15 @@ async function fetchStockData(ticker) {
       ? displayedNextEpsValue * estimateSharesOutstanding * 1000000
       : null);
 
-  const data = await normalizeForeignAdrStockData(ticker, preserveBankMargins(withGuaranteedAnalystSection({
+  let data = await normalizeForeignAdrStockData(ticker, preserveBankMargins(withGuaranteedAnalystSection({
     isFinancialCompany,
     bankMetrics: displayedBankMetrics,
     marginHistory,
     historicalPe,
     name: profile.name || ticker,
     symbol: ticker,
+    currency: firstText(yahooSupplementalData.currency, quote.currency, previousData?.currency),
+    financialCurrency: firstText(yahooSupplementalData.financialCurrency, yahooSupplementalData.currency, quote.currency, previousData?.financialCurrency),
     sector: firstText(profile.gicsSector, profile.sector, yahooSupplementalData.sector, previousData?.sector),
     industry: firstText(profile.finnhubIndustry, profile.gicsSubIndustry, profile.industry, yahooSupplementalData.industry, previousData?.industry),
     logo: profile.logo || getFinnhubLogoUrl(ticker),
@@ -7298,6 +7387,7 @@ async function fetchStockData(ticker) {
     revenueHistory,
     revenueData
   }), previousData));
+  data = await normalizeForeignFinancialCurrencyStockData(ticker, data);
 
   await Stock.findOneAndUpdate(
     { ticker },

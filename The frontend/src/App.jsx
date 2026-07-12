@@ -706,6 +706,12 @@ const formatChartPeriodLabel = (period) => {
   return value || "N/A";
 };
 
+const formatChartTooltipValue = (period, value, formatter) => {
+  const label = formatChartPeriodLabel(period);
+  const formattedValue = formatter(value);
+  return `${label} ${formattedValue}`;
+};
+
 const formatGrowthPercent = (value) =>
   isNumber(value) ? `${value > 0 ? "+" : ""}${value.toFixed(1)}%` : "N/A";
 
@@ -1250,7 +1256,10 @@ function HistoricalLineChart({ title, data, dataKey, color, formatter, valueLabe
               <YAxis tickFormatter={formatter} width={58} />
               <Tooltip
                 labelFormatter={formatChartPeriodLabel}
-                formatter={(value) => [formatter(value), valueLabel]}
+                formatter={(value, name, props) => [
+                  formatChartTooltipValue(props?.payload?.period, value, formatter),
+                  valueLabel
+                ]}
               />
               <Line
                 type="monotone"
@@ -4456,8 +4465,8 @@ return (
 
         <Tooltip
   labelFormatter={formatChartPeriodLabel}
-  formatter={(value) => [
-    formatChartBillions(value),
+  formatter={(value, name, props) => [
+    formatChartTooltipValue(props?.payload?.period, value, formatChartBillions),
     "Revenue"
   ]}
 />
@@ -4538,8 +4547,8 @@ return (
 
           <Tooltip
             labelFormatter={formatChartPeriodLabel}
-            formatter={(value) => [
-              formatChartBillions(value),
+            formatter={(value, name, props) => [
+              formatChartTooltipValue(props?.payload?.period, value, formatChartBillions),
               "Net Income"
             ]}
           />
@@ -4625,8 +4634,8 @@ return (
 
           <Tooltip
             labelFormatter={formatChartPeriodLabel}
-            formatter={(value) => [
-              formatChartEps(value),
+            formatter={(value, name, props) => [
+              formatChartTooltipValue(props?.payload?.period, value, formatChartEps),
               "EPS"
             ]}
           />

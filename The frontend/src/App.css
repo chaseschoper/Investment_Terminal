@@ -2765,6 +2765,12 @@ body {
     height: 6px;
   }
 
+  .welcome-hero-content {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
   .main > :not(.welcome-hero) {
     width: min(calc(100% - 24px), 1500px);
   }
@@ -2774,19 +2780,35 @@ body {
   }
 
   .welcome-title-row {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 18px;
+    display: contents;
+  }
+
+  .welcome-kicker {
+    order: 1;
+  }
+
+  .welcome-hero h1 {
+    order: 2;
+  }
+
+  .welcome-hero p {
+    order: 3;
   }
 
   .welcome-logo {
+    order: 4;
     width: 88px;
     height: 88px;
+    margin-top: 18px;
     padding: 10px;
   }
 
   .welcome-hero p {
     font-size: 16px;
+  }
+
+  .welcome-action {
+    order: 5;
   }
 
   .home-features {
