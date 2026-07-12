@@ -790,9 +790,23 @@ const CHART_STABLE_FIELDS = [
   "balanceSheetMetricsVersion"
 ];
 
+const chartHistoryPointCount = (stock = {}, key) => {
+  const periods = new Set();
+  (Array.isArray(stock.revenueData) ? stock.revenueData : []).forEach((row) => {
+    if (!isNumber(row?.[key]) || row?.isCurrent) return;
+    periods.add(row.period || `${row.year}-${row.isInterim ? "interim" : "annual"}`);
+  });
+  return periods.size;
+};
+
+const hasCompleteCoreChartData = (stock = {}) =>
+  chartHistoryPointCount(stock, "revenue") >= 2 &&
+  chartHistoryPointCount(stock, "earnings") >= 2 &&
+  chartHistoryPointCount(stock, "eps") >= 2;
+
 const hasStableChartData = (stock = {}) =>
-  (Array.isArray(stock.revenueData) && stock.revenueData.length > 0) ||
-  (Array.isArray(stock.revenueHistory) && stock.revenueHistory.length > 0);
+  hasCompleteCoreChartData(stock) ||
+  (Array.isArray(stock.revenueHistory) && stock.revenueHistory.length >= 2);
 
 const hasMarketActivityData = (stock = {}) =>
   (Array.isArray(stock.analystUpdates) && stock.analystUpdates.length > 0) ||
@@ -2383,8 +2397,7 @@ useEffect(() => {
 
       const needsFreshHistory =
         response.data.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
-        !Array.isArray(stableResponse.revenueData) ||
-        stableResponse.revenueData.length === 0;
+        !hasCompleteCoreChartData(stableResponse);
       const needsMarketActivity = !hasMarketActivityData(stableResponse);
       const needsBalanceSheetMetrics =
         !stableResponse.balanceSheetCheckedAt &&
@@ -2899,6 +2912,7 @@ const hasRealHistoryRows = (rows = []) =>
   rows.some((row) => row?.isInterim && !row?.isCurrent);
 const isHistoryRefreshPending =
   isStockLoading ||
+  stockData?.refreshing ||
   stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION;
 const shouldShowHistoryLoading = (rows = []) =>
   isHistoryRefreshPending && !hasRealHistoryRows(rows);

@@ -3461,8 +3461,17 @@ function historicalGrowth(rows, field, currentYear = 2025, previousYear = 2024) 
   return ((current - previous) / Math.abs(previous)) * 100;
 }
 
+function chartHistoryPointCount(stock, key) {
+  const periods = new Set();
+  (stock?.data?.revenueData || []).forEach((row) => {
+    if (toNumberOrNull(row?.[key]) === null || row?.isCurrent) return;
+    periods.add(row.period || `${row.year}-${row.isInterim ? "interim" : "annual"}`);
+  });
+  return periods.size;
+}
+
 function hasChartHistory(stock, key) {
-  return stock?.data?.revenueData?.some((row) => toNumberOrNull(row[key]) !== null);
+  return chartHistoryPointCount(stock, key) >= 2;
 }
 
 function hasCompleteChartHistory(stock) {
