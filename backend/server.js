@@ -248,6 +248,24 @@ const FOREIGN_ADR_CONFIG = {
     adrRatio: 10,
     localSymbols: ["7203.T"],
     fallbackUsdRate: 0.0068
+  },
+  SKHYV: {
+    sourceCurrency: "KRW",
+    displayCurrency: "USD",
+    adrRatio: 1,
+    localSymbols: ["000660.KS"],
+    fallbackUsdRate: 0.00069,
+    marketCapMultiplier: 1000,
+    recomputeEpsFromConvertedEarnings: true
+  },
+  SKHY: {
+    sourceCurrency: "KRW",
+    displayCurrency: "USD",
+    adrRatio: 1,
+    localSymbols: ["000660.KS"],
+    fallbackUsdRate: 0.00069,
+    marketCapMultiplier: 1000,
+    recomputeEpsFromConvertedEarnings: true
   }
 };
 
@@ -2038,7 +2056,7 @@ function convertMoneyFields(row, usdRate, fields) {
   return next;
 }
 
-function convertForeignAdrRow(row, config, usdRate) {
+function convertForeignAdrRow(row, config, usdRate, sharesOutstanding = null) {
   if (!row) return row;
   const next = convertMoneyFields(row, usdRate, [
     "revenue",
@@ -2048,8 +2066,13 @@ function convertForeignAdrRow(row, config, usdRate) {
     "operatingCashflow",
     "freeCashflow"
   ]);
-  const eps = toNumberOrNull(row.eps);
-  if (eps !== null) next.eps = eps * config.adrRatio * usdRate;
+  if (config.recomputeEpsFromConvertedEarnings && sharesOutstanding) {
+    const recalculatedEps = computeEpsFromEarningsAndShares(next.earnings, sharesOutstanding);
+    if (recalculatedEps !== null) next.eps = recalculatedEps;
+  } else {
+    const eps = toNumberOrNull(row.eps);
+    if (eps !== null) next.eps = eps * config.adrRatio * usdRate;
+  }
   next.sourceCurrency = config.sourceCurrency;
   next.displayCurrency = config.displayCurrency;
   return next;
@@ -2073,9 +2096,10 @@ function normalizeForeignAdrMoneyEstimate(value, usdRate, threshold) {
   return Math.abs(number) >= threshold ? number * usdRate : number;
 }
 
-function normalizeForeignAdrMarketCap(value, usdRate) {
+function normalizeForeignAdrMarketCap(value, usdRate, config = {}) {
   const number = toNumberOrNull(value);
   if (number === null) return null;
+  if (config.marketCapMultiplier) return number * config.marketCapMultiplier;
   return Math.abs(number) >= 10000000000000 ? number * usdRate : number;
 }
 
@@ -2163,20 +2187,20 @@ async function normalizeForeignAdrStockData(ticker, data = {}) {
   const usdRate = await fetchUsdRate(config.sourceCurrency, config.fallbackUsdRate);
   if (!usdRate) return data;
 
+  const rawMarketCap = toNumberOrNull(data.marketCap);
+  const price = toNumberOrNull(data.price);
+  const marketCap = normalizeForeignAdrMarketCap(rawMarketCap, usdRate, config);
+  const sharesOutstanding =
+    marketCap !== null && price
+      ? marketCap / price / 1000000
+      : toNumberOrNull(data.sharesOutstanding);
   const revenueData = Array.isArray(data.revenueData)
-    ? data.revenueData.map((row) => convertForeignAdrRow(row, config, usdRate))
+    ? data.revenueData.map((row) => convertForeignAdrRow(row, config, usdRate, sharesOutstanding))
     : data.revenueData;
   const revenueHistory = Array.isArray(data.revenueHistory)
     ? data.revenueHistory.map((row) => convertMoneyFields(row, usdRate, ["value", "revenue"]))
     : data.revenueHistory;
 
-  const rawMarketCap = toNumberOrNull(data.marketCap);
-  const price = toNumberOrNull(data.price);
-  const marketCap = normalizeForeignAdrMarketCap(rawMarketCap, usdRate);
-  const sharesOutstanding =
-    marketCap !== null && price
-      ? marketCap / price / 1000000
-      : toNumberOrNull(data.sharesOutstanding);
   const analystEstimates = data.analystEstimates
     ? {
         ...data.analystEstimates,
@@ -2216,6 +2240,13 @@ async function normalizeForeignAdrStockData(ticker, data = {}) {
     ? data.historicalPe.filter((row) => row?.isCurrent || row?.isInterim)
     : [];
   const currentRevenue = toNumberOrNull(analystEstimates?.currentYear?.revenue);
+  const latestAnnualEps = Array.isArray(revenueData)
+    ? [...revenueData].reverse().find((row) => !row?.isInterim && toNumberOrNull(row?.eps) !== null)?.eps
+    : null;
+  const normalizedPe =
+    price && toNumberOrNull(latestAnnualEps) !== null && latestAnnualEps !== 0
+      ? price / latestAnnualEps
+      : data.pe;
 
   return {
     ...data,
@@ -2223,6 +2254,8 @@ async function normalizeForeignAdrStockData(ticker, data = {}) {
     revenueHistory,
     marketCap: marketCap ?? data.marketCap,
     sharesOutstanding,
+    pe: normalizedPe,
+    trailingEps: latestAnnualEps ?? data.trailingEps,
     priceToSales:
       marketCap !== null && currentRevenue && currentRevenue > 0
         ? marketCap / currentRevenue
