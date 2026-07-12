@@ -54,7 +54,7 @@ const fxRateCache = new Map();
 const alphaVantageFundamentalCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 146;
 const STOCK_ESTIMATE_VERSION = 15;
-const BALANCE_SHEET_METRICS_VERSION = 4;
+const BALANCE_SHEET_METRICS_VERSION = 7;
 const EARNINGS_CALL_VERSION = 17;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -5949,22 +5949,88 @@ async function fetchLatestBalanceSheetMetrics(ticker) {
           !entry?.start
         );
       for (const entry of entries) {
+        const candidate = { ...entry, concept };
         if (
           !latest ||
-          String(entry.end) > String(latest.end) ||
-          (String(entry.end) === String(latest.end) && String(entry.filed || "") > String(latest.filed || ""))
+          String(candidate.end) > String(latest.end) ||
+          (String(candidate.end) === String(latest.end) && String(candidate.filed || "") > String(latest.filed || ""))
         ) {
-          latest = entry;
+          latest = candidate;
         }
       }
     }
     return latest
       ? {
           value: toNumberOrNull(latest.val),
-          asOf: latest.end || null
+          asOf: latest.end || null,
+          concept: latest.concept || null
         }
-      : { value: null, asOf: null };
+      : { value: null, asOf: null, concept: null };
   };
+
+  const latestSecInstantFactByPattern = (companyFacts, includePattern, rejectPattern = null) => {
+    let latest = null;
+    const facts = companyFacts?.facts?.["us-gaap"] || {};
+    for (const [concept, fact] of Object.entries(facts)) {
+      if (!includePattern.test(concept) || (rejectPattern && rejectPattern.test(concept))) continue;
+      const entries = Object.values(fact?.units || {})
+        .flat()
+        .filter((entry) =>
+          ["10-K", "10-K/A", "10-Q", "10-Q/A", "20-F", "20-F/A", "40-F", "40-F/A"].includes(entry?.form) &&
+          entry?.end &&
+          toNumberOrNull(entry?.val) !== null &&
+          !entry?.start
+        );
+      for (const entry of entries) {
+        const candidate = { ...entry, concept };
+        if (
+          !latest ||
+          String(candidate.end) > String(latest.end) ||
+          (String(candidate.end) === String(latest.end) && String(candidate.filed || "") > String(latest.filed || ""))
+        ) {
+          latest = candidate;
+        }
+      }
+    }
+    return latest
+      ? {
+          value: toNumberOrNull(latest.val),
+          asOf: latest.end || null,
+          concept: latest.concept || null
+        }
+      : { value: null, asOf: null, concept: null };
+  };
+
+  const hasSecConceptByPattern = (companyFacts, includePattern, rejectPattern = null) =>
+    Object.keys(companyFacts?.facts?.["us-gaap"] || {}).some(
+      (concept) => includePattern.test(concept) && !(rejectPattern && rejectPattern.test(concept))
+    );
+
+  const mostRecentAsOf = (...facts) =>
+    facts
+      .map((fact) => fact?.asOf)
+      .filter(Boolean)
+      .sort()
+      .at(-1) || null;
+
+  const sourceForSec = (strictSource, ...broadFacts) =>
+    broadFacts.some((fact) => fact?.value !== null)
+      ? `${strictSource} (broad scan)`
+      : strictSource;
+  const isFreshBalanceSheetDate = (asOf) => {
+    if (!asOf) return false;
+    const timestamp = Date.parse(`${asOf}T00:00:00Z`);
+    if (!Number.isFinite(timestamp)) return false;
+    return Date.now() - timestamp <= 820 * 24 * 60 * 60 * 1000;
+  };
+  const balanceSheetDebtRejectPattern =
+    /Maturit|Repayment|Repayments|Proceeds|Interest|FairValue|Unamortized|Discount|Premium|IssuanceCosts|AvailableForSale|Securities|Unrealized|Hedge|Gain|Loss|Expense|RightOfUseAsset|PaymentsDue|UnusedBorrowingCapacity|LineOfCreditFacilityMaximumBorrowingCapacity|Disclosure|TextBlock/i;
+  const balanceSheetCashRejectPattern =
+    /PeriodIncreaseDecrease|ProvidedBy|UsedIn|Payments|Proceeds|Dividends|Uninsured|FairValueDisclosure|Flow|TextBlock/i;
+  const broadCashPattern =
+    /^(CashAndCashEquivalents|CashCashEquivalents|CashAndShortTermInvestments|CashCashEquivalentsAndShortTermInvestments|CashEquivalentsAtCarryingValue)/i;
+  const broadDebtPattern =
+    /^(Debt|Borrowings|NotesPayable|CommercialPaper|FinanceLeaseLiabilit|CapitalLeaseObligation|LongTermDebt|ShortTermDebt|ShorttermDebt)/i;
 
   const fromSecCompanyFacts = async () => {
     const tickerMap = await getSecTickerMap();
@@ -5985,6 +6051,7 @@ async function fetchLatestBalanceSheetMetrics(ticker) {
       "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsIncludingDiscontinuedOperations",
       "CashCashEquivalentsAndShortTermInvestments"
     ]);
+    const broadCash = latestSecInstantFactByPattern(data, broadCashPattern, balanceSheetCashRejectPattern);
     const totalDebt = latestSecInstantFact(data, [
       "Debt",
       "DebtAndFinanceLeaseObligations",
@@ -5994,7 +6061,6 @@ async function fetchLatestBalanceSheetMetrics(ticker) {
       "LongTermDebt",
       "LongTermDebtAndFinanceLeaseObligations",
       "LongTermDebtAndCapitalLeaseObligations",
-      "LongTermDebtAndFinanceLeaseObligationsIncludingCurrentMaturities",
       "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities"
     ]);
     const currentDebt = latestSecInstantFact(data, [
@@ -6013,16 +6079,33 @@ async function fetchLatestBalanceSheetMetrics(ticker) {
       "LongTermDebtAndCapitalLeaseObligations",
       "LongTermDebtAndCapitalLeaseObligationsNoncurrent"
     ]);
+    const broadDebt = latestSecInstantFactByPattern(data, broadDebtPattern, balanceSheetDebtRejectPattern);
     const combinedDebt =
       currentDebt.value !== null || longTermDebt.value !== null
         ? (currentDebt.value || 0) + (longTermDebt.value || 0)
         : null;
+    const totalCash = firstFiniteNumber(cash.value, broadCash.value);
+    const hasAnyDebtConcept = hasSecConceptByPattern(data, broadDebtPattern, balanceSheetDebtRejectPattern);
+    const inferredZeroDebt =
+      totalCash !== null &&
+      totalDebt.value === null &&
+      combinedDebt === null &&
+      longTermDebt.value === null &&
+      broadDebt.value === null &&
+      !hasAnyDebtConcept
+        ? 0
+        : null;
+    const resolvedDebt = firstFiniteNumber(totalDebt.value, combinedDebt, broadDebt.value, longTermDebt.value, inferredZeroDebt);
+    const balanceSheetAsOf = mostRecentAsOf(totalDebt, currentDebt, longTermDebt, broadDebt, cash, broadCash) || null;
+    if ((totalCash !== null || resolvedDebt !== null) && !isFreshBalanceSheetDate(balanceSheetAsOf)) {
+      return {};
+    }
 
     return {
-      totalCash: cash.value,
-      totalDebt: firstFiniteNumber(totalDebt.value, combinedDebt, longTermDebt.value),
-      balanceSheetAsOf: totalDebt.asOf || cash.asOf || currentDebt.asOf || longTermDebt.asOf || null,
-      balanceSheetSource: "SEC latest balance sheet"
+      totalCash,
+      totalDebt: resolvedDebt,
+      balanceSheetAsOf,
+      balanceSheetSource: sourceForSec("SEC latest balance sheet", broadCash, broadDebt)
     };
   };
 
@@ -6032,13 +6115,31 @@ async function fetchLatestBalanceSheetMetrics(ticker) {
       "quarterlyTotalDebt",
       "quarterlyCashAndCashEquivalents",
       "quarterlyCashCashEquivalentsAndShortTermInvestments",
+      "quarterlyCashAndShortTermInvestments",
+      "quarterlyCashFinancial",
+      "quarterlyCashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
       "quarterlyLongTermDebt",
+      "quarterlyLongTermDebtAndCapitalLeaseObligation",
+      "quarterlyLongTermDebtAndFinanceLeaseObligation",
+      "quarterlyLongTermDebtNonCurrent",
       "quarterlyCurrentDebt",
+      "quarterlyCurrentDebtAndCapitalLeaseObligation",
+      "quarterlyShortTermDebt",
+      "quarterlyCommercialPaper",
       "annualTotalDebt",
       "annualCashAndCashEquivalents",
       "annualCashCashEquivalentsAndShortTermInvestments",
+      "annualCashAndShortTermInvestments",
+      "annualCashFinancial",
+      "annualCashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
       "annualLongTermDebt",
-      "annualCurrentDebt"
+      "annualLongTermDebtAndCapitalLeaseObligation",
+      "annualLongTermDebtAndFinanceLeaseObligation",
+      "annualLongTermDebtNonCurrent",
+      "annualCurrentDebt",
+      "annualCurrentDebtAndCapitalLeaseObligation",
+      "annualShortTermDebt",
+      "annualCommercialPaper"
     ];
     const period1 = Math.floor(Date.UTC(new Date().getUTCFullYear() - 4, 0, 1) / 1000);
     const period2 = Math.floor(Date.now() / 1000);
@@ -6067,29 +6168,93 @@ async function fetchLatestBalanceSheetMetrics(ticker) {
     };
     const quarterlyCash = readLatest("quarterlyCashAndCashEquivalents");
     const quarterlyCashAndShortTerm = readLatest("quarterlyCashCashEquivalentsAndShortTermInvestments");
+    const quarterlyCashAndShortTermAlt = readLatest("quarterlyCashAndShortTermInvestments");
+    const quarterlyCashFinancial = readLatest("quarterlyCashFinancial");
+    const quarterlyRestrictedCash = readLatest("quarterlyCashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents");
     const annualCash = readLatest("annualCashAndCashEquivalents");
     const annualCashAndShortTerm = readLatest("annualCashCashEquivalentsAndShortTermInvestments");
+    const annualCashAndShortTermAlt = readLatest("annualCashAndShortTermInvestments");
+    const annualCashFinancial = readLatest("annualCashFinancial");
+    const annualRestrictedCash = readLatest("annualCashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents");
     const quarterlyDebt = readLatest("quarterlyTotalDebt");
     const annualDebt = readLatest("annualTotalDebt");
     const quarterlyLongTermDebt = readLatest("quarterlyLongTermDebt");
+    const quarterlyLongTermDebtLease = readLatest("quarterlyLongTermDebtAndCapitalLeaseObligation");
+    const quarterlyLongTermDebtFinanceLease = readLatest("quarterlyLongTermDebtAndFinanceLeaseObligation");
+    const quarterlyLongTermDebtNonCurrent = readLatest("quarterlyLongTermDebtNonCurrent");
     const annualLongTermDebt = readLatest("annualLongTermDebt");
+    const annualLongTermDebtLease = readLatest("annualLongTermDebtAndCapitalLeaseObligation");
+    const annualLongTermDebtFinanceLease = readLatest("annualLongTermDebtAndFinanceLeaseObligation");
+    const annualLongTermDebtNonCurrent = readLatest("annualLongTermDebtNonCurrent");
     const quarterlyCurrentDebt = readLatest("quarterlyCurrentDebt");
+    const quarterlyCurrentDebtLease = readLatest("quarterlyCurrentDebtAndCapitalLeaseObligation");
+    const quarterlyShortTermDebt = readLatest("quarterlyShortTermDebt");
+    const quarterlyCommercialPaper = readLatest("quarterlyCommercialPaper");
     const annualCurrentDebt = readLatest("annualCurrentDebt");
+    const annualCurrentDebtLease = readLatest("annualCurrentDebtAndCapitalLeaseObligation");
+    const annualShortTermDebt = readLatest("annualShortTermDebt");
+    const annualCommercialPaper = readLatest("annualCommercialPaper");
     const fallbackQuarterlyDebt =
-      quarterlyLongTermDebt.value !== null || quarterlyCurrentDebt.value !== null
-        ? (quarterlyLongTermDebt.value || 0) + (quarterlyCurrentDebt.value || 0)
+      quarterlyLongTermDebt.value !== null ||
+      quarterlyLongTermDebtLease.value !== null ||
+      quarterlyLongTermDebtFinanceLease.value !== null ||
+      quarterlyLongTermDebtNonCurrent.value !== null ||
+      quarterlyCurrentDebt.value !== null ||
+      quarterlyCurrentDebtLease.value !== null ||
+      quarterlyShortTermDebt.value !== null ||
+      quarterlyCommercialPaper.value !== null
+        ? (firstFiniteNumber(
+            quarterlyLongTermDebt.value,
+            quarterlyLongTermDebtLease.value,
+            quarterlyLongTermDebtFinanceLease.value,
+            quarterlyLongTermDebtNonCurrent.value,
+            0
+          ) || 0) +
+          (firstFiniteNumber(
+            quarterlyCurrentDebt.value,
+            quarterlyCurrentDebtLease.value,
+            quarterlyShortTermDebt.value,
+            quarterlyCommercialPaper.value,
+            0
+          ) || 0)
         : null;
     const fallbackAnnualDebt =
-      annualLongTermDebt.value !== null || annualCurrentDebt.value !== null
-        ? (annualLongTermDebt.value || 0) + (annualCurrentDebt.value || 0)
+      annualLongTermDebt.value !== null ||
+      annualLongTermDebtLease.value !== null ||
+      annualLongTermDebtFinanceLease.value !== null ||
+      annualLongTermDebtNonCurrent.value !== null ||
+      annualCurrentDebt.value !== null ||
+      annualCurrentDebtLease.value !== null ||
+      annualShortTermDebt.value !== null ||
+      annualCommercialPaper.value !== null
+        ? (firstFiniteNumber(
+            annualLongTermDebt.value,
+            annualLongTermDebtLease.value,
+            annualLongTermDebtFinanceLease.value,
+            annualLongTermDebtNonCurrent.value,
+            0
+          ) || 0) +
+          (firstFiniteNumber(
+            annualCurrentDebt.value,
+            annualCurrentDebtLease.value,
+            annualShortTermDebt.value,
+            annualCommercialPaper.value,
+            0
+          ) || 0)
         : null;
 
     return {
       totalCash: firstFiniteNumber(
         quarterlyCash.value,
         quarterlyCashAndShortTerm.value,
+        quarterlyCashAndShortTermAlt.value,
+        quarterlyCashFinancial.value,
+        quarterlyRestrictedCash.value,
         annualCash.value,
-        annualCashAndShortTerm.value
+        annualCashAndShortTerm.value,
+        annualCashAndShortTermAlt.value,
+        annualCashFinancial.value,
+        annualRestrictedCash.value
       ),
       totalDebt: firstFiniteNumber(
         quarterlyDebt.value,
@@ -6097,15 +6262,27 @@ async function fetchLatestBalanceSheetMetrics(ticker) {
         fallbackQuarterlyDebt,
         fallbackAnnualDebt,
         quarterlyLongTermDebt.value,
-        annualLongTermDebt.value
+        quarterlyLongTermDebtLease.value,
+        quarterlyLongTermDebtFinanceLease.value,
+        quarterlyLongTermDebtNonCurrent.value,
+        annualLongTermDebt.value,
+        annualLongTermDebtLease.value,
+        annualLongTermDebtFinanceLease.value,
+        annualLongTermDebtNonCurrent.value
       ),
       balanceSheetAsOf:
         quarterlyDebt.asOf ||
         quarterlyCash.asOf ||
         quarterlyCashAndShortTerm.asOf ||
+        quarterlyCashAndShortTermAlt.asOf ||
+        quarterlyCashFinancial.asOf ||
+        quarterlyRestrictedCash.asOf ||
         annualDebt.asOf ||
         annualCash.asOf ||
         annualCashAndShortTerm.asOf ||
+        annualCashAndShortTermAlt.asOf ||
+        annualCashFinancial.asOf ||
+        annualRestrictedCash.asOf ||
         null,
       balanceSheetSource: "Yahoo Finance latest balance sheet"
     };
@@ -7647,6 +7824,11 @@ async function fetchStockData(ticker) {
     yahooCurrentEpsRaw ?? stockAnalysisForecast.currentYearEps ?? nasdaqData.currentYearEps ?? null;
   const consensusNextEpsValue =
     yahooNextEpsRaw ?? stockAnalysisForecast.nextYearEps ?? nasdaqData.nextYearEps ?? null;
+  const previousBalanceSheetAsOfMs = Date.parse(`${previousData?.balanceSheetAsOf || ""}T00:00:00Z`);
+  const canReusePreviousBalanceSheetMetrics =
+    previousData?.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION &&
+    Number.isFinite(previousBalanceSheetAsOfMs) &&
+    Date.now() - previousBalanceSheetAsOfMs <= 820 * 24 * 60 * 60 * 1000;
   const displayedCurrentRevenueValue =
     yahooCurrentRevenueEstimate ?? previousYahooEstimates?.currentYear?.revenue ?? consensusCurrentRevenueValue;
   const displayedCurrentEpsValue =
@@ -7697,11 +7879,20 @@ async function fetchStockData(ticker) {
     fiftyTwoWeekHigh,
     fiftyTwoWeekLow,
     marketCap,
-    totalCash: firstFiniteNumber(balanceSheetMetrics.totalCash, previousData?.totalCash),
-    totalDebt: firstFiniteNumber(balanceSheetMetrics.totalDebt, previousData?.totalDebt),
-    balanceSheetAsOf: balanceSheetMetrics.balanceSheetAsOf || previousData?.balanceSheetAsOf || null,
-    balanceSheetSource: balanceSheetMetrics.balanceSheetSource || previousData?.balanceSheetSource || null,
-    balanceSheetCheckedAt: balanceSheetMetrics.balanceSheetCheckedAt || previousData?.balanceSheetCheckedAt || null,
+    totalCash: firstFiniteNumber(
+      balanceSheetMetrics.totalCash,
+      canReusePreviousBalanceSheetMetrics ? previousData?.totalCash : null
+    ),
+    totalDebt: firstFiniteNumber(
+      balanceSheetMetrics.totalDebt,
+      canReusePreviousBalanceSheetMetrics ? previousData?.totalDebt : null
+    ),
+    balanceSheetAsOf:
+      balanceSheetMetrics.balanceSheetAsOf || (canReusePreviousBalanceSheetMetrics ? previousData?.balanceSheetAsOf : null) || null,
+    balanceSheetSource:
+      balanceSheetMetrics.balanceSheetSource || (canReusePreviousBalanceSheetMetrics ? previousData?.balanceSheetSource : null) || null,
+    balanceSheetCheckedAt:
+      balanceSheetMetrics.balanceSheetCheckedAt || (canReusePreviousBalanceSheetMetrics ? previousData?.balanceSheetCheckedAt : null) || null,
     balanceSheetMetricsVersion: BALANCE_SHEET_METRICS_VERSION,
     priceToSales,
     priceToBook,
