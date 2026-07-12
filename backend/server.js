@@ -53,6 +53,7 @@ const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 144;
 const STOCK_ESTIMATE_VERSION = 15;
+const BALANCE_SHEET_METRICS_VERSION = 2;
 const EARNINGS_CALL_VERSION = 17;
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -3472,6 +3473,7 @@ function hasCompleteSupplementalData(stock) {
       toNumberOrNull(data.totalDebt) !== null ||
       Boolean(data.balanceSheetCheckedAt)
     ) &&
+    data.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION &&
     toNumberOrNull(data.pe) !== null &&
     toNumberOrNull(data.forwardPE) !== null &&
     (!requiresIndustrialMetrics || toNumberOrNull(data.grossMargins) !== null) &&
@@ -5930,24 +5932,39 @@ async function fetchLatestBalanceSheetMetrics(ticker) {
     );
     const cash = latestSecInstantFact(data, [
       "CashAndCashEquivalentsAtCarryingValue",
+      "CashAndCashEquivalentsAtCarryingValueIncludingDiscontinuedOperations",
       "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+      "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsIncludingDisposalGroupAndDiscontinuedOperations",
+      "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsIncludingDiscontinuedOperations",
       "CashCashEquivalentsAndShortTermInvestments"
     ]);
     const totalDebt = latestSecInstantFact(data, [
       "Debt",
       "DebtAndFinanceLeaseObligations",
+      "DebtAndCapitalLeaseObligations",
+      "DebtLongtermAndShorttermCombinedAmount",
+      "DebtInstrumentCarryingAmount",
+      "LongTermDebt",
       "LongTermDebtAndFinanceLeaseObligations",
-      "ShortTermBorrowings"
+      "LongTermDebtAndCapitalLeaseObligations",
+      "LongTermDebtAndFinanceLeaseObligationsIncludingCurrentMaturities",
+      "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities"
     ]);
     const currentDebt = latestSecInstantFact(data, [
       "DebtCurrent",
       "LongTermDebtCurrent",
+      "ShortTermDebt",
+      "ShorttermDebt",
       "ShortTermBorrowings",
-      "LongTermDebtAndFinanceLeaseObligationsCurrent"
+      "LongTermDebtAndFinanceLeaseObligationsCurrent",
+      "LongTermDebtAndCapitalLeaseObligationsCurrent"
     ]);
     const longTermDebt = latestSecInstantFact(data, [
+      "LongTermDebt",
       "LongTermDebtNoncurrent",
-      "LongTermDebtAndFinanceLeaseObligationsNoncurrent"
+      "LongTermDebtAndFinanceLeaseObligationsNoncurrent",
+      "LongTermDebtAndCapitalLeaseObligations",
+      "LongTermDebtAndCapitalLeaseObligationsNoncurrent"
     ]);
     const combinedDebt =
       currentDebt.value !== null || longTermDebt.value !== null
@@ -7596,6 +7613,7 @@ async function fetchStockData(ticker) {
     balanceSheetAsOf: balanceSheetMetrics.balanceSheetAsOf || previousData?.balanceSheetAsOf || null,
     balanceSheetSource: balanceSheetMetrics.balanceSheetSource || previousData?.balanceSheetSource || null,
     balanceSheetCheckedAt: balanceSheetMetrics.balanceSheetCheckedAt || previousData?.balanceSheetCheckedAt || null,
+    balanceSheetMetricsVersion: BALANCE_SHEET_METRICS_VERSION,
     priceToSales,
     priceToBook,
     bookValuePerShare,

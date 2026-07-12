@@ -786,7 +786,8 @@ const CHART_STABLE_FIELDS = [
   "totalDebt",
   "balanceSheetAsOf",
   "balanceSheetSource",
-  "balanceSheetCheckedAt"
+  "balanceSheetCheckedAt",
+  "balanceSheetMetricsVersion"
 ];
 
 const hasStableChartData = (stock = {}) =>
