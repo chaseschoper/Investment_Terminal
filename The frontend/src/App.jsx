@@ -3949,13 +3949,13 @@ return (
     <nav className="section-tabs" aria-label="MrktRally pages">
       {[
         ["home", "Home"],
-        ["market-overview", "Market Overview"],
         ["overview", "Stock Overview"],
         ["projections", "Projections"],
         ["comparison", "Compare"],
         ["portfolio", "Portfolio"],
         ["watchlists", "Watchlists"],
         ["earnings-calendar", "Calendar"],
+        ["market-overview", "Market Overview"],
         ["mr-rally", "Mr. Rally"]
       ].map(([page, label]) => (
         <button

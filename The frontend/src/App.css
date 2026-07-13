@@ -947,8 +947,12 @@ body {
 }
 
 .market-overview-page .market-strip {
-  justify-content: space-between;
+  justify-content: flex-start;
   margin: 0 0 28px;
+}
+
+.market-overview-page .market-index-grid {
+  width: auto;
 }
 
 .sp500-heatmap-section {
