@@ -37,6 +37,7 @@ const earningsCalendarCache = new Map();
 const earningsEstimateCalendarCache = new Map();
 const nasdaqEarningsDateCache = new Map();
 const marketIndexCache = new Map();
+const marketHeatmapCache = new Map();
 const priceHistoryCache = new Map();
 const companyDocumentsCache = new Map();
 const companyDocumentsInFlight = new Map();
@@ -331,6 +332,58 @@ const MARKET_INDICES = [
   { key: "nasdaq", label: "Nasdaq", yahooSymbol: "^IXIC", futuresSymbol: "NQ=F", investingPath: "nasdaq-composite" }
 ];
 
+const SP500_HEATMAP_COMPANIES = [
+  { symbol: "AAPL", name: "Apple", sector: "Technology", weight: 7.1 },
+  { symbol: "MSFT", name: "Microsoft", sector: "Technology", weight: 6.8 },
+  { symbol: "NVDA", name: "NVIDIA", sector: "Technology", weight: 6.4 },
+  { symbol: "AVGO", name: "Broadcom", sector: "Technology", weight: 2.2 },
+  { symbol: "ORCL", name: "Oracle", sector: "Technology", weight: 1.2 },
+  { symbol: "CRM", name: "Salesforce", sector: "Technology", weight: 0.8 },
+  { symbol: "AMD", name: "AMD", sector: "Technology", weight: 0.8 },
+  { symbol: "ADBE", name: "Adobe", sector: "Technology", weight: 0.6 },
+  { symbol: "GOOGL", name: "Alphabet", sector: "Communication", weight: 3.7 },
+  { symbol: "META", name: "Meta", sector: "Communication", weight: 2.6 },
+  { symbol: "NFLX", name: "Netflix", sector: "Communication", weight: 0.8 },
+  { symbol: "DIS", name: "Disney", sector: "Communication", weight: 0.5 },
+  { symbol: "AMZN", name: "Amazon", sector: "Consumer Cyclical", weight: 3.8 },
+  { symbol: "TSLA", name: "Tesla", sector: "Consumer Cyclical", weight: 1.5 },
+  { symbol: "HD", name: "Home Depot", sector: "Consumer Cyclical", weight: 0.9 },
+  { symbol: "MCD", name: "McDonald's", sector: "Consumer Cyclical", weight: 0.6 },
+  { symbol: "NKE", name: "Nike", sector: "Consumer Cyclical", weight: 0.3 },
+  { symbol: "WMT", name: "Walmart", sector: "Consumer Defensive", weight: 0.9 },
+  { symbol: "COST", name: "Costco", sector: "Consumer Defensive", weight: 0.8 },
+  { symbol: "PG", name: "Procter & Gamble", sector: "Consumer Defensive", weight: 0.7 },
+  { symbol: "KO", name: "Coca-Cola", sector: "Consumer Defensive", weight: 0.6 },
+  { symbol: "PEP", name: "PepsiCo", sector: "Consumer Defensive", weight: 0.5 },
+  { symbol: "JPM", name: "JPMorgan Chase", sector: "Financials", weight: 1.4 },
+  { symbol: "V", name: "Visa", sector: "Financials", weight: 1.0 },
+  { symbol: "MA", name: "Mastercard", sector: "Financials", weight: 0.9 },
+  { symbol: "BAC", name: "Bank of America", sector: "Financials", weight: 0.5 },
+  { symbol: "WFC", name: "Wells Fargo", sector: "Financials", weight: 0.4 },
+  { symbol: "BRK-B", name: "Berkshire Hathaway", sector: "Financials", weight: 1.7 },
+  { symbol: "LLY", name: "Eli Lilly", sector: "Healthcare", weight: 1.8 },
+  { symbol: "UNH", name: "UnitedHealth", sector: "Healthcare", weight: 1.0 },
+  { symbol: "JNJ", name: "Johnson & Johnson", sector: "Healthcare", weight: 0.7 },
+  { symbol: "ABBV", name: "AbbVie", sector: "Healthcare", weight: 0.7 },
+  { symbol: "MRK", name: "Merck", sector: "Healthcare", weight: 0.5 },
+  { symbol: "TMO", name: "Thermo Fisher", sector: "Healthcare", weight: 0.4 },
+  { symbol: "GE", name: "GE Aerospace", sector: "Industrials", weight: 0.8 },
+  { symbol: "CAT", name: "Caterpillar", sector: "Industrials", weight: 0.5 },
+  { symbol: "RTX", name: "RTX", sector: "Industrials", weight: 0.4 },
+  { symbol: "HON", name: "Honeywell", sector: "Industrials", weight: 0.4 },
+  { symbol: "BA", name: "Boeing", sector: "Industrials", weight: 0.3 },
+  { symbol: "LIN", name: "Linde", sector: "Materials", weight: 0.7 },
+  { symbol: "SHW", name: "Sherwin-Williams", sector: "Materials", weight: 0.3 },
+  { symbol: "FCX", name: "Freeport-McMoRan", sector: "Materials", weight: 0.2 },
+  { symbol: "XOM", name: "Exxon Mobil", sector: "Energy", weight: 1.0 },
+  { symbol: "CVX", name: "Chevron", sector: "Energy", weight: 0.6 },
+  { symbol: "COP", name: "ConocoPhillips", sector: "Energy", weight: 0.3 },
+  { symbol: "NEE", name: "NextEra Energy", sector: "Utilities", weight: 0.3 },
+  { symbol: "SO", name: "Southern", sector: "Utilities", weight: 0.2 },
+  { symbol: "AMT", name: "American Tower", sector: "Real Estate", weight: 0.3 },
+  { symbol: "PLD", name: "Prologis", sector: "Real Estate", weight: 0.3 }
+];
+
 const PRICE_HISTORY_RANGES = {
   "1D": { range: "1d", interval: "5m", ttl: 20 * 1000 },
   "1W": { range: "5d", interval: "15m", ttl: 60 * 1000 },
@@ -576,6 +629,25 @@ async function getFmpData(ticker, label, endpoints) {
   }
 
   return null;
+}
+
+async function fetchFmpBatchQuotes(symbols = []) {
+  if (!process.env.FMP_API_KEY || !canUseFmp() || !symbols.length) return [];
+
+  try {
+    const response = await axios.get(
+      `https://financialmodelingprep.com/api/v3/quote/${symbols.map(encodeURIComponent).join(",")}`,
+      {
+        params: { apikey: process.env.FMP_API_KEY },
+        timeout: 5500
+      }
+    );
+    return Array.isArray(response.data) ? response.data : [];
+  } catch (err) {
+    setFmpCooldown(err, "batch quote", symbols.slice(0, 3).join(","));
+    console.log("FMP batch quote skipped:", err.response?.status || err.message);
+    return [];
+  }
 }
 
 async function getAlphaVantageFundamentalData(ticker, fn) {
@@ -8595,6 +8667,165 @@ app.get("/api/prices", async (req, res) => {
   runBackgroundQuoteRefresh(staleSymbols);
 
   res.json({ prices, details });
+});
+
+function buildMarketHeatmapPayload(companies, stale = false) {
+  const sectorGroups = new Map();
+  companies.forEach((company) => {
+    const sector = company.sector || "Other";
+    if (!sectorGroups.has(sector)) sectorGroups.set(sector, []);
+    sectorGroups.get(sector).push(company);
+  });
+
+  const sectors = [...sectorGroups.entries()]
+    .map(([name, rows]) => {
+      const rowsWithChange = rows.filter((row) => toNumberOrNull(row.percentChange) !== null);
+      const totalWeight = rowsWithChange.reduce((sum, row) => sum + (toNumberOrNull(row.weight) || 1), 0);
+      const weightedChange = rowsWithChange.reduce(
+        (sum, row) => sum + (toNumberOrNull(row.percentChange) || 0) * (toNumberOrNull(row.weight) || 1),
+        0
+      );
+      return {
+        name,
+        count: rows.length,
+        averagePercentChange: totalWeight > 0 ? weightedChange / totalWeight : null
+      };
+    })
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+
+  return {
+    companies,
+    sectors,
+    updatedAt: new Date().toISOString(),
+    stale
+  };
+}
+
+app.get("/api/market-heatmap", async (req, res) => {
+  const cached = marketHeatmapCache.get("sp500");
+  const cachedAge = cached ? Date.now() - cached.fetchedAt : Infinity;
+  const freshCacheMs = 75 * 1000;
+  const staleCacheMs = 20 * 60 * 1000;
+
+  if (cached?.data?.companies?.length && cachedAge < freshCacheMs) {
+    return res.json(cached.data);
+  }
+
+  const buildFromLiveCache = () => {
+    const companies = SP500_HEATMAP_COMPANIES.map((company) => {
+      const quote = livePriceCache.get(company.symbol) || {};
+      return {
+        ...company,
+        price: toNumberOrNull(quote.price),
+        change: toNumberOrNull(quote.change),
+        percentChange: toNumberOrNull(quote.percentChange)
+      };
+    });
+    if (!companies.some((company) => toNumberOrNull(company.price) !== null)) return null;
+    return buildMarketHeatmapPayload(companies, true);
+  };
+
+  const fetchFreshHeatmap = async () => {
+    const fmpQuotes = await resolveWithin(
+      fetchFmpBatchQuotes(SP500_HEATMAP_COMPANIES.map((company) => company.symbol)),
+      6000,
+      []
+    );
+    const fmpBySymbol = new Map((Array.isArray(fmpQuotes) ? fmpQuotes : [])
+      .map((quote) => [String(quote.symbol || "").toUpperCase(), quote]));
+    const seededResults = SP500_HEATMAP_COMPANIES.map((company) => {
+      const fmpQuote = fmpBySymbol.get(company.symbol);
+      if (!fmpQuote) return null;
+      return {
+        ...company,
+        price: firstFiniteNumber(fmpQuote.price),
+        change: firstFiniteNumber(fmpQuote.change),
+        percentChange: firstFiniteNumber(fmpQuote.changesPercentage)
+      };
+    }).filter(Boolean);
+    seededResults.forEach((company) => {
+      if (toNumberOrNull(company.price) !== null) {
+        livePriceCache.set(company.symbol, {
+          price: company.price,
+          change: company.change,
+          percentChange: company.percentChange,
+          extendedHours: null,
+          fetchedAt: Date.now()
+        });
+      }
+    });
+
+    const seededSymbols = new Set(
+      seededResults
+        .filter((company) => toNumberOrNull(company.price) !== null && toNumberOrNull(company.percentChange) !== null)
+        .map((company) => company.symbol)
+    );
+    const queue = SP500_HEATMAP_COMPANIES.filter((company) => !seededSymbols.has(company.symbol));
+    const results = [];
+    const workerCount = Math.min(4, queue.length);
+
+    await resolveWithin(Promise.all(Array.from({ length: workerCount }, async () => {
+      while (queue.length) {
+        const company = queue.shift();
+        const quote = await resolveWithin(fetchSimilarCompanyQuote(company.symbol), 2200, {}).catch(() => ({}));
+        results.push({
+          ...company,
+          price: toNumberOrNull(quote.price),
+          change: toNumberOrNull(quote.change),
+          percentChange: toNumberOrNull(quote.percentChange)
+        });
+      }
+    })), 9000, null);
+
+    const bySymbol = new Map([...seededResults, ...results].map((company) => [company.symbol, company]));
+    const companies = SP500_HEATMAP_COMPANIES.map((company) => (
+      bySymbol.get(company.symbol) || {
+        ...company,
+        price: toNumberOrNull(livePriceCache.get(company.symbol)?.price),
+        change: toNumberOrNull(livePriceCache.get(company.symbol)?.change),
+        percentChange: toNumberOrNull(livePriceCache.get(company.symbol)?.percentChange)
+      }
+    ));
+    const data = buildMarketHeatmapPayload(companies, false);
+
+    if (companies.some((company) => toNumberOrNull(company.price) !== null)) {
+      marketHeatmapCache.set("sp500", {
+        fetchedAt: Date.now(),
+        data
+      });
+    }
+
+    return data;
+  };
+
+  if (cached?.data?.companies?.length && cachedAge < staleCacheMs) {
+    fetchFreshHeatmap().catch((err) => {
+      console.log("Market heat map background refresh skipped:", err.message);
+    });
+    return res.json({ ...cached.data, stale: true, refreshing: true });
+  }
+
+  try {
+    const data = await fetchFreshHeatmap();
+    if (data?.companies?.length) return res.json(data);
+  } catch (err) {
+    console.log("Market heat map refresh failed:", err.message);
+  }
+
+  const cachedLiveData = buildFromLiveCache();
+  if (cachedLiveData?.companies?.length) return res.json(cachedLiveData);
+
+  return res.json({
+    companies: SP500_HEATMAP_COMPANIES.map((company) => ({
+      ...company,
+      price: null,
+      change: null,
+      percentChange: null
+    })),
+    sectors: [],
+    updatedAt: new Date().toISOString(),
+    stale: true
+  });
 });
 
 app.get("/api/market-indices", async (req, res) => {
