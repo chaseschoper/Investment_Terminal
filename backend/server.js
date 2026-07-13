@@ -8426,6 +8426,7 @@ async function fetchSimilarCompanyQuote(symbol) {
       price,
       change,
       percentChange,
+      previousClose,
       extendedHours,
       fetchedAt: Date.now()
     };
@@ -8670,6 +8671,34 @@ app.get("/api/prices", async (req, res) => {
   res.json({ prices, details });
 });
 
+const hasCompleteHeatmapQuote = (company = {}) =>
+  toNumberOrNull(company.price) !== null &&
+  toNumberOrNull(company.percentChange) !== null;
+
+function normalizeHeatmapCompanyQuote(company = {}, quote = {}) {
+  const price = firstFiniteNumber(quote.price, quote.c, company.price);
+  const previousClose = firstFiniteNumber(quote.previousClose, quote.pc, company.previousClose);
+  const providerChange = firstFiniteNumber(quote.change, quote.d, company.change);
+  const computedChange = price !== null && previousClose > 0
+    ? price - previousClose
+    : null;
+  const change = firstFiniteNumber(providerChange, computedChange);
+  const percentChange = firstFiniteNumber(
+    quote.percentChange,
+    quote.dp,
+    company.percentChange,
+    change !== null && previousClose > 0 ? (change / previousClose) * 100 : null
+  );
+
+  return {
+    ...company,
+    price,
+    change,
+    previousClose,
+    percentChange
+  };
+}
+
 function buildMarketHeatmapPayload(companies, stale = false) {
   const sectorGroups = new Map();
   companies.forEach((company) => {
@@ -8694,9 +8723,15 @@ function buildMarketHeatmapPayload(companies, stale = false) {
     })
     .sort((a, b) => String(a.name).localeCompare(String(b.name)));
 
+  const movers = companies
+    .filter(hasCompleteHeatmapQuote)
+    .sort((a, b) => toNumberOrNull(b.percentChange) - toNumberOrNull(a.percentChange));
+
   return {
     companies,
     sectors,
+    topGainers: movers.slice(0, 8),
+    topLosers: [...movers].reverse().slice(0, 8),
     updatedAt: new Date().toISOString(),
     stale
   };
@@ -8708,19 +8743,42 @@ app.get("/api/market-heatmap", async (req, res) => {
   const freshCacheMs = 75 * 1000;
   const staleCacheMs = 20 * 60 * 1000;
 
-  if (cached?.data?.companies?.length && cachedAge < freshCacheMs) {
+  const cachedNeedsRefresh = cached?.data?.companies?.some((company) => !hasCompleteHeatmapQuote(company));
+
+  const startHeatmapRefresh = () => {
+    if (!marketHeatmapRefreshPromise) {
+      marketHeatmapRefreshPromise = fetchFreshHeatmap()
+        .catch((err) => {
+          console.log("Market heat map refresh failed:", err.message);
+          return null;
+        })
+        .finally(() => {
+          marketHeatmapRefreshPromise = null;
+        });
+    }
+    return marketHeatmapRefreshPromise;
+  };
+
+  if (cached?.data?.companies?.length && cachedAge < freshCacheMs && !cachedNeedsRefresh) {
     return res.json(cached.data);
   }
 
-  const buildFromLiveCache = () => {
+  const buildFromFallbackCache = async () => {
+    const symbols = SP500_HEATMAP_COMPANIES.map((company) => company.symbol);
+    const savedStocks = await Stock.find({ ticker: { $in: symbols } })
+      .select("ticker data.price data.change data.percentChange data.previousClose")
+      .lean()
+      .catch(() => []);
+    const savedBySymbol = new Map((savedStocks || []).map((stock) => [stock.ticker, stock.data || {}]));
     const companies = SP500_HEATMAP_COMPANIES.map((company) => {
       const quote = livePriceCache.get(company.symbol) || {};
-      return {
-        ...company,
-        price: toNumberOrNull(quote.price),
-        change: toNumberOrNull(quote.change),
-        percentChange: toNumberOrNull(quote.percentChange)
-      };
+      const saved = savedBySymbol.get(company.symbol) || {};
+      return normalizeHeatmapCompanyQuote(company, {
+        price: firstFiniteNumber(quote.price, saved.price),
+        change: firstFiniteNumber(quote.change, saved.change),
+        percentChange: firstFiniteNumber(quote.percentChange, saved.percentChange),
+        previousClose: firstFiniteNumber(quote.previousClose, saved.previousClose)
+      });
     });
     if (!companies.some((company) => toNumberOrNull(company.price) !== null)) return null;
     return buildMarketHeatmapPayload(companies, true);
@@ -8737,12 +8795,12 @@ app.get("/api/market-heatmap", async (req, res) => {
     const seededResults = SP500_HEATMAP_COMPANIES.map((company) => {
       const fmpQuote = fmpBySymbol.get(company.symbol);
       if (!fmpQuote) return null;
-      return {
-        ...company,
+      return normalizeHeatmapCompanyQuote(company, {
         price: parseApiNumber(fmpQuote.price),
         change: parseApiNumber(fmpQuote.change),
-        percentChange: parseApiNumber(fmpQuote.changesPercentage)
-      };
+        percentChange: parseApiNumber(fmpQuote.changesPercentage),
+        previousClose: parseApiNumber(fmpQuote.previousClose)
+      });
     }).filter(Boolean);
     seededResults.forEach((company) => {
       if (toNumberOrNull(company.price) !== null) {
@@ -8750,6 +8808,7 @@ app.get("/api/market-heatmap", async (req, res) => {
           price: company.price,
           change: company.change,
           percentChange: company.percentChange,
+          previousClose: company.previousClose,
           extendedHours: null,
           fetchedAt: Date.now()
         });
@@ -8769,23 +8828,23 @@ app.get("/api/market-heatmap", async (req, res) => {
       while (queue.length) {
         const company = queue.shift();
         const quote = await resolveWithin(fetchSimilarCompanyQuote(company.symbol), 2200, {}).catch(() => ({}));
-        results.push({
-          ...company,
+        results.push(normalizeHeatmapCompanyQuote(company, {
           price: toNumberOrNull(quote.price),
           change: toNumberOrNull(quote.change),
-          percentChange: toNumberOrNull(quote.percentChange)
-        });
+          percentChange: toNumberOrNull(quote.percentChange),
+          previousClose: toNumberOrNull(quote.previousClose)
+        }));
       }
     })), 9000, null);
 
     const bySymbol = new Map([...seededResults, ...results].map((company) => [company.symbol, company]));
     const companies = SP500_HEATMAP_COMPANIES.map((company) => (
-      bySymbol.get(company.symbol) || {
-        ...company,
+      bySymbol.get(company.symbol) || normalizeHeatmapCompanyQuote(company, {
         price: toNumberOrNull(livePriceCache.get(company.symbol)?.price),
         change: toNumberOrNull(livePriceCache.get(company.symbol)?.change),
-        percentChange: toNumberOrNull(livePriceCache.get(company.symbol)?.percentChange)
-      }
+        percentChange: toNumberOrNull(livePriceCache.get(company.symbol)?.percentChange),
+        previousClose: toNumberOrNull(livePriceCache.get(company.symbol)?.previousClose)
+      })
     ));
     const data = buildMarketHeatmapPayload(companies, false);
 
@@ -8797,20 +8856,6 @@ app.get("/api/market-heatmap", async (req, res) => {
     }
 
     return data;
-  };
-
-  const startHeatmapRefresh = () => {
-    if (!marketHeatmapRefreshPromise) {
-      marketHeatmapRefreshPromise = fetchFreshHeatmap()
-        .catch((err) => {
-          console.log("Market heat map refresh failed:", err.message);
-          return null;
-        })
-        .finally(() => {
-          marketHeatmapRefreshPromise = null;
-        });
-    }
-    return marketHeatmapRefreshPromise;
   };
 
   if (cached?.data?.companies?.length && cachedAge < staleCacheMs) {
@@ -8829,8 +8874,8 @@ app.get("/api/market-heatmap", async (req, res) => {
     )
   });
 
-  const cachedLiveData = buildFromLiveCache();
-  if (cachedLiveData?.companies?.length) return res.json({ ...cachedLiveData, refreshing: true });
+  const cachedFallbackData = await resolveWithin(buildFromFallbackCache(), 1200, null);
+  if (cachedFallbackData?.companies?.length) return res.json({ ...cachedFallbackData, refreshing: true });
 
   return res.json({
     companies: SP500_HEATMAP_COMPANIES.map((company) => ({

@@ -3405,6 +3405,11 @@ const displayedMarketIndices = MARKET_INDEX_ORDER.map((item) => ({
 }));
 const heatmapCompanies = marketHeatmap.companies || [];
 const heatmapSectors = marketHeatmap.sectors || [];
+const heatmapMovers = heatmapCompanies
+  .filter((company) => isNumber(company.percentChange))
+  .sort((a, b) => b.percentChange - a.percentChange);
+const heatmapTopGainers = heatmapMovers.slice(0, 6);
+const heatmapTopLosers = [...heatmapMovers].reverse().slice(0, 6);
 
 const marketOverviewStrip = (
   <div className="market-strip" aria-label="Market index snapshot">
@@ -4086,13 +4091,48 @@ return (
                       setTicker(company.symbol);
                       setActivePage("overview");
                     }}
-                    title={`${company.name} ${formatSignedPercent(company.percentChange)}`}
+                    title={`${company.name} ${isNumber(company.percentChange) ? formatSignedPercent(company.percentChange) : "Loading"}`}
                   >
                     <span className="heatmap-symbol">{company.symbol}</span>
                     <span className="heatmap-name">{company.name}</span>
-                    <strong>{formatSignedPercent(company.percentChange)}</strong>
+                    <strong>{isNumber(company.percentChange) ? formatSignedPercent(company.percentChange) : "Loading"}</strong>
                     <small>{isNumber(company.price) ? formatPrice(company.price) : "Loading"}</small>
                   </button>
+                ))}
+              </div>
+              <div className="market-movers-grid">
+                {[
+                  ["Top Gainers", heatmapTopGainers, "positive"],
+                  ["Top Losers", heatmapTopLosers, "negative"]
+                ].map(([title, rows, tone]) => (
+                  <section className={`market-movers-panel ${tone}`} key={title}>
+                    <div className="market-movers-heading">
+                      <span>{title}</span>
+                      <strong>S&P 500</strong>
+                    </div>
+                    {rows.length ? (
+                      rows.map((company) => (
+                        <button
+                          className="market-mover-row"
+                          key={`${title}-${company.symbol}`}
+                          type="button"
+                          onClick={() => {
+                            setSearchInput(company.symbol);
+                            setTicker(company.symbol);
+                            setActivePage("overview");
+                          }}
+                        >
+                          <span>
+                            <strong>{company.symbol}</strong>
+                            <small>{company.name}</small>
+                          </span>
+                          <em>{formatSignedPercent(company.percentChange)}</em>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="market-movers-empty">Loading movers...</div>
+                    )}
+                  </section>
                 ))}
               </div>
             </>

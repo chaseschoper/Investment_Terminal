@@ -1118,6 +1118,121 @@ body {
   font-weight: 800;
 }
 
+.market-movers-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.market-movers-panel {
+  padding: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 10px;
+  background:
+    linear-gradient(145deg, rgba(15, 23, 42, 0.88), rgba(3, 7, 13, 0.94));
+}
+
+.market-movers-panel.positive {
+  border-color: rgba(16, 185, 129, 0.28);
+}
+
+.market-movers-panel.negative {
+  border-color: rgba(244, 63, 94, 0.28);
+}
+
+.market-movers-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.market-movers-heading span {
+  color: #ffffff;
+  font-size: 18px;
+  font-weight: 950;
+}
+
+.market-movers-heading strong {
+  color: #7dd3fc;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.market-mover-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 0;
+  border: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+  background: transparent;
+  color: #ffffff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.market-mover-row:first-of-type {
+  border-top: 0;
+}
+
+.market-mover-row:hover,
+.market-mover-row:focus-visible {
+  color: #dbeafe;
+  outline: none;
+}
+
+.market-mover-row span,
+.market-mover-row small {
+  min-width: 0;
+  display: block;
+}
+
+.market-mover-row strong {
+  color: inherit;
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.market-mover-row small {
+  max-width: 260px;
+  margin-top: 3px;
+  overflow: hidden;
+  color: #9ca3af;
+  font-size: 12px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.market-mover-row em {
+  flex: 0 0 auto;
+  font-size: 15px;
+  font-style: normal;
+  font-weight: 950;
+  font-variant-numeric: tabular-nums;
+}
+
+.market-movers-panel.positive .market-mover-row em {
+  color: #34d399;
+}
+
+.market-movers-panel.negative .market-mover-row em {
+  color: #fb7185;
+}
+
+.market-movers-empty {
+  padding: 22px 0;
+  color: #9ca3af;
+  font-size: 14px;
+  font-weight: 800;
+}
+
 /* GRID */
 
 .grid {
@@ -3139,6 +3254,10 @@ body {
 
   .sp500-heatmap-tile {
     min-height: 112px;
+  }
+
+  .market-movers-grid {
+    grid-template-columns: 1fr;
   }
 
   .market-signal {
