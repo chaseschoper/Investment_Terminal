@@ -49,6 +49,7 @@ const fmpMarketActivityCache = new Map();
 const marketBeatAnalystCache = new Map();
 const secInsiderTransactionCache = new Map();
 const epsSurpriseCache = new Map();
+const stockAnalysisValuationCache = new Map();
 const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
@@ -1026,6 +1027,54 @@ const parseAbbreviatedNumber = (value) => {
   return Number(match[1]) * (multipliers[match[2]?.toUpperCase()] || 1);
 };
 
+const estimatePegRatio = (forwardPE, epsGrowthPercent) => {
+  const forwardPeNumber = toNumberOrNull(forwardPE);
+  const epsGrowthNumber = toNumberOrNull(epsGrowthPercent);
+  if (forwardPeNumber === null || epsGrowthNumber === null || epsGrowthNumber <= 0) return null;
+  return forwardPeNumber / epsGrowthNumber;
+};
+
+async function fetchStockAnalysisValuationMetrics(ticker) {
+  const symbol = normalizeTickerForStockAnalysis(ticker);
+  const cached = stockAnalysisValuationCache.get(symbol);
+  if (cached && Date.now() - cached.fetchedAt < 15 * 60 * 1000) {
+    return cached.data;
+  }
+
+  try {
+    const { data } = await axios.get(`https://stockanalysis.com/stocks/${symbol}/statistics/`, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+      },
+      timeout: 5500
+    });
+    const $ = cheerio.load(data || "");
+    const readStatistic = (label) => {
+      const cells = $("tr").filter((_, row) =>
+        $(row).find("th,td").first().text().trim() === label
+      ).first().find("th,td");
+      return parseNasdaqNumber(cells.eq(1).text());
+    };
+    const forwardPE = readStatistic("Forward PE");
+    const epsGrowthForecast = readStatistic("EPS Growth Forecast (3Y)");
+    const valuation = {
+      pe: readStatistic("PE Ratio"),
+      forwardPE,
+      pegRatio: firstNumber(
+        readStatistic("PEG Ratio"),
+        estimatePegRatio(forwardPE, epsGrowthForecast)
+      ),
+      epsGrowthForecast
+    };
+    stockAnalysisValuationCache.set(symbol, { data: valuation, fetchedAt: Date.now() });
+    return valuation;
+  } catch (err) {
+    console.log("StockAnalysis valuation metrics skipped:", ticker, err.response?.status || err.message);
+    return {};
+  }
+}
+
 async function fetchStockAnalysisForecast(ticker) {
   try {
     const stockAnalysisTicker = normalizeTickerForStockAnalysis(ticker);
@@ -1095,6 +1144,8 @@ async function fetchStockAnalysisForecast(ticker) {
     const ratingCount = parseNasdaqNumber(
       forecastResponse.data.match(/currentRatings:\{[^}]*count:([^,}]+)/)?.[1]
     );
+    const forecastForwardPE = readStatistic("Forward PE");
+    const epsGrowthForecast = readStatistic("EPS Growth Forecast (3Y)");
 
     return {
       fiscalYear: eps.year || revenue.year,
@@ -1103,8 +1154,12 @@ async function fetchStockAnalysisForecast(ticker) {
       nextYearRevenue: firstNumber(embeddedRevenueNext, revenue.nextValue),
       nextYearEps: firstNumber(embeddedEpsNext, eps.nextValue),
       pe: readStatistic("PE Ratio"),
-      forwardPE: readStatistic("Forward PE"),
-      pegRatio: readStatistic("PEG Ratio"),
+      forwardPE: forecastForwardPE,
+      pegRatio: firstNumber(
+        readStatistic("PEG Ratio"),
+        estimatePegRatio(forecastForwardPE, epsGrowthForecast)
+      ),
+      epsGrowthForecast,
       targetMean: readEmbeddedTarget("avg"),
       targetMedian: readEmbeddedTarget("median"),
       analystRatingText: firstText(ratingConsensus),
@@ -3670,6 +3725,11 @@ function hasCompleteSupplementalData(stock) {
     balanceSheetCheckedAt &&
     !Number.isNaN(balanceSheetCheckedAt.getTime()) &&
     Date.now() - balanceSheetCheckedAt.getTime() < 5 * 60 * 1000;
+  const valuationMetricsCheckedAt = data.valuationMetricsCheckedAt ? new Date(data.valuationMetricsCheckedAt) : null;
+  const valuationMetricsCheckedRecently =
+    valuationMetricsCheckedAt &&
+    !Number.isNaN(valuationMetricsCheckedAt.getTime()) &&
+    Date.now() - valuationMetricsCheckedAt.getTime() < 15 * 60 * 1000;
   const currentYear = data.analystEstimates?.currentYear || {};
   const nextYear = data.analystEstimates?.nextYear || {};
   const hasCompleteYahooEstimates =
@@ -3688,6 +3748,7 @@ function hasCompleteSupplementalData(stock) {
     data.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION &&
     toNumberOrNull(data.pe) !== null &&
     toNumberOrNull(data.forwardPE) !== null &&
+    (toNumberOrNull(data.pegRatio) !== null || valuationMetricsCheckedRecently) &&
     (!requiresIndustrialMetrics || toNumberOrNull(data.grossMargins) !== null) &&
     (!requiresIndustrialMetrics || toNumberOrNull(data.operatingMargins) !== null) &&
     toNumberOrNull(data.profitMargins) !== null &&
@@ -6968,10 +7029,11 @@ async function publishMarketActivitySnapshot(ticker) {
 }
 
 async function buildFastStockSnapshot(ticker, previousData = {}) {
-  const [yahooData, chartQuote, calendarQuarterEstimate] = await Promise.all([
+  const [yahooData, chartQuote, calendarQuarterEstimate, stockAnalysisValuation] = await Promise.all([
     resolveWithin(fetchYahooQuickQuote(ticker), 900, {}),
     resolveWithin(fetchYahooChartQuote(ticker), 1200, {}),
-    resolveWithin(fetchCalendarQuarterEstimate(ticker, { fast: true }), 1400, previousData.analystEstimates?.nextQuarter || {})
+    resolveWithin(fetchCalendarQuarterEstimate(ticker, { fast: true }), 1400, previousData.analystEstimates?.nextQuarter || {}),
+    resolveWithin(fetchStockAnalysisValuationMetrics(ticker), 1800, {})
   ]);
   const chartData = chartQuote?.c
     ? {
@@ -6987,7 +7049,10 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     : {};
   const fastData = {
     ...chartData,
-    ...yahooData
+    ...yahooData,
+    pe: firstNumber(yahooData.pe, stockAnalysisValuation.pe),
+    forwardPE: firstNumber(yahooData.forwardPE, stockAnalysisValuation.forwardPE),
+    pegRatio: firstNumber(yahooData.pegRatio, stockAnalysisValuation.pegRatio)
   };
   if (!fastData?.price) return null;
 
@@ -7017,6 +7082,7 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
   return withGuaranteedAnalystSection({
     ...previousData,
     ...definedValues(fastData),
+    valuationMetricsCheckedAt: new Date().toISOString(),
     forwardPE: firstNumber(
       fastData.forwardPE,
       nextEps > 0 ? fastData.price / nextEps : null,
@@ -8320,6 +8386,7 @@ async function fetchStockData(ticker) {
     pe,
     forwardPE,
     pegRatio,
+    valuationMetricsCheckedAt: new Date().toISOString(),
     trailingEps: trailingEpsValue,
     forwardEps: forwardEpsValue,
     operatingCashflow,
