@@ -3055,8 +3055,13 @@ const hasRealHistoryRows = (rows = []) =>
   rows.some((row) => row?.isInterim && !row?.isCurrent);
 const isHistoryRefreshPending =
   isStockLoading ||
-  stockData?.refreshing ||
-  stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION;
+  (
+    !stockData?.financialHistoryCheckedAt &&
+    (
+      stockData?.refreshing ||
+      stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION
+    )
+  );
 const shouldShowHistoryLoading = (rows = []) =>
   isHistoryRefreshPending && !hasRealHistoryRows(rows);
 

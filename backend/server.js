@@ -3644,6 +3644,21 @@ function hasCompleteChartHistory(stock) {
   );
 }
 
+function hasAnyCoreChartHistory(stock) {
+  return (
+    hasChartHistory(stock, "revenue") ||
+    hasChartHistory(stock, "earnings") ||
+    hasChartHistory(stock, "eps")
+  );
+}
+
+function isCompletedStockAnalysisAnnualHeader(header = {}) {
+  if (!header.id || header.id === "TTM") return false;
+  const endDate = new Date(`${header.id}T00:00:00Z`);
+  if (Number.isNaN(endDate.getTime())) return true;
+  return endDate.getTime() <= Date.now();
+}
+
 function hasCompleteSupplementalData(stock) {
   const data = stock?.data || {};
   const requiresIndustrialMetrics = !data.isFinancialCompany;
@@ -4918,13 +4933,14 @@ async function fetchStockAnalysisAnnualFinancialHistoryFast(ticker) {
     const table = $("table").first();
     if (!table.length) return [];
 
-    const headers = table.find("thead tr").first().find("th").toArray()
+    const rawHeaders = table.find("thead tr").first().find("th").toArray()
       .slice(1)
       .map((cell) => ({
         id: $(cell).attr("id"),
         text: $(cell).text().trim()
-      }))
-      .filter((header) => header.id && header.id !== "TTM");
+      }));
+    const valueOffset = rawHeaders.some((header) => header.id === "TTM" || /^TTM$/i.test(header.text)) ? 1 : 0;
+    const headers = rawHeaders.filter(isCompletedStockAnalysisAnnualHeader);
     const valuesByLabel = new Map();
 
     table.find("tbody tr").each((_, row) => {
@@ -4957,11 +4973,11 @@ async function fetchStockAnalysisAnnualFinancialHistoryFast(ticker) {
         return {
           year,
           period: String(year),
-          revenue: revenueValues[index + 1] !== undefined ? revenueValues[index + 1] / 1000 : null,
-          earnings: earningsValues[index + 1] !== undefined ? earningsValues[index + 1] / 1000 : null,
-          grossProfit: grossProfitValues[index + 1] !== undefined ? grossProfitValues[index + 1] / 1000 : null,
-          operatingIncome: operatingIncomeValues[index + 1] !== undefined ? operatingIncomeValues[index + 1] / 1000 : null,
-          eps: epsValues[index + 1] ?? null,
+          revenue: revenueValues[index + valueOffset] !== undefined ? revenueValues[index + valueOffset] / 1000 : null,
+          earnings: earningsValues[index + valueOffset] !== undefined ? earningsValues[index + valueOffset] / 1000 : null,
+          grossProfit: grossProfitValues[index + valueOffset] !== undefined ? grossProfitValues[index + valueOffset] / 1000 : null,
+          operatingIncome: operatingIncomeValues[index + valueOffset] !== undefined ? operatingIncomeValues[index + valueOffset] / 1000 : null,
+          eps: epsValues[index + valueOffset] ?? null,
           source: "StockAnalysis fast annual financials"
         };
       })
@@ -5004,13 +5020,14 @@ async function fetchStockAnalysisIncomeStatementHistory(ticker) {
     const table = $("table").first();
     if (!table.length) return [];
 
-    const headers = table.find("thead tr").first().find("th").toArray()
+    const rawHeaders = table.find("thead tr").first().find("th").toArray()
       .slice(1)
       .map((cell) => ({
         id: $(cell).attr("id"),
         text: $(cell).text().trim()
-      }))
-      .filter((header) => header.id && header.id !== "TTM");
+      }));
+    const valueOffset = rawHeaders.some((header) => header.id === "TTM" || /^TTM$/i.test(header.text)) ? 1 : 0;
+    const headers = rawHeaders.filter(isCompletedStockAnalysisAnnualHeader);
     const valuesByLabel = new Map();
 
     table.find("tbody tr").each((_, row) => {
@@ -5044,11 +5061,11 @@ async function fetchStockAnalysisIncomeStatementHistory(ticker) {
         return {
           year,
           period: String(year),
-          revenue: revenueValues[index + 1] !== undefined ? revenueValues[index + 1] / 1000 : null,
-          earnings: earningsValues[index + 1] !== undefined ? earningsValues[index + 1] / 1000 : null,
-          grossProfit: grossProfitValues[index + 1] !== undefined ? grossProfitValues[index + 1] / 1000 : null,
-          operatingIncome: operatingIncomeValues[index + 1] !== undefined ? operatingIncomeValues[index + 1] / 1000 : null,
-          eps: epsValues[index + 1] ?? null,
+          revenue: revenueValues[index + valueOffset] !== undefined ? revenueValues[index + valueOffset] / 1000 : null,
+          earnings: earningsValues[index + valueOffset] !== undefined ? earningsValues[index + valueOffset] / 1000 : null,
+          grossProfit: grossProfitValues[index + valueOffset] !== undefined ? grossProfitValues[index + valueOffset] / 1000 : null,
+          operatingIncome: operatingIncomeValues[index + valueOffset] !== undefined ? operatingIncomeValues[index + valueOffset] / 1000 : null,
+          eps: epsValues[index + valueOffset] ?? null,
           source: "StockAnalysis financials"
         };
       })
@@ -7085,6 +7102,7 @@ async function publishChartHistorySnapshot(ticker, previousData = {}, secAnnualM
     .slice(-7));
   const nextData = withGuaranteedAnalystSection({
     ...previousData,
+    financialHistoryCheckedAt: new Date().toISOString(),
     interimHistoryCheckedAt: new Date().toISOString(),
     hasInterimHistory: revenueData.some((row) => row.isInterim),
     latestInterimPeriod: revenueData.findLast((row) => row.isInterim)?.period || null,
@@ -8395,6 +8413,7 @@ async function fetchStockData(ticker) {
     },
     estimateDataVersion: STOCK_ESTIMATE_VERSION,
     financialHistoryVersion: FINANCIAL_HISTORY_VERSION,
+    financialHistoryCheckedAt: new Date().toISOString(),
     interimHistoryCheckedAt: new Date().toISOString(),
     hasInterimHistory: revenueData.some((row) => row.isInterim),
     latestInterimPeriod: revenueData.findLast((row) => row.isInterim)?.period || null,
@@ -8433,7 +8452,11 @@ async function markStockFetchFailed(ticker, error) {
 async function publishFastFinancialHistorySnapshot(ticker) {
   const stock = await Stock.findOne({ ticker }).lean();
   const previousData = stock?.data || {};
-  if (hasCompleteChartHistory({ data: previousData }) && previousData.financialHistoryVersion === FINANCIAL_HISTORY_VERSION) {
+  if (
+    hasCompleteChartHistory({ data: previousData }) &&
+    previousData.financialHistoryVersion === FINANCIAL_HISTORY_VERSION &&
+    previousData.financialHistoryCheckedAt
+  ) {
     return;
   }
 
@@ -8448,7 +8471,8 @@ async function publishFastFinancialHistorySnapshot(ticker) {
     mergeHistoricalFinancials(stockAnalysisRows, previousData.revenueData || []),
     previousData.sharesOutstanding || null
   ));
-  if (!hasCompleteChartHistory({ data: { ...previousData, revenueData, interimHistoryCheckedAt: new Date().toISOString() } })) {
+  const checkedAt = new Date().toISOString();
+  if (!hasAnyCoreChartHistory({ data: { ...previousData, revenueData, interimHistoryCheckedAt: checkedAt } })) {
     return;
   }
 
@@ -8469,7 +8493,8 @@ async function publishFastFinancialHistorySnapshot(ticker) {
         "data.revenueData": revenueData,
         "data.revenueHistory": revenueHistory,
         "data.financialHistoryVersion": FINANCIAL_HISTORY_VERSION,
-        "data.interimHistoryCheckedAt": new Date().toISOString(),
+        "data.financialHistoryCheckedAt": checkedAt,
+        "data.interimHistoryCheckedAt": checkedAt,
         "data.hasInterimHistory": revenueData.some((row) => row.isInterim),
         "data.latestInterimPeriod": revenueData.findLast((row) => row.isInterim)?.period || null
       }
