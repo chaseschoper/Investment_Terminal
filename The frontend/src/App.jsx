@@ -3738,6 +3738,13 @@ const comparisonSection = (
       </div>
 
       <div className="comparison-stat">
+        <span>PEG Ratio</span>
+  <strong>
+    {formatPlain(stock.pegRatio)}
+  </strong>
+      </div>
+
+      <div className="comparison-stat">
         <span>Price-to-Sales</span>
   <strong>
     {formatPlain(stock.priceToSales)}
@@ -5111,6 +5118,16 @@ return (
 
     <div className="card-value">
       {stockValue(formatPlain(stockData.forwardPE))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      PEG Ratio
+    </div>
+
+    <div className="card-value">
+      {stockValue(formatPlain(stockData.pegRatio))}
     </div>
   </div>
 

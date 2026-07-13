@@ -1104,6 +1104,7 @@ async function fetchStockAnalysisForecast(ticker) {
       nextYearEps: firstNumber(embeddedEpsNext, eps.nextValue),
       pe: readStatistic("PE Ratio"),
       forwardPE: readStatistic("Forward PE"),
+      pegRatio: readStatistic("PEG Ratio"),
       targetMean: readEmbeddedTarget("avg"),
       targetMedian: readEmbeddedTarget("median"),
       analystRatingText: firstText(ratingConsensus),
@@ -3944,6 +3945,7 @@ function withGuaranteedAnalystSection(data = {}) {
     price !== null && consensusNextYearEps > 0 ? price / consensusNextYearEps : null,
     price !== null && nextEps > 0 ? price / nextEps : null
   );
+  const pegRatio = firstNumber(data.pegRatio, data.trailingPegRatio);
   const fiftyTwoWeekHigh = firstNumber(data.fiftyTwoWeekHigh, data.high, price);
   const fiftyTwoWeekLow = firstNumber(data.fiftyTwoWeekLow, data.low, price);
   const freeCashflow = isFinancialCompany
@@ -4358,6 +4360,7 @@ function withGuaranteedAnalystSection(data = {}) {
     priceToBook,
     bookValuePerShare,
     forwardPE,
+    pegRatio,
     revenueGrowth,
     earningsGrowth,
     grossMargins,
@@ -6157,6 +6160,7 @@ async function fetchYahooSupplementalData(ticker) {
       marketCap: firstYahooNumber(detail.marketCap, keyStats.marketCap, quoteData.marketCap),
       pe: firstYahooNumber(detail.trailingPE, keyStats.trailingPE, quoteData.trailingPE),
       forwardPE: firstYahooNumber(keyStats.forwardPE, financialData.forwardPE, quoteData.forwardPE),
+      pegRatio: firstYahooNumber(keyStats.pegRatio, keyStats.trailingPegRatio, quoteData.pegRatio, quoteData.trailingPegRatio),
       trailingEps: firstYahooNumber(
         keyStats.trailingEps,
         quoteData.epsTrailingTwelveMonths,
@@ -6791,6 +6795,7 @@ async function fetchYahooQuickQuote(ticker) {
       marketCap: firstYahooNumber(quoteData.marketCap),
       pe: firstYahooNumber(quoteData.trailingPE),
       forwardPE: firstYahooNumber(quoteData.forwardPE),
+      pegRatio: firstYahooNumber(quoteData.pegRatio, quoteData.trailingPegRatio),
       trailingEps: firstYahooNumber(
         quoteData.epsTrailingTwelveMonths,
         quoteData.trailingEps
@@ -7967,6 +7972,12 @@ async function fetchStockData(ticker) {
     yahooSupplementalData.forwardPE,
     forwardEpsValue > 0 ? quote.c / forwardEpsValue : null
   );
+  const pegRatio = firstNumber(
+    yahooSupplementalData.pegRatio,
+    stockAnalysisForecast.pegRatio,
+    metrics.forwardPEG,
+    metrics.pegTTM
+  );
   const revenueGrowth = firstFiniteNumber(
     chartRevenueGrowth,
     secAnnualMargins.revenueGrowth,
@@ -8308,6 +8319,7 @@ async function fetchStockData(ticker) {
     sharesOutstanding: sharesOutstandingValue,
     pe,
     forwardPE,
+    pegRatio,
     trailingEps: trailingEpsValue,
     forwardEps: forwardEpsValue,
     operatingCashflow,
