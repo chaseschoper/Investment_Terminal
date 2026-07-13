@@ -702,6 +702,33 @@ async function fetchYahooMarketMoverList(type) {
   }
 }
 
+async function fetchStockAnalysisMarketMoverList(type) {
+  const path = type === "losers" ? "losers" : "gainers";
+
+  try {
+    const response = await axios.get(`https://stockanalysis.com/markets/${path}/`, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+      },
+      timeout: 7000
+    });
+    const $ = cheerio.load(response.data || "");
+    return $("table tbody tr").map((_, row) => {
+      const cells = $(row).find("td").map((__, cell) => $(cell).text().trim()).get();
+      return {
+        symbol: cells[1],
+        name: cells[2],
+        percentChange: cells[3],
+        price: cells[4]
+      };
+    }).get();
+  } catch (err) {
+    console.log(`StockAnalysis market ${path} skipped:`, err.response?.status || err.message);
+    return [];
+  }
+}
+
 async function getAlphaVantageFundamentalData(ticker, fn) {
   const apiKey = getAlphaVantageApiKey();
   const symbol = String(ticker || "").trim().toUpperCase();
@@ -8978,12 +9005,16 @@ app.get("/api/market-movers", async (req, res) => {
       fmpGainerRows,
       fmpLoserRows,
       yahooGainerRows,
-      yahooLoserRows
+      yahooLoserRows,
+      stockAnalysisGainerRows,
+      stockAnalysisLoserRows
     ] = await Promise.all([
       resolveWithin(fetchFmpMarketMoverList("gainers"), 6500, []),
       resolveWithin(fetchFmpMarketMoverList("losers"), 6500, []),
       resolveWithin(fetchYahooMarketMoverList("gainers"), 6500, []),
-      resolveWithin(fetchYahooMarketMoverList("losers"), 6500, [])
+      resolveWithin(fetchYahooMarketMoverList("losers"), 6500, []),
+      resolveWithin(fetchStockAnalysisMarketMoverList("gainers"), 7000, []),
+      resolveWithin(fetchStockAnalysisMarketMoverList("losers"), 7000, [])
     ]);
 
     const mergeMoverRows = (...groups) => {
@@ -8996,12 +9027,12 @@ app.get("/api/market-movers", async (req, res) => {
       return [...bySymbol.values()];
     };
 
-    const gainers = mergeMoverRows(fmpGainerRows, yahooGainerRows)
+    const gainers = mergeMoverRows(fmpGainerRows, yahooGainerRows, stockAnalysisGainerRows)
       .map(normalizeMarketMoverRow)
       .filter(Boolean)
       .sort((a, b) => toNumberOrNull(b.percentChange) - toNumberOrNull(a.percentChange))
       .slice(0, 10);
-    const losers = mergeMoverRows(fmpLoserRows, yahooLoserRows)
+    const losers = mergeMoverRows(fmpLoserRows, yahooLoserRows, stockAnalysisLoserRows)
       .map(normalizeMarketMoverRow)
       .filter(Boolean)
       .sort((a, b) => toNumberOrNull(a.percentChange) - toNumberOrNull(b.percentChange))
@@ -9010,7 +9041,7 @@ app.get("/api/market-movers", async (req, res) => {
       gainers,
       losers,
       source: gainers.length || losers.length
-        ? "FMP/Yahoo market movers"
+        ? "FMP/Yahoo/StockAnalysis market movers"
         : "Market movers",
       updatedAt: new Date().toISOString()
     };
