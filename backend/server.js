@@ -71,6 +71,7 @@ const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
 const activePriceRefreshes = new Set();
 let marketIndexRefreshPromise = null;
+let marketHeatmapRefreshPromise = null;
 let yahooCooldownUntil = 0;
 let yahooQuoteSummaryCooldownUntil = 0;
 let yahooEarningsTrendCooldownUntil = 0;
@@ -8728,7 +8729,7 @@ app.get("/api/market-heatmap", async (req, res) => {
   const fetchFreshHeatmap = async () => {
     const fmpQuotes = await resolveWithin(
       fetchFmpBatchQuotes(SP500_HEATMAP_COMPANIES.map((company) => company.symbol)),
-      6000,
+      2600,
       []
     );
     const fmpBySymbol = new Map((Array.isArray(fmpQuotes) ? fmpQuotes : [])
@@ -8738,9 +8739,9 @@ app.get("/api/market-heatmap", async (req, res) => {
       if (!fmpQuote) return null;
       return {
         ...company,
-        price: firstFiniteNumber(fmpQuote.price),
-        change: firstFiniteNumber(fmpQuote.change),
-        percentChange: firstFiniteNumber(fmpQuote.changesPercentage)
+        price: parseApiNumber(fmpQuote.price),
+        change: parseApiNumber(fmpQuote.change),
+        percentChange: parseApiNumber(fmpQuote.changesPercentage)
       };
     }).filter(Boolean);
     seededResults.forEach((company) => {
@@ -8798,22 +8799,38 @@ app.get("/api/market-heatmap", async (req, res) => {
     return data;
   };
 
+  const startHeatmapRefresh = () => {
+    if (!marketHeatmapRefreshPromise) {
+      marketHeatmapRefreshPromise = fetchFreshHeatmap()
+        .catch((err) => {
+          console.log("Market heat map refresh failed:", err.message);
+          return null;
+        })
+        .finally(() => {
+          marketHeatmapRefreshPromise = null;
+        });
+    }
+    return marketHeatmapRefreshPromise;
+  };
+
   if (cached?.data?.companies?.length && cachedAge < staleCacheMs) {
-    fetchFreshHeatmap().catch((err) => {
+    startHeatmapRefresh().catch((err) => {
       console.log("Market heat map background refresh skipped:", err.message);
     });
     return res.json({ ...cached.data, stale: true, refreshing: true });
   }
 
-  try {
-    const data = await fetchFreshHeatmap();
-    if (data?.companies?.length) return res.json(data);
-  } catch (err) {
-    console.log("Market heat map refresh failed:", err.message);
-  }
+  const data = await resolveWithin(startHeatmapRefresh(), 3200, null);
+  if (data?.companies?.length) return res.json({
+    ...data,
+    refreshing: data.companies.some((company) =>
+      toNumberOrNull(company.price) === null ||
+      toNumberOrNull(company.percentChange) === null
+    )
+  });
 
   const cachedLiveData = buildFromLiveCache();
-  if (cachedLiveData?.companies?.length) return res.json(cachedLiveData);
+  if (cachedLiveData?.companies?.length) return res.json({ ...cachedLiveData, refreshing: true });
 
   return res.json({
     companies: SP500_HEATMAP_COMPANIES.map((company) => ({
@@ -8824,7 +8841,8 @@ app.get("/api/market-heatmap", async (req, res) => {
     })),
     sectors: [],
     updatedAt: new Date().toISOString(),
-    stale: true
+    stale: true,
+    refreshing: true
   });
 });
 

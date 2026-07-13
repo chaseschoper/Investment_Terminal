@@ -1931,39 +1931,46 @@ useEffect(() => {
   let refreshTimer;
 
   const loadMarketHeatmap = async () => {
-    if (!marketHeatmap.companies.length) {
+    if (!(marketHeatmap.companies || []).length) {
       setIsMarketHeatmapLoading(true);
     }
+    let nextRefreshMs = 90 * 1000;
     try {
       const response = await axios.get(`${API_URL}/api/market-heatmap`, {
-        timeout: 12000,
+        timeout: 6500,
       });
       if (isActive) {
+        const companies = Array.isArray(response.data?.companies) ? response.data.companies : [];
+        const hasMissingQuotes = companies.some((company) =>
+          !isNumber(company.price) || !isNumber(company.percentChange)
+        );
+        nextRefreshMs = hasMissingQuotes || response.data?.refreshing ? 4000 : 90 * 1000;
         setMarketHeatmap({
-          companies: Array.isArray(response.data?.companies) ? response.data.companies : [],
+          companies,
           sectors: Array.isArray(response.data?.sectors) ? response.data.sectors : [],
           updatedAt: response.data?.updatedAt || null
         });
       }
     } catch (error) {
       console.error("Market heat map failed", error);
+      nextRefreshMs = 5000;
     } finally {
       if (isActive) {
         setIsMarketHeatmapLoading(false);
+        refreshTimer = window.setTimeout(loadMarketHeatmap, nextRefreshMs);
       }
     }
   };
 
   if (activePage === "market-overview") {
     loadMarketHeatmap();
-    refreshTimer = window.setInterval(loadMarketHeatmap, 90 * 1000);
   }
 
   return () => {
     isActive = false;
-    window.clearInterval(refreshTimer);
+    window.clearTimeout(refreshTimer);
   };
-}, [activePage, marketHeatmap.companies.length]);
+}, [activePage]);
 
 useEffect(() => {
   const timer = window.setInterval(() => {
