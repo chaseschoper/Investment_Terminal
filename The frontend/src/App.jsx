@@ -2123,7 +2123,7 @@ useEffect(() => {
             range: stockChartRange,
             fast: stockChartRange === "1D" && attempt === 0 ? "1" : undefined
           },
-          timeout: 12000
+          timeout: stockChartRange === "1D" ? 6500 : 9000
         }
       );
 

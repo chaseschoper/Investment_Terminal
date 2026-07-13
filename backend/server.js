@@ -4417,11 +4417,11 @@ async function repairHistoricalPeIfNeeded(ticker, data = {}) {
   };
 }
 
-async function prepareStockResponseData(ticker, data = {}) {
-  const repairedData = await repairHistoricalPeIfNeeded(
-    ticker,
-    withGuaranteedAnalystSection(applyStockEarningsDateOverrides(ticker, data))
-  );
+async function prepareStockResponseData(ticker, data = {}, options = {}) {
+  const baseData = withGuaranteedAnalystSection(applyStockEarningsDateOverrides(ticker, data));
+  const repairedData = options.fast
+    ? baseData
+    : await repairHistoricalPeIfNeeded(ticker, baseData);
   return normalizeForeignAdrStockData(ticker, repairedData);
 }
 
@@ -4901,6 +4901,75 @@ async function fetchStockAnalysisBalanceSheetMetrics(ticker) {
   } catch (err) {
     console.log("StockAnalysis balance sheet skipped:", ticker, err.response?.status || err.message);
     return {};
+  }
+}
+
+async function fetchStockAnalysisAnnualFinancialHistoryFast(ticker) {
+  try {
+    const stockAnalysisTicker = normalizeTickerForStockAnalysis(ticker);
+    const { data } = await axios.get(
+      `https://stockanalysis.com/stocks/${stockAnalysisTicker}/financials/income-statement/`,
+      {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        timeout: 3500
+      }
+    );
+    const $ = cheerio.load(data || "");
+    const table = $("table").first();
+    if (!table.length) return [];
+
+    const headers = table.find("thead tr").first().find("th").toArray()
+      .slice(1)
+      .map((cell) => ({
+        id: $(cell).attr("id"),
+        text: $(cell).text().trim()
+      }))
+      .filter((header) => header.id && header.id !== "TTM");
+    const valuesByLabel = new Map();
+
+    table.find("tbody tr").each((_, row) => {
+      const cells = $(row).find("td").toArray();
+      const label = $(cells[0]).text().trim().replace(/\s+/g, " ");
+      if (!label) return;
+      valuesByLabel.set(
+        label.toLowerCase(),
+        cells.slice(1).map((cell) => parseStockAnalysisNumber($(cell).text()))
+      );
+    });
+
+    const valuesFor = (...labels) => {
+      for (const label of labels) {
+        const values = valuesByLabel.get(label.toLowerCase());
+        if (values) return values;
+      }
+      return [];
+    };
+    const revenueValues = valuesFor("Revenue");
+    const earningsValues = valuesFor("Net Income");
+    const grossProfitValues = valuesFor("Gross Profit", "Net Interest Income");
+    const operatingIncomeValues = valuesFor("Operating Income", "Pretax Income");
+    const epsValues = valuesFor("EPS (Diluted)", "EPS Diluted", "Diluted EPS");
+
+    return headers
+      .map((header, index) => {
+        const year = Number(String(header.id).slice(0, 4));
+        if (!Number.isFinite(year)) return null;
+        return {
+          year,
+          period: String(year),
+          revenue: revenueValues[index + 1] !== undefined ? revenueValues[index + 1] / 1000 : null,
+          earnings: earningsValues[index + 1] !== undefined ? earningsValues[index + 1] / 1000 : null,
+          grossProfit: grossProfitValues[index + 1] !== undefined ? grossProfitValues[index + 1] / 1000 : null,
+          operatingIncome: operatingIncomeValues[index + 1] !== undefined ? operatingIncomeValues[index + 1] / 1000 : null,
+          eps: epsValues[index + 1] ?? null,
+          source: "StockAnalysis fast annual financials"
+        };
+      })
+      .filter((row) => row?.year)
+      .sort((a, b) => a.year - b.year);
+  } catch (err) {
+    console.log("StockAnalysis fast annual financials skipped:", ticker, err.response?.status || err.message);
+    return [];
   }
 }
 
@@ -8361,11 +8430,61 @@ async function markStockFetchFailed(ticker, error) {
   );
 }
 
+async function publishFastFinancialHistorySnapshot(ticker) {
+  const stock = await Stock.findOne({ ticker }).lean();
+  const previousData = stock?.data || {};
+  if (hasCompleteChartHistory({ data: previousData }) && previousData.financialHistoryVersion === FINANCIAL_HISTORY_VERSION) {
+    return;
+  }
+
+  const stockAnalysisRows = await resolveWithin(
+    fetchStockAnalysisAnnualFinancialHistoryFast(ticker),
+    3800,
+    []
+  );
+  if (!Array.isArray(stockAnalysisRows) || !stockAnalysisRows.length) return;
+
+  const revenueData = cleanFinancialHistoryRows(finalizeFinancialHistory(
+    mergeHistoricalFinancials(stockAnalysisRows, previousData.revenueData || []),
+    previousData.sharesOutstanding || null
+  ));
+  if (!hasCompleteChartHistory({ data: { ...previousData, revenueData, interimHistoryCheckedAt: new Date().toISOString() } })) {
+    return;
+  }
+
+  const revenueHistory = revenueData
+    .filter((row) => !row?.isInterim && !row?.isCurrent)
+    .map((row) => ({
+      year: row.year,
+      revenue: row.revenue,
+      earnings: row.earnings,
+      eps: row.eps,
+      source: row.source
+    }));
+
+  await Stock.findOneAndUpdate(
+    { ticker },
+    {
+      $set: {
+        "data.revenueData": revenueData,
+        "data.revenueHistory": revenueHistory,
+        "data.financialHistoryVersion": FINANCIAL_HISTORY_VERSION,
+        "data.interimHistoryCheckedAt": new Date().toISOString(),
+        "data.hasInterimHistory": revenueData.some((row) => row.isInterim),
+        "data.latestInterimPeriod": revenueData.findLast((row) => row.isInterim)?.period || null
+      }
+    }
+  );
+}
+
 function startStockFetch(ticker) {
   if (activeStockFetches.has(ticker)) return;
 
   activeStockFetches.add(ticker);
 
+  publishFastFinancialHistorySnapshot(ticker).catch((err) => {
+    console.log("Fast financial history snapshot skipped:", ticker, err.message);
+  });
   publishFastStockSnapshot(ticker).catch((err) => {
     console.log("Fast stock snapshot skipped:", ticker, err.message);
   });
@@ -9429,13 +9548,17 @@ app.get("/api/price-history/:ticker", async (req, res) => {
 
     const cacheKey = `${ticker}:${requestedRange}`;
     const cached = priceHistoryCache.get(cacheKey);
+    const wantsFastHistory = req.query.fast === "1" || req.query.fast === "true";
     if (cached && Date.now() - cached.fetchedAt < rangeConfig.ttl) {
       return res.json(cached.data);
+    }
+    if (cached?.data && requestedRange === "1D" && wantsFastHistory) {
+      return res.json({ ...cached.data, stale: true });
     }
     if (!canUseYahoo() && cached?.data) {
       return res.json({ ...cached.data, stale: true });
     }
-    if (requestedRange === "1D" && (req.query.fast === "1" || req.query.fast === "true")) {
+    if (requestedRange === "1D" && wantsFastHistory) {
       const fallbackHistory = await buildFallbackPriceHistory(requestedTicker, ticker, requestedRange);
       if (fallbackHistory) {
         return res.json(fallbackHistory);
@@ -9462,7 +9585,7 @@ app.get("/api/price-history/:ticker", async (req, res) => {
       `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}`,
       {
         params,
-        timeout: 10000,
+        timeout: requestedRange === "1D" ? 5500 : 8000,
         headers: YAHOO_CHART_HEADERS
       }
     );
@@ -9670,7 +9793,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       }
 
       if (stock.data && Object.keys(stock.data).length) {
-        const responseData = await prepareStockResponseData(ticker, stock.data);
+        const responseData = await prepareStockResponseData(ticker, stock.data, { fast: true });
 
         return res.json({
           ticker: stock.ticker,
@@ -9719,7 +9842,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       if (isStale) {
         startStockFetch(ticker);
         const fastData = await getImmediateStockSnapshot(ticker, stock.data || {});
-        const responseData = await prepareStockResponseData(ticker, fastData || stock.data);
+        const responseData = await prepareStockResponseData(ticker, fastData || stock.data, { fast: true });
 
         return res.json({
           ticker: stock.ticker,
@@ -9793,7 +9916,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       startStockFetch(ticker);
 
       if (stock.data && Object.keys(stock.data).length) {
-        const responseData = await prepareStockResponseData(ticker, stock.data);
+        const responseData = await prepareStockResponseData(ticker, stock.data, { fast: true });
 
         return res.json({
           ticker: stock.ticker,
