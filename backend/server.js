@@ -38,6 +38,7 @@ const earningsEstimateCalendarCache = new Map();
 const nasdaqEarningsDateCache = new Map();
 const marketIndexCache = new Map();
 const marketHeatmapCache = new Map();
+const broadMarketMoversCache = new Map();
 const priceHistoryCache = new Map();
 const companyDocumentsCache = new Map();
 const companyDocumentsInFlight = new Map();
@@ -647,6 +648,56 @@ async function fetchFmpBatchQuotes(symbols = []) {
   } catch (err) {
     setFmpCooldown(err, "batch quote", symbols.slice(0, 3).join(","));
     console.log("FMP batch quote skipped:", err.response?.status || err.message);
+    return [];
+  }
+}
+
+async function fetchFmpMarketMoverList(type) {
+  if (!process.env.FMP_API_KEY || !canUseFmp()) return [];
+  const endpoint = type === "losers" ? "losers" : "gainers";
+
+  try {
+    const response = await axios.get(
+      `https://financialmodelingprep.com/api/v3/stock_market/${endpoint}`,
+      {
+        params: { apikey: process.env.FMP_API_KEY },
+        timeout: 6000
+      }
+    );
+    return Array.isArray(response.data) ? response.data : [];
+  } catch (err) {
+    setFmpCooldown(err, `market ${endpoint}`, endpoint);
+    console.log(`FMP market ${endpoint} skipped:`, err.response?.status || err.message);
+    return [];
+  }
+}
+
+async function fetchYahooMarketMoverList(type) {
+  if (!canUseYahoo()) return [];
+  const scrId = type === "losers" ? "day_losers" : "day_gainers";
+
+  try {
+    const response = await axios.get(
+      "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved",
+      {
+        params: {
+          formatted: "false",
+          lang: "en-US",
+          region: "US",
+          scrIds: scrId,
+          count: 20
+        },
+        headers: {
+          "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
+          Accept: "application/json,text/plain,*/*"
+        },
+        timeout: 6500
+      }
+    );
+    return response.data?.finance?.result?.[0]?.quotes || [];
+  } catch (err) {
+    setYahooCooldown(err, `market ${scrId}`, scrId);
+    console.log(`Yahoo market ${scrId} skipped:`, err.response?.status || err.message);
     return [];
   }
 }
@@ -8888,6 +8939,114 @@ app.get("/api/market-heatmap", async (req, res) => {
     updatedAt: new Date().toISOString(),
     stale: true,
     refreshing: true
+  });
+});
+
+function normalizeMarketMoverRow(row = {}) {
+  const symbol = String(row.symbol || row.ticker || "").trim().toUpperCase();
+  if (!/^[A-Z0-9.-]{1,12}$/.test(symbol)) return null;
+  const price = parseApiNumber(row.price ?? row.regularMarketPrice);
+  const change = parseApiNumber(row.change ?? row.regularMarketChange);
+  const percentChange = parseApiNumber(
+    row.changesPercentage ??
+    row.percentChange ??
+    row.changePercentage ??
+    row.regularMarketChangePercent
+  );
+
+  return {
+    symbol,
+    name: firstText(row.name, row.companyName, row.shortName, row.longName, FALLBACK_COMPANY_NAMES[symbol], symbol),
+    price,
+    change,
+    percentChange
+  };
+}
+
+app.get("/api/market-movers", async (req, res) => {
+  const cached = broadMarketMoversCache.get("latest");
+  const cachedAge = cached ? Date.now() - cached.fetchedAt : Infinity;
+  const freshCacheMs = 90 * 1000;
+  const staleCacheMs = 20 * 60 * 1000;
+
+  if (cached?.data && cachedAge < freshCacheMs) {
+    return res.json(cached.data);
+  }
+
+  const fetchFreshMovers = async () => {
+    const [
+      fmpGainerRows,
+      fmpLoserRows,
+      yahooGainerRows,
+      yahooLoserRows
+    ] = await Promise.all([
+      resolveWithin(fetchFmpMarketMoverList("gainers"), 6500, []),
+      resolveWithin(fetchFmpMarketMoverList("losers"), 6500, []),
+      resolveWithin(fetchYahooMarketMoverList("gainers"), 6500, []),
+      resolveWithin(fetchYahooMarketMoverList("losers"), 6500, [])
+    ]);
+
+    const mergeMoverRows = (...groups) => {
+      const bySymbol = new Map();
+      groups.flat().forEach((row) => {
+        const normalized = normalizeMarketMoverRow(row);
+        if (!normalized || toNumberOrNull(normalized.percentChange) === null) return;
+        if (!bySymbol.has(normalized.symbol)) bySymbol.set(normalized.symbol, normalized);
+      });
+      return [...bySymbol.values()];
+    };
+
+    const gainers = mergeMoverRows(fmpGainerRows, yahooGainerRows)
+      .map(normalizeMarketMoverRow)
+      .filter(Boolean)
+      .sort((a, b) => toNumberOrNull(b.percentChange) - toNumberOrNull(a.percentChange))
+      .slice(0, 10);
+    const losers = mergeMoverRows(fmpLoserRows, yahooLoserRows)
+      .map(normalizeMarketMoverRow)
+      .filter(Boolean)
+      .sort((a, b) => toNumberOrNull(a.percentChange) - toNumberOrNull(b.percentChange))
+      .slice(0, 10);
+    const data = {
+      gainers,
+      losers,
+      source: gainers.length || losers.length
+        ? "FMP/Yahoo market movers"
+        : "Market movers",
+      updatedAt: new Date().toISOString()
+    };
+
+    if (gainers.length || losers.length) {
+      broadMarketMoversCache.set("latest", {
+        fetchedAt: Date.now(),
+        data
+      });
+    }
+
+    return data;
+  };
+
+  if (cached?.data && cachedAge < staleCacheMs) {
+    fetchFreshMovers().catch((err) => {
+      console.log("Market movers background refresh skipped:", err.message);
+    });
+    return res.json({ ...cached.data, stale: true, refreshing: true });
+  }
+
+  try {
+    const data = await resolveWithin(fetchFreshMovers(), 7000, null);
+    if (data?.gainers?.length || data?.losers?.length) return res.json(data);
+  } catch (err) {
+    console.log("Market movers refresh failed:", err.message);
+  }
+
+  if (cached?.data) return res.json({ ...cached.data, stale: true });
+
+  return res.json({
+    gainers: [],
+    losers: [],
+    source: "FMP market movers",
+    updatedAt: new Date().toISOString(),
+    stale: true
   });
 });
 

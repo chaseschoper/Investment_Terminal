@@ -364,10 +364,10 @@ const getMarketIndexTone = (percentChange) => {
 };
 
 const getHeatMapTone = (percentChange) => {
-  if (!isNumber(percentChange)) return "neutral";
-  if (percentChange >= 0.05) return "positive";
-  if (percentChange <= -0.05) return "negative";
-  return "neutral";
+  if (!isNumber(percentChange)) return "heat-neutral";
+  if (percentChange >= 0.05) return "heat-positive";
+  if (percentChange <= -0.05) return "heat-negative";
+  return "heat-neutral";
 };
 
 const getHeatMapTileStyle = (company = {}) => {
@@ -1799,6 +1799,12 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [isMarketHeatmapLoading, setIsMarketHeatmapLoading] =
     useState(true);
 
+  const [broadMarketMovers, setBroadMarketMovers] =
+    useState({ gainers: [], losers: [], updatedAt: null });
+
+  const [isBroadMarketMoversLoading, setIsBroadMarketMoversLoading] =
+    useState(false);
+
   const [marketClockNow, setMarketClockNow] =
     useState(() => new Date());
 
@@ -1964,6 +1970,50 @@ useEffect(() => {
 
   if (activePage === "market-overview") {
     loadMarketHeatmap();
+  }
+
+  return () => {
+    isActive = false;
+    window.clearTimeout(refreshTimer);
+  };
+}, [activePage]);
+
+useEffect(() => {
+  let isActive = true;
+  let refreshTimer;
+
+  const loadBroadMarketMovers = async () => {
+    if (!broadMarketMovers.gainers.length && !broadMarketMovers.losers.length) {
+      setIsBroadMarketMoversLoading(true);
+    }
+    let nextRefreshMs = 2 * 60 * 1000;
+    try {
+      const response = await axios.get(`${API_URL}/api/market-movers`, {
+        timeout: 9000,
+      });
+      if (isActive) {
+        const gainers = Array.isArray(response.data?.gainers) ? response.data.gainers : [];
+        const losers = Array.isArray(response.data?.losers) ? response.data.losers : [];
+        nextRefreshMs = gainers.length || losers.length ? 2 * 60 * 1000 : 8000;
+        setBroadMarketMovers({
+          gainers,
+          losers,
+          updatedAt: response.data?.updatedAt || null
+        });
+      }
+    } catch (error) {
+      console.error("Market movers failed", error);
+      nextRefreshMs = 10000;
+    } finally {
+      if (isActive) {
+        setIsBroadMarketMoversLoading(false);
+        refreshTimer = window.setTimeout(loadBroadMarketMovers, nextRefreshMs);
+      }
+    }
+  };
+
+  if (activePage === "market-overview") {
+    loadBroadMarketMovers();
   }
 
   return () => {
@@ -3410,6 +3460,36 @@ const heatmapMovers = heatmapCompanies
   .sort((a, b) => b.percentChange - a.percentChange);
 const heatmapTopGainers = heatmapMovers.slice(0, 6);
 const heatmapTopLosers = [...heatmapMovers].reverse().slice(0, 6);
+const renderMarketMoverPanel = (title, rows, tone, scope, isLoading = false) => (
+  <section className={`market-movers-panel mover-${tone}`} key={`${scope}-${title}`}>
+    <div className="market-movers-heading">
+      <span>{title}</span>
+      <strong>{scope}</strong>
+    </div>
+    {rows.length ? (
+      rows.map((company) => (
+        <button
+          className="market-mover-row"
+          key={`${scope}-${title}-${company.symbol}`}
+          type="button"
+          onClick={() => {
+            setSearchInput(company.symbol);
+            setTicker(company.symbol);
+            setActivePage("overview");
+          }}
+        >
+          <span>
+            <strong>{company.symbol}</strong>
+            <small>{company.name}</small>
+          </span>
+          <em>{formatSignedPercent(company.percentChange)}</em>
+        </button>
+      ))
+    ) : (
+      <div className="market-movers-empty">{isLoading ? "Loading movers..." : "No movers available yet."}</div>
+    )}
+  </section>
+);
 
 const marketOverviewStrip = (
   <div className="market-strip" aria-label="Market index snapshot">
@@ -4101,39 +4181,22 @@ return (
                 ))}
               </div>
               <div className="market-movers-grid">
-                {[
-                  ["Top Gainers", heatmapTopGainers, "positive"],
-                  ["Top Losers", heatmapTopLosers, "negative"]
-                ].map(([title, rows, tone]) => (
-                  <section className={`market-movers-panel ${tone}`} key={title}>
-                    <div className="market-movers-heading">
-                      <span>{title}</span>
-                      <strong>S&P 500</strong>
-                    </div>
-                    {rows.length ? (
-                      rows.map((company) => (
-                        <button
-                          className="market-mover-row"
-                          key={`${title}-${company.symbol}`}
-                          type="button"
-                          onClick={() => {
-                            setSearchInput(company.symbol);
-                            setTicker(company.symbol);
-                            setActivePage("overview");
-                          }}
-                        >
-                          <span>
-                            <strong>{company.symbol}</strong>
-                            <small>{company.name}</small>
-                          </span>
-                          <em>{formatSignedPercent(company.percentChange)}</em>
-                        </button>
-                      ))
-                    ) : (
-                      <div className="market-movers-empty">Loading movers...</div>
-                    )}
-                  </section>
-                ))}
+                {renderMarketMoverPanel("Top Gainers", heatmapTopGainers, "positive", "S&P 500", isMarketHeatmapLoading)}
+                {renderMarketMoverPanel("Top Losers", heatmapTopLosers, "negative", "S&P 500", isMarketHeatmapLoading)}
+              </div>
+              <div className="market-movers-block">
+                <div className="market-movers-block-heading">
+                  <span>Entire Market Movers</span>
+                  {broadMarketMovers.updatedAt && (
+                    <strong>
+                      Updated {new Date(broadMarketMovers.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                    </strong>
+                  )}
+                </div>
+                <div className="market-movers-grid">
+                  {renderMarketMoverPanel("Top Gainers", broadMarketMovers.gainers || [], "positive", "All Stocks", isBroadMarketMoversLoading)}
+                  {renderMarketMoverPanel("Top Losers", broadMarketMovers.losers || [], "negative", "All Stocks", isBroadMarketMoversLoading)}
+                </div>
               </div>
             </>
           ) : (
