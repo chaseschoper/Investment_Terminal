@@ -83,7 +83,7 @@ const HOME_FEATURES = [
     icon: "etf",
     label: "ETF Overview",
     title: "Break down funds fast",
-    text: "Search ETFs to review price, assets, fees, yield, sector exposure, country mix, asset allocation, and top holdings."
+    text: "Search ETFs and mutual funds to review price, assets, fees, yield, exposure, asset mix, and top holdings when available."
   },
   {
     id: "projections",
@@ -270,6 +270,17 @@ const formatPlain = (value) =>
 
 const formatPrice = (value) =>
   isNumber(value) ? `$${value.toFixed(2)}` : "N/A";
+
+const formatShortDate = (value) => {
+  if (!value) return "N/A";
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+    year: "numeric"
+  });
+};
 
 const formatIndexPrice = (value) =>
   isNumber(value) ? value.toLocaleString(undefined, {
@@ -2039,9 +2050,9 @@ useEffect(() => {
       if (!isActive) return;
       setEtfData(response.data);
     } catch (error) {
-      console.error("ETF data failed", error);
+      console.error("Fund data failed", error);
       if (!isActive) return;
-      setEtfError("ETF data is not available yet for that ticker.");
+      setEtfError("Fund data is not available yet for that ticker.");
     } finally {
       if (isActive) setIsEtfLoading(false);
     }
@@ -4393,9 +4404,9 @@ return (
       <section className="etf-page" id="etfs" aria-labelledby="etf-page-title">
         <div className="etf-heading-row">
           <div>
-            <span className="home-feature-label">ETF Research</span>
+            <span className="home-feature-label">ETF & Fund Research</span>
             <h2 id="etf-page-title">ETF Overview</h2>
-            <p>Search an ETF to review price, fund profile, costs, yield, exposure, and top holdings.</p>
+            <p>Search an ETF, mutual fund, or similar fund ticker to review price, profile, costs, yield, exposure, and holdings when available.</p>
           </div>
           <form
             className="etf-search"
@@ -4412,15 +4423,15 @@ return (
             <input
               value={etfSearchInput}
               onChange={(event) => setEtfSearchInput(event.target.value.toUpperCase())}
-              placeholder="Search ETF ticker"
-              aria-label="Search ETF ticker"
+              placeholder="Search ETF or fund ticker"
+              aria-label="Search ETF or fund ticker"
             />
-            <button type="submit">{isEtfLoading ? "Loading..." : "Search ETF"}</button>
+            <button type="submit">{isEtfLoading ? "Loading..." : "Search Fund"}</button>
           </form>
         </div>
 
         {isEtfLoading && !etfData ? (
-          <div className="heatmap-loading">Loading {etfTicker} ETF data...</div>
+          <div className="heatmap-loading">Loading {etfTicker} fund data...</div>
         ) : etfError ? (
           <div className="heatmap-loading">{etfError}</div>
         ) : etfData ? (
@@ -4429,7 +4440,8 @@ return (
               <div>
                 <span className="etf-symbol">{etfData.symbol}</span>
                 <h3>{etfData.name}</h3>
-                <p>{etfData.description || "ETF profile and holdings data from the latest available fund data."}</p>
+                {etfData.type && <strong className="etf-type-badge">{etfData.type}</strong>}
+                <p>{etfData.description || "Fund profile and holdings data from the latest available source."}</p>
               </div>
               <div className="etf-price-card">
                 <span>Price</span>
@@ -4449,6 +4461,27 @@ return (
               <div><span>Top 10 Weight</span><strong>{formatPercent(etfStats.top10Percent)}</strong></div>
               <div><span>Volume</span><strong>{isNumber(etfStats.volume) ? etfStats.volume.toLocaleString() : "N/A"}</strong></div>
               <div><span>52W Range</span><strong>{formatPrice(etfStats.fiftyTwoWeekLow)} - {formatPrice(etfStats.fiftyTwoWeekHigh)}</strong></div>
+              {isNumber(etfStats.previousClose) && (
+                <div><span>Previous Close</span><strong>{formatPrice(etfStats.previousClose)}</strong></div>
+              )}
+              {etfStats.inceptionDate && (
+                <div><span>Inception</span><strong>{formatShortDate(etfStats.inceptionDate)}</strong></div>
+              )}
+              {isNumber(etfStats.minimumInitialInvestment) && (
+                <div><span>Min Initial</span><strong>{formatLargeDollars(etfStats.minimumInitialInvestment)}</strong></div>
+              )}
+              {etfStats.pricingFrequency && (
+                <div><span>Pricing</span><strong>{etfStats.pricingFrequency}</strong></div>
+              )}
+              {etfStats.lastTradeDate && (
+                <div><span>Last Priced</span><strong>{etfStats.lastTradeDate}</strong></div>
+              )}
+              {isNumber(etfStats.bondDuration) && (
+                <div><span>Bond Duration</span><strong>{formatPlain(etfStats.bondDuration)}</strong></div>
+              )}
+              {isNumber(etfStats.bondMaturity) && (
+                <div><span>Bond Maturity</span><strong>{formatPlain(etfStats.bondMaturity)}</strong></div>
+              )}
             </div>
 
             <div className="etf-profile-strip">

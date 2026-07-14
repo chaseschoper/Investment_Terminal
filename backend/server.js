@@ -820,6 +820,10 @@ const parseNasdaqNumber = (value) => {
 const parseApiNumber = (value) => {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "object") {
+    if (value.raw !== undefined) return parseApiNumber(value.raw);
+    if (value.fmt !== undefined) return parseApiNumber(value.fmt);
+  }
   const number = Number(String(value).replace(/[$,%\s,]/g, ""));
   return Number.isFinite(number) ? number : null;
 };
@@ -9167,13 +9171,227 @@ const parseEmbeddedStockAnalysisQuoteValue = (html, key) => {
 const cleanEtfDescription = (text) =>
   String(text || "").replace(/^Fund Home Page\s+/i, "").trim();
 
+const normalizeYahooFundHolding = (holding, index) => ({
+  rank: index + 1,
+  symbol: String(holding?.symbol || "").replace(/^\$/, "").replace(/\./g, "-").toUpperCase(),
+  name: holding?.holdingName || holding?.name || holding?.symbol || "Holding",
+  weight: parseApiNumber(holding?.holdingPercent) !== null
+    ? parseApiNumber(holding.holdingPercent) * 100
+    : parseApiNumber(holding?.weight),
+  shares: null
+});
+
+const normalizeYahooFundExposure = (rows = [], nameKey = "categoryName", weightKey = "equityPosition") =>
+  (Array.isArray(rows) ? rows : [])
+    .map((row) => ({
+      name: row?.[nameKey] || row?.category || row?.name,
+      weight: parseApiNumber(row?.[weightKey]) !== null
+        ? parseApiNumber(row?.[weightKey]) * 100
+        : parseApiNumber(row?.weight)
+    }))
+    .filter((row) => row.name && row.weight !== null);
+
+async function fetchNasdaqFundFallback(ticker, upstreamError = null) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  const headers = {
+    "User-Agent": STOCK_ANALYSIS_HEADERS["User-Agent"],
+    Accept: "application/json",
+    Origin: "https://www.nasdaq.com",
+    Referer: "https://www.nasdaq.com/"
+  };
+  const [infoResponse, summaryResponse] = await Promise.all([
+    axios.get(`https://api.nasdaq.com/api/quote/${symbol}/info`, {
+      params: { assetclass: "mutualfunds" },
+      headers,
+      timeout: 8000,
+      validateStatus: () => true
+    }),
+    axios.get(`https://api.nasdaq.com/api/quote/${symbol}/summary`, {
+      params: { assetclass: "mutualfunds" },
+      headers,
+      timeout: 8000,
+      validateStatus: () => true
+    }).catch(() => ({ data: null }))
+  ]);
+  const info = infoResponse.data?.data;
+  if (!info?.symbol) throw upstreamError || new Error("Fund data unavailable");
+  const primary = info.primaryData || {};
+  const summary = summaryResponse.data?.data?.summaryData || {};
+  const readSummary = (key) => {
+    const value = summary?.[key]?.value;
+    return value && !/^n\/a$/i.test(String(value)) ? value : null;
+  };
+  const price = parseApiNumber(primary.lastSalePrice);
+  const change = parseApiNumber(primary.netChange);
+  const percentChange = parseApiNumber(primary.percentageChange);
+  const data = {
+    symbol,
+    name: info.companyName || symbol,
+    type: readSummary("InstrumentType") || info.stockType || "Mutual Fund",
+    price,
+    change,
+    percentChange,
+    currency: primary.currency || readSummary("Currency") || "USD",
+    updatedAt: new Date().toISOString(),
+    source: "Nasdaq mutual fund data",
+    description: "Mutual fund quote and profile data from Nasdaq Fund Network. Holdings are shown when a fund provider source makes them available.",
+    stats: {
+      assets: null,
+      expenseRatio: parseStockAnalysisPercent(readSummary("NetExpenseRatio")),
+      peRatio: null,
+      dividendYield: null,
+      volume: parseApiNumber(primary.volume),
+      previousClose: price !== null && change !== null ? price - change : null,
+      fiftyTwoWeekLow: null,
+      fiftyTwoWeekHigh: null,
+      beta: null,
+      holdingsCount: null,
+      inceptionDate: readSummary("NAVInceptionDate"),
+      top10Percent: null,
+      minimumInitialInvestment: parseStockAnalysisMoney(readSummary("MinimumInitialSubscription")),
+      minimumIncrementalInvestment: parseStockAnalysisMoney(readSummary("MinimumIncrementalSubscription")),
+      pricingFrequency: readSummary("PricingFrequency"),
+      shareClass: readSummary("ShareClass"),
+      distributionFrequency: readSummary("DistributionTypeAndFrequency"),
+      lastTradeDate: primary.lastTradeTimestamp || null
+    },
+    profile: {
+      assetClass: readSummary("InstrumentType") || "Mutual Fund",
+      category: readSummary("Category") || "",
+      region: "",
+      exchange: info.exchange || "",
+      provider: "",
+      indexTracked: readSummary("InvestorType") || ""
+    },
+    holdings: [],
+    sectors: [],
+    countries: [],
+    assetAllocation: [],
+    holdingsAsOf: null,
+    holdingsLastUpdated: primary.lastTradeTimestamp || null
+  };
+
+  etfDataCache.set(symbol, { data, fetchedAt: Date.now() });
+  return data;
+}
+
+async function fetchYahooFundFallback(ticker, stockAnalysisError = null) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  const chartResponse = await axios.get(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`, {
+    params: { range: "1mo", interval: "1d" },
+    headers: { "User-Agent": STOCK_ANALYSIS_HEADERS["User-Agent"] },
+    timeout: 8000
+  }).catch((err) => {
+    throw err;
+  });
+  const chart = chartResponse.data?.chart?.result?.[0];
+  const meta = chart?.meta || {};
+  if (!meta.symbol && !meta.regularMarketPrice) throw stockAnalysisError || new Error("Fund data unavailable");
+
+  const timestamps = Array.isArray(chart?.timestamp) ? chart.timestamp : [];
+  const closes = chart?.indicators?.quote?.[0]?.close || [];
+  const lastClose = [...closes].reverse().find((value) => parseApiNumber(value) !== null);
+  const previousClose = firstFiniteNumber(
+    parseApiNumber(meta.chartPreviousClose),
+    closes.length > 1 ? parseApiNumber(closes[closes.length - 2]) : null
+  );
+  const price = firstFiniteNumber(parseApiNumber(meta.regularMarketPrice), parseApiNumber(lastClose));
+  const change = price !== null && previousClose !== null ? price - previousClose : null;
+  const percentChange = price !== null && previousClose ? (change / previousClose) * 100 : null;
+
+  const summary = await resolveWithin(
+    yahooFinance.quoteSummary(symbol, {
+      modules: ["summaryProfile", "topHoldings", "fundProfile", "price", "summaryDetail", "defaultKeyStatistics"]
+    }).catch(() => null),
+    2500,
+    null
+  );
+  const topHoldings = summary?.topHoldings || {};
+  const fundProfile = summary?.fundProfile || {};
+  const summaryDetail = summary?.summaryDetail || {};
+  const priceSummary = summary?.price || {};
+  const stats = summary?.defaultKeyStatistics || {};
+  const annualExpenseRatio = firstFiniteNumber(
+    parseApiNumber(fundProfile.annualReportExpenseRatio),
+    parseApiNumber(summaryDetail.annualReportExpenseRatio)
+  );
+  const holdings = (topHoldings.holdings || []).map(normalizeYahooFundHolding).filter((holding) => holding.name);
+  const bondHoldings = topHoldings.bondHoldings || {};
+  const assetAllocation = [
+    ["Cash", topHoldings.cashPosition],
+    ["Stocks", topHoldings.stockPosition],
+    ["Bonds", topHoldings.bondPosition],
+    ["Preferred", topHoldings.preferredPosition],
+    ["Convertible", topHoldings.convertiblePosition],
+    ["Other", topHoldings.otherPosition]
+  ]
+    .map(([name, value]) => ({
+      name,
+      weight: parseApiNumber(value) !== null ? parseApiNumber(value) * 100 : null
+    }))
+    .filter((row, index, rows) =>
+      row.weight !== null &&
+      rows.findIndex((item) => item.name === row.name) === index
+    );
+
+  const data = {
+    symbol,
+    name: meta.longName || meta.shortName || priceSummary.longName || priceSummary.shortName || symbol,
+    type: String(meta.instrumentType || "Fund").toUpperCase() === "MUTUALFUND" ? "Mutual Fund" : (meta.instrumentType || "Fund"),
+    price,
+    change,
+    percentChange,
+    currency: meta.currency || priceSummary.currency || "USD",
+    updatedAt: new Date().toISOString(),
+    source: "Yahoo fund chart data",
+    description: summary?.summaryProfile?.longBusinessSummary || "Fund profile data is limited, but price and NAV data are available from the latest market feed.",
+    stats: {
+      assets: parseApiNumber(summaryDetail.totalAssets),
+      expenseRatio: annualExpenseRatio !== null ? annualExpenseRatio * 100 : null,
+      peRatio: parseApiNumber(topHoldings.equityHoldings?.priceToEarnings),
+      dividendYield: parseApiNumber(summaryDetail.yield) !== null ? parseApiNumber(summaryDetail.yield) * 100 : null,
+      volume: parseApiNumber(meta.regularMarketVolume),
+      previousClose,
+      fiftyTwoWeekLow: parseApiNumber(meta.fiftyTwoWeekLow),
+      fiftyTwoWeekHigh: parseApiNumber(meta.fiftyTwoWeekHigh),
+      beta: parseApiNumber(stats.beta),
+      holdingsCount: parseApiNumber(topHoldings.holdings?.length) || null,
+      inceptionDate: meta.firstTradeDate ? new Date(meta.firstTradeDate * 1000).toISOString().slice(0, 10) : null,
+      top10Percent: holdings.reduce((sum, holding) => sum + (holding.weight || 0), 0) || null,
+      bondDuration: parseApiNumber(bondHoldings.duration),
+      bondMaturity: parseApiNumber(bondHoldings.maturity),
+      bondCreditQuality: bondHoldings.creditQuality || null
+    },
+    profile: {
+      assetClass: fundProfile.categoryName || (String(meta.instrumentType || "").toUpperCase() === "MUTUALFUND" ? "Mutual Fund" : meta.instrumentType || "Fund"),
+      category: fundProfile.categoryName || summary?.summaryProfile?.category || "",
+      region: "",
+      exchange: meta.fullExchangeName || meta.exchangeName || "",
+      provider: fundProfile.family || "",
+      indexTracked: fundProfile.legalType || ""
+    },
+    holdings,
+    sectors: normalizeYahooFundExposure(topHoldings.sectorWeightings, "categoryName", "equityPosition"),
+    countries: [],
+    assetAllocation,
+    holdingsAsOf: null,
+    holdingsLastUpdated: timestamps.length ? new Date(timestamps[timestamps.length - 1] * 1000).toISOString().slice(0, 10) : null
+  };
+
+  etfDataCache.set(symbol, { data, fetchedAt: Date.now() });
+  return data;
+}
+
 async function fetchEtfData(ticker) {
   const symbol = String(ticker || "").trim().toUpperCase();
   const stockAnalysisSymbol = normalizeTickerForStockAnalysis(symbol);
   const cached = etfDataCache.get(symbol);
   if (cached && Date.now() - cached.fetchedAt < 5 * 60 * 1000) return cached.data;
 
-  const [overviewResponse, holdingsResponse] = await Promise.all([
+  let overviewResponse;
+  let holdingsResponse;
+  try {
+    [overviewResponse, holdingsResponse] = await Promise.all([
     axios.get(`https://stockanalysis.com/etf/${stockAnalysisSymbol}/`, {
       headers: STOCK_ANALYSIS_HEADERS,
       timeout: 8000
@@ -9182,7 +9400,14 @@ async function fetchEtfData(ticker) {
       headers: STOCK_ANALYSIS_HEADERS,
       timeout: 8000
     }).catch(() => ({ data: "" }))
-  ]);
+    ]);
+  } catch (err) {
+    try {
+      return await fetchYahooFundFallback(symbol, err);
+    } catch (fundErr) {
+      return fetchNasdaqFundFallback(symbol, fundErr);
+    }
+  }
 
   const overviewHtml = overviewResponse.data || "";
   const holdingsHtml = holdingsResponse.data || "";
@@ -9257,6 +9482,7 @@ async function fetchEtfData(ticker) {
   const data = {
     symbol,
     name,
+    type: "ETF",
     price,
     change,
     percentChange,
