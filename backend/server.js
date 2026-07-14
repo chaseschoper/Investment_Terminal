@@ -3653,16 +3653,18 @@ function finalizeRevenueHistory(rows) {
   );
 }
 
-function historicalGrowth(rows, field, currentYear = 2025, previousYear = 2024) {
-  const sortedRows = [...(rows || [])]
-    .filter((row) => row?.year && !row?.isInterim && !row?.isCurrent)
+function historicalGrowth(rows, field) {
+  const completedAnnualRows = [...(rows || [])]
+    .filter((row) =>
+      row?.year &&
+      !row?.isInterim &&
+      !row?.isCurrent &&
+      row?.source !== "Modeled fallback" &&
+      toNumberOrNull(row?.[field]) !== null
+    )
     .sort((a, b) => a.year - b.year);
-  const currentRow = sortedRows.find((row) => Number(row.year) === currentYear);
-  const previousRow = sortedRows.find((row) => Number(row.year) === previousYear);
-  const fallbackCurrent = sortedRows.at(-1);
-  const fallbackPrevious = sortedRows.at(-2);
-  const current = toNumberOrNull((currentRow || fallbackCurrent)?.[field]);
-  const previous = toNumberOrNull((previousRow || fallbackPrevious)?.[field]);
+  const current = toNumberOrNull(completedAnnualRows.at(-1)?.[field]);
+  const previous = toNumberOrNull(completedAnnualRows.at(-2)?.[field]);
 
   if (current === null || previous === null || previous === 0) return null;
   return ((current - previous) / Math.abs(previous)) * 100;
