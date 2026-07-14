@@ -972,7 +972,15 @@ const normalizePortfolios = (items = []) => {
   return items.map((item, index) => ({
     id: String(item?.id || `portfolio-${index}`),
     name: String(item?.name || `Portfolio ${index + 1}`),
-    positions: Array.isArray(item?.positions) ? item.positions : []
+    positions: Array.isArray(item?.positions)
+      ? item.positions.map((position, positionIndex) => ({
+          ...position,
+          id: String(
+            position?.id ||
+              `${item?.id || `portfolio-${index}`}-${position?.symbol || "position"}-${positionIndex}`
+          )
+        }))
+      : []
   }));
 };
 
@@ -1599,7 +1607,7 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
       setWatchlist(savedLists.watchlist);
     }
     if (Array.isArray(savedLists.portfolios) && savedLists.portfolios.length) {
-      setPortfolios(savedLists.portfolios);
+      setPortfolios(normalizePortfolios(savedLists.portfolios));
     }
     if (savedLists.activePortfolioId) {
       setActivePortfolioId(savedLists.activePortfolioId);
@@ -1770,6 +1778,14 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
         index === positionIndex
           ? { ...position, [field]: number }
           : position
+      )
+    );
+  };
+
+  const removePortfolioPosition = (positionId, fallbackIndex) => {
+    setPortfolio((positions) =>
+      positions.filter((position, index) =>
+        positionId ? position.id !== positionId : index !== fallbackIndex
       )
     );
   };
@@ -2927,6 +2943,29 @@ const loadUserData = async () => {
     }
   };
 
+  const addComparisonTicker = (rawSymbol) => {
+    const symbol = String(rawSymbol || "").trim().toUpperCase();
+    if (!symbol) return false;
+    if (compareTickers.includes(symbol)) return true;
+
+    latestComparisonRequest.current += 1;
+    setCompareData((items) =>
+      items.some((item) => item.symbol === symbol)
+        ? items
+        : [...items, { symbol, name: `Loading ${symbol}...`, status: "pending" }]
+    );
+    setCompareTickers((items) =>
+      items.includes(symbol) ? items : [...items, symbol]
+    );
+    return true;
+  };
+
+  const removeComparisonTicker = (symbol) => {
+    latestComparisonRequest.current += 1;
+    setCompareData((items) => items.filter((item) => item.symbol !== symbol));
+    setCompareTickers((items) => items.filter((item) => item !== symbol));
+  };
+
 if (!stockData) {
   const fastDetails = savedSymbolDetails[ticker] || {};
   stockData = {
@@ -3662,19 +3701,7 @@ const comparisonSection = (
 
         if (e.key === "Enter") {
 
-          const symbol =
-            e.target.value.toUpperCase();
-
-          if (
-            symbol &&
-            !compareTickers.includes(symbol)
-          ) {
-
-            setCompareTickers([
-              ...compareTickers,
-              symbol,
-            ]);
-
+          if (addComparisonTicker(e.target.value)) {
             e.target.value = "";
           }
         }
@@ -3695,13 +3722,7 @@ const comparisonSection = (
 
       <button
         className="remove-position"
-        onClick={() =>
-          setCompareTickers(
-            compareTickers.filter(
-              (t) => t !== stock.symbol
-            )
-          )
-        }
+        onClick={() => removeComparisonTicker(stock.symbol)}
       >
         Remove
       </button>
@@ -6145,6 +6166,7 @@ return (
       );
 
       const newPosition = {
+        id: globalThis.crypto?.randomUUID?.() || `position-${Date.now()}`,
         symbol: portfolioTicker,
         shares,
         avgCost,
@@ -6200,7 +6222,7 @@ return (
   return (
 
     <div
-      key={`${position.symbol}-${position.avgCost}-${positionIndex}`}
+      key={position.id || `${position.symbol}-${positionIndex}`}
       className="portfolio-row"
     >
 
@@ -6271,10 +6293,7 @@ return (
       <button
   className="remove-position"
   onClick={() => {
-
-    setPortfolio((positions) =>
-      positions.filter((_, index) => index !== positionIndex)
-    );
+    removePortfolioPosition(position.id, positionIndex);
 
   }}
 >
