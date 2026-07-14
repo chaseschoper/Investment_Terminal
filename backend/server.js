@@ -51,6 +51,7 @@ const secInsiderTransactionCache = new Map();
 const epsSurpriseCache = new Map();
 const stockAnalysisValuationCache = new Map();
 const sp500ConstituentsCache = new Map();
+const etfDataCache = new Map();
 const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
@@ -9091,6 +9092,194 @@ function buildMarketHeatmapPayload(companies, stale = false) {
   };
 }
 
+const STOCK_ANALYSIS_HEADERS = {
+  "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+};
+
+const parseStockAnalysisMoney = (value) => {
+  const text = String(value || "").trim();
+  if (!text || /^n\/a$/i.test(text)) return null;
+  const match = text.replace(/,/g, "").match(/^\$?(-?[\d.]+)\s*([KMBT])?$/i);
+  if (!match) return parseApiNumber(text);
+  const multipliers = { K: 1e3, M: 1e6, B: 1e9, T: 1e12 };
+  return Number(match[1]) * (multipliers[match[2]?.toUpperCase()] || 1);
+};
+
+const parseStockAnalysisPercent = (value) => {
+  const parsed = parseApiNumber(value);
+  return parsed === null ? null : parsed;
+};
+
+const parseStockAnalysisShares = (value) => parseApiNumber(value);
+
+const readStockAnalysisRows = ($, tableIndex = 0) => {
+  const rows = {};
+  $("table").eq(tableIndex).find("tr").each((_, row) => {
+    const cells = $(row).find("th,td").map((__, cell) => $(cell).text().trim()).get();
+    if (cells.length >= 2) rows[cells[0]] = cells[1];
+  });
+  return rows;
+};
+
+const parseEmbeddedStockAnalysisPairs = (html, arrayName, keyName = "n", valueName = "w") => {
+  const match = String(html || "").match(new RegExp(`${arrayName}:\\[(.*?)\\](?:,|})`));
+  if (!match) return [];
+  return [...match[1].matchAll(new RegExp(`\\{[^}]*${keyName}:"([^"]+)"[^}]*${valueName}:(-?[\\d.]+)`, "g"))]
+    .map((item) => ({
+      name: item[1],
+      weight: parseApiNumber(item[2])
+    }))
+    .filter((item) => item.name && item.weight !== null);
+};
+
+const parseEmbeddedStockAnalysisCountries = (html) => {
+  const match = String(html || "").match(/countries:\[(.*?)\](?:,|})/);
+  if (!match) return [];
+  return [...match[1].matchAll(/\{[^}]*weight:(-?[\d.]+)[^}]*country:"([^"]+)"/g)]
+    .map((item) => ({
+      name: item[2],
+      weight: parseApiNumber(item[1])
+    }))
+    .filter((item) => item.name && item.weight !== null);
+};
+
+const parseEmbeddedStockAnalysisHoldingsMeta = (html) => {
+  const source = String(html || "");
+  const count = source.match(/infoTable:\{[^}]*count:(\d+)/)?.[1];
+  const top10 = source.match(/infoTable:\{[^}]*top10:([\d.]+)/)?.[1];
+  const lastUpdated = source.match(/lastUpdated:"([^"]+)"/)?.[1];
+  const asOf = source.match(/date:"([^"]+)"/)?.[1];
+  return {
+    count: parseApiNumber(count),
+    top10Percent: parseApiNumber(top10),
+    asOf: asOf || lastUpdated || null,
+    lastUpdated: lastUpdated || null
+  };
+};
+
+const parseEmbeddedStockAnalysisQuoteValue = (html, key) => {
+  const quoteBlock = String(html || "").match(/quote:\{([^}]+)\}/)?.[1] || "";
+  const match = quoteBlock.match(new RegExp(`(?:^|,)${key}:([^,}]+)`));
+  return parseApiNumber(match?.[1]);
+};
+
+const cleanEtfDescription = (text) =>
+  String(text || "").replace(/^Fund Home Page\s+/i, "").trim();
+
+async function fetchEtfData(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  const stockAnalysisSymbol = normalizeTickerForStockAnalysis(symbol);
+  const cached = etfDataCache.get(symbol);
+  if (cached && Date.now() - cached.fetchedAt < 5 * 60 * 1000) return cached.data;
+
+  const [overviewResponse, holdingsResponse] = await Promise.all([
+    axios.get(`https://stockanalysis.com/etf/${stockAnalysisSymbol}/`, {
+      headers: STOCK_ANALYSIS_HEADERS,
+      timeout: 8000
+    }),
+    axios.get(`https://stockanalysis.com/etf/${stockAnalysisSymbol}/holdings/`, {
+      headers: STOCK_ANALYSIS_HEADERS,
+      timeout: 8000
+    }).catch(() => ({ data: "" }))
+  ]);
+
+  const overviewHtml = overviewResponse.data || "";
+  const holdingsHtml = holdingsResponse.data || "";
+  const $ = cheerio.load(overviewHtml);
+  const holdingsPage = cheerio.load(holdingsHtml);
+  const summaryRows = readStockAnalysisRows($, 0);
+  const tradingRows = readStockAnalysisRows($, 1);
+  const h1 = $("h1").first().text().trim();
+  const h1Match = h1.match(/^(.*?)\s*\(([^)]+)\)$/);
+  const name = h1Match?.[1] || h1 || symbol;
+  const price = firstFiniteNumber(parseEmbeddedStockAnalysisQuoteValue(overviewHtml, "p"), parseStockAnalysisMoney($("main").text().match(/\b\d+\.\d{2}\b/)?.[0]));
+  const change = parseEmbeddedStockAnalysisQuoteValue(overviewHtml, "c");
+  const percentChange = parseEmbeddedStockAnalysisQuoteValue(overviewHtml, "cp");
+
+  const aboutText = $("body").text().replace(/\s+/g, " ");
+  const profileText = aboutText.slice(Math.max(0, aboutText.indexOf(`About ${symbol}`)));
+  const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const readAbout = (label, nextLabel) => {
+    const pattern = nextLabel
+      ? new RegExp(`${escapeRegex(label)}\\s+(.+?)\\s+${escapeRegex(nextLabel)}`)
+      : new RegExp(`${escapeRegex(label)}\\s+(.+?)\\s*(?:Top 10 Holdings|Dividend History|Performance|News|$)`);
+    return profileText.match(pattern)?.[1]?.trim() || "";
+  };
+
+  const holdings = holdingsPage("table").first().find("tbody tr").map((_, row) => {
+    const cells = holdingsPage(row).find("td").map((__, cell) => holdingsPage(cell).text().trim()).get();
+    if (cells.length < 4) return null;
+    return {
+      rank: parseApiNumber(cells[0]),
+      symbol: String(cells[1] || "").replace(/^\$/, "").replace(/\./g, "-").toUpperCase(),
+      name: cells[2],
+      weight: parseStockAnalysisPercent(cells[3]),
+      shares: parseStockAnalysisShares(cells[4])
+    };
+  }).get().filter(Boolean);
+
+  const overviewTopHoldings = $("table").eq(2).find("tbody tr").map((_, row) => {
+    const cells = $(row).find("td").map((__, cell) => $(cell).text().trim()).get();
+    if (cells.length < 3) return null;
+    return {
+      symbol: String(cells[1] || "").replace(/^\$/, "").replace(/\./g, "-").toUpperCase(),
+      name: cells[0],
+      weight: parseStockAnalysisPercent(cells[2])
+    };
+  }).get().filter(Boolean);
+
+  const holdingsMeta = parseEmbeddedStockAnalysisHoldingsMeta(holdingsHtml);
+  const data = {
+    symbol,
+    name,
+    price,
+    change,
+    percentChange,
+    currency: "USD",
+    updatedAt: new Date().toISOString(),
+    source: "StockAnalysis ETF data",
+    description: cleanEtfDescription(readAbout("About " + symbol, "Asset Class")),
+    stats: {
+      assets: parseStockAnalysisMoney(summaryRows.Assets),
+      expenseRatio: parseStockAnalysisPercent(summaryRows["Expense Ratio"]),
+      peRatio: parseApiNumber(summaryRows["PE Ratio"]),
+      sharesOutstanding: parseStockAnalysisMoney(summaryRows["Shares Out"]),
+      dividend: parseStockAnalysisMoney(summaryRows["Dividend (ttm)"]),
+      dividendYield: parseStockAnalysisPercent(summaryRows["Dividend Yield"]),
+      exDividendDate: summaryRows["Ex-Dividend Date"] || null,
+      payoutFrequency: summaryRows["Payout Frequency"] || null,
+      volume: parseApiNumber(tradingRows.Volume),
+      open: parseStockAnalysisMoney(tradingRows.Open),
+      previousClose: parseStockAnalysisMoney(tradingRows["Previous Close"]),
+      dayRange: tradingRows["Day's Range"] || null,
+      fiftyTwoWeekLow: parseStockAnalysisMoney(tradingRows["52-Week Low"]),
+      fiftyTwoWeekHigh: parseStockAnalysisMoney(tradingRows["52-Week High"]),
+      beta: parseApiNumber(tradingRows.Beta),
+      holdingsCount: holdingsMeta.count || parseApiNumber(summaryRows.Holdings),
+      inceptionDate: summaryRows["Inception Date"] || null,
+      top10Percent: holdingsMeta.top10Percent
+    },
+    profile: {
+      assetClass: readAbout("Asset Class", "Category"),
+      category: readAbout("Category", "Region"),
+      region: readAbout("Region", "Stock Exchange"),
+      exchange: readAbout("Stock Exchange", "Ticker Symbol"),
+      provider: readAbout("ETF Provider", "Index Tracked"),
+      indexTracked: readAbout("Index Tracked")
+    },
+    holdings: holdings.length ? holdings : overviewTopHoldings,
+    sectors: parseEmbeddedStockAnalysisPairs(holdingsHtml, "sectors"),
+    countries: parseEmbeddedStockAnalysisCountries(holdingsHtml),
+    assetAllocation: parseEmbeddedStockAnalysisPairs(holdingsHtml, "asset_allocation", "key", "value"),
+    holdingsAsOf: holdingsMeta.asOf,
+    holdingsLastUpdated: holdingsMeta.lastUpdated
+  };
+
+  etfDataCache.set(symbol, { data, fetchedAt: Date.now() });
+  return data;
+}
+
 app.get("/api/market-heatmap", async (req, res) => {
   const cached = marketHeatmapCache.get("sp500");
   const cachedAge = cached ? Date.now() - cached.fetchedAt : Infinity;
@@ -9897,6 +10086,21 @@ app.get("/api/similar-companies/:ticker", async (req, res) => {
   } catch (err) {
     console.log("Similar companies failed:", req.params.ticker, err.message);
     return res.status(502).json({ companies: [] });
+  }
+});
+
+app.get("/api/etf/:ticker", async (req, res) => {
+  try {
+    const ticker = String(req.params.ticker || "").trim().toUpperCase();
+    if (!/^[A-Z0-9.-]{1,12}$/.test(ticker)) {
+      return res.status(400).json({ error: "Invalid ETF ticker" });
+    }
+
+    const data = await fetchEtfData(ticker);
+    res.json(data);
+  } catch (err) {
+    console.log("ETF data failed:", req.params.ticker, err.response?.status || err.message);
+    res.status(404).json({ error: "ETF data not found yet" });
   }
 });
 

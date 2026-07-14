@@ -1821,6 +1821,21 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [isBroadMarketMoversLoading, setIsBroadMarketMoversLoading] =
     useState(false);
 
+  const [etfSearchInput, setEtfSearchInput] =
+    useState("SPY");
+
+  const [etfTicker, setEtfTicker] =
+    useState("SPY");
+
+  const [etfData, setEtfData] =
+    useState(null);
+
+  const [isEtfLoading, setIsEtfLoading] =
+    useState(false);
+
+  const [etfError, setEtfError] =
+    useState("");
+
   const [marketClockNow, setMarketClockNow] =
     useState(() => new Date());
 
@@ -1993,6 +2008,35 @@ useEffect(() => {
     window.clearTimeout(refreshTimer);
   };
 }, [activePage]);
+
+useEffect(() => {
+  if (activePage !== "etfs" || !etfTicker) return;
+
+  let isActive = true;
+
+  const loadEtfData = async () => {
+    setIsEtfLoading(true);
+    setEtfError("");
+
+    try {
+      const response = await axios.get(`${API_URL}/api/etf/${etfTicker}`);
+      if (!isActive) return;
+      setEtfData(response.data);
+    } catch (error) {
+      console.error("ETF data failed", error);
+      if (!isActive) return;
+      setEtfError("ETF data is not available yet for that ticker.");
+    } finally {
+      if (isActive) setIsEtfLoading(false);
+    }
+  };
+
+  loadEtfData();
+
+  return () => {
+    isActive = false;
+  };
+}, [activePage, etfTicker]);
 
 useEffect(() => {
   let isActive = true;
@@ -3517,6 +3561,31 @@ const heatmapSectorGroups = heatmapSectors.map((sector) => ({
       return String(a.symbol).localeCompare(String(b.symbol));
     })
 })).filter((sector) => sector.companies.length);
+const etfStats = etfData?.stats || {};
+const etfProfile = etfData?.profile || {};
+const topEtfHoldings = etfData?.holdings || [];
+const renderEtfExposureBars = (title, rows = []) => (
+  <div className="etf-panel">
+    <h3>{title}</h3>
+    {rows.length ? (
+      <div className="etf-exposure-list">
+        {rows.slice(0, 12).map((row) => (
+          <div className="etf-exposure-row" key={row.name}>
+            <div>
+              <span>{row.name}</span>
+              <strong>{formatPercent(row.weight)}</strong>
+            </div>
+            <div className="etf-exposure-track">
+              <span style={{ width: `${Math.max(2, Math.min(100, row.weight || 0))}%` }} />
+            </div>
+          </div>
+        ))}
+      </div>
+    ) : (
+      <div className="etf-empty">No breakdown available yet.</div>
+    )}
+  </div>
+);
 const renderMarketMoverPanel = (title, rows, tone, scope, isLoading = false) => (
   <section className={`market-movers-panel mover-${tone}`} key={`${scope}-${title}`}>
     <div className="market-movers-heading">
@@ -4102,6 +4171,7 @@ return (
       {[
         ["home", "Home"],
         ["overview", "Stock Overview"],
+        ["etfs", "ETFs"],
         ["projections", "Projections"],
         ["comparison", "Compare"],
         ["portfolio", "Portfolio"],
@@ -4304,6 +4374,123 @@ return (
       </section>
     )}
 
+
+    {activePage === "etfs" && (
+      <section className="etf-page" id="etfs" aria-labelledby="etf-page-title">
+        <div className="etf-heading-row">
+          <div>
+            <span className="home-feature-label">ETF Research</span>
+            <h2 id="etf-page-title">ETF Overview</h2>
+            <p>Search an ETF to review price, fund profile, costs, yield, exposure, and top holdings.</p>
+          </div>
+          <form
+            className="etf-search"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const symbol = etfSearchInput.trim().toUpperCase();
+              if (!symbol) return;
+              setEtfTicker(symbol);
+            }}
+          >
+            <input
+              value={etfSearchInput}
+              onChange={(event) => setEtfSearchInput(event.target.value.toUpperCase())}
+              placeholder="Search ETF ticker"
+              aria-label="Search ETF ticker"
+            />
+            <button type="submit">Search ETF</button>
+          </form>
+        </div>
+
+        {isEtfLoading && !etfData ? (
+          <div className="heatmap-loading">Loading ETF data...</div>
+        ) : etfError ? (
+          <div className="heatmap-loading">{etfError}</div>
+        ) : etfData ? (
+          <>
+            <div className="etf-hero-panel">
+              <div>
+                <span className="etf-symbol">{etfData.symbol}</span>
+                <h3>{etfData.name}</h3>
+                <p>{etfData.description || "ETF profile and holdings data from the latest available fund data."}</p>
+              </div>
+              <div className="etf-price-card">
+                <span>Price</span>
+                <strong>{formatPrice(etfData.price)}</strong>
+                <em className={isNumber(etfData.percentChange) && etfData.percentChange < 0 ? "red" : "green"}>
+                  {formatSignedPercent(etfData.percentChange)}
+                </em>
+              </div>
+            </div>
+
+            <div className="etf-stat-grid">
+              <div><span>Assets</span><strong>{formatLargeDollars(etfStats.assets)}</strong></div>
+              <div><span>Expense Ratio</span><strong>{formatPercent(etfStats.expenseRatio)}</strong></div>
+              <div><span>Dividend Yield</span><strong>{formatPercent(etfStats.dividendYield)}</strong></div>
+              <div><span>P/E Ratio</span><strong>{formatPlain(etfStats.peRatio)}</strong></div>
+              <div><span>Holdings</span><strong>{isNumber(etfStats.holdingsCount) ? etfStats.holdingsCount.toLocaleString() : "N/A"}</strong></div>
+              <div><span>Top 10 Weight</span><strong>{formatPercent(etfStats.top10Percent)}</strong></div>
+              <div><span>Volume</span><strong>{isNumber(etfStats.volume) ? etfStats.volume.toLocaleString() : "N/A"}</strong></div>
+              <div><span>52W Range</span><strong>{formatPrice(etfStats.fiftyTwoWeekLow)} - {formatPrice(etfStats.fiftyTwoWeekHigh)}</strong></div>
+            </div>
+
+            <div className="etf-profile-strip">
+              <span><strong>Provider</strong>{etfProfile.provider || "N/A"}</span>
+              <span><strong>Category</strong>{etfProfile.category || "N/A"}</span>
+              <span><strong>Asset Class</strong>{etfProfile.assetClass || "N/A"}</span>
+              <span><strong>Index</strong>{etfProfile.indexTracked || "N/A"}</span>
+            </div>
+
+            <div className="etf-breakdown-grid">
+              {renderEtfExposureBars("Sector Exposure", etfData.sectors)}
+              {renderEtfExposureBars("Country Exposure", etfData.countries)}
+              {renderEtfExposureBars("Asset Mix", etfData.assetAllocation)}
+            </div>
+
+            <div className="etf-panel etf-holdings-panel">
+              <div className="etf-panel-heading">
+                <h3>Top Holdings</h3>
+                <span>{etfData.holdingsAsOf ? `As of ${etfData.holdingsAsOf}` : "Latest available"}</span>
+              </div>
+              {topEtfHoldings.length ? (
+                <div className="etf-holdings-table">
+                  <div className="etf-holdings-header">
+                    <span>#</span>
+                    <span>Ticker</span>
+                    <span>Name</span>
+                    <span>Weight</span>
+                    <span>Shares</span>
+                  </div>
+                  {topEtfHoldings.map((holding, index) => (
+                    <button
+                      className="etf-holding-row"
+                      type="button"
+                      key={`${holding.symbol}-${index}`}
+                      onClick={() => {
+                        if (!holding.symbol) return;
+                        setSearchInput(holding.symbol);
+                        setTicker(holding.symbol);
+                        setActivePage("overview");
+                      }}
+                    >
+                      <span>{holding.rank || index + 1}</span>
+                      <strong>{holding.symbol || "N/A"}</strong>
+                      <span>{holding.name}</span>
+                      <span>{formatPercent(holding.weight)}</span>
+                      <span>{isNumber(holding.shares) ? holding.shares.toLocaleString() : "N/A"}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="etf-empty">No holdings available yet.</div>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="heatmap-loading">Search an ETF to get started.</div>
+        )}
+      </section>
+    )}
 
 
     {/* SEARCH */}
