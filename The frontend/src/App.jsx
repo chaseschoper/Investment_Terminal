@@ -4229,23 +4229,21 @@ return (
             <button className="welcome-action" type="button" onClick={() => openPage("overview")}>
               Explore the market
             </button>
-            <button
-              className="welcome-action welcome-auth-action"
-              type="button"
-              onClick={() => {
-                if (user) {
-                  handleSignOut();
-                  return;
-                }
-                setAuthPrompt("");
-                setAuthMessage("");
-                setIsLogin(true);
-                setIsRecoveringPassword(false);
-                setShowAuth(true);
-              }}
-            >
-              {user ? `Sign Out (${user.username})` : "Login / Sign Up"}
-            </button>
+            {!user && (
+              <button
+                className="welcome-action welcome-auth-action"
+                type="button"
+                onClick={() => {
+                  setAuthPrompt("");
+                  setAuthMessage("");
+                  setIsLogin(true);
+                  setIsRecoveringPassword(false);
+                  setShowAuth(true);
+                }}
+              >
+                Login / Sign Up
+              </button>
+            )}
           </div>
         </div>
       </section>
