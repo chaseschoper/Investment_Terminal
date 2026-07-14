@@ -50,6 +50,7 @@ const marketBeatAnalystCache = new Map();
 const secInsiderTransactionCache = new Map();
 const epsSurpriseCache = new Map();
 const stockAnalysisValuationCache = new Map();
+const sp500ConstituentsCache = new Map();
 const mrRallyExternalMetricCache = new Map();
 const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
@@ -386,6 +387,53 @@ const SP500_HEATMAP_COMPANIES = [
   { symbol: "AMT", name: "American Tower", sector: "Real Estate", weight: 0.3 },
   { symbol: "PLD", name: "Prologis", sector: "Real Estate", weight: 0.3 }
 ];
+
+const normalizeSp500Symbol = (symbol) =>
+  String(symbol || "").trim().toUpperCase().replace(/\./g, "-");
+
+async function fetchSp500Constituents() {
+  const cached = sp500ConstituentsCache.get("current");
+  if (cached && Date.now() - cached.fetchedAt < 24 * 60 * 60 * 1000) {
+    return cached.companies;
+  }
+
+  try {
+    const { data } = await axios.get("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", {
+      headers: {
+        "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+      },
+      timeout: 7000
+    });
+    const $ = cheerio.load(data || "");
+    const companies = [];
+
+    $("#constituents tbody tr").each((_, row) => {
+      const cells = $(row).find("td");
+      const symbol = normalizeSp500Symbol(cells.eq(0).text());
+      const name = cells.eq(1).text().trim();
+      const sector = cells.eq(2).text().trim() || "Other";
+      const industry = cells.eq(3).text().trim() || "";
+      if (!symbol || !name) return;
+      companies.push({
+        symbol,
+        name,
+        sector,
+        industry,
+        weight: 1
+      });
+    });
+
+    if (companies.length >= 450) {
+      sp500ConstituentsCache.set("current", { companies, fetchedAt: Date.now() });
+      return companies;
+    }
+  } catch (err) {
+    console.log("S&P 500 constituents skipped:", err.response?.status || err.message);
+  }
+
+  return SP500_HEATMAP_COMPANIES;
+}
 
 const PRICE_HISTORY_RANGES = {
   "1D": { range: "1d", interval: "5m", ttl: 20 * 1000 },
@@ -8980,6 +9028,7 @@ const hasCompleteHeatmapQuote = (company = {}) =>
 
 function normalizeHeatmapCompanyQuote(company = {}, quote = {}) {
   const price = firstFiniteNumber(quote.price, quote.c, company.price);
+  const marketCap = firstFiniteNumber(quote.marketCap, quote.mktCap, company.marketCap);
   const previousClose = firstFiniteNumber(quote.previousClose, quote.pc, company.previousClose);
   const providerChange = firstFiniteNumber(quote.change, quote.d, company.change);
   const computedChange = price !== null && previousClose > 0
@@ -8996,6 +9045,8 @@ function normalizeHeatmapCompanyQuote(company = {}, quote = {}) {
   return {
     ...company,
     price,
+    marketCap,
+    weight: marketCap ? Math.max(toNumberOrNull(company.weight) || 1, marketCap / 100000000000) : company.weight,
     change,
     previousClose,
     percentChange
@@ -9067,17 +9118,19 @@ app.get("/api/market-heatmap", async (req, res) => {
   }
 
   const buildFromFallbackCache = async () => {
-    const symbols = SP500_HEATMAP_COMPANIES.map((company) => company.symbol);
+    const heatmapCompanies = await fetchSp500Constituents();
+    const symbols = heatmapCompanies.map((company) => company.symbol);
     const savedStocks = await Stock.find({ ticker: { $in: symbols } })
-      .select("ticker data.price data.change data.percentChange data.previousClose")
+      .select("ticker data.price data.change data.percentChange data.previousClose data.marketCap")
       .lean()
       .catch(() => []);
     const savedBySymbol = new Map((savedStocks || []).map((stock) => [stock.ticker, stock.data || {}]));
-    const companies = SP500_HEATMAP_COMPANIES.map((company) => {
+    const companies = heatmapCompanies.map((company) => {
       const quote = livePriceCache.get(company.symbol) || {};
       const saved = savedBySymbol.get(company.symbol) || {};
       return normalizeHeatmapCompanyQuote(company, {
         price: firstFiniteNumber(quote.price, saved.price),
+        marketCap: firstFiniteNumber(quote.marketCap, saved.marketCap),
         change: firstFiniteNumber(quote.change, saved.change),
         percentChange: firstFiniteNumber(quote.percentChange, saved.percentChange),
         previousClose: firstFiniteNumber(quote.previousClose, saved.previousClose)
@@ -9088,18 +9141,25 @@ app.get("/api/market-heatmap", async (req, res) => {
   };
 
   const fetchFreshHeatmap = async () => {
-    const fmpQuotes = await resolveWithin(
-      fetchFmpBatchQuotes(SP500_HEATMAP_COMPANIES.map((company) => company.symbol)),
-      2600,
+    const heatmapCompanies = await fetchSp500Constituents();
+    const quoteChunks = [];
+    for (let index = 0; index < heatmapCompanies.length; index += 100) {
+      quoteChunks.push(heatmapCompanies.slice(index, index + 100).map((company) => company.symbol));
+    }
+    const fmpQuoteGroups = await resolveWithin(
+      Promise.all(quoteChunks.map((symbols) => fetchFmpBatchQuotes(symbols))),
+      5200,
       []
     );
+    const fmpQuotes = fmpQuoteGroups.flat();
     const fmpBySymbol = new Map((Array.isArray(fmpQuotes) ? fmpQuotes : [])
       .map((quote) => [String(quote.symbol || "").toUpperCase(), quote]));
-    const seededResults = SP500_HEATMAP_COMPANIES.map((company) => {
+    const seededResults = heatmapCompanies.map((company) => {
       const fmpQuote = fmpBySymbol.get(company.symbol);
       if (!fmpQuote) return null;
       return normalizeHeatmapCompanyQuote(company, {
         price: parseApiNumber(fmpQuote.price),
+        marketCap: parseApiNumber(fmpQuote.marketCap),
         change: parseApiNumber(fmpQuote.change),
         percentChange: parseApiNumber(fmpQuote.changesPercentage),
         previousClose: parseApiNumber(fmpQuote.previousClose)
@@ -9109,6 +9169,7 @@ app.get("/api/market-heatmap", async (req, res) => {
       if (toNumberOrNull(company.price) !== null) {
         livePriceCache.set(company.symbol, {
           price: company.price,
+          marketCap: company.marketCap,
           change: company.change,
           percentChange: company.percentChange,
           previousClose: company.previousClose,
@@ -9123,9 +9184,9 @@ app.get("/api/market-heatmap", async (req, res) => {
         .filter((company) => toNumberOrNull(company.price) !== null && toNumberOrNull(company.percentChange) !== null)
         .map((company) => company.symbol)
     );
-    const queue = SP500_HEATMAP_COMPANIES.filter((company) => !seededSymbols.has(company.symbol));
+    const queue = heatmapCompanies.filter((company) => !seededSymbols.has(company.symbol));
     const results = [];
-    const workerCount = Math.min(4, queue.length);
+    const workerCount = Math.min(8, queue.length);
 
     await resolveWithin(Promise.all(Array.from({ length: workerCount }, async () => {
       while (queue.length) {
@@ -9133,6 +9194,7 @@ app.get("/api/market-heatmap", async (req, res) => {
         const quote = await resolveWithin(fetchSimilarCompanyQuote(company.symbol), 2200, {}).catch(() => ({}));
         results.push(normalizeHeatmapCompanyQuote(company, {
           price: toNumberOrNull(quote.price),
+          marketCap: toNumberOrNull(quote.marketCap),
           change: toNumberOrNull(quote.change),
           percentChange: toNumberOrNull(quote.percentChange),
           previousClose: toNumberOrNull(quote.previousClose)
@@ -9141,9 +9203,10 @@ app.get("/api/market-heatmap", async (req, res) => {
     })), 9000, null);
 
     const bySymbol = new Map([...seededResults, ...results].map((company) => [company.symbol, company]));
-    const companies = SP500_HEATMAP_COMPANIES.map((company) => (
+    const companies = heatmapCompanies.map((company) => (
       bySymbol.get(company.symbol) || normalizeHeatmapCompanyQuote(company, {
         price: toNumberOrNull(livePriceCache.get(company.symbol)?.price),
+        marketCap: toNumberOrNull(livePriceCache.get(company.symbol)?.marketCap),
         change: toNumberOrNull(livePriceCache.get(company.symbol)?.change),
         percentChange: toNumberOrNull(livePriceCache.get(company.symbol)?.percentChange),
         previousClose: toNumberOrNull(livePriceCache.get(company.symbol)?.previousClose)
@@ -9181,7 +9244,7 @@ app.get("/api/market-heatmap", async (req, res) => {
   if (cachedFallbackData?.companies?.length) return res.json({ ...cachedFallbackData, refreshing: true });
 
   return res.json({
-    companies: SP500_HEATMAP_COMPANIES.map((company) => ({
+    companies: (await fetchSp500Constituents()).map((company) => ({
       ...company,
       price: null,
       change: null,

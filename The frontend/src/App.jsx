@@ -3506,6 +3506,17 @@ const heatmapMovers = heatmapCompanies
   .sort((a, b) => b.percentChange - a.percentChange);
 const heatmapTopGainers = heatmapMovers.slice(0, 6);
 const heatmapTopLosers = [...heatmapMovers].reverse().slice(0, 6);
+const heatmapSectorGroups = heatmapSectors.map((sector) => ({
+  ...sector,
+  id: `heatmap-sector-${String(sector.name || "other").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+  companies: heatmapCompanies
+    .filter((company) => (company.sector || "Other") === sector.name)
+    .sort((a, b) => {
+      const weightDiff = (b.weight || 1) - (a.weight || 1);
+      if (weightDiff !== 0) return weightDiff;
+      return String(a.symbol).localeCompare(String(b.symbol));
+    })
+})).filter((sector) => sector.companies.length);
 const renderMarketMoverPanel = (title, rows, tone, scope, isLoading = false) => (
   <section className={`market-movers-panel mover-${tone}`} key={`${scope}-${title}`}>
     <div className="market-movers-heading">
@@ -4221,31 +4232,50 @@ return (
             <>
               <div className="heatmap-sector-summary">
                 {heatmapSectors.map((sector) => (
-                  <span className={`heatmap-sector-pill ${getHeatMapTone(sector.averagePercentChange)}`} key={sector.name}>
+                  <button
+                    className={`heatmap-sector-pill ${getHeatMapTone(sector.averagePercentChange)}`}
+                    key={sector.name}
+                    type="button"
+                    onClick={() => {
+                      const id = `heatmap-sector-${String(sector.name || "other").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+                      document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                    }}
+                  >
                     {sector.name}
                     <strong>{formatSignedPercent(sector.averagePercentChange)}</strong>
-                  </span>
+                  </button>
                 ))}
               </div>
               <div className="sp500-heatmap-grid">
-                {heatmapCompanies.map((company) => (
-                  <button
-                    className={`sp500-heatmap-tile ${getHeatMapTone(company.percentChange)}`}
-                    key={company.symbol}
-                    type="button"
-                    style={getHeatMapTileStyle(company)}
-                    onClick={() => {
-                      setSearchInput(company.symbol);
-                      setTicker(company.symbol);
-                      setActivePage("overview");
-                    }}
-                    title={`${company.name} ${isNumber(company.percentChange) ? formatSignedPercent(company.percentChange) : "Loading"}`}
-                  >
-                    <span className="heatmap-symbol">{company.symbol}</span>
-                    <span className="heatmap-name">{company.name}</span>
-                    <strong>{isNumber(company.percentChange) ? formatSignedPercent(company.percentChange) : "Loading"}</strong>
-                    <small>{isNumber(company.price) ? formatPrice(company.price) : "Loading"}</small>
-                  </button>
+                {heatmapSectorGroups.map((sector) => (
+                  <section className="heatmap-sector-block" id={sector.id} key={sector.name}>
+                    <div className="heatmap-sector-title">
+                      <span>{sector.name}</span>
+                      <strong>{formatSignedPercent(sector.averagePercentChange)}</strong>
+                      <small>{sector.count} stocks</small>
+                    </div>
+                    <div className="heatmap-sector-tiles">
+                      {sector.companies.map((company) => (
+                        <button
+                          className={`sp500-heatmap-tile ${getHeatMapTone(company.percentChange)}`}
+                          key={company.symbol}
+                          type="button"
+                          style={getHeatMapTileStyle(company)}
+                          onClick={() => {
+                            setSearchInput(company.symbol);
+                            setTicker(company.symbol);
+                            setActivePage("overview");
+                          }}
+                          title={`${company.name} ${isNumber(company.percentChange) ? formatSignedPercent(company.percentChange) : "Loading"}`}
+                        >
+                          <span className="heatmap-symbol">{company.symbol}</span>
+                          <span className="heatmap-name">{company.name}</span>
+                          <strong>{isNumber(company.percentChange) ? formatSignedPercent(company.percentChange) : "Loading"}</strong>
+                          <small>{isNumber(company.price) ? formatPrice(company.price) : "Loading"}</small>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
                 ))}
               </div>
               <div className="market-movers-grid">
