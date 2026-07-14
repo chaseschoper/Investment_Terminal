@@ -4171,11 +4171,11 @@ return (
       {[
         ["home", "Home"],
         ["overview", "Stock Overview"],
-        ["etfs", "ETFs"],
         ["projections", "Projections"],
         ["comparison", "Compare"],
         ["portfolio", "Portfolio"],
         ["watchlists", "Watchlists"],
+        ["etfs", "ETF Overview"],
         ["earnings-calendar", "Calendar"],
         ["market-overview", "Market Overview"],
         ["mr-rally", "Mr. Rally"]
@@ -4389,6 +4389,9 @@ return (
               event.preventDefault();
               const symbol = etfSearchInput.trim().toUpperCase();
               if (!symbol) return;
+              setEtfData(null);
+              setEtfError("");
+              setIsEtfLoading(true);
               setEtfTicker(symbol);
             }}
           >
@@ -4398,12 +4401,12 @@ return (
               placeholder="Search ETF ticker"
               aria-label="Search ETF ticker"
             />
-            <button type="submit">Search ETF</button>
+            <button type="submit">{isEtfLoading ? "Loading..." : "Search ETF"}</button>
           </form>
         </div>
 
         {isEtfLoading && !etfData ? (
-          <div className="heatmap-loading">Loading ETF data...</div>
+          <div className="heatmap-loading">Loading {etfTicker} ETF data...</div>
         ) : etfError ? (
           <div className="heatmap-loading">{etfError}</div>
         ) : etfData ? (
