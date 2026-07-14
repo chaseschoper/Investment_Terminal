@@ -4128,9 +4128,28 @@ return (
             />
           </div>
           <p>Track companies, study the numbers, and keep your market view in one place.</p>
-          <button className="welcome-action" type="button" onClick={() => openPage("overview")}>
-            Explore the market
-          </button>
+          <div className="welcome-actions">
+            <button className="welcome-action" type="button" onClick={() => openPage("overview")}>
+              Explore the market
+            </button>
+            <button
+              className="welcome-action welcome-auth-action"
+              type="button"
+              onClick={() => {
+                if (user) {
+                  handleSignOut();
+                  return;
+                }
+                setAuthPrompt("");
+                setAuthMessage("");
+                setIsLogin(true);
+                setIsRecoveringPassword(false);
+                setShowAuth(true);
+              }}
+            >
+              {user ? `Sign Out (${user.username})` : "Login / Sign Up"}
+            </button>
+          </div>
         </div>
       </section>
 
