@@ -4229,9 +4229,6 @@ return (
             <button className="welcome-action" type="button" onClick={() => openPage("overview")}>
               Explore the market
             </button>
-            <button className="welcome-action welcome-secondary-action" type="button" onClick={() => openPage("etfs")}>
-              ETF Overview
-            </button>
             <button
               className="welcome-action welcome-auth-action"
               type="button"
