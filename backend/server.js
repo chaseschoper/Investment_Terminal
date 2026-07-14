@@ -9206,6 +9206,30 @@ async function fetchEtfData(ticker) {
       : new RegExp(`${escapeRegex(label)}\\s+(.+?)\\s*(?:Top 10 Holdings|Dividend History|Performance|News|$)`);
     return profileText.match(pattern)?.[1]?.trim() || "";
   };
+  const readProfileField = (label) => {
+    let value = "";
+    $("span").each((_, span) => {
+      if (value) return;
+      const spanText = $(span).text().trim();
+      if (spanText !== label) return;
+      const parentText = $(span).parent().text().replace(/\s+/g, " ").trim();
+      value = parentText.replace(new RegExp(`^${escapeRegex(label)}\\s*`), "").trim();
+    });
+    return value;
+  };
+  const providerFromSchema = (() => {
+    let provider = "";
+    $("script[type='application/ld+json']").each((_, script) => {
+      if (provider) return;
+      try {
+        const json = JSON.parse($(script).text());
+        provider = json?.provider?.name || "";
+      } catch {
+        provider = "";
+      }
+    });
+    return provider;
+  })();
 
   const holdings = holdingsPage("table").first().find("tbody tr").map((_, row) => {
     const cells = holdingsPage(row).find("td").map((__, cell) => holdingsPage(cell).text().trim()).get();
@@ -9261,12 +9285,12 @@ async function fetchEtfData(ticker) {
       top10Percent: holdingsMeta.top10Percent
     },
     profile: {
-      assetClass: readAbout("Asset Class", "Category"),
-      category: readAbout("Category", "Region"),
-      region: readAbout("Region", "Stock Exchange"),
-      exchange: readAbout("Stock Exchange", "Ticker Symbol"),
-      provider: readAbout("ETF Provider", "Index Tracked"),
-      indexTracked: readAbout("Index Tracked")
+      assetClass: readProfileField("Asset Class") || readAbout("Asset Class", "Category"),
+      category: readProfileField("Category") || readAbout("Category", "Region"),
+      region: readProfileField("Region") || readAbout("Region", "Stock Exchange"),
+      exchange: readProfileField("Stock Exchange") || readAbout("Stock Exchange", "Ticker Symbol"),
+      provider: providerFromSchema || readProfileField("ETF Provider") || readAbout("ETF Provider", "Index Tracked"),
+      indexTracked: readProfileField("Index Tracked") || readAbout("Index Tracked")
     },
     holdings: holdings.length ? holdings : overviewTopHoldings,
     sectors: parseEmbeddedStockAnalysisPairs(holdingsHtml, "sectors"),

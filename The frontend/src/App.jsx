@@ -79,6 +79,13 @@ const HOME_FEATURES = [
     text: "Search a ticker and review live pricing, financial charts, metrics, estimates, peer comps, AI analysis, transcripts, and company documents together."
   },
   {
+    id: "etfs",
+    icon: "etf",
+    label: "ETF Overview",
+    title: "Break down funds fast",
+    text: "Search ETFs to review price, assets, fees, yield, sector exposure, country mix, asset allocation, and top holdings."
+  },
+  {
     id: "projections",
     icon: "projections",
     label: "Projections",
@@ -155,6 +162,15 @@ const renderHomeFeatureIcon = (icon) => {
           <path className="icon-blue" d="M18 42L28 31L38 36L52 18" />
           <path className="icon-green" d="M44 18H52V26" />
           <circle className="icon-dot" cx="28" cy="31" r="3" />
+        </svg>
+      );
+    case "etf":
+      return (
+        <svg {...commonProps}>
+          <rect className="icon-muted" x="12" y="13" width="40" height="38" rx="7" />
+          <path className="icon-blue" d="M21 25H43M21 33H43M21 41H34" />
+          <path className="icon-green" d="M23 25V43M33 25V43M43 25V35" />
+          <circle className="icon-dot" cx="44" cy="42" r="5" />
         </svg>
       );
     case "projections":
@@ -4212,6 +4228,9 @@ return (
           <div className="welcome-actions">
             <button className="welcome-action" type="button" onClick={() => openPage("overview")}>
               Explore the market
+            </button>
+            <button className="welcome-action welcome-secondary-action" type="button" onClick={() => openPage("etfs")}>
+              ETF Overview
             </button>
             <button
               className="welcome-action welcome-auth-action"
