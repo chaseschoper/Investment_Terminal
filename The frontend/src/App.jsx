@@ -2907,6 +2907,8 @@ const loadUserData = async () => {
         stock.refreshing ||
         !isNumber(stock.forwardPE) ||
         !isNumber(stock.priceToSales) ||
+        !isNumber(stock.totalCash) ||
+        !isNumber(stock.totalDebt) ||
         !isNumber(stock.fiftyTwoWeekHigh) ||
         !isNumber(stock.fiftyTwoWeekLow)
       );
@@ -3720,6 +3722,20 @@ const comparisonSection = (
         <span>Market Cap</span>
   <strong>
     {formatBillions(stock.marketCap)}
+  </strong>
+      </div>
+
+      <div className="comparison-stat">
+        <span>Total Cash</span>
+  <strong>
+    {formatBillions(stock.totalCash)}
+  </strong>
+      </div>
+
+      <div className="comparison-stat">
+        <span>Total Debt</span>
+  <strong>
+    {formatBillions(stock.totalDebt)}
   </strong>
       </div>
 
