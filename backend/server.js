@@ -9137,6 +9137,28 @@ const parseEmbeddedStockAnalysisPairs = (html, arrayName, keyName = "n", valueNa
     .filter((item) => item.name && item.weight !== null);
 };
 
+const inferStockAnalysisAssetAllocation = (html, sectors = [], holdings = []) => {
+  const explicit = parseEmbeddedStockAnalysisPairs(html, "asset_allocation", "key", "value");
+  if (explicit.length) return explicit;
+
+  const source = String(html || "");
+  if (!/asset_allocation:null/.test(source)) return [];
+
+  if (sectors.length) {
+    return [{ name: "Stocks", weight: 100 }];
+  }
+
+  const holdingText = (Array.isArray(holdings) ? holdings : [])
+    .slice(0, 10)
+    .map((holding) => `${holding.name || ""} ${holding.symbol || ""}`)
+    .join(" ");
+  if (/\b(treasury|bond|note|bill|mktliq|mortgage|agency|credit|income)\b/i.test(holdingText)) {
+    return [{ name: "Bonds", weight: 100 }];
+  }
+
+  return [];
+};
+
 const parseEmbeddedStockAnalysisCountries = (html) => {
   const match = String(html || "").match(/countries:\[(.*?)\](?:,|})/);
   if (!match) return [];
@@ -9478,6 +9500,10 @@ async function fetchEtfData(ticker) {
     };
   }).get().filter(Boolean);
 
+  const selectedHoldings = holdings.length ? holdings : overviewTopHoldings;
+  const sectors = parseEmbeddedStockAnalysisPairs(holdingsHtml, "sectors");
+  const countries = parseEmbeddedStockAnalysisCountries(holdingsHtml);
+  const assetAllocation = inferStockAnalysisAssetAllocation(holdingsHtml, sectors, selectedHoldings);
   const holdingsMeta = parseEmbeddedStockAnalysisHoldingsMeta(holdingsHtml);
   const data = {
     symbol,
@@ -9518,10 +9544,10 @@ async function fetchEtfData(ticker) {
       provider: providerFromSchema || readProfileField("ETF Provider") || readAbout("ETF Provider", "Index Tracked"),
       indexTracked: readProfileField("Index Tracked") || readAbout("Index Tracked")
     },
-    holdings: holdings.length ? holdings : overviewTopHoldings,
-    sectors: parseEmbeddedStockAnalysisPairs(holdingsHtml, "sectors"),
-    countries: parseEmbeddedStockAnalysisCountries(holdingsHtml),
-    assetAllocation: parseEmbeddedStockAnalysisPairs(holdingsHtml, "asset_allocation", "key", "value"),
+    holdings: selectedHoldings,
+    sectors,
+    countries,
+    assetAllocation,
     holdingsAsOf: holdingsMeta.asOf,
     holdingsLastUpdated: holdingsMeta.lastUpdated
   };
