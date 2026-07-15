@@ -9172,9 +9172,9 @@ const parseEmbeddedStockAnalysisCountries = (html) => {
 
 const parseEmbeddedStockAnalysisHoldingsMeta = (html) => {
   const source = String(html || "");
-  const count = source.match(/infoTable:\{[^}]*count:(\d+)/)?.[1];
-  const top10 = source.match(/infoTable:\{[^}]*top10:([\d.]+)/)?.[1];
-  const lastUpdated = source.match(/lastUpdated:"([^"]+)"/)?.[1];
+  const count = source.match(/(?:infoTable|holdingsTable):\{[^}]*count:(\d+)/)?.[1];
+  const top10 = source.match(/(?:infoTable|holdingsTable):\{[^}]*top10:([\d.]+)/)?.[1];
+  const lastUpdated = source.match(/(?:lastUpdated|updated):"([^"]+)"/)?.[1];
   const asOf = source.match(/date:"([^"]+)"/)?.[1];
   return {
     count: parseApiNumber(count),
@@ -9190,8 +9190,134 @@ const parseEmbeddedStockAnalysisQuoteValue = (html, key) => {
   return parseApiNumber(match?.[1]);
 };
 
+const parseEmbeddedStockAnalysisQuoteString = (html, key) => {
+  const quoteBlock = String(html || "").match(/quote:\{([^}]+)\}/)?.[1] || "";
+  return quoteBlock.match(new RegExp(`(?:^|,)${key}:"([^"]+)"`))?.[1] || null;
+};
+
 const cleanEtfDescription = (text) =>
   String(text || "").replace(/^Fund Home Page\s+/i, "").trim();
+
+const parseStockAnalysisFundHoldings = ($) =>
+  $("table").first().find("tbody tr").map((_, row) => {
+    const cells = $(row).find("td").map((__, cell) => $(cell).text().trim()).get();
+    if (cells.length < 4) return null;
+    return {
+      rank: parseApiNumber(cells[0]),
+      symbol: String(cells[1] || "").replace(/^\$/, "").replace(/\./g, "-").toUpperCase(),
+      name: cells[2],
+      weight: parseStockAnalysisPercent(cells[3]),
+      shares: parseStockAnalysisShares(cells[4])
+    };
+  }).get().filter(Boolean);
+
+async function fetchStockAnalysisMutualFundData(ticker, upstreamError = null) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  const stockAnalysisSymbol = normalizeTickerForStockAnalysis(symbol);
+  const [overviewResponse, holdingsResponse] = await Promise.all([
+    axios.get(`https://stockanalysis.com/quote/mutf/${stockAnalysisSymbol}/`, {
+      headers: STOCK_ANALYSIS_HEADERS,
+      timeout: 8000
+    }),
+    axios.get(`https://stockanalysis.com/quote/mutf/${stockAnalysisSymbol}/holdings/`, {
+      headers: STOCK_ANALYSIS_HEADERS,
+      timeout: 8000
+    }).catch(() => ({ data: "" }))
+  ]).catch((err) => {
+    throw upstreamError || err;
+  });
+
+  const overviewHtml = overviewResponse.data || "";
+  const holdingsHtml = holdingsResponse.data || "";
+  const $ = cheerio.load(overviewHtml);
+  const holdingsPage = cheerio.load(holdingsHtml);
+  const summaryRows = readStockAnalysisRows($, 0);
+  const performanceRows = readStockAnalysisRows($, 1);
+  const h1 = $("h1").first().text().trim();
+  const h1Match = h1.match(/^(.*?)\s*\(([^)]+)\)$/);
+  const name = h1Match?.[1] || h1 || symbol;
+  const price = firstFiniteNumber(
+    parseEmbeddedStockAnalysisQuoteValue(overviewHtml, "p"),
+    parseStockAnalysisMoney(performanceRows["Previous Close"])
+  );
+  const change = parseEmbeddedStockAnalysisQuoteValue(overviewHtml, "c");
+  const percentChange = parseEmbeddedStockAnalysisQuoteValue(overviewHtml, "cp");
+  const holdings = parseStockAnalysisFundHoldings(holdingsPage);
+  const overviewHoldings = $("table").eq(4).find("tbody tr").map((_, row) => {
+    const cells = $(row).find("td").map((__, cell) => $(cell).text().trim()).get();
+    if (cells.length < 3) return null;
+    return {
+      symbol: String(cells[1] || "").replace(/^\$/, "").replace(/\./g, "-").toUpperCase(),
+      name: cells[0],
+      weight: parseStockAnalysisPercent(cells[2])
+    };
+  }).get().filter(Boolean);
+  const selectedHoldings = holdings.length ? holdings : overviewHoldings;
+  const sectors = parseEmbeddedStockAnalysisPairs(holdingsHtml, "sectors");
+  const countries = parseEmbeddedStockAnalysisCountries(holdingsHtml);
+  const assetAllocation = inferStockAnalysisAssetAllocation(holdingsHtml, sectors, selectedHoldings);
+  const holdingsMeta = parseEmbeddedStockAnalysisHoldingsMeta(overviewHtml);
+  const holdingsPageMeta = parseEmbeddedStockAnalysisHoldingsMeta(holdingsHtml);
+  const provider = holdingsHtml.match(/provider:"([^"]+)"/)?.[1] || "";
+  const description = $("meta[name='description']").attr("content") || "";
+  const data = {
+    symbol,
+    name,
+    type: "Mutual Fund",
+    price,
+    change,
+    percentChange,
+    currency: "USD",
+    updatedAt: new Date().toISOString(),
+    source: "StockAnalysis mutual fund data",
+    description,
+    stats: {
+      assets: parseStockAnalysisMoney(summaryRows["Fund Assets"]),
+      expenseRatio: parseStockAnalysisPercent(summaryRows["Expense Ratio"]),
+      peRatio: null,
+      dividend: parseStockAnalysisMoney(summaryRows["Dividend (ttm)"]),
+      dividendYield: parseStockAnalysisPercent(summaryRows["Dividend Yield"]),
+      dividendGrowth: parseStockAnalysisPercent(summaryRows["Dividend Growth"]),
+      payoutFrequency: summaryRows["Payout Frequency"] || null,
+      exDividendDate: summaryRows["Ex-Dividend Date"] || null,
+      turnover: parseStockAnalysisPercent(summaryRows.Turnover),
+      volume: null,
+      previousClose: parseStockAnalysisMoney(performanceRows["Previous Close"]),
+      ytdReturn: parseStockAnalysisPercent(performanceRows["YTD Return"]),
+      oneYearReturn: parseStockAnalysisPercent(performanceRows["1-Year Return"]),
+      fiveYearReturn: parseStockAnalysisPercent(performanceRows["5-Year Return"]),
+      fiftyTwoWeekLow: parseStockAnalysisMoney(performanceRows["52-Week Low"]),
+      fiftyTwoWeekHigh: parseStockAnalysisMoney(performanceRows["52-Week High"]),
+      beta: parseApiNumber(performanceRows["Beta (5Y)"]),
+      holdingsCount: parseApiNumber(performanceRows.Holdings) || holdingsMeta.count || holdingsPageMeta.count,
+      inceptionDate: performanceRows["Inception Date"] || null,
+      top10Percent: holdingsMeta.top10Percent || holdingsPageMeta.top10Percent,
+      minimumInitialInvestment: parseStockAnalysisMoney(summaryRows["Min. Investment"]),
+      minimumIncrementalInvestment: null,
+      pricingFrequency: null,
+      shareClass: null,
+      distributionFrequency: summaryRows["Payout Frequency"] || null,
+      lastTradeDate: parseEmbeddedStockAnalysisQuoteString(overviewHtml, "td")
+    },
+    profile: {
+      assetClass: "Mutual Fund",
+      category: summaryRows.Category || overviewHtml.match(/fundCategory:"([^"]+)"/)?.[1] || "",
+      region: "",
+      exchange: "MUTF",
+      provider,
+      indexTracked: ""
+    },
+    holdings: selectedHoldings,
+    sectors,
+    countries,
+    assetAllocation,
+    holdingsAsOf: holdingsMeta.asOf || holdingsPageMeta.asOf,
+    holdingsLastUpdated: holdingsMeta.lastUpdated || holdingsPageMeta.lastUpdated
+  };
+
+  etfDataCache.set(symbol, { data, fetchedAt: Date.now() });
+  return data;
+}
 
 const normalizeYahooFundHolding = (holding, index) => ({
   rank: index + 1,
@@ -9425,9 +9551,13 @@ async function fetchEtfData(ticker) {
     ]);
   } catch (err) {
     try {
-      return await fetchNasdaqFundFallback(symbol, err);
-    } catch (fundErr) {
-      return fetchYahooFundFallback(symbol, fundErr);
+      return await fetchStockAnalysisMutualFundData(symbol, err);
+    } catch (stockAnalysisFundErr) {
+      try {
+        return await fetchNasdaqFundFallback(symbol, stockAnalysisFundErr);
+      } catch (fundErr) {
+        return fetchYahooFundFallback(symbol, fundErr);
+      }
     }
   }
 

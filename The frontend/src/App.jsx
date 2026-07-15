@@ -3610,23 +3610,34 @@ const fundOverviewCards = [
   { label: "NAV / Price", value: formatPrice(etfData?.price) },
   { label: "Daily Move", value: formatSignedPercent(etfData?.percentChange) },
   { label: "Previous NAV", value: formatPrice(etfStats.previousClose) },
+  { label: "Fund Assets", value: formatLargeDollars(etfStats.assets) },
+  { label: "Expense Ratio", value: formatPercent(etfStats.expenseRatio) },
+  { label: "YTD Return", value: formatPercent(etfStats.ytdReturn) },
+  { label: "1-Year Return", value: formatPercent(etfStats.oneYearReturn) },
+  { label: "5-Year Return", value: formatPercent(etfStats.fiveYearReturn) },
+  { label: "52W Range", value: `${formatPrice(etfStats.fiftyTwoWeekLow)} - ${formatPrice(etfStats.fiftyTwoWeekHigh)}` },
+  { label: "Holdings", value: isNumber(etfStats.holdingsCount) ? etfStats.holdingsCount.toLocaleString() : "N/A" },
+  { label: "Top 10 Weight", value: formatPercent(etfStats.top10Percent) },
+  { label: "Turnover", value: formatPercent(etfStats.turnover) },
+  { label: "Dividend Yield", value: formatPercent(etfStats.dividendYield) },
+  { label: "Dividend (ttm)", value: formatPlain(etfStats.dividend) },
+  { label: "Dividend Growth", value: formatPercent(etfStats.dividendGrowth) },
+  { label: "Beta (5Y)", value: formatPlain(etfStats.beta) },
+  { label: "Ex-Dividend", value: etfStats.exDividendDate || "N/A" },
+  { label: "Inception", value: etfStats.inceptionDate || "N/A" },
+  { label: "Min Investment", value: isNumber(etfStats.minimumInitialInvestment) ? formatLargeDollars(etfStats.minimumInitialInvestment) : "N/A" },
+  { label: "Fund Type", value: etfData?.type || etfProfile.assetClass || "N/A" },
+  { label: "Category", value: etfProfile.category || "N/A" },
   { label: "Pricing", value: etfStats.pricingFrequency || "N/A" },
   { label: "Last Priced", value: etfStats.lastTradeDate || "N/A" },
   { label: "Exchange", value: etfProfile.exchange || "N/A" },
-  { label: "Fund Type", value: etfData?.type || etfProfile.assetClass || "N/A" },
-  { label: "Category", value: etfProfile.category || "N/A" },
-  isNumber(etfStats.minimumInitialInvestment) && etfStats.minimumInitialInvestment > 0
-    ? { label: "Min Initial", value: formatLargeDollars(etfStats.minimumInitialInvestment) }
-    : null,
-  isNumber(etfStats.minimumIncrementalInvestment) && etfStats.minimumIncrementalInvestment > 0
-    ? { label: "Min Add-On", value: formatLargeDollars(etfStats.minimumIncrementalInvestment) }
-    : null,
   etfStats.shareClass ? { label: "Share Class", value: etfStats.shareClass } : null,
   etfStats.distributionFrequency ? { label: "Distribution", value: etfStats.distributionFrequency } : null
 ].filter(Boolean);
 const etfProfileItems = isMutualFundView
   ? [
       { label: "Exchange", value: etfProfile.exchange },
+      { label: "Provider", value: etfProfile.provider },
       { label: "Category", value: etfProfile.category },
       { label: "Asset Class", value: etfProfile.assetClass },
       { label: "Source", value: etfData?.source }
