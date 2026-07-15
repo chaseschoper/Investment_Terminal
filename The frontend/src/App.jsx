@@ -903,6 +903,34 @@ const hasMarketActivityData = (stock = {}) =>
   (Array.isArray(stock.institutionalHolders) && stock.institutionalHolders.length > 0) ||
   (Array.isArray(stock.insiderTransactions) && stock.insiderTransactions.length > 0);
 
+const hasAnyOverviewMetricData = (stock = {}) =>
+  isNumber(stock.marketCap) ||
+  isNumber(stock.pe) ||
+  isNumber(stock.forwardPE) ||
+  isNumber(stock.priceToSales) ||
+  isNumber(stock.priceToBook) ||
+  isNumber(stock.revenueGrowth) ||
+  isNumber(stock.earningsGrowth) ||
+  isNumber(stock.grossMargins) ||
+  isNumber(stock.profitMargins) ||
+  isNumber(stock.freeCashflow) ||
+  isNumber(stock.operatingCashflow) ||
+  isNumber(stock.targetMean);
+
+const hasNextQuarterData = (stock = {}) => {
+  const nextQuarter = stock.analystEstimates?.nextQuarter || {};
+  return (
+    isNumber(nextQuarter.revenue) ||
+    isNumber(nextQuarter.eps) ||
+    Boolean(nextQuarter.date)
+  );
+};
+
+const shouldKeepWarmingNewStock = (stock = {}) =>
+  !hasCompleteCoreChartData(stock) ||
+  !hasAnyOverviewMetricData(stock) ||
+  !hasNextQuarterData(stock);
+
 const stabilizeRefreshingStockData = (previous, incoming) => {
   if (
     !previous ||
@@ -2650,6 +2678,7 @@ useEffect(() => {
       const previousStock =
         stockMemoryCacheRef.current.get(symbol) ||
         (stockData?.symbol === symbol || stockData?.ticker === symbol ? stockData : null);
+      const hadCachedStock = stockMemoryCacheRef.current.has(symbol);
       const stableResponse = stabilizeRefreshingStockData(previousStock, response.data);
       stockMemoryCacheRef.current.set(symbol, stableResponse);
       setStockData(stableResponse);
@@ -2659,13 +2688,16 @@ useEffect(() => {
       const needsFreshHistory =
         response.data.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
         !hasCompleteCoreChartData(stableResponse);
+      const needsNewStockWarmup =
+        (!hadCachedStock || attempt < 30) &&
+        shouldKeepWarmingNewStock(stableResponse);
       const needsMarketActivity = response.data.refreshing && !hasMarketActivityData(stableResponse);
       const needsBalanceSheetMetrics =
         !stableResponse.balanceSheetCheckedAt &&
         !isNumber(stableResponse.totalCash) &&
         !isNumber(stableResponse.totalDebt);
 
-      if (response.data.refreshing && (needsFreshHistory || needsMarketActivity || needsBalanceSheetMetrics) && attempt < 90) {
+      if ((response.data.refreshing || needsNewStockWarmup) && (needsFreshHistory || needsMarketActivity || needsBalanceSheetMetrics || needsNewStockWarmup) && attempt < 90) {
         const retryDelay =
           attempt < 12
             ? 500
