@@ -9198,6 +9198,31 @@ const parseEmbeddedStockAnalysisQuoteString = (html, key) => {
 const cleanEtfDescription = (text) =>
   String(text || "").replace(/^Fund Home Page\s+/i, "").trim();
 
+const cleanStockAnalysisFundDescription = (text) => {
+  const cleaned = cleanEtfDescription(text)
+    .replace(/\s+/g, " ")
+    .trim();
+  if (/^get the latest\b/i.test(cleaned)) return "";
+  return cleaned;
+};
+
+const readStockAnalysisAboutDescription = ($, symbol) => {
+  let description = "";
+  const normalizedSymbol = String(symbol || "").trim().toUpperCase();
+
+  $("h2").each((_, heading) => {
+    if (description) return;
+    const headingText = $(heading).text().replace(/\s+/g, " ").trim();
+    if (headingText !== `About ${normalizedSymbol}`) return;
+
+    description =
+      $(heading).parent().nextAll("p").first().text().trim() ||
+      $(heading).nextAll("p").first().text().trim();
+  });
+
+  return cleanStockAnalysisFundDescription(description);
+};
+
 const parseStockAnalysisFundHoldings = ($) =>
   $("table").first().find("tbody tr").map((_, row) => {
     const cells = $(row).find("td").map((__, cell) => $(cell).text().trim()).get();
@@ -9259,7 +9284,9 @@ async function fetchStockAnalysisMutualFundData(ticker, upstreamError = null) {
   const holdingsMeta = parseEmbeddedStockAnalysisHoldingsMeta(overviewHtml);
   const holdingsPageMeta = parseEmbeddedStockAnalysisHoldingsMeta(holdingsHtml);
   const provider = holdingsHtml.match(/provider:"([^"]+)"/)?.[1] || "";
-  const description = $("meta[name='description']").attr("content") || "";
+  const description =
+    readStockAnalysisAboutDescription($, symbol) ||
+    cleanStockAnalysisFundDescription($("meta[name='description']").attr("content") || "");
   const data = {
     symbol,
     name,
