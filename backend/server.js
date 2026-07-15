@@ -9403,9 +9403,9 @@ async function fetchEtfData(ticker) {
     ]);
   } catch (err) {
     try {
-      return await fetchYahooFundFallback(symbol, err);
+      return await fetchNasdaqFundFallback(symbol, err);
     } catch (fundErr) {
-      return fetchNasdaqFundFallback(symbol, fundErr);
+      return fetchYahooFundFallback(symbol, fundErr);
     }
   }
 

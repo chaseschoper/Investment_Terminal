@@ -3591,6 +3591,35 @@ const heatmapSectorGroups = heatmapSectors.map((sector) => ({
 const etfStats = etfData?.stats || {};
 const etfProfile = etfData?.profile || {};
 const topEtfHoldings = etfData?.holdings || [];
+const isMutualFundView = /mutual fund/i.test(String(etfData?.type || etfProfile.assetClass || ""));
+const etfOverviewCards = [
+  { label: "Assets", value: formatLargeDollars(etfStats.assets) },
+  { label: "Expense Ratio", value: formatPercent(etfStats.expenseRatio) },
+  { label: "Dividend Yield", value: formatPercent(etfStats.dividendYield) },
+  { label: "P/E Ratio", value: formatPlain(etfStats.peRatio) },
+  { label: "Holdings", value: isNumber(etfStats.holdingsCount) ? etfStats.holdingsCount.toLocaleString() : "N/A" },
+  { label: "Top 10 Weight", value: formatPercent(etfStats.top10Percent) },
+  { label: "Volume", value: isNumber(etfStats.volume) ? etfStats.volume.toLocaleString() : "N/A" },
+  { label: "52W Range", value: `${formatPrice(etfStats.fiftyTwoWeekLow)} - ${formatPrice(etfStats.fiftyTwoWeekHigh)}` },
+  isNumber(etfStats.previousClose) ? { label: "Previous Close", value: formatPrice(etfStats.previousClose) } : null,
+  etfStats.inceptionDate ? { label: "Inception", value: formatShortDate(etfStats.inceptionDate) } : null,
+  isNumber(etfStats.bondDuration) ? { label: "Bond Duration", value: formatPlain(etfStats.bondDuration) } : null,
+  isNumber(etfStats.bondMaturity) ? { label: "Bond Maturity", value: formatPlain(etfStats.bondMaturity) } : null
+].filter(Boolean);
+const fundOverviewCards = [
+  { label: "NAV / Price", value: formatPrice(etfData?.price) },
+  { label: "Daily Move", value: formatSignedPercent(etfData?.percentChange) },
+  { label: "Previous NAV", value: formatPrice(etfStats.previousClose) },
+  { label: "Pricing", value: etfStats.pricingFrequency || "N/A" },
+  { label: "Last Priced", value: etfStats.lastTradeDate || "N/A" },
+  { label: "Exchange", value: etfProfile.exchange || "N/A" },
+  { label: "Fund Type", value: etfData?.type || etfProfile.assetClass || "N/A" },
+  { label: "Category", value: etfProfile.category || "N/A" },
+  isNumber(etfStats.minimumInitialInvestment) ? { label: "Min Initial", value: formatLargeDollars(etfStats.minimumInitialInvestment) } : null,
+  isNumber(etfStats.minimumIncrementalInvestment) ? { label: "Min Add-On", value: formatLargeDollars(etfStats.minimumIncrementalInvestment) } : null,
+  etfStats.shareClass ? { label: "Share Class", value: etfStats.shareClass } : null,
+  etfStats.distributionFrequency ? { label: "Distribution", value: etfStats.distributionFrequency } : null
+].filter(Boolean);
 const renderEtfExposureBars = (title, rows = []) => (
   <div className="etf-panel">
     <h3>{title}</h3>
@@ -4453,35 +4482,12 @@ return (
             </div>
 
             <div className="etf-stat-grid">
-              <div><span>Assets</span><strong>{formatLargeDollars(etfStats.assets)}</strong></div>
-              <div><span>Expense Ratio</span><strong>{formatPercent(etfStats.expenseRatio)}</strong></div>
-              <div><span>Dividend Yield</span><strong>{formatPercent(etfStats.dividendYield)}</strong></div>
-              <div><span>P/E Ratio</span><strong>{formatPlain(etfStats.peRatio)}</strong></div>
-              <div><span>Holdings</span><strong>{isNumber(etfStats.holdingsCount) ? etfStats.holdingsCount.toLocaleString() : "N/A"}</strong></div>
-              <div><span>Top 10 Weight</span><strong>{formatPercent(etfStats.top10Percent)}</strong></div>
-              <div><span>Volume</span><strong>{isNumber(etfStats.volume) ? etfStats.volume.toLocaleString() : "N/A"}</strong></div>
-              <div><span>52W Range</span><strong>{formatPrice(etfStats.fiftyTwoWeekLow)} - {formatPrice(etfStats.fiftyTwoWeekHigh)}</strong></div>
-              {isNumber(etfStats.previousClose) && (
-                <div><span>Previous Close</span><strong>{formatPrice(etfStats.previousClose)}</strong></div>
-              )}
-              {etfStats.inceptionDate && (
-                <div><span>Inception</span><strong>{formatShortDate(etfStats.inceptionDate)}</strong></div>
-              )}
-              {isNumber(etfStats.minimumInitialInvestment) && (
-                <div><span>Min Initial</span><strong>{formatLargeDollars(etfStats.minimumInitialInvestment)}</strong></div>
-              )}
-              {etfStats.pricingFrequency && (
-                <div><span>Pricing</span><strong>{etfStats.pricingFrequency}</strong></div>
-              )}
-              {etfStats.lastTradeDate && (
-                <div><span>Last Priced</span><strong>{etfStats.lastTradeDate}</strong></div>
-              )}
-              {isNumber(etfStats.bondDuration) && (
-                <div><span>Bond Duration</span><strong>{formatPlain(etfStats.bondDuration)}</strong></div>
-              )}
-              {isNumber(etfStats.bondMaturity) && (
-                <div><span>Bond Maturity</span><strong>{formatPlain(etfStats.bondMaturity)}</strong></div>
-              )}
+              {(isMutualFundView ? fundOverviewCards : etfOverviewCards).map((card) => (
+                <div key={card.label}>
+                  <span>{card.label}</span>
+                  <strong>{card.value}</strong>
+                </div>
+              ))}
             </div>
 
             <div className="etf-profile-strip">
