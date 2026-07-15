@@ -3615,11 +3615,30 @@ const fundOverviewCards = [
   { label: "Exchange", value: etfProfile.exchange || "N/A" },
   { label: "Fund Type", value: etfData?.type || etfProfile.assetClass || "N/A" },
   { label: "Category", value: etfProfile.category || "N/A" },
-  isNumber(etfStats.minimumInitialInvestment) ? { label: "Min Initial", value: formatLargeDollars(etfStats.minimumInitialInvestment) } : null,
-  isNumber(etfStats.minimumIncrementalInvestment) ? { label: "Min Add-On", value: formatLargeDollars(etfStats.minimumIncrementalInvestment) } : null,
+  isNumber(etfStats.minimumInitialInvestment) && etfStats.minimumInitialInvestment > 0
+    ? { label: "Min Initial", value: formatLargeDollars(etfStats.minimumInitialInvestment) }
+    : null,
+  isNumber(etfStats.minimumIncrementalInvestment) && etfStats.minimumIncrementalInvestment > 0
+    ? { label: "Min Add-On", value: formatLargeDollars(etfStats.minimumIncrementalInvestment) }
+    : null,
   etfStats.shareClass ? { label: "Share Class", value: etfStats.shareClass } : null,
   etfStats.distributionFrequency ? { label: "Distribution", value: etfStats.distributionFrequency } : null
 ].filter(Boolean);
+const etfProfileItems = isMutualFundView
+  ? [
+      { label: "Exchange", value: etfProfile.exchange },
+      { label: "Category", value: etfProfile.category },
+      { label: "Asset Class", value: etfProfile.assetClass },
+      { label: "Source", value: etfData?.source }
+    ]
+  : [
+      { label: "Provider", value: etfProfile.provider },
+      { label: "Category", value: etfProfile.category },
+      { label: "Asset Class", value: etfProfile.assetClass },
+      { label: "Index", value: etfProfile.indexTracked }
+    ];
+const hasEtfBreakdownData = [etfData?.sectors, etfData?.countries, etfData?.assetAllocation]
+  .some((rows) => Array.isArray(rows) && rows.length);
 const renderEtfExposureBars = (title, rows = []) => (
   <div className="etf-panel">
     <h3>{title}</h3>
@@ -4473,7 +4492,7 @@ return (
                 <p>{etfData.description || "Fund profile and holdings data from the latest available source."}</p>
               </div>
               <div className="etf-price-card">
-                <span>Price</span>
+                <span>{isMutualFundView ? "NAV / Price" : "Price"}</span>
                 <strong>{formatPrice(etfData.price)}</strong>
                 <em className={isNumber(etfData.percentChange) && etfData.percentChange < 0 ? "red" : "green"}>
                   {formatSignedPercent(etfData.percentChange)}
@@ -4491,18 +4510,23 @@ return (
             </div>
 
             <div className="etf-profile-strip">
-              <span><strong>Provider</strong>{etfProfile.provider || "N/A"}</span>
-              <span><strong>Category</strong>{etfProfile.category || "N/A"}</span>
-              <span><strong>Asset Class</strong>{etfProfile.assetClass || "N/A"}</span>
-              <span><strong>Index</strong>{etfProfile.indexTracked || "N/A"}</span>
+              {etfProfileItems.map((item) => (
+                <span key={item.label}>
+                  <strong>{item.label}</strong>
+                  {item.value || "N/A"}
+                </span>
+              ))}
             </div>
 
-            <div className="etf-breakdown-grid">
-              {renderEtfExposureBars("Sector Exposure", etfData.sectors)}
-              {renderEtfExposureBars("Country Exposure", etfData.countries)}
-              {renderEtfExposureBars("Asset Mix", etfData.assetAllocation)}
-            </div>
+            {(!isMutualFundView || hasEtfBreakdownData) && (
+              <div className="etf-breakdown-grid">
+                {(!isMutualFundView || etfData.sectors?.length) && renderEtfExposureBars("Sector Exposure", etfData.sectors)}
+                {(!isMutualFundView || etfData.countries?.length) && renderEtfExposureBars("Country Exposure", etfData.countries)}
+                {(!isMutualFundView || etfData.assetAllocation?.length) && renderEtfExposureBars("Asset Mix", etfData.assetAllocation)}
+              </div>
+            )}
 
+            {(!isMutualFundView || topEtfHoldings.length > 0) && (
             <div className="etf-panel etf-holdings-panel">
               <div className="etf-panel-heading">
                 <h3>Top Holdings</h3>
@@ -4541,6 +4565,7 @@ return (
                 <div className="etf-empty">No holdings available yet.</div>
               )}
             </div>
+            )}
           </>
         ) : (
           <div className="heatmap-loading">Search an ETF to get started.</div>
