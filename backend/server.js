@@ -8606,7 +8606,7 @@ async function publishFastFinancialHistorySnapshot(ticker) {
     previousData.sharesOutstanding || null
   ));
   const checkedAt = new Date().toISOString();
-  if (!hasAnyCoreChartHistory({ data: { ...previousData, revenueData, interimHistoryCheckedAt: checkedAt } })) {
+  if (!hasCompleteChartHistory({ data: { ...previousData, revenueData, interimHistoryCheckedAt: checkedAt } })) {
     return;
   }
 

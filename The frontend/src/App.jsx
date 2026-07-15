@@ -811,6 +811,7 @@ const buildChartRows = (rows, key) =>
       year: item.year,
       period: item.period || String(item.year),
       isInterim: Boolean(item.isInterim),
+      isCurrent: Boolean(item.isCurrent),
       [key]: isNumber(item[key])
         ? item[key]
         : null,
@@ -858,6 +859,27 @@ const CHART_STABLE_FIELDS = [
   "balanceSheetMetricsVersion"
 ];
 
+const METRIC_STABLE_FIELDS = [
+  "marketCap",
+  "pe",
+  "forwardPE",
+  "pegRatio",
+  "priceToSales",
+  "priceToBook",
+  "revenueGrowth",
+  "earningsGrowth",
+  "sharesOutstanding",
+  "grossMargins",
+  "operatingMargins",
+  "profitMargins",
+  "freeCashflow",
+  "operatingCashflow",
+  "targetMean",
+  "analystRatingText",
+  "recommendationKey",
+  "bankMetrics"
+];
+
 const chartHistoryPointCount = (stock = {}, key) => {
   const periods = new Set();
   (Array.isArray(stock.revenueData) ? stock.revenueData : []).forEach((row) => {
@@ -895,6 +917,15 @@ const stabilizeRefreshingStockData = (previous, incoming) => {
   const stable = { ...incoming };
   CHART_STABLE_FIELDS.forEach((field) => {
     if (previous[field] !== undefined && previous[field] !== null) {
+      stable[field] = previous[field];
+    }
+  });
+  METRIC_STABLE_FIELDS.forEach((field) => {
+    if (
+      previous[field] !== undefined &&
+      previous[field] !== null &&
+      (incoming[field] === undefined || incoming[field] === null || incoming[field] === "N/A")
+    ) {
       stable[field] = previous[field];
     }
   });
@@ -3046,7 +3077,8 @@ if (!stockData) {
     price: portfolioPrices[ticker],
     change: fastDetails.change,
     percentChange: fastDetails.percentChange,
-    revenueData: []
+    revenueData: [],
+    isPlaceholder: true
   };
 }
 
@@ -3162,11 +3194,13 @@ const profitMarginHistory = chartRowsWithCurrentFallback(
   stockData?.profitMargins
 );
 
+const hasCompleteVisibleCoreChartData = hasCompleteCoreChartData(stockData || {});
 const hasRealHistoryRows = (rows = []) =>
-  rows.filter((row) => !row?.isCurrent).length >= 2 ||
-  rows.some((row) => row?.isInterim && !row?.isCurrent);
+  rows.filter((row) => !row?.isCurrent).length >= 2;
 const isHistoryRefreshPending =
   isStockLoading ||
+  stockData?.refreshing ||
+  stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
   (
     !stockData?.financialHistoryCheckedAt &&
     (
@@ -3174,8 +3208,12 @@ const isHistoryRefreshPending =
       stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION
     )
   );
+const shouldShowCoreHistoryLoading = (rows = []) =>
+  isHistoryRefreshPending && (!hasCompleteVisibleCoreChartData || !hasRealHistoryRows(rows));
 const shouldShowHistoryLoading = (rows = []) =>
   isHistoryRefreshPending && !hasRealHistoryRows(rows);
+const readyHistoryRows = (rows = []) =>
+  hasRealHistoryRows(rows) ? rows : [];
 
 const estimateFromHistoryYear = (year, fallback = {}) => {
   const row = financialHistory.find(
@@ -3400,15 +3438,47 @@ const isNextQuarterRefreshing =
     !isNumber(nextQuarterEstimate?.eps) ||
     !nextQuarterDateLabel
   );
-const isInitialStockLoad = isStockLoading && !stockData?.symbol;
+const hasUsableMetricSnapshot =
+  !stockData?.isPlaceholder &&
+  (
+    isNumber(stockData?.marketCap) ||
+    isNumber(stockData?.pe) ||
+    isNumber(stockData?.forwardPE) ||
+    isNumber(stockData?.priceToSales) ||
+    isNumber(stockData?.priceToBook) ||
+    isNumber(stockData?.revenueGrowth) ||
+    isNumber(stockData?.earningsGrowth) ||
+    isNumber(stockData?.grossMargins) ||
+    isNumber(stockData?.profitMargins) ||
+    isNumber(latestFreeCashflowFromChart) ||
+    isNumber(latestOperatingCashflowFromChart)
+  );
+const isInitialStockLoad = isStockLoading && (!stockData?.symbol || stockData?.isPlaceholder);
+const areMetricsRefreshing =
+  isInitialStockLoad ||
+  (isStockLoading && !hasUsableMetricSnapshot) ||
+  (
+    stockData?.refreshing &&
+    (
+      !hasCompleteVisibleCoreChartData ||
+      stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION
+    )
+  );
 const stockValue = (value) =>
-  isInitialStockLoad
+  areMetricsRefreshing && (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
     : value;
+const metricValue = (value) =>
+  areMetricsRefreshing
+    ? "Loading..."
+    : stockValue(value);
 const balanceSheetValue = (value) =>
-  stockData?.refreshing &&
-  !stockData?.balanceSheetCheckedAt &&
-  (value === "N/A" || value === null || value === undefined)
+  (areMetricsRefreshing ||
+    (
+      stockData?.refreshing &&
+      !stockData?.balanceSheetCheckedAt &&
+      (value === "N/A" || value === null || value === undefined)
+    ))
     ? "Loading..."
     : stockValue(value);
 const estimateValue = (value) =>
@@ -5125,7 +5195,7 @@ return (
 
 <div className="chart-box">
 
-{shouldShowHistoryLoading(revenueHistory) ? (
+    {shouldShowCoreHistoryLoading(revenueHistory) ? (
 
   <StockDataLoading label="Loading revenue history..." />
 
@@ -5209,7 +5279,7 @@ return (
 
   <div className="chart-box">
 
-    {shouldShowHistoryLoading(earningsHistory) ? (
+    {shouldShowCoreHistoryLoading(earningsHistory) ? (
 
       <StockDataLoading label="Loading net income history..." />
 
@@ -5296,7 +5366,7 @@ return (
 
   <div className="chart-box">
 
-    {shouldShowHistoryLoading(epsHistory) ? (
+    {shouldShowCoreHistoryLoading(epsHistory) ? (
 
       <StockDataLoading label="Loading EPS history..." />
 
@@ -5378,7 +5448,7 @@ return (
 <div className="historical-chart-grid">
   <HistoricalLineChart
     title="Historical Year-End P/E"
-    data={historicalPeHistory}
+    data={readyHistoryRows(historicalPeHistory)}
     dataKey="pe"
     color="#60a5fa"
     formatter={(value) => `${Number(value).toFixed(1)}x`}
@@ -5387,7 +5457,7 @@ return (
   />
   <HistoricalLineChart
     title={stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin History"}
-    data={grossMarginHistory}
+    data={readyHistoryRows(grossMarginHistory)}
     dataKey="grossMargin"
     color="#a78bfa"
     formatter={(value) => `${Number(value).toFixed(1)}%`}
@@ -5396,7 +5466,7 @@ return (
   />
   <HistoricalLineChart
     title={stockData.isFinancialCompany ? "Pre-Tax Margin History" : "Operating Margin History"}
-    data={operatingMarginHistory}
+    data={readyHistoryRows(operatingMarginHistory)}
     dataKey="operatingMargin"
     color="#f59e0b"
     formatter={(value) => `${Number(value).toFixed(1)}%`}
@@ -5405,7 +5475,7 @@ return (
   />
   <HistoricalLineChart
     title="Profit Margin History"
-    data={profitMarginHistory}
+    data={readyHistoryRows(profitMarginHistory)}
     dataKey="profitMargin"
     color="#34d399"
     formatter={(value) => `${Number(value).toFixed(1)}%`}
@@ -5414,7 +5484,7 @@ return (
   />
   <HistoricalLineChart
     title="Operating Cash Flow History"
-    data={operatingCashflowHistory}
+    data={readyHistoryRows(operatingCashflowHistory)}
     dataKey="operatingCashflow"
     color="#22d3ee"
     formatter={formatChartBillions}
@@ -5423,7 +5493,7 @@ return (
   />
   <HistoricalLineChart
     title="Free Cash Flow History"
-    data={freeCashflowHistory}
+    data={readyHistoryRows(freeCashflowHistory)}
     dataKey="freeCashflow"
     color="#14b8a6"
     formatter={formatChartBillions}
@@ -5432,7 +5502,7 @@ return (
   />
   <HistoricalLineChart
     title="Shares Outstanding History"
-    data={sharesOutstandingHistory}
+    data={readyHistoryRows(sharesOutstandingHistory)}
     dataKey="sharesOutstanding"
     color="#f472b6"
     formatter={formatSharesMillions}
@@ -5451,7 +5521,7 @@ return (
     </div>
 
     <div className="card-value">
-{stockValue(formatBillions(stockData.marketCap))}
+{metricValue(formatBillions(stockData.marketCap))}
     </div>
   </div>
 
@@ -5481,7 +5551,7 @@ return (
     </div>
 
     <div className="card-value">
-      {stockValue(formatPlain(stockData.pe))}
+      {metricValue(formatPlain(stockData.pe))}
     </div>
   </div>
 
@@ -5491,7 +5561,7 @@ return (
     </div>
 
     <div className="card-value">
-      {stockValue(formatPlain(stockData.forwardPE))}
+      {metricValue(formatPlain(stockData.forwardPE))}
     </div>
   </div>
 
@@ -5501,7 +5571,7 @@ return (
     </div>
 
     <div className="card-value">
-      {stockValue(formatPlain(stockData.pegRatio))}
+      {metricValue(formatPlain(stockData.pegRatio))}
     </div>
   </div>
 
@@ -5511,7 +5581,7 @@ return (
     </div>
 
     <div className="card-value">
-      {stockValue(formatPlain(stockData.priceToSales))}
+      {metricValue(formatPlain(stockData.priceToSales))}
     </div>
   </div>
 
@@ -5521,7 +5591,7 @@ return (
     </div>
 
     <div className="card-value">
-      {stockValue(formatPlain(stockData.priceToBook))}
+      {metricValue(formatPlain(stockData.priceToBook))}
     </div>
   </div>
 
@@ -5531,7 +5601,7 @@ return (
     </div>
 
     <div className="card-value">
-{stockValue(formatPercent(stockData.revenueGrowth))}
+{metricValue(formatPercent(stockData.revenueGrowth))}
     </div>
   </div>
 
@@ -5541,7 +5611,7 @@ return (
     </div>
 
     <div className="card-value">
-{stockValue(formatPercent(stockData.earningsGrowth))}
+{metricValue(formatPercent(stockData.earningsGrowth))}
     </div>
   </div>
 
@@ -5551,7 +5621,7 @@ return (
     </div>
 
     <div className="card-value">
-{stockValue(stockData.sharesOutstanding
+{metricValue(stockData.sharesOutstanding
   ? `${(stockData.sharesOutstanding / 1000).toFixed(2)}B`
   : "N/A")}
     </div>
@@ -5563,7 +5633,7 @@ return (
     </div>
 
     <div className="card-value">
-{stockValue(formatPercent(
+{metricValue(formatPercent(
   stockData.isFinancialCompany
     ? stockData.bankMetrics?.netInterestRevenueMix
     : stockData.grossMargins
@@ -5577,7 +5647,7 @@ return (
     </div>
 
     <div className="card-value">
-{stockValue(formatPercent(
+{metricValue(formatPercent(
   stockData.isFinancialCompany
     ? stockData.bankMetrics?.preTaxMargin
     : stockData.operatingMargins
@@ -5591,7 +5661,7 @@ return (
     </div>
 
     <div className="card-value">
-{stockValue(formatPercent(stockData.profitMargins))}
+{metricValue(formatPercent(stockData.profitMargins))}
     </div>
   </div>
 
@@ -5601,7 +5671,7 @@ return (
     </div>
 
     <div className="card-value">
-{stockValue(formatBillions(
+{metricValue(formatBillions(
   stockData.isFinancialCompany
     ? stockData.bankMetrics?.annualCashChange
     : latestFreeCashflowFromChart
@@ -5616,7 +5686,7 @@ return (
     </div>
 
     <div className="card-value">
-{stockValue(formatBillions(latestOperatingCashflowFromChart))}
+{metricValue(formatBillions(latestOperatingCashflowFromChart))}
     </div>
   </div>
   )}
@@ -5627,7 +5697,7 @@ return (
     </div>
 
     <div className="card-value">
-{stockValue(formatPrice(stockData.targetMean))}
+{metricValue(formatPrice(stockData.targetMean))}
     </div>
   </div>
 
@@ -5637,7 +5707,7 @@ return (
     </div>
 
     <div className="card-value">
-      {stockValue(stockData.analystRatingText || stockData.recommendationKey || "N/A")}
+      {metricValue(stockData.analystRatingText || stockData.recommendationKey || "N/A")}
     </div>
   </div>
 
