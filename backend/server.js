@@ -9655,6 +9655,7 @@ async function fetchEtfData(ticker) {
       dividendYield: parseStockAnalysisPercent(summaryRows["Dividend Yield"]),
       exDividendDate: summaryRows["Ex-Dividend Date"] || null,
       payoutFrequency: summaryRows["Payout Frequency"] || null,
+      payoutRatio: parseStockAnalysisPercent(summaryRows["Payout Ratio"]),
       volume: parseApiNumber(tradingRows.Volume),
       open: parseStockAnalysisMoney(tradingRows.Open),
       previousClose: parseStockAnalysisMoney(tradingRows["Previous Close"]),
@@ -9663,7 +9664,7 @@ async function fetchEtfData(ticker) {
       fiftyTwoWeekHigh: parseStockAnalysisMoney(tradingRows["52-Week High"]),
       beta: parseApiNumber(tradingRows.Beta),
       holdingsCount: holdingsMeta.count || parseApiNumber(summaryRows.Holdings),
-      inceptionDate: summaryRows["Inception Date"] || null,
+      inceptionDate: tradingRows["Inception Date"] || summaryRows["Inception Date"] || null,
       top10Percent: holdingsMeta.top10Percent
     },
     profile: {
