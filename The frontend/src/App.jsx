@@ -2699,8 +2699,10 @@ useEffect(() => {
 
       if ((response.data.refreshing || needsNewStockWarmup) && (needsFreshHistory || needsMarketActivity || needsBalanceSheetMetrics || needsNewStockWarmup) && attempt < 90) {
         const retryDelay =
-          attempt < 12
-            ? 500
+          attempt < 10
+            ? 350
+            : attempt < 18
+              ? 550
             : (needsMarketActivity || needsBalanceSheetMetrics) && attempt < 28
               ? 900
               : attempt < 40
@@ -3249,7 +3251,7 @@ const isHistoryRefreshPending =
     )
   );
 const shouldShowCoreHistoryLoading = (rows = []) =>
-  isHistoryRefreshPending && (!hasCompleteVisibleCoreChartData || !hasRealHistoryRows(rows));
+  isHistoryRefreshPending && !hasRealHistoryRows(rows);
 const shouldShowHistoryLoading = (rows = []) =>
   isHistoryRefreshPending && !hasRealHistoryRows(rows);
 const readyHistoryRows = (rows = []) =>

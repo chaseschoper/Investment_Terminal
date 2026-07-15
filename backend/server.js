@@ -8606,7 +8606,7 @@ async function publishFastFinancialHistorySnapshot(ticker) {
     previousData.sharesOutstanding || null
   ));
   const checkedAt = new Date().toISOString();
-  if (!hasCompleteChartHistory({ data: { ...previousData, revenueData, interimHistoryCheckedAt: checkedAt } })) {
+  if (!hasAnyCoreChartHistory({ data: { ...previousData, revenueData, interimHistoryCheckedAt: checkedAt } })) {
     return;
   }
 
@@ -10525,13 +10525,13 @@ app.get("/api/stock/:ticker", async (req, res) => {
     let stock = await Stock.findOne({ ticker });
 
     if (!stock) {
-      const quickData = await getImmediateStockSnapshot(ticker);
+      const initialData = buildMinimalStockSnapshot(ticker);
       stock = await Stock.findOneAndUpdate(
         { ticker },
         {
           ticker,
           status: "pending",
-          data: quickData || {},
+          data: initialData,
           updatedAt: new Date()
         },
         {
@@ -10541,6 +10541,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       );
 
       startStockFetch(ticker);
+      const quickData = await getImmediateStockSnapshot(ticker, initialData);
 
       return res.json({
         ticker,
