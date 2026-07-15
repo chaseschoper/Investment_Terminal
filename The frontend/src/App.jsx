@@ -2659,14 +2659,22 @@ useEffect(() => {
       const needsFreshHistory =
         response.data.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
         !hasCompleteCoreChartData(stableResponse);
-      const needsMarketActivity = !hasMarketActivityData(stableResponse);
+      const needsMarketActivity = response.data.refreshing && !hasMarketActivityData(stableResponse);
       const needsBalanceSheetMetrics =
         !stableResponse.balanceSheetCheckedAt &&
         !isNumber(stableResponse.totalCash) &&
         !isNumber(stableResponse.totalDebt);
 
       if (response.data.refreshing && (needsFreshHistory || needsMarketActivity || needsBalanceSheetMetrics) && attempt < 90) {
-        scheduleRetry((needsMarketActivity || needsBalanceSheetMetrics) && attempt < 20 ? 750 : attempt < 30 ? 1000 : 2500);
+        const retryDelay =
+          attempt < 12
+            ? 500
+            : (needsMarketActivity || needsBalanceSheetMetrics) && attempt < 28
+              ? 900
+              : attempt < 40
+                ? 1300
+                : 2500;
+        scheduleRetry(retryDelay);
       }
 
       setPortfolioPrices((prev) => ({
@@ -3469,16 +3477,13 @@ const stockValue = (value) =>
     ? "Loading..."
     : value;
 const metricValue = (value) =>
-  areMetricsRefreshing
+  areMetricsRefreshing && (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
     : stockValue(value);
 const balanceSheetValue = (value) =>
-  (areMetricsRefreshing ||
-    (
-      stockData?.refreshing &&
-      !stockData?.balanceSheetCheckedAt &&
-      (value === "N/A" || value === null || value === undefined)
-    ))
+  (areMetricsRefreshing || stockData?.refreshing) &&
+  !stockData?.balanceSheetCheckedAt &&
+  (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
     : stockValue(value);
 const estimateValue = (value) =>
@@ -3489,6 +3494,12 @@ const nextQuarterValue = (value) =>
   (isInitialStockLoad || isNextQuarterRefreshing) && (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
     : stockValue(value);
+const analystUpdateRows = stockData.analystUpdates || [];
+const institutionalHolderRows = stockData.institutionalHolders || [];
+const insiderMoveRows = stockData.insiderTransactions || [];
+const isAnalystUpdatesLoading = isInitialStockLoad && !analystUpdateRows.length;
+const isInstitutionalHoldersLoading = isInitialStockLoad && !institutionalHolderRows.length;
+const isInsiderMovesLoading = isInitialStockLoad && !insiderMoveRows.length;
 const selectedEarningsDay = (earnings?.days || []).find(
   (day) => day.date === selectedEarningsDate
 ) || { date: selectedEarningsDate, events: [] };
@@ -6069,8 +6080,8 @@ return (
       title="Analyst Updates"
       subtitle="Latest firm actions from available market sources"
       emptyText="No recent analyst rows found yet."
-      loading={Boolean(stockData.refreshing)}
-      rows={stockData.analystUpdates || []}
+      loading={isAnalystUpdatesLoading}
+      rows={analystUpdateRows}
       columns={[
         { key: "firm", label: "Institution" },
         { key: "latestRating", label: "Latest Rating" },
@@ -6091,8 +6102,8 @@ return (
       title="Top Institutional Holders"
       subtitle="Latest reported institutional holders"
       emptyText="No recent holder rows found yet."
-      loading={Boolean(stockData.refreshing)}
-      rows={stockData.institutionalHolders || []}
+      loading={isInstitutionalHoldersLoading}
+      rows={institutionalHolderRows}
       columns={[
         { key: "institution", label: "Institution" },
         {
@@ -6117,8 +6128,8 @@ return (
       title="Insider Tracker"
       subtitle="Latest insider moves"
       emptyText="No recent insider rows found yet."
-      loading={Boolean(stockData.refreshing)}
-      rows={stockData.insiderTransactions || []}
+      loading={isInsiderMovesLoading}
+      rows={insiderMoveRows}
       columns={[
         { key: "filerName", label: "Insider" },
         { key: "transaction", label: "Action" },

@@ -7061,26 +7061,26 @@ async function buildMarketActivitySnapshot(ticker, previousData = {}) {
 async function publishMarketActivitySnapshot(ticker) {
   const stock = await Stock.findOne({ ticker }).lean();
   if (!stock) return;
-  const marketActivity = await buildMarketActivitySnapshot(ticker, stock.data || {});
-  if (
-    !marketActivity.analystUpdates.length &&
-    !marketActivity.institutionalHolders.length &&
-    !marketActivity.insiderTransactions.length
-  ) {
-    return;
-  }
+  const publishRows = async (field, rowsPromise, timeoutMs) => {
+    const rows = await resolveWithin(rowsPromise, timeoutMs, []);
+    if (!Array.isArray(rows) || !rows.length) return;
 
-  await Stock.findOneAndUpdate(
-    { ticker },
-    {
-      $set: {
-        "data.analystUpdates": marketActivity.analystUpdates,
-        "data.institutionalHolders": marketActivity.institutionalHolders,
-        "data.insiderTransactions": marketActivity.insiderTransactions,
-        "data.marketActivityUpdatedAt": marketActivity.marketActivityUpdatedAt
+    await Stock.findOneAndUpdate(
+      { ticker },
+      {
+        $set: {
+          [`data.${field}`]: rows,
+          "data.marketActivityUpdatedAt": new Date().toISOString()
+        }
       }
-    }
-  );
+    );
+  };
+
+  await Promise.all([
+    publishRows("analystUpdates", fetchMarketBeatAnalystUpdates(ticker), 2400),
+    publishRows("institutionalHolders", fetchMarketBeatInstitutionalHolders(ticker), 2400),
+    publishRows("insiderTransactions", fetchSecInsiderTransactions(ticker), 2800)
+  ]);
 }
 
 async function buildFastStockSnapshot(ticker, previousData = {}) {
