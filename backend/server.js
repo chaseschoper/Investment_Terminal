@@ -60,7 +60,26 @@ const alphaVantageFundamentalCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 146;
 const STOCK_ESTIMATE_VERSION = 15;
 const BALANCE_SHEET_METRICS_VERSION = 9;
+const VALUATION_METRICS_VERSION = 2;
 const EARNINGS_CALL_VERSION = 17;
+const STOCK_ANALYSIS_VALUATION_FIELDS = [
+  "pe",
+  "forwardPE",
+  "forwardPS",
+  "priceToTangibleBook",
+  "priceToFreeCashflow",
+  "priceToOperatingCashflow",
+  "pegRatio",
+  "pretaxMargin",
+  "ebitdaMargin",
+  "ebitMargin",
+  "fcfMargin",
+  "returnOnEquity",
+  "returnOnAssets",
+  "returnOnInvestedCapital",
+  "returnOnCapitalEmployed",
+  "weightedAverageCostOfCapital"
+];
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
 const MR_RALLY_AI_TIMEOUT_MS = 12000;
@@ -813,7 +832,7 @@ async function getAlphaVantageFundamentalData(ticker, fn) {
 const parseNasdaqNumber = (value) => {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   if (!value || value === "N/A") return null;
-  const number = Number(String(value).replace(/[$,%\s,]/g, ""));
+  const number = Number(String(value).replace(/[$,%\s,x,]/gi, ""));
   return Number.isFinite(number) ? number : null;
 };
 
@@ -1074,7 +1093,7 @@ async function fetchNasdaqData(ticker) {
 
 const parseAbbreviatedNumber = (value) => {
   if (!value) return null;
-  const match = String(value).trim().match(/^([\d.]+)\s*([KMBT])?$/i);
+  const match = String(value).trim().replace(/[$,%\s,x,]/gi, "").match(/^(-?[\d.]+)\s*([KMBT])?$/i);
   if (!match) return parseNasdaqNumber(value);
   const multipliers = { K: 1e3, M: 1e6, B: 1e9, T: 1e12 };
   return Number(match[1]) * (multipliers[match[2]?.toUpperCase()] || 1);
@@ -1103,24 +1122,49 @@ async function fetchStockAnalysisValuationMetrics(ticker) {
       timeout: 5500
     });
     const $ = cheerio.load(data || "");
+    const normalizeStatisticLabel = (value = "") => String(value).replace(/\s+/g, " ").trim().toLowerCase();
     const readStatistic = (label) => {
-      const cells = $("tr").filter((_, row) =>
-        $(row).find("th,td").first().text().trim() === label
-      ).first().find("th,td");
-      return parseNasdaqNumber(cells.eq(1).text());
+      const expected = normalizeStatisticLabel(label);
+      let rawValue = "";
+      $("tr").each((_, row) => {
+        if (rawValue) return;
+        const cells = $(row).find("th,td").map((__, cell) =>
+          $(cell).text().replace(/\s+/g, " ").trim()
+        ).get();
+        if (cells.length < 2) return;
+        if (normalizeStatisticLabel(cells[0]) === expected) rawValue = cells[1];
+      });
+      return parseAbbreviatedNumber(rawValue);
     };
     const forwardPE = readStatistic("Forward PE");
     const epsGrowthForecast = readStatistic("EPS Growth Forecast (3Y)");
     const valuation = {
       pe: readStatistic("PE Ratio"),
       forwardPE,
+      forwardPS: readStatistic("Forward PS"),
+      priceToTangibleBook: readStatistic("P/TBV Ratio"),
+      priceToFreeCashflow: readStatistic("P/FCF Ratio"),
+      priceToOperatingCashflow: readStatistic("P/OCF Ratio"),
+      pretaxMargin: readStatistic("Pretax Margin"),
+      ebitdaMargin: readStatistic("EBITDA Margin"),
+      ebitMargin: readStatistic("EBIT Margin"),
+      fcfMargin: readStatistic("FCF Margin"),
+      returnOnEquity: readStatistic("Return on Equity (ROE)"),
+      returnOnAssets: readStatistic("Return on Assets (ROA)"),
+      returnOnInvestedCapital: readStatistic("Return on Invested Capital (ROIC)"),
+      returnOnCapitalEmployed: readStatistic("Return on Capital Employed (ROCE)"),
+      weightedAverageCostOfCapital: readStatistic("Weighted Average Cost of Capital (WACC)"),
       pegRatio: firstNumber(
         readStatistic("PEG Ratio"),
         estimatePegRatio(forwardPE, epsGrowthForecast)
       ),
       epsGrowthForecast
     };
-    stockAnalysisValuationCache.set(symbol, { data: valuation, fetchedAt: Date.now() });
+    const hasAnyValuationMetric = Object.entries(valuation)
+      .some(([key, value]) => key !== "epsGrowthForecast" && toNumberOrNull(value) !== null);
+    if (hasAnyValuationMetric) {
+      stockAnalysisValuationCache.set(symbol, { data: valuation, fetchedAt: Date.now() });
+    }
     return valuation;
   } catch (err) {
     console.log("StockAnalysis valuation metrics skipped:", ticker, err.response?.status || err.message);
@@ -4552,7 +4596,38 @@ async function repairHistoricalPeIfNeeded(ticker, data = {}) {
 }
 
 async function prepareStockResponseData(ticker, data = {}, options = {}) {
-  const baseData = withGuaranteedAnalystSection(applyStockEarningsDateOverrides(ticker, data));
+  let baseData = withGuaranteedAnalystSection(applyStockEarningsDateOverrides(ticker, data));
+  const missingValuationMetrics = STOCK_ANALYSIS_VALUATION_FIELDS.some((field) => toNumberOrNull(baseData[field]) === null);
+  if (missingValuationMetrics) {
+    const valuation = await resolveWithin(fetchStockAnalysisValuationMetrics(ticker), 1200, {});
+    const valuationPatch = {};
+    STOCK_ANALYSIS_VALUATION_FIELDS.forEach((field) => {
+      const value = toNumberOrNull(valuation[field]);
+      if (value !== null) valuationPatch[field] = value;
+    });
+    if (Object.keys(valuationPatch).length) {
+      baseData = withGuaranteedAnalystSection({
+        ...baseData,
+        ...valuationPatch,
+        valuationMetricsCheckedAt: new Date().toISOString(),
+        valuationMetricsVersion: VALUATION_METRICS_VERSION
+      });
+      Stock.findOneAndUpdate(
+        { ticker },
+        {
+          $set: Object.fromEntries(
+            Object.entries({
+              ...valuationPatch,
+              valuationMetricsCheckedAt: baseData.valuationMetricsCheckedAt,
+              valuationMetricsVersion: VALUATION_METRICS_VERSION
+            }).map(([key, value]) => [`data.${key}`, value])
+          )
+        }
+      ).catch((err) => {
+        console.log("Fast valuation response cache skipped:", ticker, err.message);
+      });
+    }
+  }
   const repairedData = options.fast
     ? baseData
     : await repairHistoricalPeIfNeeded(ticker, baseData);
@@ -5001,6 +5076,11 @@ async function fetchStockAnalysisBalanceSheetMetrics(ticker) {
       "Cash & Short-Term Investments",
       "Cash and Short-Term Investments"
     );
+    const cashAndCashEquivalents = read(
+      "Cash & Equivalents",
+      "Cash and Equivalents",
+      "Cash"
+    );
     const totalDebt = firstFiniteNumber(
       read("Total Debt", "Total Debt & Finance Lease Obligations"),
       (() => {
@@ -5022,13 +5102,39 @@ async function fetchStockAnalysisBalanceSheetMetrics(ticker) {
           : null;
       })()
     );
+    const netCash = read("Net Cash (Debt)", "Net Cash", "Net Cash / Debt");
+    const netCashPerShare = firstFiniteNumber(
+      toNumberOrNull(rows.get("net cash per share")?.[selectedIndex]),
+      toNumberOrNull(rows.get("net cash (debt) per share")?.[selectedIndex])
+    );
+    const equityBookValue = read("Book Value", "Shareholders' Equity", "Total Equity");
+    const bookValuePerShare = firstFiniteNumber(
+      toNumberOrNull(rows.get("book value per share")?.[selectedIndex]),
+      toNumberOrNull(rows.get("shareholders' equity per share")?.[selectedIndex])
+    );
+    const workingCapital = firstFiniteNumber(
+      read("Working Capital"),
+      (() => {
+        const currentAssets = read("Total Current Assets");
+        const currentLiabilities = read("Total Current Liabilities");
+        return currentAssets !== null && currentLiabilities !== null
+          ? currentAssets - currentLiabilities
+          : null;
+      })()
+    );
     if (totalCash === null && totalDebt === null) return {};
 
     const selectedHeader = headers[selectedIndex] || null;
     const year = selectedHeader?.match(/\b(?:FY\s*)?(\d{4})\b/i)?.[1] || null;
     return {
-      totalCash,
+      totalCash: cashAndCashEquivalents ?? totalCash,
       totalDebt,
+      cashAndCashEquivalents,
+      netCash,
+      netCashPerShare,
+      equityBookValue,
+      bookValuePerShare,
+      workingCapital,
       balanceSheetAsOf: year ? `${year}-12-31` : null,
       balanceSheetSource: "StockAnalysis latest balance sheet"
     };
@@ -6389,6 +6495,13 @@ async function fetchLatestBalanceSheetMetrics(ticker, options = {}) {
     balanceSheetCheckedAt: checkedAt
   });
 
+  try {
+    const stockAnalysisResult = await fetchStockAnalysisBalanceSheetMetrics(symbol);
+    if (hasBalanceSheetData(stockAnalysisResult)) return withCheckedAt(stockAnalysisResult);
+  } catch (err) {
+    console.log("StockAnalysis balance sheet metrics skipped:", symbol, err.response?.status || err.message);
+  }
+
   const latestSecInstantFact = (companyFacts, concepts = []) => {
     let latest = null;
     for (const concept of concepts) {
@@ -6856,15 +6969,6 @@ async function fetchLatestBalanceSheetMetrics(ticker, options = {}) {
     console.log("Yahoo balance sheet time series skipped:", symbol, err.response?.status || err.message);
   }
 
-  try {
-    if (!fast || !FOREIGN_ADR_CONFIG[symbol]) {
-      const stockAnalysisResult = await fetchStockAnalysisBalanceSheetMetrics(symbol);
-      if (hasBalanceSheetData(stockAnalysisResult)) return withCheckedAt(stockAnalysisResult);
-    }
-  } catch (err) {
-    console.log("StockAnalysis balance sheet metrics skipped:", symbol, err.response?.status || err.message);
-  }
-
   if (fast) return withCheckedAt({});
 
   try {
@@ -6969,6 +7073,26 @@ async function publishFastStockSnapshot(ticker) {
   );
 }
 
+async function publishValuationMetricsSnapshot(ticker) {
+  const valuation = await resolveWithin(fetchStockAnalysisValuationMetrics(ticker), 5000, {});
+  const $set = {
+    "data.valuationMetricsCheckedAt": new Date().toISOString(),
+    "data.valuationMetricsVersion": VALUATION_METRICS_VERSION
+  };
+
+  STOCK_ANALYSIS_VALUATION_FIELDS.forEach((field) => {
+    const value = toNumberOrNull(valuation[field]);
+    if (value !== null) $set[`data.${field}`] = value;
+  });
+
+  if (Object.keys($set).length <= 1) return;
+
+  await Stock.findOneAndUpdate(
+    { ticker },
+    { $set }
+  );
+}
+
 async function publishQuarterEstimateSnapshot(ticker) {
   const stock = await Stock.findOne({ ticker }).lean();
   if (!stock) return;
@@ -7024,6 +7148,12 @@ async function publishBalanceSheetSnapshot(ticker) {
       $set: {
         "data.totalCash": balanceSheetMetrics.totalCash ?? null,
         "data.totalDebt": balanceSheetMetrics.totalDebt ?? null,
+        "data.cashAndCashEquivalents": balanceSheetMetrics.cashAndCashEquivalents ?? balanceSheetMetrics.totalCash ?? null,
+        "data.netCash": balanceSheetMetrics.netCash ?? null,
+        "data.netCashPerShare": balanceSheetMetrics.netCashPerShare ?? null,
+        "data.equityBookValue": balanceSheetMetrics.equityBookValue ?? null,
+        "data.bookValuePerShare": balanceSheetMetrics.bookValuePerShare ?? null,
+        "data.workingCapital": balanceSheetMetrics.workingCapital ?? null,
         "data.balanceSheetAsOf": balanceSheetMetrics.balanceSheetAsOf || null,
         "data.balanceSheetSource": balanceSheetMetrics.balanceSheetSource || null,
         "data.balanceSheetCheckedAt": balanceSheetMetrics.balanceSheetCheckedAt || new Date().toISOString(),
@@ -7107,7 +7237,20 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     ...yahooData,
     pe: firstNumber(yahooData.pe, stockAnalysisValuation.pe),
     forwardPE: firstNumber(yahooData.forwardPE, stockAnalysisValuation.forwardPE),
-    pegRatio: firstNumber(yahooData.pegRatio, stockAnalysisValuation.pegRatio)
+    pegRatio: firstNumber(yahooData.pegRatio, stockAnalysisValuation.pegRatio),
+    forwardPS: stockAnalysisValuation.forwardPS ?? null,
+    priceToTangibleBook: stockAnalysisValuation.priceToTangibleBook ?? null,
+    priceToFreeCashflow: stockAnalysisValuation.priceToFreeCashflow ?? null,
+    priceToOperatingCashflow: stockAnalysisValuation.priceToOperatingCashflow ?? null,
+    pretaxMargin: stockAnalysisValuation.pretaxMargin ?? null,
+    ebitdaMargin: stockAnalysisValuation.ebitdaMargin ?? null,
+    ebitMargin: stockAnalysisValuation.ebitMargin ?? null,
+    fcfMargin: stockAnalysisValuation.fcfMargin ?? null,
+    returnOnEquity: stockAnalysisValuation.returnOnEquity ?? null,
+    returnOnAssets: stockAnalysisValuation.returnOnAssets ?? null,
+    returnOnInvestedCapital: stockAnalysisValuation.returnOnInvestedCapital ?? null,
+    returnOnCapitalEmployed: stockAnalysisValuation.returnOnCapitalEmployed ?? null,
+    weightedAverageCostOfCapital: stockAnalysisValuation.weightedAverageCostOfCapital ?? null
   };
   if (!fastData?.price) return null;
 
@@ -7138,6 +7281,7 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     ...previousData,
     ...definedValues(fastData),
     valuationMetricsCheckedAt: new Date().toISOString(),
+    valuationMetricsVersion: VALUATION_METRICS_VERSION,
     forwardPE: firstNumber(
       fastData.forwardPE,
       nextEps > 0 ? fastData.price / nextEps : null,
@@ -8427,6 +8571,32 @@ async function fetchStockData(ticker) {
       balanceSheetMetrics.totalDebt,
       canReusePreviousBalanceSheetMetrics ? previousData?.totalDebt : null
     ),
+    cashAndCashEquivalents: firstFiniteNumber(
+      balanceSheetMetrics.cashAndCashEquivalents,
+      balanceSheetMetrics.totalCash,
+      canReusePreviousBalanceSheetMetrics ? previousData?.cashAndCashEquivalents : null
+    ),
+    netCash: firstFiniteNumber(
+      balanceSheetMetrics.netCash,
+      canReusePreviousBalanceSheetMetrics ? previousData?.netCash : null
+    ),
+    netCashPerShare: firstFiniteNumber(
+      balanceSheetMetrics.netCashPerShare,
+      canReusePreviousBalanceSheetMetrics ? previousData?.netCashPerShare : null
+    ),
+    equityBookValue: firstFiniteNumber(
+      balanceSheetMetrics.equityBookValue,
+      canReusePreviousBalanceSheetMetrics ? previousData?.equityBookValue : null
+    ),
+    bookValuePerShare: firstFiniteNumber(
+      balanceSheetMetrics.bookValuePerShare,
+      bookValuePerShare,
+      canReusePreviousBalanceSheetMetrics ? previousData?.bookValuePerShare : null
+    ),
+    workingCapital: firstFiniteNumber(
+      balanceSheetMetrics.workingCapital,
+      canReusePreviousBalanceSheetMetrics ? previousData?.workingCapital : null
+    ),
     balanceSheetAsOf:
       balanceSheetMetrics.balanceSheetAsOf || (canReusePreviousBalanceSheetMetrics ? previousData?.balanceSheetAsOf : null) || null,
     balanceSheetSource:
@@ -8436,12 +8606,25 @@ async function fetchStockData(ticker) {
     balanceSheetMetricsVersion: BALANCE_SHEET_METRICS_VERSION,
     priceToSales,
     priceToBook,
-    bookValuePerShare,
     sharesOutstanding: sharesOutstandingValue,
     pe,
     forwardPE,
+    forwardPS: firstFiniteNumber(stockAnalysisForecast.forwardPS, stockAnalysisValuation.forwardPS),
+    priceToTangibleBook: stockAnalysisValuation.priceToTangibleBook ?? null,
+    priceToFreeCashflow: stockAnalysisValuation.priceToFreeCashflow ?? null,
+    priceToOperatingCashflow: stockAnalysisValuation.priceToOperatingCashflow ?? null,
     pegRatio,
+    pretaxMargin: stockAnalysisValuation.pretaxMargin ?? null,
+    ebitdaMargin: stockAnalysisValuation.ebitdaMargin ?? null,
+    ebitMargin: stockAnalysisValuation.ebitMargin ?? null,
+    fcfMargin: stockAnalysisValuation.fcfMargin ?? null,
+    returnOnEquity: stockAnalysisValuation.returnOnEquity ?? null,
+    returnOnAssets: stockAnalysisValuation.returnOnAssets ?? null,
+    returnOnInvestedCapital: stockAnalysisValuation.returnOnInvestedCapital ?? null,
+    returnOnCapitalEmployed: stockAnalysisValuation.returnOnCapitalEmployed ?? null,
+    weightedAverageCostOfCapital: stockAnalysisValuation.weightedAverageCostOfCapital ?? null,
     valuationMetricsCheckedAt: new Date().toISOString(),
+    valuationMetricsVersion: VALUATION_METRICS_VERSION,
     trailingEps: trailingEpsValue,
     forwardEps: forwardEpsValue,
     operatingCashflow,
@@ -8646,6 +8829,9 @@ function startStockFetch(ticker) {
   });
   publishFastStockSnapshot(ticker).catch((err) => {
     console.log("Fast stock snapshot skipped:", ticker, err.message);
+  });
+  publishValuationMetricsSnapshot(ticker).catch((err) => {
+    console.log("Valuation metrics snapshot skipped:", ticker, err.message);
   });
   publishQuarterEstimateSnapshot(ticker).catch((err) => {
     console.log("Quarter estimate snapshot skipped:", ticker, err.message);
@@ -10569,12 +10755,13 @@ app.get("/api/stock/:ticker", async (req, res) => {
 
       startStockFetch(ticker);
       const quickData = await getImmediateStockSnapshot(ticker, initialData);
+      const responseData = await prepareStockResponseData(ticker, quickData, { fast: true });
 
       return res.json({
         ticker,
         status: "ready",
         refreshing: true,
-        ...quickData,
+        ...responseData,
         updatedAt: stock.updatedAt
       });
     }
@@ -10614,11 +10801,12 @@ app.get("/api/stock/:ticker", async (req, res) => {
       }
 
       const quickData = await getImmediateStockSnapshot(ticker, stock.data || {});
+      const responseData = await prepareStockResponseData(ticker, quickData, { fast: true });
       await Stock.findOneAndUpdate(
         { ticker },
         {
           status: "pending",
-          data: quickData,
+          data: responseData,
           error: null,
           updatedAt: new Date()
         }
@@ -10628,7 +10816,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
         ticker: stock.ticker,
         status: "ready",
         refreshing: true,
-        ...quickData,
+        ...responseData,
         updatedAt: new Date()
       });
     }
@@ -10677,11 +10865,12 @@ app.get("/api/stock/:ticker", async (req, res) => {
 
         if (shouldRetryFailedSnapshot) {
           const quickData = await getImmediateStockSnapshot(ticker, fallbackData);
+          const responseData = await prepareStockResponseData(ticker, quickData, { fast: true });
           await Stock.findOneAndUpdate(
             { ticker },
             {
               status: "pending",
-              data: quickData,
+              data: responseData,
               error: null,
               updatedAt: new Date()
             }
@@ -10692,7 +10881,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
             ticker: stock.ticker,
             status: "ready",
             refreshing: true,
-            ...quickData,
+            ...responseData,
             updatedAt: new Date()
           });
         }
@@ -10737,11 +10926,12 @@ app.get("/api/stock/:ticker", async (req, res) => {
       }
 
       const quickData = await getImmediateStockSnapshot(ticker, stock.data || {});
+      const responseData = await prepareStockResponseData(ticker, quickData, { fast: true });
       await Stock.findOneAndUpdate(
         { ticker },
         {
           status: "pending",
-          data: quickData,
+          data: responseData,
           error: null,
           updatedAt: new Date()
         }
@@ -10751,7 +10941,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
         ticker,
         status: "ready",
         refreshing: true,
-        ...quickData,
+        ...responseData,
         updatedAt: new Date()
       });
     }
@@ -13536,7 +13726,7 @@ async function fetchStockAnalysisEarningsCall(ticker, requestedPeriod = null) {
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9"
       },
-      timeout: 18000,
+      timeout: 9000,
       responseType: "text",
       transformResponse: [(data) => data],
       validateStatus: (status) => status >= 200 && status < 500
@@ -14021,7 +14211,7 @@ async function fetchStockAnalysisEarningsCallPeriods(ticker) {
         "User-Agent": "Mozilla/5.0",
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
       },
-      timeout: 12000,
+      timeout: 6500,
       validateStatus: (status) => status >= 200 && status < 500
     });
     if (response.status >= 400) return [];
@@ -14068,20 +14258,22 @@ async function fetchAvailableEarningsCallPeriods(ticker) {
   }
 
   const savedCall = await EarningsCall.findOne({ ticker: symbol }).catch(() => null);
-  const [stockAnalysisPeriods, earningsCallPeriods, earningsCallPublicPeriods, finnhubPeriods] = await Promise.all([
-    resolveWithin(fetchStockAnalysisEarningsCallPeriods(symbol), 12000, []),
-    resolveWithin(fetchEarningsCallBizPeriods(symbol), 12000, []),
-    resolveWithin(fetchEarningsCallPublicPeriods(symbol), 12000, []),
-    resolveWithin(fetchFinnhubEarningsCallPeriods(symbol), 12000, [])
-  ]);
+  const stockAnalysisPeriods = await resolveWithin(fetchStockAnalysisEarningsCallPeriods(symbol), 7000, []);
   const periods = stockAnalysisPeriods.length
-    ? mergeEarningsCallPeriods(stockAnalysisPeriods)
-    : mergeEarningsCallPeriods(
-        earningsCallPeriods,
-        earningsCallPublicPeriods,
-        finnhubPeriods,
-        cachedEarningsCallPeriod(savedCall, symbol)
-      );
+    ? mergeEarningsCallPeriods(stockAnalysisPeriods, cachedEarningsCallPeriod(savedCall, symbol))
+    : await (async () => {
+        const [earningsCallPeriods, earningsCallPublicPeriods, finnhubPeriods] = await Promise.all([
+          resolveWithin(fetchEarningsCallBizPeriods(symbol), 9000, []),
+          resolveWithin(fetchEarningsCallPublicPeriods(symbol), 9000, []),
+          resolveWithin(fetchFinnhubEarningsCallPeriods(symbol), 9000, [])
+        ]);
+        return mergeEarningsCallPeriods(
+          earningsCallPeriods,
+          earningsCallPublicPeriods,
+          finnhubPeriods,
+          cachedEarningsCallPeriod(savedCall, symbol)
+        );
+      })();
   const data = {
     available: periods.length > 0,
     symbol,
@@ -14255,6 +14447,48 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
 // =========================
 // EARNINGS CALENDAR
 // =========================
+async function fetchStockAnalysisEarningsCalendarRows(targetDates = []) {
+  const targetSet = new Set(targetDates);
+  try {
+    const response = await axios.get("https://stockanalysis.com/stocks/earnings-calendar/", {
+      headers: STOCK_ANALYSIS_HEADERS,
+      timeout: 7000
+    });
+    const html = String(response.data || "");
+    const rows = [];
+    const parseCalendarNumber = (value) => {
+      const text = String(value || "").trim();
+      if (!text || text === "null") return null;
+      const number = Number(text);
+      return Number.isFinite(number) ? number : null;
+    };
+
+    for (const dayMatch of html.matchAll(/\{date:"(\d{4}-\d{2}-\d{2})",day:"([^"]+)",symbols:\[(.*?)\],count:/gs)) {
+      const [, date, , symbolsBlock] = dayMatch;
+      if (targetSet.size && !targetSet.has(date)) continue;
+
+      for (const symbolMatch of symbolsBlock.matchAll(/\{s:"([^"]+)",n:"([^"]*)",t:(null|"[^"]*"),e:([^,}]+),eg:([^,}]+),r:([^,}]+),rg:([^,}]+),m:([^,}]+)\}/g)) {
+        const [, symbol, name, timeRaw, eps, , revenue, , marketCap] = symbolMatch;
+        rows.push({
+          date,
+          symbol,
+          company: name || symbol,
+          reportTimeCode: timeRaw === "null" ? null : timeRaw.replace(/"/g, ""),
+          epsEstimate: parseCalendarNumber(eps),
+          revenueEstimate: parseCalendarNumber(revenue),
+          marketCap: parseCalendarNumber(marketCap),
+          source: "StockAnalysis earnings calendar"
+        });
+      }
+    }
+
+    return rows;
+  } catch (err) {
+    console.log("StockAnalysis earnings calendar skipped:", err.response?.status || err.message);
+    return [];
+  }
+}
+
 app.get("/api/earnings", async (req, res) => {
   const parseIsoDate = (value) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))) return null;
@@ -14290,7 +14524,8 @@ app.get("/api/earnings", async (req, res) => {
       Origin: "https://www.nasdaq.com",
       Referer: "https://www.nasdaq.com/"
     };
-    const [finnhubResponse, ...nasdaqResponses] = await Promise.all([
+    const [stockAnalysisRows, finnhubResponse, ...nasdaqResponses] = await Promise.all([
+      resolveWithin(fetchStockAnalysisEarningsCalendarRows(dates), 7500, []),
       process.env.FINNHUB_API_KEY
         ? axios.get("https://finnhub.io/api/v1/calendar/earnings", {
             params: {
@@ -14350,7 +14585,12 @@ app.get("/api/earnings", async (req, res) => {
     };
     const days = dates.map((date, index) => {
       const nasdaqRows = nasdaqResponses[index]?.data?.data?.rows || [];
-      const events = nasdaqRows.map((row) => {
+      const stockAnalysisBySymbol = new Map(
+        stockAnalysisRows
+          .filter((row) => row.date === date)
+          .map((row) => [row.symbol, row])
+      );
+      const nasdaqEvents = nasdaqRows.map((row) => {
         const exactFinnhub = finnhubByDateAndSymbol.get(`${date}:${row.symbol}`);
         const nasdaqEps = parseEstimate(row.epsForecast);
         const nearbyFinnhub = (finnhubBySymbol.get(row.symbol) || [])
@@ -14383,9 +14623,26 @@ app.get("/api/earnings", async (req, res) => {
           epsActual: parseApiNumber(finnhub.epsActual),
           revenueActual: parseApiNumber(finnhub.revenueActual)
         };
-      }).filter((event) => event.symbol)
+      }).filter((event) => event.symbol);
+      const nasdaqSymbols = new Set(nasdaqEvents.map((event) => event.symbol));
+      const stockAnalysisEvents = [...stockAnalysisBySymbol.values()]
+        .filter((row) => !nasdaqSymbols.has(row.symbol))
+        .map((row) => ({
+          date,
+          symbol: row.symbol,
+          company: row.company || row.symbol,
+          logo: getFinnhubLogoUrl(row.symbol),
+          marketCap: row.marketCap,
+          reportTime: timeLabels[row.reportTimeCode] || "Time not supplied",
+          fiscalQuarter: null,
+          epsEstimate: row.epsEstimate,
+          revenueEstimate: row.revenueEstimate,
+          epsActual: null,
+          revenueActual: null
+        }));
+      const events = [...nasdaqEvents, ...stockAnalysisEvents]
         .sort((a, b) => (b.marketCap || 0) - (a.marketCap || 0))
-        .slice(0, 8);
+        .slice(0, 40);
       return { date, events };
     });
     const responseData = {

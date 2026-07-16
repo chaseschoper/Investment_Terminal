@@ -853,6 +853,12 @@ const CHART_STABLE_FIELDS = [
   "analystEstimates",
   "totalCash",
   "totalDebt",
+  "cashAndCashEquivalents",
+  "netCash",
+  "netCashPerShare",
+  "equityBookValue",
+  "bookValuePerShare",
+  "workingCapital",
   "balanceSheetAsOf",
   "balanceSheetSource",
   "balanceSheetCheckedAt",
@@ -863,6 +869,10 @@ const METRIC_STABLE_FIELDS = [
   "marketCap",
   "pe",
   "forwardPE",
+  "forwardPS",
+  "priceToTangibleBook",
+  "priceToFreeCashflow",
+  "priceToOperatingCashflow",
   "pegRatio",
   "priceToSales",
   "priceToBook",
@@ -872,6 +882,15 @@ const METRIC_STABLE_FIELDS = [
   "grossMargins",
   "operatingMargins",
   "profitMargins",
+  "pretaxMargin",
+  "ebitdaMargin",
+  "ebitMargin",
+  "fcfMargin",
+  "returnOnEquity",
+  "returnOnAssets",
+  "returnOnInvestedCapital",
+  "returnOnCapitalEmployed",
+  "weightedAverageCostOfCapital",
   "freeCashflow",
   "operatingCashflow",
   "targetMean",
@@ -3486,8 +3505,11 @@ const hasUsableMetricSnapshot =
     isNumber(stockData?.marketCap) ||
     isNumber(stockData?.pe) ||
     isNumber(stockData?.forwardPE) ||
+    isNumber(stockData?.forwardPS) ||
     isNumber(stockData?.priceToSales) ||
     isNumber(stockData?.priceToBook) ||
+    isNumber(stockData?.priceToFreeCashflow) ||
+    isNumber(stockData?.priceToOperatingCashflow) ||
     isNumber(stockData?.revenueGrowth) ||
     isNumber(stockData?.earningsGrowth) ||
     isNumber(stockData?.grossMargins) ||
@@ -5572,11 +5594,11 @@ return (
 
   <div className="card">
     <div className="card-title">
-      Total Cash
+      Cash & Equivalents
     </div>
 
     <div className="card-value">
-{balanceSheetValue(formatBillions(stockData.totalCash))}
+{balanceSheetValue(formatBillions(stockData.cashAndCashEquivalents ?? stockData.totalCash))}
     </div>
   </div>
 
@@ -5587,6 +5609,56 @@ return (
 
     <div className="card-value">
 {balanceSheetValue(formatBillions(stockData.totalDebt))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      Net Cash
+    </div>
+
+    <div className="card-value">
+{balanceSheetValue(formatBillions(stockData.netCash))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      Net Cash / Share
+    </div>
+
+    <div className="card-value">
+{balanceSheetValue(formatPrice(stockData.netCashPerShare))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      Equity Book Value
+    </div>
+
+    <div className="card-value">
+{balanceSheetValue(formatBillions(stockData.equityBookValue))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      Book Value / Share
+    </div>
+
+    <div className="card-value">
+{balanceSheetValue(formatPrice(stockData.bookValuePerShare))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      Working Capital
+    </div>
+
+    <div className="card-value">
+{balanceSheetValue(formatBillions(stockData.workingCapital))}
     </div>
   </div>
 
@@ -5607,6 +5679,16 @@ return (
 
     <div className="card-value">
       {metricValue(formatPlain(stockData.forwardPE))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      Forward P/S
+    </div>
+
+    <div className="card-value">
+      {metricValue(formatPlain(stockData.forwardPS))}
     </div>
   </div>
 
@@ -5637,6 +5719,36 @@ return (
 
     <div className="card-value">
       {metricValue(formatPlain(stockData.priceToBook))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      P/TBV Ratio
+    </div>
+
+    <div className="card-value">
+      {metricValue(formatPlain(stockData.priceToTangibleBook))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      P/FCF Ratio
+    </div>
+
+    <div className="card-value">
+      {metricValue(formatPlain(stockData.priceToFreeCashflow))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      P/OCF Ratio
+    </div>
+
+    <div className="card-value">
+      {metricValue(formatPlain(stockData.priceToOperatingCashflow))}
     </div>
   </div>
 
@@ -5707,6 +5819,96 @@ return (
 
     <div className="card-value">
 {metricValue(formatPercent(stockData.profitMargins))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      Pretax Margin
+    </div>
+
+    <div className="card-value">
+{metricValue(formatPercent(stockData.pretaxMargin))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      EBITDA Margin
+    </div>
+
+    <div className="card-value">
+{metricValue(formatPercent(stockData.ebitdaMargin))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      EBIT Margin
+    </div>
+
+    <div className="card-value">
+{metricValue(formatPercent(stockData.ebitMargin))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      FCF Margin
+    </div>
+
+    <div className="card-value">
+{metricValue(formatPercent(stockData.fcfMargin))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      ROE
+    </div>
+
+    <div className="card-value">
+{metricValue(formatPercent(stockData.returnOnEquity))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      ROA
+    </div>
+
+    <div className="card-value">
+{metricValue(formatPercent(stockData.returnOnAssets))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      ROIC
+    </div>
+
+    <div className="card-value">
+{metricValue(formatPercent(stockData.returnOnInvestedCapital))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      ROCE
+    </div>
+
+    <div className="card-value">
+{metricValue(formatPercent(stockData.returnOnCapitalEmployed))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      WACC
+    </div>
+
+    <div className="card-value">
+{metricValue(formatPercent(stockData.weightedAverageCostOfCapital))}
     </div>
   </div>
 
