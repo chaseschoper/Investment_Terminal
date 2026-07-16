@@ -50,6 +50,7 @@ const marketBeatAnalystCache = new Map();
 const secInsiderTransactionCache = new Map();
 const epsSurpriseCache = new Map();
 const stockAnalysisValuationCache = new Map();
+let stockAnalysisEarningsCalendarPageCache = null;
 const sp500ConstituentsCache = new Map();
 const etfDataCache = new Map();
 const mrRallyExternalMetricCache = new Map();
@@ -961,7 +962,7 @@ async function fetchNasdaqEarningsDate(ticker, referenceDate) {
 
 async function fetchCalendarQuarterEstimate(ticker, options = {}) {
   const symbol = String(ticker || "").trim().toUpperCase();
-  if (!symbol || !process.env.FINNHUB_API_KEY) return {};
+  if (!symbol) return {};
   const timeoutMs = options.fast ? 3500 : 8000;
   const calendarSymbols = new Set([
     symbol,
@@ -973,14 +974,52 @@ async function fetchCalendarQuarterEstimate(ticker, options = {}) {
     return cached.data;
   }
 
+  const emptyResult = {
+    revenue: null,
+    earnings: null,
+    eps: null,
+    date: null,
+    fiscalQuarter: null,
+    source: "Earnings calendar"
+  };
+
+  const today = new Date();
+  const todayNoon = new Date(today);
+  todayNoon.setUTCHours(12, 0, 0, 0);
+  const calendarDates = Array.from({ length: options.fast ? 150 : 240 }, (_, index) => {
+    const date = new Date(todayNoon);
+    date.setUTCDate(date.getUTCDate() + index);
+    return date.toISOString().slice(0, 10);
+  });
+  const stockAnalysisRows = await resolveWithin(
+    fetchStockAnalysisEarningsCalendarRows(calendarDates),
+    options.fast ? 1700 : 3500,
+    []
+  );
+  const stockAnalysisRow = (stockAnalysisRows || [])
+    .filter((row) => calendarSymbols.has(String(row.symbol || "").toUpperCase()))
+    .filter((row) => toNumberOrNull(row.epsEstimate) !== null || toNumberOrNull(row.revenueEstimate) !== null)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)))[0];
+  if (stockAnalysisRow) {
+    const result = applyEarningsDateOverride(symbol, {
+      revenue: stockAnalysisRow.revenueEstimate,
+      earnings: null,
+      eps: stockAnalysisRow.epsEstimate,
+      date: stockAnalysisRow.date || null,
+      fiscalQuarter: null,
+      source: "StockAnalysis earnings calendar"
+    });
+    earningsEstimateCalendarCache.set(symbol, { data: result, fetchedAt: Date.now() });
+    return result;
+  }
+
+  if (!process.env.FINNHUB_API_KEY) return emptyResult;
+
   try {
-    const today = new Date();
     const from = new Date(today);
     from.setUTCDate(from.getUTCDate() - 45);
     const to = new Date(today);
     to.setUTCDate(to.getUTCDate() + 520);
-    const todayNoon = new Date(today);
-    todayNoon.setUTCHours(12, 0, 0, 0);
 
     const { data } = await axios.get("https://finnhub.io/api/v1/calendar/earnings", {
       params: {
@@ -1038,14 +1077,7 @@ async function fetchCalendarQuarterEstimate(ticker, options = {}) {
     return correctedResult;
   } catch (err) {
     console.log("Ticker earnings estimate calendar skipped:", symbol, err.response?.status || err.message);
-    return {
-      revenue: null,
-      earnings: null,
-      eps: null,
-      date: null,
-      fiscalQuarter: null,
-      source: "Earnings calendar"
-    };
+    return emptyResult;
   }
 }
 
@@ -4597,6 +4629,20 @@ async function repairHistoricalPeIfNeeded(ticker, data = {}) {
 
 async function prepareStockResponseData(ticker, data = {}, options = {}) {
   let baseData = withGuaranteedAnalystSection(applyStockEarningsDateOverrides(ticker, data));
+  const existingNextQuarter = baseData.analystEstimates?.nextQuarter || {};
+  if (
+    !baseData.quarterEstimateCheckedAt &&
+    (
+      toNumberOrNull(existingNextQuarter.revenue) !== null ||
+      toNumberOrNull(existingNextQuarter.eps) !== null ||
+      Boolean(existingNextQuarter.date)
+    )
+  ) {
+    baseData = {
+      ...baseData,
+      quarterEstimateCheckedAt: new Date().toISOString()
+    };
+  }
   const missingValuationMetrics = STOCK_ANALYSIS_VALUATION_FIELDS.some((field) => toNumberOrNull(baseData[field]) === null);
   if (missingValuationMetrics) {
     const valuation = await resolveWithin(fetchStockAnalysisValuationMetrics(ticker), 1200, {});
@@ -7105,7 +7151,6 @@ async function publishQuarterEstimateSnapshot(ticker) {
     toNumberOrNull(estimate?.revenue) !== null ||
     toNumberOrNull(estimate?.eps) !== null ||
     Boolean(estimate?.date);
-  if (!hasEstimate) return;
 
   const nextQuarter = {
     revenue: normalizeStatementDollars(estimate.revenue),
@@ -7122,8 +7167,36 @@ async function publishQuarterEstimateSnapshot(ticker) {
       $set: {
         "data.analystEstimates.nextQuarter": nextQuarter,
         "data.analystEstimatesSources.nextQuarter": "Earnings calendar",
+        "data.quarterEstimateCheckedAt": new Date().toISOString(),
         "data.estimateDataVersion": STOCK_ESTIMATE_VERSION,
-        "data.epsBeatMiss": buildEpsBeatMissSeries(stock.data?.epsBeatMiss || [], nextQuarter)
+        ...(hasEstimate
+          ? { "data.epsBeatMiss": buildEpsBeatMissSeries(stock.data?.epsBeatMiss || [], nextQuarter) }
+          : {})
+      }
+    }
+  );
+}
+
+async function publishEpsBeatMissSnapshot(ticker) {
+  const stock = await Stock.findOne({ ticker }).lean();
+  if (!stock) return;
+  const [calendarQuarterEstimate, marketBeatRows, finnhubRows] = await Promise.all([
+    resolveWithin(fetchCalendarQuarterEstimate(ticker, { fast: true }), 2200, stock.data?.analystEstimates?.nextQuarter || {}),
+    resolveWithin(fetchMarketBeatEpsSurprises(ticker), 2600, []),
+    resolveWithin(fetchFinnhubEpsSurprises(ticker), 2600, [])
+  ]);
+  const reportedRows = marketBeatRows?.length >= 3
+    ? marketBeatRows
+    : mergeEpsBeatMissRows(stock.data?.epsBeatMiss || [], finnhubRows || []);
+  const epsBeatMiss = buildEpsBeatMissSeries(reportedRows, calendarQuarterEstimate);
+  if (!Array.isArray(epsBeatMiss) || !epsBeatMiss.length) return;
+
+  await Stock.findOneAndUpdate(
+    { ticker },
+    {
+      $set: {
+        "data.epsBeatMiss": epsBeatMiss,
+        "data.epsBeatMissCheckedAt": new Date().toISOString()
       }
     }
   );
@@ -7205,12 +7278,54 @@ async function publishMarketActivitySnapshot(ticker) {
       }
     );
   };
+  const publishYahooRows = async () => {
+    const data = await resolveWithin(getYahooSupplementalData(ticker), 2200, {});
+    const $set = {};
+    if (Array.isArray(data.analystUpdates) && data.analystUpdates.length) {
+      $set["data.analystUpdates"] = data.analystUpdates;
+    }
+    if (Array.isArray(data.institutionalHolders) && data.institutionalHolders.length) {
+      $set["data.institutionalHolders"] = data.institutionalHolders;
+    }
+    if (Array.isArray(data.insiderTransactions) && data.insiderTransactions.length) {
+      $set["data.insiderTransactions"] = data.insiderTransactions;
+    }
+    if (data.holderSummary && Object.keys(data.holderSummary).length) {
+      $set["data.holderSummary"] = data.holderSummary;
+    }
+    if (data.analystTargets && Object.keys(data.analystTargets).length) {
+      $set["data.analystTargets"] = data.analystTargets;
+    }
+    if (!Object.keys($set).length) return;
+    $set["data.marketActivityUpdatedAt"] = new Date().toISOString();
+    await Stock.findOneAndUpdate({ ticker }, { $set });
+  };
+  const publishFmpRows = async () => {
+    const data = await resolveWithin(fetchFmpMarketActivity(ticker), 2200, { analystUpdates: [], institutionalHolders: [] });
+    const $set = {};
+    if (Array.isArray(data.analystUpdates) && data.analystUpdates.length) {
+      $set["data.analystUpdates"] = data.analystUpdates;
+    }
+    if (Array.isArray(data.institutionalHolders) && data.institutionalHolders.length) {
+      $set["data.institutionalHolders"] = data.institutionalHolders;
+    }
+    if (!Object.keys($set).length) return;
+    $set["data.marketActivityUpdatedAt"] = new Date().toISOString();
+    await Stock.findOneAndUpdate({ ticker }, { $set });
+  };
 
   await Promise.all([
-    publishRows("analystUpdates", fetchMarketBeatAnalystUpdates(ticker), 2400),
-    publishRows("institutionalHolders", fetchMarketBeatInstitutionalHolders(ticker), 2400),
-    publishRows("insiderTransactions", fetchSecInsiderTransactions(ticker), 2800)
+    publishYahooRows(),
+    publishFmpRows(),
+    publishRows("analystUpdates", fetchMarketBeatAnalystUpdates(ticker), 2200),
+    publishRows("institutionalHolders", fetchMarketBeatInstitutionalHolders(ticker), 2200),
+    publishRows("insiderTransactions", fetchSecInsiderTransactions(ticker), 2600)
   ]);
+
+  await Stock.findOneAndUpdate(
+    { ticker },
+    { $set: { "data.marketActivityUpdatedAt": new Date().toISOString() } }
+  );
 }
 
 async function buildFastStockSnapshot(ticker, previousData = {}) {
@@ -8688,6 +8803,7 @@ async function fetchStockData(ticker) {
       : secInsiderTransactions?.length
         ? secInsiderTransactions
       : previousData?.insiderTransactions || [],
+    marketActivityUpdatedAt: new Date().toISOString(),
     holderSummary: yahooSupplementalData.holderSummary || previousData?.holderSummary || {},
     analystTargets: yahooSupplementalData.analystTargets || previousData?.analystTargets || {},
     epsBeatMiss: buildEpsBeatMissSeries(
@@ -8728,6 +8844,7 @@ async function fetchStockData(ticker) {
         eps: null
       }
     },
+    quarterEstimateCheckedAt: new Date().toISOString(),
     estimateDataVersion: STOCK_ESTIMATE_VERSION,
     financialHistoryVersion: FINANCIAL_HISTORY_VERSION,
     financialHistoryCheckedAt: new Date().toISOString(),
@@ -8835,6 +8952,9 @@ function startStockFetch(ticker) {
   });
   publishQuarterEstimateSnapshot(ticker).catch((err) => {
     console.log("Quarter estimate snapshot skipped:", ticker, err.message);
+  });
+  publishEpsBeatMissSnapshot(ticker).catch((err) => {
+    console.log("EPS beat/miss snapshot skipped:", ticker, err.message);
   });
   publishBalanceSheetSnapshot(ticker).catch((err) => {
     console.log("Balance sheet snapshot skipped:", ticker, err.message);
@@ -14450,12 +14570,22 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
 async function fetchStockAnalysisEarningsCalendarRows(targetDates = []) {
   const targetSet = new Set(targetDates);
   try {
+    if (
+      stockAnalysisEarningsCalendarPageCache &&
+      Date.now() - stockAnalysisEarningsCalendarPageCache.fetchedAt < 10 * 60 * 1000
+    ) {
+      const cachedRows = stockAnalysisEarningsCalendarPageCache.rows || [];
+      return targetSet.size
+        ? cachedRows.filter((row) => targetSet.has(row.date))
+        : cachedRows;
+    }
+
     const response = await axios.get("https://stockanalysis.com/stocks/earnings-calendar/", {
       headers: STOCK_ANALYSIS_HEADERS,
       timeout: 7000
     });
     const html = String(response.data || "");
-    const rows = [];
+    const allRows = [];
     const parseCalendarNumber = (value) => {
       const text = String(value || "").trim();
       if (!text || text === "null") return null;
@@ -14465,11 +14595,10 @@ async function fetchStockAnalysisEarningsCalendarRows(targetDates = []) {
 
     for (const dayMatch of html.matchAll(/\{date:"(\d{4}-\d{2}-\d{2})",day:"([^"]+)",symbols:\[(.*?)\],count:/gs)) {
       const [, date, , symbolsBlock] = dayMatch;
-      if (targetSet.size && !targetSet.has(date)) continue;
 
       for (const symbolMatch of symbolsBlock.matchAll(/\{s:"([^"]+)",n:"([^"]*)",t:(null|"[^"]*"),e:([^,}]+),eg:([^,}]+),r:([^,}]+),rg:([^,}]+),m:([^,}]+)\}/g)) {
         const [, symbol, name, timeRaw, eps, , revenue, , marketCap] = symbolMatch;
-        rows.push({
+        allRows.push({
           date,
           symbol,
           company: name || symbol,
@@ -14482,7 +14611,10 @@ async function fetchStockAnalysisEarningsCalendarRows(targetDates = []) {
       }
     }
 
-    return rows;
+    stockAnalysisEarningsCalendarPageCache = { rows: allRows, fetchedAt: Date.now() };
+    return targetSet.size
+      ? allRows.filter((row) => targetSet.has(row.date))
+      : allRows;
   } catch (err) {
     console.log("StockAnalysis earnings calendar skipped:", err.response?.status || err.message);
     return [];
@@ -14511,9 +14643,9 @@ app.get("/api/earnings", async (req, res) => {
   });
   const paddedStart = new Date(weekStart);
   paddedStart.setUTCDate(paddedStart.getUTCDate() - 45);
-  const cacheKey = dates[0];
+  const cacheKey = `v2:${dates[0]}`;
   const cached = earningsCalendarCache.get(cacheKey);
-  if (cached && Date.now() - cached.cachedAt < 15 * 60 * 1000) {
+  if (cached && Date.now() - cached.cachedAt < 15 * 60 * 1000 && cached.data?.days?.some((day) => day.events?.length)) {
     return res.json(cached.data);
   }
 
@@ -14650,7 +14782,9 @@ app.get("/api/earnings", async (req, res) => {
       weekEnd: dates[6],
       days
     };
-    earningsCalendarCache.set(cacheKey, { data: responseData, cachedAt: Date.now() });
+    if (days.some((day) => day.events?.length)) {
+      earningsCalendarCache.set(cacheKey, { data: responseData, cachedAt: Date.now() });
+    }
     return res.json(responseData);
   } catch (err) {
     console.error("Earnings calendar error:", err.message);
