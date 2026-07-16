@@ -937,7 +937,6 @@ const chooseRicherRows = (previousRows, incomingRows, keys) => {
 };
 
 const hasMarketActivityData = (stock = {}) =>
-  Boolean(stock.marketActivityUpdatedAt) ||
   (Array.isArray(stock.analystUpdates) && stock.analystUpdates.length > 0) ||
   (Array.isArray(stock.institutionalHolders) && stock.institutionalHolders.length > 0) ||
   (Array.isArray(stock.insiderTransactions) && stock.insiderTransactions.length > 0);
@@ -956,20 +955,87 @@ const hasAnyOverviewMetricData = (stock = {}) =>
   isNumber(stock.operatingCashflow) ||
   isNumber(stock.targetMean);
 
+const overviewMetricCount = (stock = {}) =>
+  [
+    "marketCap",
+    "pe",
+    "forwardPE",
+    "pegRatio",
+    "forwardPS",
+    "priceToSales",
+    "priceToBook",
+    "priceToFreeCashflow",
+    "priceToOperatingCashflow",
+    "totalCash",
+    "totalDebt",
+    "cashAndCashEquivalents",
+    "netCash",
+    "equityBookValue",
+    "workingCapital",
+    "revenueGrowth",
+    "earningsGrowth",
+    "grossMargins",
+    "operatingMargins",
+    "profitMargins",
+    "pretaxMargin",
+    "ebitdaMargin",
+    "ebitMargin",
+    "fcfMargin",
+    "returnOnEquity",
+    "returnOnAssets",
+    "returnOnInvestedCapital"
+  ].filter((field) => isNumber(stock[field])).length;
+
 const hasNextQuarterData = (stock = {}) => {
   const nextQuarter = stock.analystEstimates?.nextQuarter || {};
   return (
-    Boolean(stock.quarterEstimateCheckedAt) ||
     isNumber(nextQuarter.revenue) ||
     isNumber(nextQuarter.eps) ||
     Boolean(nextQuarter.date)
   );
 };
 
+const hasAnnualEstimateData = (stock = {}) => {
+  const estimates = stock.analystEstimates || {};
+  return (
+    (isNumber(estimates.currentYear?.revenue) || isNumber(estimates.currentYear?.eps)) &&
+    (isNumber(estimates.nextYear?.revenue) || isNumber(estimates.nextYear?.eps))
+  );
+};
+
+const historicalFieldCount = (rows = [], field) =>
+  (Array.isArray(rows) ? rows : [])
+    .filter((row) => !row?.isCurrent && isNumber(row?.[field]))
+    .length;
+
+const hasExtendedHistoricalChartData = (stock = {}) => {
+  const revenueData = stock.revenueData || [];
+  const marginHistory = stock.marginHistory || [];
+  const historicalPe = stock.historicalPe || [];
+  const hasCashFlowHistory =
+    historicalFieldCount(revenueData, "operatingCashflow") >= 2 ||
+    historicalFieldCount(revenueData, "freeCashflow") >= 2;
+  const hasMarginHistory =
+    historicalFieldCount(marginHistory, "grossMargin") >= 2 ||
+    historicalFieldCount(marginHistory, "operatingMargin") >= 2 ||
+    historicalFieldCount(marginHistory, "profitMargin") >= 2 ||
+    stock.isFinancialCompany;
+
+  return (
+    historicalFieldCount(historicalPe, "pe") >= 2 &&
+    hasCashFlowHistory &&
+    hasMarginHistory
+  );
+};
+
 const shouldKeepWarmingNewStock = (stock = {}) =>
   !hasCompleteCoreChartData(stock) ||
+  !hasExtendedHistoricalChartData(stock) ||
   !hasAnyOverviewMetricData(stock) ||
-  !hasNextQuarterData(stock);
+  overviewMetricCount(stock) < 8 ||
+  !hasAnnualEstimateData(stock) ||
+  !hasNextQuarterData(stock) ||
+  !hasMarketActivityData(stock);
 
 const stabilizeRefreshingStockData = (previous, incoming) => {
   if (
@@ -2759,16 +2825,41 @@ useEffect(() => {
       const needsFreshHistory =
         response.data.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
         !hasCompleteCoreChartData(stableResponse);
+      const needsInterimHistory =
+        attempt < 40 &&
+        countInterimRows(stableResponse.revenueData || []) < 1;
+      const needsExtendedHistory =
+        attempt < 40 &&
+        !hasExtendedHistoricalChartData(stableResponse);
+      const needsMoreMetricCards =
+        response.data.refreshing &&
+        overviewMetricCount(stableResponse) < 12;
       const needsNewStockWarmup =
         (!hadCachedStock || attempt < 30) &&
         shouldKeepWarmingNewStock(stableResponse);
       const needsMarketActivity = response.data.refreshing && !hasMarketActivityData(stableResponse);
+      const needsAnnualEstimates = response.data.refreshing && !hasAnnualEstimateData(stableResponse);
+      const needsQuarterEstimate = response.data.refreshing && !hasNextQuarterData(stableResponse);
       const needsBalanceSheetMetrics =
         !stableResponse.balanceSheetCheckedAt &&
         !isNumber(stableResponse.totalCash) &&
         !isNumber(stableResponse.totalDebt);
 
-      if ((response.data.refreshing || needsNewStockWarmup) && (needsFreshHistory || needsMarketActivity || needsBalanceSheetMetrics || needsNewStockWarmup) && attempt < 90) {
+      if (
+        (response.data.refreshing || needsNewStockWarmup) &&
+        (
+          needsFreshHistory ||
+          needsInterimHistory ||
+          needsExtendedHistory ||
+          needsMoreMetricCards ||
+          needsMarketActivity ||
+          needsAnnualEstimates ||
+          needsQuarterEstimate ||
+          needsBalanceSheetMetrics ||
+          needsNewStockWarmup
+        ) &&
+        attempt < 90
+      ) {
         const retryDelay =
           attempt < 10
             ? 350
@@ -3578,7 +3669,7 @@ const stockValue = (value) =>
     ? "Loading..."
     : value;
 const metricValue = (value) =>
-  areMetricsRefreshing && (value === "N/A" || value === null || value === undefined)
+  (areMetricsRefreshing || stockData?.refreshing) && (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
     : stockValue(value);
 const balanceSheetValue = (value) =>
@@ -3598,9 +3689,9 @@ const nextQuarterValue = (value) =>
 const analystUpdateRows = stockData.analystUpdates || [];
 const institutionalHolderRows = stockData.institutionalHolders || [];
 const insiderMoveRows = stockData.insiderTransactions || [];
-const isAnalystUpdatesLoading = (isInitialStockLoad || stockData?.refreshing) && !stockData?.marketActivityUpdatedAt && !analystUpdateRows.length;
-const isInstitutionalHoldersLoading = (isInitialStockLoad || stockData?.refreshing) && !stockData?.marketActivityUpdatedAt && !institutionalHolderRows.length;
-const isInsiderMovesLoading = (isInitialStockLoad || stockData?.refreshing) && !stockData?.marketActivityUpdatedAt && !insiderMoveRows.length;
+const isAnalystUpdatesLoading = (isInitialStockLoad || stockData?.refreshing) && !analystUpdateRows.length;
+const isInstitutionalHoldersLoading = (isInitialStockLoad || stockData?.refreshing) && !institutionalHolderRows.length;
+const isInsiderMovesLoading = (isInitialStockLoad || stockData?.refreshing) && !insiderMoveRows.length;
 const selectedEarningsDay = (earnings?.days || []).find(
   (day) => day.date === selectedEarningsDate
 ) || { date: selectedEarningsDate, events: [] };

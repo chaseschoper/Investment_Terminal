@@ -3401,7 +3401,23 @@ function limitHistoricalFinancialRows(rows, limit = 7) {
   if (!Number.isFinite(limit)) return dedupedRows;
 
   const annualRows = dedupedRows.filter((row) => !row?.isInterim).slice(-limit);
-  const interimRows = dedupedRows.filter((row) => row?.isInterim).slice(-3);
+  const interimRowsByYear = new Map();
+  dedupedRows
+    .filter((row) => row?.isInterim && row?.period !== "Current")
+    .forEach((row) => {
+      const year = Number(row.year);
+      if (!Number.isFinite(year)) return;
+      const rowsForYear = interimRowsByYear.get(year) || [];
+      rowsForYear.push(row);
+      interimRowsByYear.set(year, rowsForYear);
+    });
+  const interimRows = [...interimRowsByYear.entries()]
+    .sort(([yearA], [yearB]) => yearA - yearB)
+    .flatMap(([, rowsForYear]) =>
+      rowsForYear
+        .sort((a, b) => String(a.period || "").localeCompare(String(b.period || "")))
+        .slice(-3)
+    );
   const mergedRows = [...annualRows, ...interimRows].sort((a, b) => {
     const yearDiff = Number(a.year) - Number(b.year);
     if (yearDiff !== 0) return yearDiff;
@@ -9071,6 +9087,18 @@ async function getHydratedStockDataForFirstResponse(ticker, fallbackData = {}, w
   };
 }
 
+function getStockResponseError(data = {}, error = null) {
+  if (
+    hasAnyCoreChartHistory({ data }) ||
+    hasCompleteChartHistory({ data }) ||
+    hasCompleteSupplementalData({ data })
+  ) {
+    return null;
+  }
+
+  return error || null;
+}
+
 function normalizePeerSymbol(symbol) {
   return String(symbol || "")
     .trim()
@@ -11015,7 +11043,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           status: "ready",
           refreshing: true,
           ...responseData,
-          error: stock.error,
+          error: getStockResponseError(responseData, stock.error),
           updatedAt: hydrated.stock?.updatedAt || stock.updatedAt
         });
       }
@@ -11067,7 +11095,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           status: "ready",
           refreshing: true,
           ...responseData,
-          error: stock.error,
+          error: getStockResponseError(responseData, stock.error),
           updatedAt: hydrated.stock?.updatedAt || stock.updatedAt
         });
       }
@@ -11121,7 +11149,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           status: "ready",
           refreshing: shouldKeepPolling,
           ...responseData,
-          error: stock.error,
+          error: getStockResponseError(responseData, stock.error),
           updatedAt: stock.updatedAt
         });
       }
@@ -11146,7 +11174,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           status: "ready",
           refreshing: true,
           ...responseData,
-          error: stock.error,
+          error: getStockResponseError(responseData, stock.error),
           updatedAt: hydrated.stock?.updatedAt || stock.updatedAt
         });
       }
@@ -11179,7 +11207,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       ticker: stock.ticker,
       status: stock.status,
       ...responseData,
-      error: stock.error,
+      error: getStockResponseError(responseData, stock.error),
       updatedAt: stock.updatedAt
     });
 
