@@ -2710,28 +2710,52 @@ useEffect(() => {
     if (!loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
 
     let isActive = true;
-    setIsSimilarCompaniesLoading(true);
+    let retryTimer;
 
-    axios.get(`${API_URL}/api/similar-companies/${ticker}`, { timeout: 15000 })
-      .then((response) => {
-        if (isActive) {
-          setSimilarCompanies(response.data?.companies || []);
-        }
-      })
-      .catch((error) => {
-        console.error("Similar companies failed", error);
-        if (isActive) {
+    const loadSimilarCompanies = (attempt = 0) => {
+      if (!isActive) return;
+      let willRetry = false;
+      setIsSimilarCompaniesLoading(true);
+
+      axios.get(`${API_URL}/api/similar-companies/${ticker}`, { timeout: 18000 })
+        .then((response) => {
+          if (!isActive) return;
+          const companies = response.data?.companies || [];
+          if (!companies.length && attempt < 5) {
+            willRetry = true;
+            retryTimer = window.setTimeout(
+              () => loadSimilarCompanies(attempt + 1),
+              Math.min(8000, 1000 + attempt * 1300)
+            );
+            return;
+          }
+          setSimilarCompanies(companies);
+        })
+        .catch((error) => {
+          console.error("Similar companies failed", error);
+          if (!isActive) return;
+          if (attempt < 5) {
+            willRetry = true;
+            retryTimer = window.setTimeout(
+              () => loadSimilarCompanies(attempt + 1),
+              Math.min(9000, 1200 + attempt * 1400)
+            );
+            return;
+          }
           setSimilarCompanies([]);
-        }
-      })
-      .finally(() => {
-        if (isActive) {
-          setIsSimilarCompaniesLoading(false);
-        }
-      });
+        })
+        .finally(() => {
+          if (isActive && !willRetry) {
+            setIsSimilarCompaniesLoading(false);
+          }
+        });
+    };
+
+    loadSimilarCompanies();
 
     return () => {
       isActive = false;
+      if (retryTimer) window.clearTimeout(retryTimer);
     };
   }, [ticker, loadedStockSymbol, isStockLoading]);
 
@@ -3412,9 +3436,9 @@ const isHistoryRefreshPending =
     )
   );
 const shouldShowCoreHistoryLoading = (rows = []) =>
-  isHistoryRefreshPending && !hasRealHistoryRows(rows);
+  (isHistoryRefreshPending || stockData?.refreshing) && !hasRealHistoryRows(rows);
 const shouldShowHistoryLoading = (rows = []) =>
-  isHistoryRefreshPending && !hasRealHistoryRows(rows);
+  (isHistoryRefreshPending || stockData?.refreshing) && !hasRealHistoryRows(rows);
 const readyHistoryRows = (rows = []) =>
   hasRealHistoryRows(rows) ? rows : [];
 

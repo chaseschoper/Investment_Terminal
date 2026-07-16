@@ -9118,6 +9118,11 @@ function getFallbackSimilarSymbols(ticker, stockData = {}) {
   if (industryText.includes("software")) return FALLBACK_SIMILAR_COMPANIES.MSFT;
   if (industryText.includes("retail")) return FALLBACK_SIMILAR_COMPANIES.WMT;
   if (industryText.includes("auto")) return FALLBACK_SIMILAR_COMPANIES.AZO;
+  if (industryText.includes("apparel") || industryText.includes("footwear")) return FALLBACK_SIMILAR_COMPANIES.NKE;
+  if (industryText.includes("cosmetic") || industryText.includes("personal")) return FALLBACK_SIMILAR_COMPANIES.ELF;
+  if (industryText.includes("cruise") || industryText.includes("travel")) return FALLBACK_SIMILAR_COMPANIES.CCL;
+  if (industryText.includes("biotech") || industryText.includes("healthcare") || industryText.includes("medical")) return FALLBACK_SIMILAR_COMPANIES.TMO;
+  if (industryText.includes("internet") || industryText.includes("cloud")) return FALLBACK_SIMILAR_COMPANIES.SNOW;
 
   return [];
 }
@@ -10908,8 +10913,13 @@ app.get("/api/similar-companies/:ticker", async (req, res) => {
       return res.status(400).json({ companies: [] });
     }
 
-    const stock = await Stock.findOne({ ticker }).lean().catch(() => null);
-    const currentData = stock?.data || {};
+    let stock = await Stock.findOne({ ticker }).lean().catch(() => null);
+    let currentData = stock?.data || {};
+    if ((!currentData.sector && !currentData.industry) && activeStockFetches.has(ticker)) {
+      const hydrated = await getHydratedStockDataForFirstResponse(ticker, currentData, 1800);
+      stock = hydrated.stock || stock;
+      currentData = hydrated.data || stock?.data || currentData;
+    }
     let peerSymbols = [];
 
     const finnhubPeers = await resolveWithin(
@@ -10934,6 +10944,9 @@ app.get("/api/similar-companies/:ticker", async (req, res) => {
       );
 
     peerSymbols = [...new Set(peerSymbols)].slice(0, 12);
+    if (!peerSymbols.length) {
+      peerSymbols = ["MSFT", "AAPL", "GOOGL", "AMZN", "META", "NVDA"].filter((symbol) => symbol !== ticker);
+    }
 
     const companies = await hydrateSimilarCompaniesFast((await Promise.all(
       peerSymbols.map(async (symbol) => {
