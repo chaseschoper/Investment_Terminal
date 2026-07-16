@@ -937,6 +937,7 @@ const chooseRicherRows = (previousRows, incomingRows, keys) => {
 };
 
 const hasMarketActivityData = (stock = {}) =>
+  Boolean(stock.marketActivityUpdatedAt) ||
   (Array.isArray(stock.analystUpdates) && stock.analystUpdates.length > 0) ||
   (Array.isArray(stock.institutionalHolders) && stock.institutionalHolders.length > 0) ||
   (Array.isArray(stock.insiderTransactions) && stock.insiderTransactions.length > 0);
@@ -958,6 +959,7 @@ const hasAnyOverviewMetricData = (stock = {}) =>
 const hasNextQuarterData = (stock = {}) => {
   const nextQuarter = stock.analystEstimates?.nextQuarter || {};
   return (
+    Boolean(stock.quarterEstimateCheckedAt) ||
     isNumber(nextQuarter.revenue) ||
     isNumber(nextQuarter.eps) ||
     Boolean(nextQuarter.date)
@@ -3570,14 +3572,7 @@ const hasUsableMetricSnapshot =
 const isInitialStockLoad = isStockLoading && (!stockData?.symbol || stockData?.isPlaceholder);
 const areMetricsRefreshing =
   isInitialStockLoad ||
-  (isStockLoading && !hasUsableMetricSnapshot) ||
-  (
-    stockData?.refreshing &&
-    (
-      !hasCompleteVisibleCoreChartData ||
-      stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION
-    )
-  );
+  (isStockLoading && !hasUsableMetricSnapshot);
 const stockValue = (value) =>
   areMetricsRefreshing && (value === "N/A" || value === null || value === undefined)
     ? "Loading..."

@@ -3848,45 +3848,42 @@ function isCompletedStockAnalysisAnnualHeader(header = {}) {
 
 function hasCompleteSupplementalData(stock) {
   const data = stock?.data || {};
-  const requiresIndustrialMetrics = !data.isFinancialCompany;
   const hasBalanceSheetMetrics =
     toNumberOrNull(data.totalCash) !== null || toNumberOrNull(data.totalDebt) !== null;
   const balanceSheetCheckedAt = data.balanceSheetCheckedAt ? new Date(data.balanceSheetCheckedAt) : null;
   const balanceSheetCheckedRecently =
     balanceSheetCheckedAt &&
     !Number.isNaN(balanceSheetCheckedAt.getTime()) &&
-    Date.now() - balanceSheetCheckedAt.getTime() < 5 * 60 * 1000;
+    Date.now() - balanceSheetCheckedAt.getTime() < 60 * 60 * 1000;
   const valuationMetricsCheckedAt = data.valuationMetricsCheckedAt ? new Date(data.valuationMetricsCheckedAt) : null;
   const valuationMetricsCheckedRecently =
     valuationMetricsCheckedAt &&
     !Number.isNaN(valuationMetricsCheckedAt.getTime()) &&
-    Date.now() - valuationMetricsCheckedAt.getTime() < 15 * 60 * 1000;
-  const currentYear = data.analystEstimates?.currentYear || {};
-  const nextYear = data.analystEstimates?.nextYear || {};
-  const hasCompleteYahooEstimates =
-    data.analystEstimatesSource === "Yahoo Finance" &&
-    toNumberOrNull(currentYear.revenue) !== null &&
-    toNumberOrNull(currentYear.eps) !== null &&
-    toNumberOrNull(nextYear.revenue) !== null &&
-    toNumberOrNull(nextYear.eps) !== null;
+    Date.now() - valuationMetricsCheckedAt.getTime() < 60 * 60 * 1000;
+  const quarterEstimateCheckedAt = data.quarterEstimateCheckedAt ? new Date(data.quarterEstimateCheckedAt) : null;
+  const quarterEstimateCheckedRecently =
+    quarterEstimateCheckedAt &&
+    !Number.isNaN(quarterEstimateCheckedAt.getTime()) &&
+    Date.now() - quarterEstimateCheckedAt.getTime() < 60 * 60 * 1000;
+  const marketActivityUpdatedAt = data.marketActivityUpdatedAt ? new Date(data.marketActivityUpdatedAt) : null;
+  const marketActivityCheckedRecently =
+    marketActivityUpdatedAt &&
+    !Number.isNaN(marketActivityUpdatedAt.getTime()) &&
+    Date.now() - marketActivityUpdatedAt.getTime() < 60 * 60 * 1000;
+  const hasValuationMetrics =
+    toNumberOrNull(data.pe) !== null ||
+    toNumberOrNull(data.forwardPE) !== null ||
+    toNumberOrNull(data.priceToSales) !== null ||
+    toNumberOrNull(data.priceToBook) !== null ||
+    valuationMetricsCheckedRecently;
 
   return (
-    (!requiresIndustrialMetrics || toNumberOrNull(data.freeCashflow) !== null) &&
-    toNumberOrNull(data.targetMean) !== null &&
-    toNumberOrNull(data.priceToSales) !== null &&
-    toNumberOrNull(data.priceToBook) !== null &&
+    hasValuationMetrics &&
     (hasBalanceSheetMetrics || balanceSheetCheckedRecently) &&
     data.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION &&
-    toNumberOrNull(data.pe) !== null &&
-    toNumberOrNull(data.forwardPE) !== null &&
-    (toNumberOrNull(data.pegRatio) !== null || valuationMetricsCheckedRecently) &&
-    (!requiresIndustrialMetrics || toNumberOrNull(data.grossMargins) !== null) &&
-    (!requiresIndustrialMetrics || toNumberOrNull(data.operatingMargins) !== null) &&
-    toNumberOrNull(data.profitMargins) !== null &&
-    toNumberOrNull(data.fiftyTwoWeekHigh) !== null &&
-    toNumberOrNull(data.fiftyTwoWeekLow) !== null &&
-    ["buy", "hold", "sell"].includes(data.recommendationKey) &&
-    hasCompleteYahooEstimates
+    data.estimateDataVersion === STOCK_ESTIMATE_VERSION &&
+    (quarterEstimateCheckedRecently || Boolean(data.analystEstimates?.nextQuarter)) &&
+    marketActivityCheckedRecently
   );
 }
 
@@ -4644,8 +4641,21 @@ async function prepareStockResponseData(ticker, data = {}, options = {}) {
     };
   }
   const missingValuationMetrics = STOCK_ANALYSIS_VALUATION_FIELDS.some((field) => toNumberOrNull(baseData[field]) === null);
+  const hasBalanceSheetValue =
+    toNumberOrNull(baseData.totalCash) !== null ||
+    toNumberOrNull(baseData.totalDebt) !== null ||
+    toNumberOrNull(baseData.cashAndCashEquivalents) !== null;
+  const needsBalanceSheetMetrics = !baseData.balanceSheetCheckedAt || !hasBalanceSheetValue;
+  const [valuation, balanceSheetMetrics] = await Promise.all([
+    missingValuationMetrics
+      ? resolveWithin(fetchStockAnalysisValuationMetrics(ticker), options.fast ? 900 : 1200, {})
+      : Promise.resolve({}),
+    needsBalanceSheetMetrics
+      ? resolveWithin(fetchLatestBalanceSheetMetrics(ticker, { fast: true }), options.fast ? 1100 : 1600, {})
+      : Promise.resolve({})
+  ]);
+
   if (missingValuationMetrics) {
-    const valuation = await resolveWithin(fetchStockAnalysisValuationMetrics(ticker), 1200, {});
     const valuationPatch = {};
     STOCK_ANALYSIS_VALUATION_FIELDS.forEach((field) => {
       const value = toNumberOrNull(valuation[field]);
@@ -4673,6 +4683,44 @@ async function prepareStockResponseData(ticker, data = {}, options = {}) {
         console.log("Fast valuation response cache skipped:", ticker, err.message);
       });
     }
+  }
+
+  if (needsBalanceSheetMetrics) {
+    const balanceCheckedAt = balanceSheetMetrics.balanceSheetCheckedAt || new Date().toISOString();
+    const balancePatch = {
+      balanceSheetCheckedAt: balanceCheckedAt,
+      balanceSheetMetricsVersion: BALANCE_SHEET_METRICS_VERSION
+    };
+    const balanceFields = [
+      "totalCash",
+      "totalDebt",
+      "cashAndCashEquivalents",
+      "netCash",
+      "netCashPerShare",
+      "equityBookValue",
+      "bookValuePerShare",
+      "workingCapital"
+    ];
+    balanceFields.forEach((field) => {
+      const value = toNumberOrNull(balanceSheetMetrics[field]);
+      if (value !== null) balancePatch[field] = value;
+    });
+    if (balanceSheetMetrics.balanceSheetAsOf) balancePatch.balanceSheetAsOf = balanceSheetMetrics.balanceSheetAsOf;
+    if (balanceSheetMetrics.balanceSheetSource) balancePatch.balanceSheetSource = balanceSheetMetrics.balanceSheetSource;
+    baseData = {
+      ...baseData,
+      ...balancePatch
+    };
+    Stock.findOneAndUpdate(
+      { ticker },
+      {
+        $set: Object.fromEntries(
+          Object.entries(balancePatch).map(([key, value]) => [`data.${key}`, value])
+        )
+      }
+    ).catch((err) => {
+      console.log("Fast balance response cache skipped:", ticker, err.message);
+    });
   }
   const repairedData = options.fast
     ? baseData
@@ -7213,23 +7261,27 @@ async function publishBalanceSheetSnapshot(ticker) {
   const hasBalanceSheetData =
     toNumberOrNull(balanceSheetMetrics.totalCash) !== null ||
     toNumberOrNull(balanceSheetMetrics.totalDebt) !== null;
-  if (!hasBalanceSheetData) return;
+  const checkedAt = balanceSheetMetrics.balanceSheetCheckedAt || new Date().toISOString();
 
   await Stock.findOneAndUpdate(
     { ticker },
     {
       $set: {
-        "data.totalCash": balanceSheetMetrics.totalCash ?? null,
-        "data.totalDebt": balanceSheetMetrics.totalDebt ?? null,
-        "data.cashAndCashEquivalents": balanceSheetMetrics.cashAndCashEquivalents ?? balanceSheetMetrics.totalCash ?? null,
-        "data.netCash": balanceSheetMetrics.netCash ?? null,
-        "data.netCashPerShare": balanceSheetMetrics.netCashPerShare ?? null,
-        "data.equityBookValue": balanceSheetMetrics.equityBookValue ?? null,
-        "data.bookValuePerShare": balanceSheetMetrics.bookValuePerShare ?? null,
-        "data.workingCapital": balanceSheetMetrics.workingCapital ?? null,
-        "data.balanceSheetAsOf": balanceSheetMetrics.balanceSheetAsOf || null,
-        "data.balanceSheetSource": balanceSheetMetrics.balanceSheetSource || null,
-        "data.balanceSheetCheckedAt": balanceSheetMetrics.balanceSheetCheckedAt || new Date().toISOString(),
+        ...(hasBalanceSheetData
+          ? {
+              "data.totalCash": balanceSheetMetrics.totalCash ?? null,
+              "data.totalDebt": balanceSheetMetrics.totalDebt ?? null,
+              "data.cashAndCashEquivalents": balanceSheetMetrics.cashAndCashEquivalents ?? balanceSheetMetrics.totalCash ?? null,
+              "data.netCash": balanceSheetMetrics.netCash ?? null,
+              "data.netCashPerShare": balanceSheetMetrics.netCashPerShare ?? null,
+              "data.equityBookValue": balanceSheetMetrics.equityBookValue ?? null,
+              "data.bookValuePerShare": balanceSheetMetrics.bookValuePerShare ?? null,
+              "data.workingCapital": balanceSheetMetrics.workingCapital ?? null,
+              "data.balanceSheetAsOf": balanceSheetMetrics.balanceSheetAsOf || null,
+              "data.balanceSheetSource": balanceSheetMetrics.balanceSheetSource || null
+            }
+          : {}),
+        "data.balanceSheetCheckedAt": checkedAt,
         "data.balanceSheetMetricsVersion": BALANCE_SHEET_METRICS_VERSION
       }
     }
@@ -7645,6 +7697,7 @@ async function fetchStockData(ticker) {
     fmpAnalystEstimateData,
     fmpRatingData,
     stockAnalysisFinancialData,
+    stockAnalysisValuation,
     calendarQuarterEstimate,
     finnhubAnalystUpdates,
     fmpMarketActivity,
@@ -7683,6 +7736,7 @@ async function fetchStockData(ticker) {
       "/api/v3/rating/{ticker}"
     ]), STOCK_PROVIDER_TIMEOUT_MS, null),
     resolveWithin(fetchStockAnalysisIncomeStatementHistory(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
+    resolveWithin(fetchStockAnalysisValuationMetrics(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
     resolveWithin(fetchCalendarQuarterEstimate(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, {}),
     resolveWithin(fetchFinnhubAnalystUpdates(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(fetchFmpMarketActivity(ticker), STOCK_PROVIDER_TIMEOUT_MS, { analystUpdates: [], institutionalHolders: [] }),
@@ -8859,10 +8913,15 @@ async function fetchStockData(ticker) {
   await Stock.findOneAndUpdate(
     { ticker },
     {
-      ticker,
-      status: "ready",
-      data,
-      updatedAt: new Date()
+      $set: {
+        ticker,
+        status: "ready",
+        data,
+        updatedAt: new Date()
+      },
+      $unset: {
+        error: ""
+      }
     },
     { upsert: true }
   );
@@ -11006,7 +11065,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           });
         }
 
-        const responseData = await prepareStockResponseData(ticker, fallbackData);
+        const responseData = await prepareStockResponseData(ticker, fallbackData, { fast: true });
         const shouldKeepPolling =
           !hasCompleteChartHistory({ data: responseData }) ||
           !hasCompleteSupplementalData({ data: responseData });
