@@ -6158,11 +6158,15 @@ return (
       52-Week Range
     </div>
 
-    <div className="card-value">
-{metricValue(
-  isNumber(stockData.fiftyTwoWeekLow) && isNumber(stockData.fiftyTwoWeekHigh)
-    ? `${formatPrice(stockData.fiftyTwoWeekLow)} - ${formatPrice(stockData.fiftyTwoWeekHigh)}`
-    : "N/A"
+    <div className="card-value card-range-value">
+{isNumber(stockData.fiftyTwoWeekLow) && isNumber(stockData.fiftyTwoWeekHigh) ? (
+  <>
+    <span>{formatPrice(stockData.fiftyTwoWeekLow)}</span>
+    <span className="card-range-divider">to</span>
+    <span>{formatPrice(stockData.fiftyTwoWeekHigh)}</span>
+  </>
+) : (
+  metricValue("N/A")
 )}
     </div>
   </div>
