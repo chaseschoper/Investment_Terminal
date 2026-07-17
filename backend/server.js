@@ -80,7 +80,10 @@ const STOCK_ANALYSIS_VALUATION_FIELDS = [
   "returnOnAssets",
   "returnOnInvestedCapital",
   "returnOnCapitalEmployed",
-  "weightedAverageCostOfCapital"
+  "weightedAverageCostOfCapital",
+  "revenuePerEmployee",
+  "profitsPerEmployee",
+  "employeeCount"
 ];
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
@@ -1187,6 +1190,23 @@ async function fetchStockAnalysisValuationMetrics(ticker) {
       returnOnInvestedCapital: readStatistic("Return on Invested Capital (ROIC)"),
       returnOnCapitalEmployed: readStatistic("Return on Capital Employed (ROCE)"),
       weightedAverageCostOfCapital: readStatistic("Weighted Average Cost of Capital (WACC)"),
+      revenuePerEmployee: firstNumber(
+        readStatistic("Revenue Per Employee"),
+        readStatistic("Revenue / Employee"),
+        readStatistic("Revenue per Employee")
+      ),
+      profitsPerEmployee: firstNumber(
+        readStatistic("Profits Per Employee"),
+        readStatistic("Profit Per Employee"),
+        readStatistic("Profits / Employee"),
+        readStatistic("Profit / Employee"),
+        readStatistic("Net Income Per Employee")
+      ),
+      employeeCount: firstNumber(
+        readStatistic("Employees"),
+        readStatistic("Employee Count"),
+        readStatistic("Number of Employees")
+      ),
       pegRatio: firstNumber(
         readStatistic("PEG Ratio"),
         estimatePegRatio(forwardPE, epsGrowthForecast)
@@ -2618,7 +2638,12 @@ async function normalizeForeignAdrStockData(ticker, data = {}) {
     price && toNumberOrNull(latestAnnualEps) !== null && latestAnnualEps !== 0
       ? price / latestAnnualEps
       : data.pe;
-  const topLevelMoney = convertMoneyFields(data, usdRate, ["totalCash", "totalDebt"]);
+  const topLevelMoney = convertMoneyFields(data, usdRate, [
+    "totalCash",
+    "totalDebt",
+    "revenuePerEmployee",
+    "profitsPerEmployee"
+  ]);
 
   return {
     ...topLevelMoney,
@@ -2708,7 +2733,9 @@ async function normalizeForeignFinancialCurrencyStockData(ticker, data = {}) {
     "consensusCurrentYearRevenue",
     "consensusNextYearRevenue",
     "totalCash",
-    "totalDebt"
+    "totalDebt",
+    "revenuePerEmployee",
+    "profitsPerEmployee"
   ]);
 
   return {
@@ -7434,7 +7461,10 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     returnOnAssets: stockAnalysisValuation.returnOnAssets ?? null,
     returnOnInvestedCapital: stockAnalysisValuation.returnOnInvestedCapital ?? null,
     returnOnCapitalEmployed: stockAnalysisValuation.returnOnCapitalEmployed ?? null,
-    weightedAverageCostOfCapital: stockAnalysisValuation.weightedAverageCostOfCapital ?? null
+    weightedAverageCostOfCapital: stockAnalysisValuation.weightedAverageCostOfCapital ?? null,
+    revenuePerEmployee: stockAnalysisValuation.revenuePerEmployee ?? null,
+    profitsPerEmployee: stockAnalysisValuation.profitsPerEmployee ?? null,
+    employeeCount: stockAnalysisValuation.employeeCount ?? null
   };
   if (!fastData?.price) return null;
 
@@ -8809,6 +8839,9 @@ async function fetchStockData(ticker) {
     returnOnInvestedCapital: stockAnalysisValuation.returnOnInvestedCapital ?? null,
     returnOnCapitalEmployed: stockAnalysisValuation.returnOnCapitalEmployed ?? null,
     weightedAverageCostOfCapital: stockAnalysisValuation.weightedAverageCostOfCapital ?? null,
+    revenuePerEmployee: stockAnalysisValuation.revenuePerEmployee ?? null,
+    profitsPerEmployee: stockAnalysisValuation.profitsPerEmployee ?? null,
+    employeeCount: stockAnalysisValuation.employeeCount ?? null,
     valuationMetricsCheckedAt: new Date().toISOString(),
     valuationMetricsVersion: VALUATION_METRICS_VERSION,
     trailingEps: trailingEpsValue,

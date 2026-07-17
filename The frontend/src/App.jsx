@@ -891,8 +891,13 @@ const METRIC_STABLE_FIELDS = [
   "returnOnInvestedCapital",
   "returnOnCapitalEmployed",
   "weightedAverageCostOfCapital",
+  "revenuePerEmployee",
+  "profitsPerEmployee",
+  "employeeCount",
   "freeCashflow",
   "operatingCashflow",
+  "fiftyTwoWeekHigh",
+  "fiftyTwoWeekLow",
   "targetMean",
   "analystRatingText",
   "recommendationKey",
@@ -983,7 +988,12 @@ const overviewMetricCount = (stock = {}) =>
     "fcfMargin",
     "returnOnEquity",
     "returnOnAssets",
-    "returnOnInvestedCapital"
+    "returnOnInvestedCapital",
+    "revenuePerEmployee",
+    "profitsPerEmployee",
+    "employeeCount",
+    "fiftyTwoWeekHigh",
+    "fiftyTwoWeekLow"
   ].filter((field) => isNumber(stock[field])).length;
 
 const hasNextQuarterData = (stock = {}) => {
@@ -3681,6 +3691,11 @@ const hasUsableMetricSnapshot =
     isNumber(stockData?.earningsGrowth) ||
     isNumber(stockData?.grossMargins) ||
     isNumber(stockData?.profitMargins) ||
+    isNumber(stockData?.revenuePerEmployee) ||
+    isNumber(stockData?.profitsPerEmployee) ||
+    isNumber(stockData?.employeeCount) ||
+    isNumber(stockData?.fiftyTwoWeekHigh) ||
+    isNumber(stockData?.fiftyTwoWeekLow) ||
     isNumber(latestFreeCashflowFromChart) ||
     isNumber(latestOperatingCashflowFromChart)
   );
@@ -5946,6 +5961,36 @@ return (
 
   <div className="card">
     <div className="card-title">
+      Employee Count
+    </div>
+
+    <div className="card-value">
+{metricValue(formatSharesCount(stockData.employeeCount))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      Revenue / Employee
+    </div>
+
+    <div className="card-value">
+{metricValue(formatLargeDollars(stockData.revenuePerEmployee))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      Profit / Employee
+    </div>
+
+    <div className="card-value">
+{metricValue(formatLargeDollars(stockData.profitsPerEmployee))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
       {stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin"}
     </div>
 
@@ -6105,6 +6150,20 @@ return (
 
     <div className="card-value">
 {metricValue(formatPrice(stockData.targetMean))}
+    </div>
+  </div>
+
+  <div className="card">
+    <div className="card-title">
+      52-Week Range
+    </div>
+
+    <div className="card-value">
+{metricValue(
+  isNumber(stockData.fiftyTwoWeekLow) && isNumber(stockData.fiftyTwoWeekHigh)
+    ? `${formatPrice(stockData.fiftyTwoWeekLow)} - ${formatPrice(stockData.fiftyTwoWeekHigh)}`
+    : "N/A"
+)}
     </div>
   </div>
 
