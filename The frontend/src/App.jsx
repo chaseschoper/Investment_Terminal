@@ -4173,6 +4173,69 @@ const mrRallySection = (
   </section>
 );
 
+const comparisonMetricsForStock = (stock = {}) => [
+  { label: "Market Cap", value: formatBillions(stock.marketCap) },
+  { label: "Cash & Equivalents", value: formatBillions(stock.cashAndCashEquivalents ?? stock.totalCash) },
+  { label: "Total Debt", value: formatBillions(stock.totalDebt) },
+  { label: "Net Cash", value: formatBillions(stock.netCash) },
+  { label: "Net Cash / Share", value: formatPrice(stock.netCashPerShare) },
+  { label: "Equity Book Value", value: formatBillions(stock.equityBookValue) },
+  { label: "Book Value / Share", value: formatPrice(stock.bookValuePerShare) },
+  { label: "Working Capital", value: formatBillions(stock.workingCapital) },
+  { label: "Current P/E", value: formatPlain(stock.pe) },
+  { label: "Forward P/E", value: formatPlain(stock.forwardPE) },
+  { label: "Forward P/S", value: formatPlain(stock.forwardPS) },
+  { label: "PEG Ratio", value: formatPlain(stock.pegRatio) },
+  { label: "Price-to-Sales", value: formatPlain(stock.priceToSales) },
+  { label: "Price-to-Book", value: formatPlain(stock.priceToBook) },
+  { label: "P/TBV Ratio", value: formatPlain(stock.priceToTangibleBook) },
+  { label: "P/FCF Ratio", value: formatPlain(stock.priceToFreeCashflow) },
+  { label: "P/OCF Ratio", value: formatPlain(stock.priceToOperatingCashflow) },
+  { label: "Revenue Growth", value: formatPercent(stock.revenueGrowth) },
+  { label: "Earnings Growth", value: formatPercent(stock.earningsGrowth) },
+  {
+    label: "Shares Outstanding",
+    value: isNumber(stock.sharesOutstanding) ? `${(stock.sharesOutstanding / 1000).toFixed(2)}B` : "N/A"
+  },
+  { label: "Employee Count", value: formatSharesCount(stock.employeeCount) },
+  { label: "Revenue / Employee", value: formatLargeDollars(stock.revenuePerEmployee) },
+  { label: "Profit / Employee", value: formatLargeDollars(stock.profitsPerEmployee) },
+  {
+    label: stock.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin",
+    value: formatPercent(stock.isFinancialCompany ? stock.bankMetrics?.netInterestRevenueMix : stock.grossMargins)
+  },
+  {
+    label: stock.isFinancialCompany ? "Pre-Tax Margin" : "Operating Margin",
+    value: formatPercent(stock.isFinancialCompany ? stock.bankMetrics?.preTaxMargin : stock.operatingMargins)
+  },
+  { label: "Profit Margin", value: formatPercent(stock.profitMargins) },
+  { label: "Pretax Margin", value: formatPercent(stock.pretaxMargin) },
+  { label: "EBITDA Margin", value: formatPercent(stock.ebitdaMargin) },
+  { label: "EBIT Margin", value: formatPercent(stock.ebitMargin) },
+  { label: "FCF Margin", value: formatPercent(stock.fcfMargin) },
+  { label: "ROE", value: formatPercent(stock.returnOnEquity) },
+  { label: "ROA", value: formatPercent(stock.returnOnAssets) },
+  { label: "ROIC", value: formatPercent(stock.returnOnInvestedCapital) },
+  { label: "ROCE", value: formatPercent(stock.returnOnCapitalEmployed) },
+  { label: "WACC", value: formatPercent(stock.weightedAverageCostOfCapital) },
+  {
+    label: stock.isFinancialCompany ? "Annual Cash Change" : "Free Cash Flow",
+    value: formatBillions(stock.isFinancialCompany ? stock.bankMetrics?.annualCashChange : stock.freeCashflow)
+  },
+  ...(!stock.isFinancialCompany
+    ? [{ label: "Operating Cash Flow", value: formatBillions(stock.operatingCashflow) }]
+    : []),
+  { label: "Price Target", value: formatPrice(stock.targetMean) },
+  { label: "Analyst Rating", value: stock.analystRatingText || stock.recommendationKey || "N/A" },
+  { label: "Dividend Yield", value: formatDividendYield(stock.dividendYield) },
+  {
+    label: "52-Week Range",
+    value: isNumber(stock.fiftyTwoWeekLow) && isNumber(stock.fiftyTwoWeekHigh)
+      ? `${formatPrice(stock.fiftyTwoWeekLow)} to ${formatPrice(stock.fiftyTwoWeekHigh)}`
+      : "N/A"
+  }
+];
+
 const comparisonSection = (
   <div className="chart-section" id="comparison">
 
@@ -4226,150 +4289,12 @@ const comparisonSection = (
         {formatPrice(stock.price)}
       </div>
 
-      <div className="comparison-stat">
-        <span>Market Cap</span>
-  <strong>
-    {formatBillions(stock.marketCap)}
-  </strong>
-      </div>
-
-      <div className="comparison-stat">
-        <span>Total Cash</span>
-  <strong>
-    {formatBillions(stock.totalCash)}
-  </strong>
-      </div>
-
-      <div className="comparison-stat">
-        <span>Total Debt</span>
-  <strong>
-    {formatBillions(stock.totalDebt)}
-  </strong>
-      </div>
-
-      <div className="comparison-stat">
-        <span>Current P/E</span>
-  <strong>
-    {formatPlain(stock.pe)}
-  </strong>
-      </div>
-
-      <div className="comparison-stat">
-        <span>Forward P/E</span>
-  <strong>
-    {formatPlain(stock.forwardPE)}
-  </strong>
-      </div>
-
-      <div className="comparison-stat">
-        <span>PEG Ratio</span>
-  <strong>
-    {formatPlain(stock.pegRatio)}
-  </strong>
-      </div>
-
-      <div className="comparison-stat">
-        <span>Price-to-Sales</span>
-  <strong>
-    {formatPlain(stock.priceToSales)}
-  </strong>
-      </div>
-
-      <div className="comparison-stat">
-        <span>Price-to-Book</span>
-  <strong>
-    {formatPlain(stock.priceToBook)}
-  </strong>
-      </div>
-
-      <div className="comparison-stat">
-        <span>Revenue Growth</span>
-  <strong>
-    {formatPercent(stock.revenueGrowth)}
-  </strong>
-      </div>
-
-      <div className="comparison-stat">
-        <span>Earnings Growth</span>
-  <strong>
-    {formatPercent(stock.earningsGrowth)}
-  </strong>
-      </div>
-
-      <div className="comparison-stat">
-        <span>{stock.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin"}</span>
-  <strong>
-    {formatPercent(
-      stock.isFinancialCompany
-        ? stock.bankMetrics?.netInterestRevenueMix
-        : stock.grossMargins
-    )}
-  </strong>
-      </div>
-
-      <div className="comparison-stat">
-        <span>{stock.isFinancialCompany ? "Pre-Tax Margin" : "Operating Margin"}</span>
-  <strong>
-    {formatPercent(
-      stock.isFinancialCompany
-        ? stock.bankMetrics?.preTaxMargin
-        : stock.operatingMargins
-    )}
-  </strong>
-      </div>
-
-      <div className="comparison-stat">
-        <span>Profit Margin</span>
-  <strong>
-    {formatPercent(stock.profitMargins)}
-  </strong>
-      </div>
-
-      <div className="comparison-stat">
-        <span>{stock.isFinancialCompany ? "Annual Cash Change" : "Free Cash Flow"}</span>
-  <strong>
-    {formatBillions(
-      stock.isFinancialCompany
-        ? stock.bankMetrics?.annualCashChange
-        : stock.freeCashflow
-    )}
-  </strong>
-      </div>
-
-      <div className="comparison-stat">
-        <span>Price Target</span>
-  <strong>
-    {formatPrice(stock.targetMean)}
-  </strong>
-      </div>
-
-      <div className="comparison-stat">
-        <span>Analyst Rating</span>
-  <strong>
-    {stock.analystRatingText || stock.recommendationKey || "N/A"}
-  </strong>
-      </div>
-
-      <div className="comparison-stat">
-        <span>Dividend Yield</span>
-        <strong>
-          {formatDividendYield(stock.dividendYield)}
-        </strong>
-      </div>
-
-      <div className="comparison-stat">
-        <span>52W High</span>
-        <strong>
-          {formatPrice(stock.fiftyTwoWeekHigh)}
-        </strong>
-      </div>
-
-      <div className="comparison-stat">
-        <span>52W Low</span>
-        <strong>
-          {formatPrice(stock.fiftyTwoWeekLow)}
-        </strong>
-      </div>
+      {comparisonMetricsForStock(stock).map((metric) => (
+        <div className="comparison-stat" key={metric.label}>
+          <span>{metric.label}</span>
+          <strong>{metric.value}</strong>
+        </div>
+      ))}
 
     </div>
 

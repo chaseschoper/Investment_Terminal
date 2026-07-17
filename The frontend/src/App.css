@@ -2851,10 +2851,24 @@ body {
   display: flex;
 
   justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
 
   margin-top: 12px;
 
   color: #d1d5db;
+}
+
+.comparison-stat span {
+  color: #9ca3af;
+  line-height: 1.35;
+}
+
+.comparison-stat strong {
+  color: #f9fafb;
+  line-height: 1.35;
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .top-watchlist {
