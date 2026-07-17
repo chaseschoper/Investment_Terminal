@@ -63,7 +63,7 @@ const FINANCIAL_HISTORY_VERSION = 146;
 const STOCK_ESTIMATE_VERSION = 15;
 const BALANCE_SHEET_METRICS_VERSION = 9;
 const VALUATION_METRICS_VERSION = 2;
-const EARNINGS_CALL_VERSION = 17;
+const EARNINGS_CALL_VERSION = 18;
 const STOCK_ANALYSIS_VALUATION_FIELDS = [
   "pe",
   "forwardPE",
@@ -3323,6 +3323,10 @@ const normalizeTickerForStockAnalysis = (ticker) => {
   if (/^BRK[-.]B$/i.test(symbol)) return "brk.b";
   if (/^BRK[-.]A$/i.test(symbol)) return "brk.a";
   return symbol.toLowerCase();
+};
+
+const STOCK_ANALYSIS_TRANSCRIPT_PATH_OVERRIDES = {
+  TSM: ["quote/tpe/2330"]
 };
 
 const normalizeBookValuePerShare = (bookValuePerShare, price, ticker) => {
@@ -13582,6 +13586,25 @@ function isStockAnalysisAudioUrl(audioUrl) {
   }
 }
 
+function cleanStockAnalysisAudioUrl(audioUrl) {
+  const cleaned = String(audioUrl || "")
+    .replace(/\\u0026/g, "&")
+    .replace(/\\\//g, "/")
+    .replace(/&amp;/g, "&")
+    .trim();
+  return isStockAnalysisAudioUrl(cleaned) ? cleaned : null;
+}
+
+function extractStockAnalysisAudioUrl(html = "") {
+  const text = String(html || "");
+  const directMatch = text.match(/audioUrl:\s*"([^"]+)"/);
+  const directUrl = cleanStockAnalysisAudioUrl(directMatch?.[1]);
+  if (directUrl) return directUrl;
+
+  const fileMatch = text.match(/https?:\\?\/\\?\/files\.quartr\.com\\?\/audio-files\\?\/[^"'\\\s<>]+/i);
+  return cleanStockAnalysisAudioUrl(fileMatch?.[0]);
+}
+
 function buildStockAnalysisAudioProxyUrl(apiBaseUrl, ticker, audioUrl) {
   const params = new URLSearchParams({ url: audioUrl });
   return `${apiBaseUrl}/api/earnings-call/${encodeURIComponent(ticker)}/stockanalysis-audio?${params}`;
@@ -13965,7 +13988,7 @@ function parseEarningsCallPublicTranscript(html, ticker, requestedPeriod = null,
 
 function parseStockAnalysisTranscript(html, ticker, requestedPeriod = null, pageUrl = "") {
   const $ = cheerio.load(html || "");
-  const audioUrl = String(html || "").match(/audioUrl:\s*"([^"]+)"/)?.[1] || null;
+  const audioUrl = extractStockAnalysisAudioUrl(html);
   $("script,style,noscript,nav,footer,header,aside").remove();
 
   const transcriptRoot = $('[aria-label="Full transcript"] [role="article"]').first();
@@ -14007,7 +14030,7 @@ function parseStockAnalysisTranscript(html, ticker, requestedPeriod = null, page
     date: dateMatch ? dateMatch[0] : null,
     fiscalYear: requestedPeriod?.year || null,
     fiscalPeriod: requestedPeriod ? `Q${requestedPeriod.quarter}` : null,
-    audioUrl: audioUrl && isStockAnalysisAudioUrl(audioUrl) ? audioUrl : null,
+    audioUrl,
     transcriptUrl: null,
     transcript,
     sourceUrl: pageUrl,
@@ -14026,7 +14049,6 @@ async function fetchStockAnalysisEarningsCall(ticker, requestedPeriod = null) {
     return cached.data;
   }
 
-  const indexUrl = `https://stockanalysis.com/stocks/${encodeURIComponent(symbol)}/transcripts/`;
   const cachedPeriodData = earningsCallPeriodsCache.get(String(ticker || "").trim().toUpperCase());
   const periods = cachedPeriodData && Date.now() - cachedPeriodData.fetchedAt < 60 * 60 * 1000
     ? (cachedPeriodData.data?.periods || []).filter((item) => item.provider === "StockAnalysis")
@@ -14037,22 +14059,12 @@ async function fetchStockAnalysisEarningsCall(ticker, requestedPeriod = null) {
     item.sourceUrl
   );
   if (!period?.sourceUrl) return null;
+  const indexUrl = period.indexUrl || buildStockAnalysisTranscriptIndexUrls(ticker)[0] || period.sourceUrl;
 
   try {
-    const response = await axios.get(period.sourceUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        Referer: indexUrl,
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9"
-      },
-      timeout: 9000,
-      responseType: "text",
-      transformResponse: [(data) => data],
-      validateStatus: (status) => status >= 200 && status < 500
-    });
-    if (response.status >= 400) return null;
-    const parsed = parseStockAnalysisTranscript(response.data, ticker, requestedPeriod, period.sourceUrl);
+    const html = await fetchStockAnalysisTranscriptHtml(period.sourceUrl, indexUrl, 12000);
+    if (!html) return null;
+    const parsed = parseStockAnalysisTranscript(html, ticker, requestedPeriod, period.sourceUrl);
     if (parsed) {
       earningsCallTranscriptCache.set(cacheKey, { data: parsed, fetchedAt: Date.now() });
       return parsed;
@@ -14405,6 +14417,8 @@ function normalizeCachedEarningsCall(cached, ticker, cachedTranscriptUrl) {
     date: cached.data.date || null,
     fiscalYear: cached.data.fiscalYear || null,
     fiscalPeriod: cached.data.fiscalPeriod || null,
+    audioUrl: cached.data.rawAudioUrl || cached.data.audioUrl || null,
+    rawAudioUrl: cached.data.rawAudioUrl || null,
     transcriptUrl: cachedTranscriptUrl || null,
     transcript: cached.data.transcript || [],
     transcriptSourceUrl: cached.data.transcriptSourceUrl || null
@@ -14428,14 +14442,28 @@ function normalizeEarningsCallPeriodItem(item = {}, provider = "") {
     quarter,
     date,
     sourceUrl: item.sourceUrl || item.url || null,
+    indexUrl: item.indexUrl || null,
     provider
   };
+}
+
+function isFutureEarningsCallDate(date) {
+  if (!date) return false;
+  const parsed = new Date(date);
+  if (!Number.isFinite(parsed.getTime())) return false;
+  return parsed.getTime() > Date.now() + 12 * 60 * 60 * 1000;
+}
+
+function isCompletedEarningsCallPeriod(period = {}) {
+  if (!period?.value) return false;
+  if (isFutureEarningsCallDate(period.date)) return false;
+  return true;
 }
 
 function mergeEarningsCallPeriods(...periodSets) {
   const byPeriod = new Map();
   periodSets.flat().forEach((period) => {
-    if (!period?.value) return;
+    if (!isCompletedEarningsCallPeriod(period)) return;
     const existing = byPeriod.get(period.value);
     if (!existing) {
       byPeriod.set(period.value, period);
@@ -14555,21 +14583,53 @@ async function fetchFinnhubEarningsCallPeriods(ticker) {
   }
 }
 
-async function fetchStockAnalysisEarningsCallPeriods(ticker) {
+async function fetchStockAnalysisTranscriptHtml(url, referer, timeout = 12000) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await axios.get(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0",
+          Referer: referer,
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9"
+        },
+        timeout: timeout + attempt * 2500,
+        responseType: "text",
+        transformResponse: [(data) => data],
+        validateStatus: (status) => status >= 200 && status < 500
+      });
+      if (response.status >= 400) return null;
+      return String(response.data || "");
+    } catch (err) {
+      lastError = err;
+      await new Promise((resolve) => setTimeout(resolve, 350 + attempt * 550));
+    }
+  }
+  if (lastError) throw lastError;
+  return null;
+}
+
+function buildStockAnalysisTranscriptIndexUrls(ticker) {
   const symbol = normalizeTickerForStockAnalysis(ticker);
   if (!symbol || !/^[a-z0-9.-]{1,15}$/.test(symbol)) return [];
-  const indexUrl = `https://stockanalysis.com/stocks/${encodeURIComponent(symbol)}/transcripts/`;
-  try {
-    const response = await axios.get(indexUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-      },
-      timeout: 6500,
-      validateStatus: (status) => status >= 200 && status < 500
-    });
-    if (response.status >= 400) return [];
-    const $ = cheerio.load(String(response.data || ""));
+  const urls = [`https://stockanalysis.com/stocks/${encodeURIComponent(symbol)}/transcripts/`];
+  const overrides = STOCK_ANALYSIS_TRANSCRIPT_PATH_OVERRIDES[String(ticker || "").trim().toUpperCase()] || [];
+  overrides.forEach((path) => {
+    urls.push(`https://stockanalysis.com/${String(path).replace(/^\/+/, "").replace(/\/+$/, "")}/transcripts/`);
+  });
+  return [...new Set(urls)];
+}
+
+async function fetchStockAnalysisEarningsCallPeriods(ticker) {
+  const indexUrls = buildStockAnalysisTranscriptIndexUrls(ticker);
+  if (!indexUrls.length) return [];
+
+  for (const indexUrl of indexUrls) {
+    try {
+    const html = await fetchStockAnalysisTranscriptHtml(indexUrl, indexUrl, 9000);
+    if (!html) continue;
+    const $ = cheerio.load(html);
     const transcriptLinks = [];
     $("a").each((_, element) => {
       const text = $(element).text().replace(/\s+/g, " ").trim();
@@ -14579,10 +14639,11 @@ async function fetchStockAnalysisEarningsCallPeriods(ticker) {
       transcriptLinks.push({
         quarter: Number(match[1]),
         year: Number(match[2]),
+        indexUrl,
         sourceUrl: new URL(href, indexUrl).toString()
       });
     });
-    return mergeEarningsCallPeriods(
+    const periods = mergeEarningsCallPeriods(
       transcriptLinks.map((item) =>
         normalizeEarningsCallPeriodItem(
           item,
@@ -14590,10 +14651,13 @@ async function fetchStockAnalysisEarningsCallPeriods(ticker) {
         )
       ).filter(Boolean)
     );
-  } catch (err) {
-    console.log("StockAnalysis transcript periods skipped:", ticker, err.response?.status || err.message);
-    return [];
+    if (periods.length) return periods;
+    } catch (err) {
+      console.log("StockAnalysis transcript periods skipped:", ticker, indexUrl, err.response?.status || err.message);
+    }
   }
+
+  return [];
 }
 
 function cachedEarningsCallPeriod(cached, ticker) {
@@ -14612,7 +14676,7 @@ async function fetchAvailableEarningsCallPeriods(ticker) {
   }
 
   const savedCall = await EarningsCall.findOne({ ticker: symbol }).catch(() => null);
-  const stockAnalysisPeriods = await resolveWithin(fetchStockAnalysisEarningsCallPeriods(symbol), 7000, []);
+  const stockAnalysisPeriods = await resolveWithin(fetchStockAnalysisEarningsCallPeriods(symbol), 12000, []);
   const periods = stockAnalysisPeriods.length
     ? mergeEarningsCallPeriods(stockAnalysisPeriods, cachedEarningsCallPeriod(savedCall, symbol))
     : await (async () => {

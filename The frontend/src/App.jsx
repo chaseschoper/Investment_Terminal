@@ -34,6 +34,13 @@ const isNumber = (value) =>
 const formatPercent = (value) =>
   isNumber(value) ? `${value.toFixed(1)}%` : "N/A";
 
+const isFutureTranscriptPeriod = (period) => {
+  if (!period?.date) return false;
+  const parsed = new Date(period.date);
+  if (!Number.isFinite(parsed.getTime())) return false;
+  return parsed.getTime() > Date.now() + 12 * 60 * 60 * 1000;
+};
+
 const normalizeTranscriptPeriodOptions = (periods = []) =>
   (Array.isArray(periods) ? periods : [])
     .map((period) => {
@@ -50,6 +57,7 @@ const normalizeTranscriptPeriodOptions = (periods = []) =>
       };
     })
     .filter(Boolean)
+    .filter((period) => !isFutureTranscriptPeriod(period))
     .sort((a, b) => (b.year * 4 + b.quarter) - (a.year * 4 + a.quarter));
 
 const COMPANY_DOCUMENT_TABS = [
@@ -2667,26 +2675,47 @@ useEffect(() => {
     const timer = window.setTimeout(() => {
       setIsEarningsCallLoading(true);
 
-      axios.get(`${API_URL}/api/earnings-call/${ticker}`, {
-        params: { year: selectedPeriod.year, quarter: selectedPeriod.quarter },
-        timeout: 45000
-      })
-        .then((response) => {
-          if (requestId === latestEarningsCallRequest.current) {
-            setEarningsCall(response.data);
-          }
+      const loadSelectedEarningsCall = (attempt = 0) => {
+        axios.get(`${API_URL}/api/earnings-call/${ticker}`, {
+          params: {
+            year: selectedPeriod.year,
+            quarter: selectedPeriod.quarter,
+            attempt
+          },
+          timeout: 50000
         })
-        .catch((error) => {
-          console.error("Earnings call failed", error);
-          if (requestId === latestEarningsCallRequest.current) {
-            setEarningsCall({ available: false });
-          }
-        })
-        .finally(() => {
-          if (requestId === latestEarningsCallRequest.current) {
+          .then((response) => {
+            if (requestId !== latestEarningsCallRequest.current) return;
+            const data = response.data || {};
+            const hasTranscript = Boolean(data.transcript?.length || data.transcriptUrl);
+            if (!hasTranscript && attempt < 2) {
+              window.setTimeout(() => {
+                if (requestId === latestEarningsCallRequest.current) {
+                  loadSelectedEarningsCall(attempt + 1);
+                }
+              }, 1200 + attempt * 1800);
+              return;
+            }
+            setEarningsCall(data);
             setIsEarningsCallLoading(false);
-          }
-        });
+          })
+          .catch((error) => {
+            console.error("Earnings call failed", error);
+            if (requestId !== latestEarningsCallRequest.current) return;
+            if (attempt < 2) {
+              window.setTimeout(() => {
+                if (requestId === latestEarningsCallRequest.current) {
+                  loadSelectedEarningsCall(attempt + 1);
+                }
+              }, 1200 + attempt * 1800);
+              return;
+            }
+            setEarningsCall({ available: false });
+            setIsEarningsCallLoading(false);
+          });
+      };
+
+      loadSelectedEarningsCall();
       });
 
     return () => window.clearTimeout(timer);
