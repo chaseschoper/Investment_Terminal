@@ -5315,6 +5315,18 @@ return (
           </div>
         </div>
 
+        {earningsCall.audioUrl ? (
+          <div className="earnings-call-audio">
+            <div>
+              <span>Earnings Call Audio</span>
+              <small>{earningsCall.provider ? `${earningsCall.provider} audio` : "Audio replay"}</small>
+            </div>
+            <audio controls preload="none" src={earningsCall.audioUrl}>
+              Your browser does not support earnings call audio.
+            </audio>
+          </div>
+        ) : null}
+
         {earningsCall.transcript?.length ? (
           <div className="transcript-reader">
             <div className="transcript-content">

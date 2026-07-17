@@ -13569,6 +13569,24 @@ function buildEarningsAudioProxyUrl(apiBaseUrl, ticker, audioUrl) {
   return `${apiBaseUrl}/api/earnings-call/${encodeURIComponent(ticker)}/ir-audio?${params}`;
 }
 
+function isStockAnalysisAudioUrl(audioUrl) {
+  try {
+    const parsed = new URL(audioUrl);
+    const host = parsed.hostname.replace(/^www\./, "").toLowerCase();
+    return (
+      host === "files.quartr.com" &&
+      /^\/audio-files\/[^/?#]+\.(?:mpeg|mp3|m4a|wav|mp4)$/i.test(parsed.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function buildStockAnalysisAudioProxyUrl(apiBaseUrl, ticker, audioUrl) {
+  const params = new URLSearchParams({ url: audioUrl });
+  return `${apiBaseUrl}/api/earnings-call/${encodeURIComponent(ticker)}/stockanalysis-audio?${params}`;
+}
+
 function buildEarningsTranscriptProxyUrl(apiBaseUrl, ticker, transcriptUrl) {
   const params = new URLSearchParams({ url: transcriptUrl });
   return `${apiBaseUrl}/api/earnings-call/${encodeURIComponent(ticker)}/transcript-file?${params}`;
@@ -13947,6 +13965,7 @@ function parseEarningsCallPublicTranscript(html, ticker, requestedPeriod = null,
 
 function parseStockAnalysisTranscript(html, ticker, requestedPeriod = null, pageUrl = "") {
   const $ = cheerio.load(html || "");
+  const audioUrl = String(html || "").match(/audioUrl:\s*"([^"]+)"/)?.[1] || null;
   $("script,style,noscript,nav,footer,header,aside").remove();
 
   const transcriptRoot = $('[aria-label="Full transcript"] [role="article"]').first();
@@ -13988,7 +14007,7 @@ function parseStockAnalysisTranscript(html, ticker, requestedPeriod = null, page
     date: dateMatch ? dateMatch[0] : null,
     fiscalYear: requestedPeriod?.year || null,
     fiscalPeriod: requestedPeriod ? `Q${requestedPeriod.quarter}` : null,
-    audioUrl: null,
+    audioUrl: audioUrl && isStockAnalysisAudioUrl(audioUrl) ? audioUrl : null,
     transcriptUrl: null,
     transcript,
     sourceUrl: pageUrl,
@@ -14217,6 +14236,40 @@ app.get("/api/earnings-call/:ticker/audio", async (req, res) => {
   } catch (err) {
     console.error("EarningsCall audio failed:", ticker, err.response?.status || err.message);
     return res.status(502).json({ error: "Earnings call audio unavailable" });
+  }
+});
+
+app.get("/api/earnings-call/:ticker/stockanalysis-audio", async (req, res) => {
+  const ticker = req.params.ticker.trim().toUpperCase();
+  const audioUrl = String(req.query.url || "");
+
+  if (!/^[A-Z0-9.-]{1,15}$/.test(ticker) || !isStockAnalysisAudioUrl(audioUrl)) {
+    return res.status(400).json({ error: "Invalid StockAnalysis audio request" });
+  }
+
+  try {
+    const upstream = await axios.get(audioUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        Accept: "audio/*,*/*;q=0.8",
+        Referer: "https://stockanalysis.com/",
+        ...(req.headers.range ? { Range: req.headers.range } : {})
+      },
+      responseType: "stream",
+      timeout: 30000,
+      maxRedirects: 4,
+      validateStatus: (status) => status === 200 || status === 206
+    });
+
+    res.status(upstream.status);
+    for (const header of ["content-type", "content-length", "content-range", "accept-ranges"]) {
+      if (upstream.headers[header]) res.setHeader(header, upstream.headers[header]);
+    }
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    return upstream.data.pipe(res);
+  } catch (err) {
+    console.error("StockAnalysis audio proxy failed:", ticker, err.response?.status || err.message);
+    return res.status(502).json({ error: "StockAnalysis earnings call audio unavailable" });
   }
 });
 
@@ -14626,20 +14679,30 @@ app.get("/api/earnings-call/:ticker", async (req, res) => {
         ? null
         : cached?.data?.transcriptUrl);
     const sendTranscriptData = async (transcriptData) => {
+      const rawAudioUrl = transcriptData.rawAudioUrl || transcriptData.audioUrl || null;
+      const proxiedAudioUrl = rawAudioUrl
+        ? (
+            String(rawAudioUrl).startsWith(apiBaseUrl)
+              ? rawAudioUrl
+              : isStockAnalysisAudioUrl(rawAudioUrl)
+                ? buildStockAnalysisAudioProxyUrl(apiBaseUrl, ticker, rawAudioUrl)
+                : transcriptData.audioUrl || null
+          )
+        : null;
       const data = {
         ...transcriptData,
         provider: transcriptData.provider,
         symbol: ticker,
-        audioUrl: null,
+        audioUrl: proxiedAudioUrl,
         webcastUrl: null,
-        rawAudioUrl: null,
+        rawAudioUrl,
         rawTranscriptUrl: transcriptData.transcriptUrl || null,
         transcriptUrl: transcriptData.transcriptUrl
           ? buildEarningsTranscriptProxyUrl(apiBaseUrl, ticker, transcriptData.transcriptUrl)
           : null,
         transcript: transcriptData.transcript || [],
         computerReadAudio: false,
-        hasOriginalAudio: false,
+        hasOriginalAudio: Boolean(proxiedAudioUrl),
         version: EARNINGS_CALL_VERSION,
         errors: providerErrors,
         fetchedAt: new Date().toISOString()
