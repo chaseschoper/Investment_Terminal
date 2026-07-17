@@ -1755,12 +1755,40 @@ body {
   line-height: 1.15;
 }
 
+.metric-range-card {
+  grid-column: span 2;
+}
+
+.metric-range-card .card-range-value {
+  gap: 16px;
+  font-size: clamp(26px, 2.4vw, 36px);
+}
+
 .card-range-divider {
   color: #94a3b8;
   font-size: 13px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.metric-range-card .card-range-divider {
+  font-size: 15px;
+}
+
+@media (max-width: 640px) {
+  .metric-range-card {
+    grid-column: span 1;
+  }
+
+  .metric-range-card .card-range-value {
+    gap: 10px;
+    font-size: clamp(20px, 6vw, 28px);
+  }
+
+  .metric-range-card .card-range-divider {
+    font-size: 12px;
+  }
 }
 
 /* CHART SECTIONS */

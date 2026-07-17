@@ -6155,6 +6155,16 @@ return (
 
   <div className="card">
     <div className="card-title">
+      Analyst Rating
+    </div>
+
+    <div className="card-value">
+      {metricValue(stockData.analystRatingText || stockData.recommendationKey || "N/A")}
+    </div>
+  </div>
+
+  <div className="card metric-range-card">
+    <div className="card-title">
       52-Week Range
     </div>
 
@@ -6168,16 +6178,6 @@ return (
 ) : (
   metricValue("N/A")
 )}
-    </div>
-  </div>
-
-  <div className="card">
-    <div className="card-title">
-      Analyst Rating
-    </div>
-
-    <div className="card-value">
-      {metricValue(stockData.analystRatingText || stockData.recommendationKey || "N/A")}
     </div>
   </div>
 
