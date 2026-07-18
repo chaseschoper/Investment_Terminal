@@ -10561,8 +10561,8 @@ app.get("/api/market-movers", async (req, res) => {
 app.get("/api/market-indices", async (req, res) => {
   const cached = marketIndexCache.get("latest");
   const cachedAge = cached ? Date.now() - cached.fetchedAt : Infinity;
-  const freshCacheMs = 10 * 1000;
-  const staleCacheMs = 2 * 60 * 1000;
+  const freshCacheMs = 8 * 1000;
+  const staleCacheMs = 5 * 60 * 1000;
   const cachedByKey = new Map((cached?.data?.indices || []).map((index) => [index.key, index]));
 
   const buildIndexQuote = (index, symbol, price, change, percentChange, source, extra = {}) => {
@@ -10817,17 +10817,11 @@ app.get("/api/market-indices", async (req, res) => {
 
   if (cached?.data?.indices?.length && cachedAge < staleCacheMs) {
     startBackgroundRefresh();
-    try {
-      const data = await resolveWithin(fetchFreshIndices(), 2800, null);
-      if (data?.indices?.length) return res.json(data);
-    } catch (err) {
-      console.log("Market indices quick refresh failed:", err.message);
-    }
     return res.json({ ...cached.data, stale: true, refreshing: true });
   }
 
   try {
-    const data = await resolveWithin(fetchFreshIndices(), 5000, null);
+    const data = await resolveWithin(fetchFreshIndices(), 3800, null);
     if (data?.indices?.length) return res.json(data);
   } catch (err) {
     console.log("Market indices refresh failed:", err.message);

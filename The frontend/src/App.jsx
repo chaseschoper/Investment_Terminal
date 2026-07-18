@@ -2159,18 +2159,22 @@ useEffect(() => {
 
 useEffect(() => {
   let isActive = true;
+  let refreshTimer;
+  let hasLoadedIndices = marketIndices.length > 0;
 
   const loadMarketIndices = async () => {
-    if (!marketIndices.length) {
+    let nextRefreshMs = 8 * 1000;
+    if (!hasLoadedIndices) {
       setIsMarketLoading(true);
     }
     try {
       const response = await axios.get(`${API_URL}/api/market-indices`, {
-        timeout: 4200,
+        timeout: 3500,
       });
       if (isActive) {
         const indices = response.data.indices || [];
         if (indices.length) {
+          hasLoadedIndices = true;
           setMarketIndices(() => {
             const indicesByKey = new Map(indices.map((index) => [index.key, index]));
             const ordered = MARKET_INDEX_ORDER
@@ -2179,22 +2183,27 @@ useEffect(() => {
             localStorage.setItem(MARKET_INDICES_STORAGE_KEY, JSON.stringify(ordered));
             return ordered;
           });
+          setIsMarketLoading(false);
+          nextRefreshMs = response.data?.stale || response.data?.refreshing ? 3500 : 8 * 1000;
+        } else {
+          nextRefreshMs = 2500;
+          setIsMarketLoading(true);
         }
       }
     } catch (error) {
       console.error("Market indices failed", error);
+      nextRefreshMs = hasLoadedIndices ? 5000 : 2200;
     } finally {
       if (isActive) {
-        setIsMarketLoading(false);
+        refreshTimer = window.setTimeout(loadMarketIndices, nextRefreshMs);
       }
     }
   };
 
   loadMarketIndices();
-  const refreshTimer = window.setInterval(loadMarketIndices, 12 * 1000);
   return () => {
     isActive = false;
-    window.clearInterval(refreshTimer);
+    window.clearTimeout(refreshTimer);
   };
 }, []);
 
@@ -2234,18 +2243,16 @@ useEffect(() => {
     }
   };
 
-  if (activePage === "market-overview") {
-    loadMarketHeatmap();
-  }
+  loadMarketHeatmap();
 
   return () => {
     isActive = false;
     window.clearTimeout(refreshTimer);
   };
-}, [activePage]);
+}, []);
 
 useEffect(() => {
-  if (activePage !== "etfs" || !etfTicker) return;
+  if (!etfTicker) return;
 
   let isActive = true;
 
@@ -2271,7 +2278,7 @@ useEffect(() => {
   return () => {
     isActive = false;
   };
-}, [activePage, etfTicker]);
+}, [etfTicker]);
 
 useEffect(() => {
   let isActive = true;
@@ -2307,15 +2314,13 @@ useEffect(() => {
     }
   };
 
-  if (activePage === "market-overview") {
-    loadBroadMarketMovers();
-  }
+  loadBroadMarketMovers();
 
   return () => {
     isActive = false;
     window.clearTimeout(refreshTimer);
   };
-}, [activePage]);
+}, []);
 
 useEffect(() => {
   const timer = window.setInterval(() => {
