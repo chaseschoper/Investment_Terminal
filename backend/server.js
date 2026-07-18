@@ -59,7 +59,7 @@ const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const alphaVantageFundamentalCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 146;
+const FINANCIAL_HISTORY_VERSION = 149;
 const STOCK_ESTIMATE_VERSION = 15;
 const BALANCE_SHEET_METRICS_VERSION = 9;
 const VALUATION_METRICS_VERSION = 2;
@@ -274,6 +274,7 @@ const FOREIGN_ADR_CONFIG = {
     sourceCurrency: "TWD",
     displayCurrency: "USD",
     adrRatio: 5,
+    stockAnalysisPath: "quote/tpe/2330",
     localSymbols: ["2330.TW"],
     fallbackUsdRate: 0.031
   },
@@ -281,6 +282,7 @@ const FOREIGN_ADR_CONFIG = {
     sourceCurrency: "JPY",
     displayCurrency: "USD",
     adrRatio: 10,
+    stockAnalysisPath: "quote/tyo/7203",
     localSymbols: ["7203.T"],
     fallbackUsdRate: 0.0068
   },
@@ -288,6 +290,7 @@ const FOREIGN_ADR_CONFIG = {
     sourceCurrency: "KRW",
     displayCurrency: "USD",
     adrRatio: 1,
+    stockAnalysisPath: "quote/krx/000660",
     localSymbols: ["000660.KS"],
     fallbackUsdRate: 0.00069,
     marketCapMultiplier: 1000,
@@ -297,6 +300,7 @@ const FOREIGN_ADR_CONFIG = {
     sourceCurrency: "KRW",
     displayCurrency: "USD",
     adrRatio: 1,
+    stockAnalysisPath: "quote/krx/000660",
     localSymbols: ["000660.KS"],
     fallbackUsdRate: 0.00069,
     marketCapMultiplier: 1000,
@@ -1146,14 +1150,14 @@ const estimatePegRatio = (forwardPE, epsGrowthPercent) => {
 };
 
 async function fetchStockAnalysisValuationMetrics(ticker) {
-  const symbol = normalizeTickerForStockAnalysis(ticker);
+  const symbol = getStockAnalysisPath(ticker);
   const cached = stockAnalysisValuationCache.get(symbol);
   if (cached && Date.now() - cached.fetchedAt < 15 * 60 * 1000) {
     return cached.data;
   }
 
   try {
-    const { data } = await axios.get(`https://stockanalysis.com/stocks/${symbol}/statistics/`, {
+    const { data } = await axios.get(buildStockAnalysisUrl(ticker, "statistics/"), {
       headers: {
         "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
@@ -1181,6 +1185,11 @@ async function fetchStockAnalysisValuationMetrics(ticker) {
       pe: readStatistic("PE Ratio"),
       forwardPE,
       forwardPS: readStatistic("Forward PS"),
+      priceToBook: firstNumber(
+        readStatistic("PB Ratio"),
+        readStatistic("Price-to-Book Ratio"),
+        readStatistic("Price / Book Ratio")
+      ),
       priceToTangibleBook: readStatistic("P/TBV Ratio"),
       priceToFreeCashflow: readStatistic("P/FCF Ratio"),
       priceToOperatingCashflow: readStatistic("P/OCF Ratio"),
@@ -1230,16 +1239,15 @@ async function fetchStockAnalysisValuationMetrics(ticker) {
 
 async function fetchStockAnalysisForecast(ticker) {
   try {
-    const stockAnalysisTicker = normalizeTickerForStockAnalysis(ticker);
     const headers = {
       "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36"
     };
     const [forecastResponse, statisticsResponse] = await Promise.all([
-      axios.get(`https://stockanalysis.com/stocks/${stockAnalysisTicker}/forecast/`, {
+      axios.get(buildStockAnalysisUrl(ticker, "forecast/"), {
         headers,
         timeout: 10000
       }),
-      axios.get(`https://stockanalysis.com/stocks/${stockAnalysisTicker}/statistics/`, {
+      axios.get(buildStockAnalysisUrl(ticker, "statistics/"), {
         headers,
         timeout: 10000
       }).catch(() => ({ data: "" }))
@@ -2642,11 +2650,29 @@ async function normalizeForeignAdrStockData(ticker, data = {}) {
       ? price / latestAnnualEps
       : data.pe;
   const topLevelMoney = convertMoneyFields(data, usdRate, [
+    "cashAndCashEquivalents",
+    "equityBookValue",
+    "freeCashflow",
+    "netCash",
+    "operatingCashflow",
+    "workingCapital",
     "totalCash",
     "totalDebt",
     "revenuePerEmployee",
     "profitsPerEmployee"
   ]);
+  const convertedBookValuePerShare = toNumberOrNull(data.bookValuePerShare) !== null
+    ? data.bookValuePerShare * config.adrRatio * usdRate
+    : data.bookValuePerShare;
+  const convertedNetCashPerShare = toNumberOrNull(data.netCashPerShare) !== null
+    ? data.netCashPerShare * config.adrRatio * usdRate
+    : data.netCashPerShare;
+  const normalizedPriceToBook =
+    toNumberOrNull(data.priceToBook) !== null && data.priceToBook > 0.1
+      ? data.priceToBook
+      : price && toNumberOrNull(convertedBookValuePerShare) !== null && convertedBookValuePerShare > 0
+        ? price / convertedBookValuePerShare
+        : data.priceToBook;
 
   return {
     ...topLevelMoney,
@@ -2656,6 +2682,9 @@ async function normalizeForeignAdrStockData(ticker, data = {}) {
     sharesOutstanding,
     pe: normalizedPe,
     trailingEps: latestAnnualEps ?? data.trailingEps,
+    bookValuePerShare: convertedBookValuePerShare,
+    netCashPerShare: convertedNetCashPerShare,
+    priceToBook: normalizedPriceToBook,
     priceToSales:
       marketCap !== null && currentRevenue && currentRevenue > 0
         ? marketCap / currentRevenue
@@ -2709,7 +2738,7 @@ function convertGenericEpsBeatMissToUsd(rows, usdRate) {
 }
 
 async function normalizeForeignFinancialCurrencyStockData(ticker, data = {}) {
-  const sourceCurrency = firstText(data.financialCurrency, data.sourceFinancialCurrency);
+  const sourceCurrency = firstText(data.sourceFinancialCurrency, data.financialCurrency);
   if (!sourceCurrency || String(sourceCurrency).toUpperCase() === "USD") {
     return data;
   }
@@ -2731,18 +2760,38 @@ async function normalizeForeignFinancialCurrencyStockData(ticker, data = {}) {
     : data.analystEstimates;
 
   const topLevelMoney = convertMoneyFields(data, usdRate, [
-    "operatingCashflow",
+    "cashAndCashEquivalents",
+    "equityBookValue",
     "freeCashflow",
+    "netCash",
+    "operatingCashflow",
     "consensusCurrentYearRevenue",
     "consensusNextYearRevenue",
     "totalCash",
     "totalDebt",
+    "workingCapital",
     "revenuePerEmployee",
     "profitsPerEmployee"
   ]);
+  const convertedBookValuePerShare = toNumberOrNull(data.bookValuePerShare) !== null
+    ? data.bookValuePerShare * usdRate
+    : data.bookValuePerShare;
+  const convertedNetCashPerShare = toNumberOrNull(data.netCashPerShare) !== null
+    ? data.netCashPerShare * usdRate
+    : data.netCashPerShare;
+  const price = toNumberOrNull(data.price);
+  const normalizedPriceToBook =
+    toNumberOrNull(data.priceToBook) !== null && data.priceToBook > 0.1
+      ? data.priceToBook
+      : price && toNumberOrNull(convertedBookValuePerShare) !== null && convertedBookValuePerShare > 0
+        ? price / convertedBookValuePerShare
+        : data.priceToBook;
 
   return {
     ...topLevelMoney,
+    bookValuePerShare: convertedBookValuePerShare,
+    netCashPerShare: convertedNetCashPerShare,
+    priceToBook: normalizedPriceToBook,
     revenueData: Array.isArray(data.revenueData)
       ? data.revenueData.map((row) => convertGenericForeignRowToUsd({ ...row, sourceCurrency }, usdRate))
       : data.revenueData,
@@ -3326,6 +3375,30 @@ const normalizeTickerForStockAnalysis = (ticker) => {
   if (/^BRK[-.]B$/i.test(symbol)) return "brk.b";
   if (/^BRK[-.]A$/i.test(symbol)) return "brk.a";
   return symbol.toLowerCase();
+};
+
+const STOCK_ANALYSIS_PATH_OVERRIDES = {
+  ASML: "quote/ams/ASML",
+  BP: "quote/lon/BP",
+  HMC: "quote/tyo/7267",
+  NVO: "quote/cph/NOVO.B",
+  SAP: "quote/etr/SAP",
+  SHEL: "quote/lon/SHEL",
+  SONY: "quote/tyo/6758",
+  TTE: "quote/epa/TTE"
+};
+
+const getStockAnalysisPath = (ticker) => {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  const configuredPath = FOREIGN_ADR_CONFIG[symbol]?.stockAnalysisPath || STOCK_ANALYSIS_PATH_OVERRIDES[symbol];
+  if (configuredPath) return String(configuredPath).replace(/^\/+/, "").replace(/\/+$/, "");
+  return `stocks/${normalizeTickerForStockAnalysis(ticker)}`;
+};
+
+const buildStockAnalysisUrl = (ticker, path = "") => {
+  const basePath = getStockAnalysisPath(ticker);
+  const cleanPath = String(path || "").replace(/^\/+/, "");
+  return `https://stockanalysis.com/${basePath}/${cleanPath}`;
 };
 
 const STOCK_ANALYSIS_TRANSCRIPT_PATH_OVERRIDES = {
@@ -5181,9 +5254,8 @@ const parseStockAnalysisNumber = (value) => {
 
 async function fetchStockAnalysisBalanceSheetMetrics(ticker) {
   try {
-    const stockAnalysisTicker = normalizeTickerForStockAnalysis(ticker);
     const { data } = await axios.get(
-      `https://stockanalysis.com/stocks/${stockAnalysisTicker}/financials/balance-sheet/`,
+      buildStockAnalysisUrl(ticker, "financials/balance-sheet/"),
       {
         headers: { "User-Agent": "Mozilla/5.0" },
         timeout: 4500
@@ -5293,9 +5365,8 @@ async function fetchStockAnalysisBalanceSheetMetrics(ticker) {
 
 async function fetchStockAnalysisAnnualFinancialHistoryFast(ticker) {
   try {
-    const stockAnalysisTicker = normalizeTickerForStockAnalysis(ticker);
     const { data } = await axios.get(
-      `https://stockanalysis.com/stocks/${stockAnalysisTicker}/financials/income-statement/`,
+      buildStockAnalysisUrl(ticker, "financials/income-statement/"),
       {
         headers: { "User-Agent": "Mozilla/5.0" },
         timeout: 3500
@@ -5304,6 +5375,7 @@ async function fetchStockAnalysisAnnualFinancialHistoryFast(ticker) {
     const $ = cheerio.load(data || "");
     const table = $("table").first();
     if (!table.length) return [];
+    const statementCurrency = $("main").text().match(/Currency is\s+([A-Z]{3})/i)?.[1]?.toUpperCase() || null;
 
     const rawHeaders = table.find("thead tr").first().find("th").toArray()
       .slice(1)
@@ -5350,6 +5422,7 @@ async function fetchStockAnalysisAnnualFinancialHistoryFast(ticker) {
           grossProfit: grossProfitValues[index + valueOffset] !== undefined ? grossProfitValues[index + valueOffset] / 1000 : null,
           operatingIncome: operatingIncomeValues[index + valueOffset] !== undefined ? operatingIncomeValues[index + valueOffset] / 1000 : null,
           eps: epsValues[index + valueOffset] ?? null,
+          sourceCurrency: statementCurrency,
           source: "StockAnalysis fast annual financials"
         };
       })
@@ -5363,24 +5436,23 @@ async function fetchStockAnalysisAnnualFinancialHistoryFast(ticker) {
 
 async function fetchStockAnalysisIncomeStatementHistory(ticker) {
   try {
-    const stockAnalysisTicker = normalizeTickerForStockAnalysis(ticker);
     const [annualResponse, quarterlyResponse, quarterlyCashFlowResponse] = await Promise.all([
       axios.get(
-        `https://stockanalysis.com/stocks/${stockAnalysisTicker}/financials/income-statement/`,
+        buildStockAnalysisUrl(ticker, "financials/income-statement/"),
         {
           headers: { "User-Agent": "Mozilla/5.0" },
           timeout: STOCK_PROVIDER_TIMEOUT_MS
         }
       ),
       axios.get(
-        `https://stockanalysis.com/stocks/${stockAnalysisTicker}/financials/income-statement/?p=quarterly`,
+        buildStockAnalysisUrl(ticker, "financials/income-statement/?p=quarterly"),
         {
           headers: { "User-Agent": "Mozilla/5.0" },
           timeout: STOCK_PROVIDER_TIMEOUT_MS
         }
       ).catch(() => ({ data: "" })),
       axios.get(
-        `https://stockanalysis.com/stocks/${stockAnalysisTicker}/financials/cash-flow-statement/?p=quarterly`,
+        buildStockAnalysisUrl(ticker, "financials/cash-flow-statement/?p=quarterly"),
         {
           headers: { "User-Agent": "Mozilla/5.0" },
           timeout: STOCK_PROVIDER_TIMEOUT_MS
@@ -5391,6 +5463,7 @@ async function fetchStockAnalysisIncomeStatementHistory(ticker) {
     const $ = cheerio.load(data);
     const table = $("table").first();
     if (!table.length) return [];
+    const statementCurrency = $("main").text().match(/Currency is\s+([A-Z]{3})/i)?.[1]?.toUpperCase() || null;
 
     const rawHeaders = table.find("thead tr").first().find("th").toArray()
       .slice(1)
@@ -5438,6 +5511,7 @@ async function fetchStockAnalysisIncomeStatementHistory(ticker) {
           grossProfit: grossProfitValues[index + valueOffset] !== undefined ? grossProfitValues[index + valueOffset] / 1000 : null,
           operatingIncome: operatingIncomeValues[index + valueOffset] !== undefined ? operatingIncomeValues[index + valueOffset] / 1000 : null,
           eps: epsValues[index + valueOffset] ?? null,
+          sourceCurrency: statementCurrency,
           source: "StockAnalysis financials"
         };
       })
@@ -5544,6 +5618,7 @@ async function fetchStockAnalysisIncomeStatementHistory(ticker) {
           period: `${row.year} Q${row.quarter} YTD`,
           isInterim: true,
           ...next,
+          sourceCurrency: statementCurrency,
           source: "StockAnalysis quarterly financials"
         };
       })
@@ -7861,16 +7936,24 @@ async function fetchStockData(ticker) {
         )
       : [];
 
-  const reportedAnnualData = mergeAllHistoricalFinancials(
-    previousRealRevenueData,
-    finnhubMetricData,
-    finnhubReportedData,
-    yahooFinancialData,
-    alphaVantageIncomeStatementData,
-    fmpIncomeStatementData,
-    stockAnalysisFinancialData,
-    getRecentEarningsReleaseAnnualRows(ticker)
-  );
+  const foreignAdrConfig = FOREIGN_ADR_CONFIG[ticker] || null;
+  const reportedAnnualData = foreignAdrConfig
+    ? mergeAllHistoricalFinancials(
+        previousRealRevenueData,
+        stockAnalysisFinancialData,
+        yahooFinancialData,
+        getRecentEarningsReleaseAnnualRows(ticker)
+      )
+    : mergeAllHistoricalFinancials(
+        previousRealRevenueData,
+        finnhubMetricData,
+        finnhubReportedData,
+        yahooFinancialData,
+        alphaVantageIncomeStatementData,
+        fmpIncomeStatementData,
+        stockAnalysisFinancialData,
+        getRecentEarningsReleaseAnnualRows(ticker)
+      );
   const supplementalAnnualData = mergeAllHistoricalFinancials(
     fmpCashFlowHistory,
     stockAnalysisFinancialData,
@@ -7920,6 +8003,9 @@ async function fetchStockData(ticker) {
       : annualRowsAll;
   const latestAnnual = annualRows[annualRows.length - 1] || {};
   const previousAnnual = annualRows[annualRows.length - 2] || {};
+  const stockAnalysisFinancialCurrency = firstText(
+    ...stockAnalysisFinancialData.map((row) => row.sourceCurrency)
+  );
   const chartRevenueGrowth = historicalGrowth(revenueData, "revenue");
   const chartEarningsGrowth = historicalGrowth(revenueData, "earnings");
 
@@ -8773,6 +8859,7 @@ async function fetchStockData(ticker) {
     symbol: ticker,
     currency: firstText(yahooSupplementalData.currency, quote.currency, previousData?.currency),
     financialCurrency: firstText(yahooSupplementalData.financialCurrency, yahooSupplementalData.currency, quote.currency, previousData?.financialCurrency),
+    sourceFinancialCurrency: stockAnalysisFinancialCurrency || previousData?.sourceFinancialCurrency || null,
     sector: firstText(profile.gicsSector, profile.sector, yahooSupplementalData.sector, previousData?.sector),
     industry: firstText(profile.finnhubIndustry, profile.gicsSubIndustry, profile.industry, yahooSupplementalData.industry, previousData?.industry),
     logo: profile.logo || getFinnhubLogoUrl(ticker),
@@ -10474,8 +10561,8 @@ app.get("/api/market-movers", async (req, res) => {
 app.get("/api/market-indices", async (req, res) => {
   const cached = marketIndexCache.get("latest");
   const cachedAge = cached ? Date.now() - cached.fetchedAt : Infinity;
-  const freshCacheMs = 45 * 1000;
-  const staleCacheMs = 30 * 60 * 1000;
+  const freshCacheMs = 10 * 1000;
+  const staleCacheMs = 2 * 60 * 1000;
   const cachedByKey = new Map((cached?.data?.indices || []).map((index) => [index.key, index]));
 
   const buildIndexQuote = (index, symbol, price, change, percentChange, source, extra = {}) => {
@@ -10730,6 +10817,12 @@ app.get("/api/market-indices", async (req, res) => {
 
   if (cached?.data?.indices?.length && cachedAge < staleCacheMs) {
     startBackgroundRefresh();
+    try {
+      const data = await resolveWithin(fetchFreshIndices(), 2800, null);
+      if (data?.indices?.length) return res.json(data);
+    } catch (err) {
+      console.log("Market indices quick refresh failed:", err.message);
+    }
     return res.json({ ...cached.data, stale: true, refreshing: true });
   }
 
@@ -14620,7 +14713,7 @@ async function fetchStockAnalysisTranscriptHtml(url, referer, timeout = 12000) {
 function buildStockAnalysisTranscriptIndexUrls(ticker) {
   const symbol = normalizeTickerForStockAnalysis(ticker);
   if (!symbol || !/^[a-z0-9.-]{1,15}$/.test(symbol)) return [];
-  const urls = [`https://stockanalysis.com/stocks/${encodeURIComponent(symbol)}/transcripts/`];
+  const urls = [buildStockAnalysisUrl(ticker, "transcripts/")];
   const overrides = STOCK_ANALYSIS_TRANSCRIPT_PATH_OVERRIDES[String(ticker || "").trim().toUpperCase()] || [];
   overrides.forEach((path) => {
     urls.push(`https://stockanalysis.com/${String(path).replace(/^\/+/, "").replace(/\/+$/, "")}/transcripts/`);

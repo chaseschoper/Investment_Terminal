@@ -1280,7 +1280,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 146;
+const FINANCIAL_HISTORY_VERSION = 149;
 const STOCK_ESTIMATE_VERSION = 15;
 
 const getDefaultCompanyLogoUrl = (symbol) => {
@@ -2171,19 +2171,13 @@ useEffect(() => {
       if (isActive) {
         const indices = response.data.indices || [];
         if (indices.length) {
-          setMarketIndices((previous) => {
-            const mergedByKey = new Map((previous || []).map((index) => [index.key, index]));
-            indices.forEach((index) => {
-              mergedByKey.set(index.key, {
-                ...(mergedByKey.get(index.key) || {}),
-                ...index
-              });
-            });
-            const merged = MARKET_INDEX_ORDER
-              .map((item) => mergedByKey.get(item.key))
+          setMarketIndices(() => {
+            const indicesByKey = new Map(indices.map((index) => [index.key, index]));
+            const ordered = MARKET_INDEX_ORDER
+              .map((item) => indicesByKey.get(item.key))
               .filter(Boolean);
-            localStorage.setItem(MARKET_INDICES_STORAGE_KEY, JSON.stringify(merged));
-            return merged;
+            localStorage.setItem(MARKET_INDICES_STORAGE_KEY, JSON.stringify(ordered));
+            return ordered;
           });
         }
       }
@@ -2197,7 +2191,7 @@ useEffect(() => {
   };
 
   loadMarketIndices();
-  const refreshTimer = window.setInterval(loadMarketIndices, 30 * 1000);
+  const refreshTimer = window.setInterval(loadMarketIndices, 12 * 1000);
   return () => {
     isActive = false;
     window.clearInterval(refreshTimer);
