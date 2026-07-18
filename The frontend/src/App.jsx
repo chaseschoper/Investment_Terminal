@@ -430,8 +430,11 @@ const PROJECTION_CASES = [
   { id: "bear", label: "Bear Case" }
 ];
 const DEFAULT_PROJECTION_ASSUMPTIONS = {
+  revenue: "",
   revenueGrowth: "10",
+  netIncome: "",
   netIncomeGrowth: "10",
+  shares: "",
   sharesGrowth: "0",
   lowPe: "",
   highPe: ""
@@ -441,16 +444,22 @@ const getProjectionAssumptionValue = (settings, key, year) =>
   settings?.[key]?.[year] ?? DEFAULT_PROJECTION_ASSUMPTIONS[key] ?? "";
 
 const createProjectionCaseSettings = () => ({
+  revenue: {},
   revenueGrowth: {},
+  netIncome: {},
   netIncomeGrowth: {},
+  shares: {},
   sharesGrowth: {},
   lowPe: {},
   highPe: {}
 });
 
 const normalizeProjectionCaseSettings = (settings = {}) => ({
+  revenue: settings.revenue || {},
   revenueGrowth: settings.revenueGrowth || {},
+  netIncome: settings.netIncome || {},
   netIncomeGrowth: settings.netIncomeGrowth || {},
+  shares: settings.shares || {},
   sharesGrowth: settings.sharesGrowth || {},
   lowPe: settings.lowPe || {},
   highPe: settings.highPe || {}
@@ -478,6 +487,7 @@ const parseInputPercent = (value) => {
 };
 
 const parseInputNumber = (value) => {
+  if (String(value ?? "").trim() === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 };
@@ -1197,7 +1207,8 @@ const MARKET_INDICES_STORAGE_KEY = "mrktrally-market-indices";
 const MARKET_INDEX_ORDER = [
   { key: "sp500", label: "S&P 500" },
   { key: "dow", label: "Dow Jones" },
-  { key: "nasdaq", label: "Nasdaq" }
+  { key: "nasdaq", label: "Nasdaq 100" },
+  { key: "russell2000", label: "Russell 2000" }
 ];
 
 const normalizeSymbolList = (symbols = []) =>
@@ -1280,8 +1291,8 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 149;
-const STOCK_ESTIMATE_VERSION = 15;
+const FINANCIAL_HISTORY_VERSION = 152;
+const STOCK_ESTIMATE_VERSION = 18;
 
 const getDefaultCompanyLogoUrl = (symbol) => {
   const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
@@ -2175,11 +2186,15 @@ useEffect(() => {
         const indices = response.data.indices || [];
         if (indices.length) {
           hasLoadedIndices = true;
-          setMarketIndices(() => {
+          setMarketIndices((previousIndices) => {
+            const previousByKey = new Map(previousIndices.map((index) => [index.key, index]));
             const indicesByKey = new Map(indices.map((index) => [index.key, index]));
             const ordered = MARKET_INDEX_ORDER
-              .map((item) => indicesByKey.get(item.key))
-              .filter(Boolean);
+              .map((item) => ({
+                ...item,
+                ...(previousByKey.get(item.key) || {}),
+                ...(indicesByKey.get(item.key) || {})
+              }));
             localStorage.setItem(MARKET_INDICES_STORAGE_KEY, JSON.stringify(ordered));
             return ordered;
           });
@@ -3614,20 +3629,23 @@ const buildProjectionRows = (caseId) => PROJECTION_YEARS.reduce((rows, year) => 
     ? null
     : parseInputPercent(getProjectionInputValue(caseId, "netIncomeGrowth", year)) ?? 0;
   const sharesGrowthRate = isBaseYear
-    ? 0
+    ? parseInputPercent(getProjectionInputValue(caseId, "sharesGrowth", year)) ?? 0
     : parseInputPercent(getProjectionInputValue(caseId, "sharesGrowth", year)) ?? 0;
+  const baseRevenueOverride = parseInputNumber(getProjectionInputValue(caseId, "revenue", year));
+  const baseNetIncomeOverride = parseInputNumber(getProjectionInputValue(caseId, "netIncome", year));
+  const baseSharesOverride = parseInputNumber(getProjectionInputValue(caseId, "shares", year));
   const revenue = isBaseYear
-    ? (isNumber(currentYearEstimate?.revenue) ? currentYearEstimate.revenue : null)
+    ? firstNumber(baseRevenueOverride, currentYearEstimate?.revenue)
     : isNumber(previousRow?.revenue)
       ? previousRow.revenue * (1 + revenueGrowthRate)
       : null;
   const netIncome = isBaseYear
-    ? (isNumber(currentYearEstimate?.earnings) ? currentYearEstimate.earnings : null)
+    ? firstNumber(baseNetIncomeOverride, currentYearEstimate?.earnings)
     : isNumber(previousRow?.netIncome)
       ? previousRow.netIncome * (1 + netIncomeGrowthRate)
       : null;
   const shares = isBaseYear
-    ? projectionShareBase
+    ? firstNumber(baseSharesOverride, projectionShareBase)
     : isNumber(previousRow?.shares)
       ? previousRow.shares * (1 + sharesGrowthRate)
       : null;
@@ -6693,7 +6711,19 @@ return (
               <tr>
                 <th>Revenue</th>
                 {projectionCase.rows.map((row) => (
-                  <td key={row.year}>{estimateValue(formatEstimateMoney(row.revenue))}</td>
+                  <td key={row.year}>
+                    {row.year === PROJECTION_YEARS[0] ? (
+                      <input
+                        value={getProjectionInputValue(projectionCase.id, "revenue", row.year)}
+                        onChange={(event) => updateProjectionSetting(projectionCase.id, "revenue", row.year, event.target.value)}
+                        placeholder={isNumber(row.revenue) ? formatEstimateMoney(row.revenue) : "N/A"}
+                        inputMode="decimal"
+                        aria-label={`${projectionCase.label} ${row.year} revenue`}
+                      />
+                    ) : (
+                      estimateValue(formatEstimateMoney(row.revenue))
+                    )}
+                  </td>
                 ))}
               </tr>
               <tr className="projection-assumption-row">
@@ -6701,7 +6731,13 @@ return (
                 {projectionCase.rows.map((row) => (
                   <td key={row.year}>
                     {row.year === PROJECTION_YEARS[0] ? (
-                      estimateValue(formatPercent(row.revenueGrowth))
+                      <input
+                        value={getProjectionInputValue(projectionCase.id, "revenueGrowth", row.year)}
+                        onChange={(event) => updateProjectionSetting(projectionCase.id, "revenueGrowth", row.year, event.target.value)}
+                        placeholder={isNumber(row.revenueGrowth) ? row.revenueGrowth.toFixed(2) : "N/A"}
+                        inputMode="decimal"
+                        aria-label={`${projectionCase.label} ${row.year} revenue growth`}
+                      />
                     ) : (
                       <input
                         value={getProjectionInputValue(projectionCase.id, "revenueGrowth", row.year)}
@@ -6716,7 +6752,19 @@ return (
               <tr>
                 <th>Net Income</th>
                 {projectionCase.rows.map((row) => (
-                  <td key={row.year}>{estimateValue(formatEstimateMoney(row.netIncome))}</td>
+                  <td key={row.year}>
+                    {row.year === PROJECTION_YEARS[0] ? (
+                      <input
+                        value={getProjectionInputValue(projectionCase.id, "netIncome", row.year)}
+                        onChange={(event) => updateProjectionSetting(projectionCase.id, "netIncome", row.year, event.target.value)}
+                        placeholder={isNumber(row.netIncome) ? formatEstimateMoney(row.netIncome) : "N/A"}
+                        inputMode="decimal"
+                        aria-label={`${projectionCase.label} ${row.year} net income`}
+                      />
+                    ) : (
+                      estimateValue(formatEstimateMoney(row.netIncome))
+                    )}
+                  </td>
                 ))}
               </tr>
               <tr className="projection-assumption-row">
@@ -6746,9 +6794,19 @@ return (
                 <th>Shares Outstanding</th>
                 {projectionCase.rows.map((row) => (
                   <td key={row.year}>
-                    {isNumber(row.shares)
-                      ? row.shares.toLocaleString(undefined, { maximumFractionDigits: 0 })
-                      : estimateValue("N/A")}
+                    {row.year === PROJECTION_YEARS[0] ? (
+                      <input
+                        value={getProjectionInputValue(projectionCase.id, "shares", row.year)}
+                        onChange={(event) => updateProjectionSetting(projectionCase.id, "shares", row.year, event.target.value)}
+                        placeholder={isNumber(row.shares) ? row.shares.toLocaleString(undefined, { maximumFractionDigits: 0 }) : "N/A"}
+                        inputMode="decimal"
+                        aria-label={`${projectionCase.label} ${row.year} shares outstanding`}
+                      />
+                    ) : (
+                      isNumber(row.shares)
+                        ? row.shares.toLocaleString(undefined, { maximumFractionDigits: 0 })
+                        : estimateValue("N/A")
+                    )}
                   </td>
                 ))}
               </tr>
@@ -6757,7 +6815,13 @@ return (
                 {projectionCase.rows.map((row) => (
                   <td key={row.year}>
                     {row.year === PROJECTION_YEARS[0] ? (
-                      estimateValue(formatPercent(row.sharesGrowth))
+                      <input
+                        value={getProjectionInputValue(projectionCase.id, "sharesGrowth", row.year)}
+                        onChange={(event) => updateProjectionSetting(projectionCase.id, "sharesGrowth", row.year, event.target.value)}
+                        placeholder={isNumber(row.sharesGrowth) ? row.sharesGrowth.toFixed(2) : "0"}
+                        inputMode="decimal"
+                        aria-label={`${projectionCase.label} ${row.year} shares growth`}
+                      />
                     ) : (
                       <input
                         value={getProjectionInputValue(projectionCase.id, "sharesGrowth", row.year)}

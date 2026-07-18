@@ -844,9 +844,9 @@ body {
 
 .market-index-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(132px, 1fr));
+  grid-template-columns: repeat(4, minmax(128px, 1fr));
   gap: 10px;
-  width: min(560px, 100%);
+  width: min(720px, 100%);
 }
 
 .market-index-card {

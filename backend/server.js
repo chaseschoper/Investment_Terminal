@@ -59,8 +59,8 @@ const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const alphaVantageFundamentalCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 149;
-const STOCK_ESTIMATE_VERSION = 15;
+const FINANCIAL_HISTORY_VERSION = 152;
+const STOCK_ESTIMATE_VERSION = 18;
 const BALANCE_SHEET_METRICS_VERSION = 9;
 const VALUATION_METRICS_VERSION = 2;
 const EARNINGS_CALL_VERSION = 18;
@@ -363,9 +363,10 @@ const KNOWN_FINANCIAL_INSTITUTIONS = new Set([
 ]);
 
 const MARKET_INDICES = [
-  { key: "sp500", label: "S&P 500", yahooSymbol: "^GSPC", futuresSymbol: "ES=F", investingPath: "us-spx-500" },
-  { key: "dow", label: "Dow Jones", yahooSymbol: "^DJI", futuresSymbol: "YM=F", investingPath: "us-30" },
-  { key: "nasdaq", label: "Nasdaq", yahooSymbol: "^IXIC", futuresSymbol: "NQ=F", investingPath: "nasdaq-composite" }
+  { key: "sp500", label: "S&P 500", yahooSymbol: "^GSPC", futuresSymbol: "ES=F", investingPath: "us-spx-500", stockAnalysisLabel: "S&P500" },
+  { key: "dow", label: "Dow Jones", yahooSymbol: "^DJI", futuresSymbol: "YM=F", investingPath: "us-30", stockAnalysisLabel: "Dow Jones" },
+  { key: "nasdaq", label: "Nasdaq 100", yahooSymbol: "^NDX", futuresSymbol: "NQ=F", investingPath: "nq-100", stockAnalysisLabel: "Nasdaq 100" },
+  { key: "russell2000", label: "Russell 2000", yahooSymbol: "^RUT", futuresSymbol: "RTY=F", investingPath: "smallcap-2000", stockAnalysisLabel: "Russell 2000" }
 ];
 
 const SP500_HEATMAP_COMPANIES = [
@@ -1264,7 +1265,8 @@ async function fetchStockAnalysisForecast(ticker) {
       const section = $("h2")
         .filter((_, element) => $(element).text().trim() === heading)
         .first()
-        .next();
+        .nextAll("table")
+        .first();
       const headers = section.find("tr").first().find("th,td")
         .map((_, element) => $(element).text().trim()).get();
       const average = section.find("tr").filter((_, row) =>
@@ -1280,6 +1282,11 @@ async function fetchStockAnalysisForecast(ticker) {
     };
     const revenue = readForecast("Revenue Forecast");
     const eps = readForecast("EPS Forecast");
+    const pageText = $("main").text().replace(/\s+/g, " ");
+    const readForecastSummary = (label) => {
+      const match = pageText.match(new RegExp(`${label}\\s+([+-]?(?:\\$)?[\\d,.]+\\s*(?:K|M|B|T)?)`, "i"));
+      return match ? parseAbbreviatedNumber(match[1]) : null;
+    };
     const readEmbeddedAnnualEstimate = (key) => {
       const match = forecastResponse.data.match(
         new RegExp(`${key}:\\{last:[^,}]+,this:([^,}]+)`)
@@ -1310,10 +1317,26 @@ async function fetchStockAnalysisForecast(ticker) {
 
     return {
       fiscalYear: eps.year || revenue.year,
-      currentYearRevenue: firstNumber(embeddedRevenueThis, revenue.value),
-      currentYearEps: firstNumber(embeddedEpsThis, eps.value),
-      nextYearRevenue: firstNumber(embeddedRevenueNext, revenue.nextValue),
-      nextYearEps: firstNumber(embeddedEpsNext, eps.nextValue),
+      currentYearRevenue: firstNumber(
+        embeddedRevenueThis,
+        revenue.value,
+        readForecastSummary("Revenue This Year")
+      ),
+      currentYearEps: firstNumber(
+        embeddedEpsThis,
+        eps.value,
+        readForecastSummary("EPS This Year")
+      ),
+      nextYearRevenue: firstNumber(
+        embeddedRevenueNext,
+        revenue.nextValue,
+        readForecastSummary("Revenue Next Year")
+      ),
+      nextYearEps: firstNumber(
+        embeddedEpsNext,
+        eps.nextValue,
+        readForecastSummary("EPS Next Year")
+      ),
       pe: readStatistic("PE Ratio"),
       forwardPE: forecastForwardPE,
       pegRatio: firstNumber(
@@ -3800,6 +3823,9 @@ const normalizeSharesOutstandingMillions = (candidate, marketCap, price) => {
 
 const normalizeHistoricalEps = (row, currentShares) => {
   const eps = toNumberOrNull(row?.eps);
+  if (eps !== null && /stockanalysis/i.test(String(row?.source || ""))) {
+    return eps;
+  }
   const earnings = toNumberOrNull(row?.earnings);
   const shares = toNumberOrNull(currentShares);
   if (eps === null || earnings === null || shares === null || shares <= 0 || eps === 0) {
@@ -8236,8 +8262,10 @@ async function fetchStockData(ticker) {
     estimateNextValue(currentRevenueBase, revenueGrowthRate),
     currentRevenueBase
   );
-  const sanitizeCurrentRevenueEstimate = (candidate) => {
-    const estimate = sanitizeNearTermRevenueEstimate(candidate, currentRevenueBase);
+  const sanitizeCurrentRevenueEstimate = (candidate, options = {}) => {
+    const estimate = options.trustedHighGrowth
+      ? toNumberOrNull(candidate)
+      : sanitizeNearTermRevenueEstimate(candidate, currentRevenueBase);
     if (estimate === null) return null;
     if (interimRevenueFloor && estimate < interimRevenueFloor * 1.01) return null;
     if (
@@ -8323,7 +8351,8 @@ async function fetchStockData(ticker) {
       ? previousData.analystEstimates
       : null;
   const stockAnalysisRevenueEstimate = sanitizeCurrentRevenueEstimate(
-    stockAnalysisForecast.currentYearRevenue
+    stockAnalysisForecast.currentYearRevenue,
+    { trustedHighGrowth: true }
   );
   const fmpCurrentRevenueEstimate = sanitizeCurrentRevenueEstimate(
     fmpEstimateField(fmpCurrentEstimate, "revenueAvg", "estimatedRevenueAvg")
@@ -8333,8 +8362,8 @@ async function fetchStockData(ticker) {
     normalizeFinnhubMoney(revenueEstimates[0]?.revenueAvg)
   );
   const currentRevenue =
-    yahooCurrentRevenueEstimate ??
     stockAnalysisRevenueEstimate ??
+    yahooCurrentRevenueEstimate ??
     fmpCurrentRevenueEstimate ??
     finnhubCurrentRevenueEstimate ??
     currentRevenueEstimateFallback;
@@ -8813,7 +8842,7 @@ async function fetchStockData(ticker) {
       }
     : null;
 
-  const consensusCurrentRevenueValue = stockAnalysisRevenueEstimate ?? nasdaqData.currentYearRevenue ?? null;
+  const consensusCurrentRevenueValue = stockAnalysisRevenueEstimate ?? yahooCurrentRevenueEstimate ?? nasdaqData.currentYearRevenue ?? null;
   const consensusNextRevenueValue = stockAnalysisNextRevenueEstimate ?? nasdaqData.nextYearRevenue ?? null;
   const consensusCurrentEpsValue =
     yahooCurrentEpsRaw ?? stockAnalysisForecast.currentYearEps ?? nasdaqData.currentYearEps ?? null;
@@ -8825,7 +8854,7 @@ async function fetchStockData(ticker) {
     Number.isFinite(previousBalanceSheetAsOfMs) &&
     Date.now() - previousBalanceSheetAsOfMs <= 820 * 24 * 60 * 60 * 1000;
   const displayedCurrentRevenueValue =
-    yahooCurrentRevenueEstimate ?? previousYahooEstimates?.currentYear?.revenue ?? consensusCurrentRevenueValue;
+    stockAnalysisRevenueEstimate ?? yahooCurrentRevenueEstimate ?? previousYahooEstimates?.currentYear?.revenue ?? consensusCurrentRevenueValue;
   const displayedCurrentEpsValue =
     yahooCurrentEpsRaw ?? previousYahooEstimates?.currentYear?.eps ?? consensusCurrentEpsValue;
   const estimateSharesOutstanding = normalizeSharesOutstandingMillions(
@@ -8840,7 +8869,7 @@ async function fetchStockData(ticker) {
       ? displayedCurrentEpsValue * estimateSharesOutstanding * 1000000
       : null);
   const displayedNextRevenueValue =
-    yahooNextRevenueEstimate ?? previousYahooEstimates?.nextYear?.revenue ?? consensusNextRevenueValue;
+    stockAnalysisNextRevenueEstimate ?? yahooNextRevenueEstimate ?? previousYahooEstimates?.nextYear?.revenue ?? consensusNextRevenueValue;
   const displayedNextEpsValue =
     yahooNextEpsRaw ?? previousYahooEstimates?.nextYear?.eps ?? consensusNextEpsValue;
   const displayedNextEarningsValue =
@@ -10593,6 +10622,67 @@ app.get("/api/market-indices", async (req, res) => {
     return String(value).includes("-") ? -Math.abs(number) : number;
   };
 
+  const fetchStockAnalysisIndexMoves = async () => {
+    try {
+      const response = await axios.get("https://stockanalysis.com/markets/active/", {
+        headers: {
+          "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        },
+        timeout: 2500
+      });
+      const $ = cheerio.load(response.data || "");
+      const pageText = $("body").text().replace(/\s+/g, " ");
+      const moves = new Map();
+
+      MARKET_INDICES.forEach((index) => {
+        const escapedLabel = String(index.stockAnalysisLabel || index.label)
+          .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const match = pageText.match(new RegExp(`${escapedLabel}\\s+([+-]?\\d+(?:\\.\\d+)?)%`, "i"));
+        const percentChange = parseIndexNumber(match?.[1]);
+        if (percentChange !== null) {
+          moves.set(index.key, {
+            percentChange,
+            source: "StockAnalysis"
+          });
+        }
+      });
+
+      return moves;
+    } catch (err) {
+      console.log("StockAnalysis index moves skipped:", err.response?.status || err.message);
+      return new Map();
+    }
+  };
+
+  const applyStockAnalysisMove = (index, indexQuote, stockAnalysisMoves) => {
+    const move = stockAnalysisMoves.get(index.key);
+    if (!move || toNumberOrNull(move.percentChange) === null) return indexQuote;
+
+    const quote = indexQuote || cachedByKey.get(index.key);
+    const price = toNumberOrNull(quote?.price);
+    const percentChange = move.percentChange;
+    const impliedPreviousClose = price !== null && percentChange !== -100
+      ? price / (1 + percentChange / 100)
+      : null;
+    const change = price !== null && impliedPreviousClose
+      ? price - impliedPreviousClose
+      : toNumberOrNull(quote?.change);
+
+    return {
+      ...(quote || {}),
+      key: index.key,
+      label: index.label,
+      symbol: index.yahooSymbol,
+      price: price ?? null,
+      change,
+      percentChange,
+      source: price !== null
+        ? `StockAnalysis / ${quote?.source || "cached index"}`
+        : "StockAnalysis"
+    };
+  };
+
   const fetchInvestingIndex = async (index) => {
     const response = await axios.get(
       `https://www.investing.com/indices/${index.investingPath}`,
@@ -10765,8 +10855,10 @@ app.get("/api/market-indices", async (req, res) => {
   };
 
   const fetchFreshIndices = async () => {
+    const stockAnalysisMoves = await resolveWithin(fetchStockAnalysisIndexMoves(), 2600, new Map());
     const indices = await Promise.all(MARKET_INDICES.map(async (index) => {
       let indexQuote = await fetchBestIndexQuote(index);
+      indexQuote = applyStockAnalysisMove(index, indexQuote, stockAnalysisMoves);
 
       if (!indexQuote) return cachedByKey.get(index.key) || null;
 
