@@ -31,6 +31,9 @@ const formatMoney = (value) => {
 const isNumber = (value) =>
   typeof value === "number" && !Number.isNaN(value);
 
+const firstNumber = (...values) =>
+  values.find((value) => isNumber(value)) ?? null;
+
 const formatPercent = (value) =>
   isNumber(value) ? `${value.toFixed(1)}%` : "N/A";
 
