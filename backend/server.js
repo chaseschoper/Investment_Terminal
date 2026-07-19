@@ -10330,31 +10330,44 @@ app.get("/api/market-heatmap", async (req, res) => {
     return buildMarketHeatmapPayload(companies, true);
   };
 
+  const getSavedHeatmapQuotes = async (symbols = []) => {
+    const savedStocks = await Stock.find({ ticker: { $in: symbols } })
+      .select("ticker data.price data.change data.percentChange data.previousClose data.marketCap")
+      .lean()
+      .catch(() => []);
+    return new Map((savedStocks || []).map((stock) => [stock.ticker, stock.data || {}]));
+  };
+
   const fetchFreshHeatmap = async () => {
     const heatmapCompanies = await fetchSp500Constituents();
+    const heatmapSymbols = heatmapCompanies.map((company) => company.symbol);
     const quoteChunks = [];
     for (let index = 0; index < heatmapCompanies.length; index += 100) {
       quoteChunks.push(heatmapCompanies.slice(index, index + 100).map((company) => company.symbol));
     }
-    const fmpQuoteGroups = await resolveWithin(
-      Promise.all(quoteChunks.map((symbols) => fetchFmpBatchQuotes(symbols))),
-      5200,
-      []
-    );
+    const [fmpQuoteGroups, savedBySymbol] = await Promise.all([
+      resolveWithin(
+        Promise.all(quoteChunks.map((symbols) => fetchFmpBatchQuotes(symbols))),
+        5200,
+        []
+      ),
+      resolveWithin(getSavedHeatmapQuotes(heatmapSymbols), 1300, new Map())
+    ]);
     const fmpQuotes = fmpQuoteGroups.flat();
     const fmpBySymbol = new Map((Array.isArray(fmpQuotes) ? fmpQuotes : [])
       .map((quote) => [String(quote.symbol || "").toUpperCase(), quote]));
     const seededResults = heatmapCompanies.map((company) => {
       const fmpQuote = fmpBySymbol.get(company.symbol);
-      if (!fmpQuote) return null;
+      const liveQuote = livePriceCache.get(company.symbol) || {};
+      const savedQuote = savedBySymbol.get(company.symbol) || {};
       return normalizeHeatmapCompanyQuote(company, {
-        price: parseApiNumber(fmpQuote.price),
-        marketCap: parseApiNumber(fmpQuote.marketCap),
-        change: parseApiNumber(fmpQuote.change),
-        percentChange: parseApiNumber(fmpQuote.changesPercentage),
-        previousClose: parseApiNumber(fmpQuote.previousClose)
+        price: firstFiniteNumber(parseApiNumber(fmpQuote?.price), liveQuote.price, savedQuote.price),
+        marketCap: firstFiniteNumber(parseApiNumber(fmpQuote?.marketCap), liveQuote.marketCap, savedQuote.marketCap),
+        change: firstFiniteNumber(parseApiNumber(fmpQuote?.change), liveQuote.change, savedQuote.change),
+        percentChange: firstFiniteNumber(parseApiNumber(fmpQuote?.changesPercentage), liveQuote.percentChange, savedQuote.percentChange),
+        previousClose: firstFiniteNumber(parseApiNumber(fmpQuote?.previousClose), liveQuote.previousClose, savedQuote.previousClose)
       });
-    }).filter(Boolean);
+    });
     seededResults.forEach((company) => {
       if (toNumberOrNull(company.price) !== null) {
         livePriceCache.set(company.symbol, {
@@ -10418,20 +10431,25 @@ app.get("/api/market-heatmap", async (req, res) => {
     startHeatmapRefresh().catch((err) => {
       console.log("Market heat map background refresh skipped:", err.message);
     });
-    return res.json({ ...cached.data, stale: true, refreshing: true });
+    return res.json({ ...cached.data, stale: true, refreshing: cachedNeedsRefresh });
   }
 
-  const data = await resolveWithin(startHeatmapRefresh(), 3200, null);
-  if (data?.companies?.length) return res.json({
-    ...data,
-    refreshing: data.companies.some((company) =>
+  const [data, cachedFallbackData] = await Promise.all([
+    resolveWithin(startHeatmapRefresh(), 2600, null),
+    resolveWithin(buildFromFallbackCache(), 1300, null)
+  ]);
+  const countCompleteQuotes = (payload) =>
+    (payload?.companies || []).filter(hasCompleteHeatmapQuote).length;
+  const bestData = countCompleteQuotes(data) >= countCompleteQuotes(cachedFallbackData)
+    ? data
+    : cachedFallbackData;
+  if (bestData?.companies?.length) return res.json({
+    ...bestData,
+    refreshing: bestData.companies.some((company) =>
       toNumberOrNull(company.price) === null ||
       toNumberOrNull(company.percentChange) === null
     )
   });
-
-  const cachedFallbackData = await resolveWithin(buildFromFallbackCache(), 1200, null);
-  if (cachedFallbackData?.companies?.length) return res.json({ ...cachedFallbackData, refreshing: true });
 
   return res.json({
     companies: (await fetchSp500Constituents()).map((company) => ({
