@@ -1126,11 +1126,13 @@ const stabilizeRefreshingStockData = (previous, incoming) => {
     }
   });
   stable.financialHistoryVersion =
-    previous.financialHistoryVersion ?? incoming.financialHistoryVersion;
+    incoming.financialHistoryVersion ?? previous.financialHistoryVersion;
+  stable.interimHistoryVersion =
+    incoming.interimHistoryVersion ?? previous.interimHistoryVersion;
   stable.hasInterimHistory =
-    previous.hasInterimHistory ?? incoming.hasInterimHistory;
+    incoming.hasInterimHistory ?? previous.hasInterimHistory;
   stable.latestInterimPeriod =
-    previous.latestInterimPeriod ?? incoming.latestInterimPeriod;
+    incoming.latestInterimPeriod ?? previous.latestInterimPeriod;
   return stable;
 };
 

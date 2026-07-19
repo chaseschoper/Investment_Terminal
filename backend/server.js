@@ -61,6 +61,7 @@ const fxRateCache = new Map();
 const alphaVantageFundamentalCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 152;
 const STOCK_ESTIMATE_VERSION = 18;
+const INTERIM_HISTORY_VERSION = 2;
 const BALANCE_SHEET_METRICS_VERSION = 9;
 const VALUATION_METRICS_VERSION = 2;
 const EARNINGS_CALL_VERSION = 18;
@@ -3954,7 +3955,13 @@ function hasCompleteChartHistory(stock) {
     hasChartHistory(stock, "revenue") &&
     hasChartHistory(stock, "earnings") &&
     hasChartHistory(stock, "eps") &&
-    (!needsInterimCheck || Boolean(data.interimHistoryCheckedAt))
+    (
+      !needsInterimCheck ||
+      (
+        Boolean(data.interimHistoryCheckedAt) &&
+        data.interimHistoryVersion === INTERIM_HISTORY_VERSION
+      )
+    )
   );
 }
 
@@ -7673,6 +7680,7 @@ async function publishChartHistorySnapshot(ticker, previousData = {}, secAnnualM
     ...previousData,
     financialHistoryCheckedAt: new Date().toISOString(),
     interimHistoryCheckedAt: new Date().toISOString(),
+    interimHistoryVersion: INTERIM_HISTORY_VERSION,
     hasInterimHistory: revenueData.some((row) => row.isInterim),
     latestInterimPeriod: revenueData.findLast((row) => row.isInterim)?.period || null,
     revenueHistory,
@@ -9050,6 +9058,7 @@ async function fetchStockData(ticker) {
     financialHistoryVersion: FINANCIAL_HISTORY_VERSION,
     financialHistoryCheckedAt: new Date().toISOString(),
     interimHistoryCheckedAt: new Date().toISOString(),
+    interimHistoryVersion: INTERIM_HISTORY_VERSION,
     hasInterimHistory: revenueData.some((row) => row.isInterim),
     latestInterimPeriod: revenueData.findLast((row) => row.isInterim)?.period || null,
     revenueHistory,
@@ -9095,6 +9104,7 @@ async function publishFastFinancialHistorySnapshot(ticker) {
   if (
     hasCompleteChartHistory({ data: previousData }) &&
     previousData.financialHistoryVersion === FINANCIAL_HISTORY_VERSION &&
+    previousData.interimHistoryVersion === INTERIM_HISTORY_VERSION &&
     previousData.financialHistoryCheckedAt
   ) {
     return;
@@ -9135,6 +9145,7 @@ async function publishFastFinancialHistorySnapshot(ticker) {
         "data.financialHistoryVersion": FINANCIAL_HISTORY_VERSION,
         "data.financialHistoryCheckedAt": checkedAt,
         "data.interimHistoryCheckedAt": checkedAt,
+        "data.interimHistoryVersion": INTERIM_HISTORY_VERSION,
         "data.hasInterimHistory": revenueData.some((row) => row.isInterim),
         "data.latestInterimPeriod": revenueData.findLast((row) => row.isInterim)?.period || null
       }
@@ -11206,7 +11217,6 @@ app.get("/api/stock/:ticker", async (req, res) => {
     }
 
     let stock = await Stock.findOne({ ticker });
-
     if (!stock) {
       const initialData = buildMinimalStockSnapshot(ticker);
       stock = await Stock.findOneAndUpdate(
@@ -11231,8 +11241,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
       return res.json({
         ticker,
         status: "ready",
-        refreshing: true,
         ...responseData,
+        refreshing: true,
         updatedAt: hydrated.stock?.updatedAt || stock.updatedAt
       });
     }
@@ -11265,8 +11275,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
         return res.json({
           ticker: stock.ticker,
           status: "ready",
-          refreshing: true,
           ...responseData,
+          refreshing: true,
           error: getStockResponseError(responseData, stock.error),
           updatedAt: hydrated.stock?.updatedAt || stock.updatedAt
         });
@@ -11288,8 +11298,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
       return res.json({
         ticker: stock.ticker,
         status: "ready",
-        refreshing: true,
         ...responseData,
+        refreshing: true,
         updatedAt: new Date()
       });
     }
@@ -11299,7 +11309,10 @@ app.get("/api/stock/:ticker", async (req, res) => {
       const isOutdated =
         stock.data?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
         stock.data?.estimateDataVersion !== STOCK_ESTIMATE_VERSION;
+      const needsInterimHistoryRefresh =
+        stock.data?.interimHistoryVersion !== INTERIM_HISTORY_VERSION;
       const isIncomplete =
+        needsInterimHistoryRefresh ||
         !hasCompleteChartHistory(stock) ||
         !hasCompleteSupplementalData(stock);
       const isStale =
@@ -11307,7 +11320,6 @@ app.get("/api/stock/:ticker", async (req, res) => {
         isIncomplete ||
         !updatedAt ||
         Date.now() - updatedAt.getTime() > STOCK_FULL_REFRESH_MS;
-
       if (isStale) {
         startStockFetch(ticker);
         const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data || {}, 1200);
@@ -11317,8 +11329,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
         return res.json({
           ticker: stock.ticker,
           status: "ready",
-          refreshing: true,
           ...responseData,
+          refreshing: true,
           error: getStockResponseError(responseData, stock.error),
           updatedAt: hydrated.stock?.updatedAt || stock.updatedAt
         });
@@ -11356,8 +11368,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
           return res.json({
             ticker: stock.ticker,
             status: "ready",
-            refreshing: true,
             ...hydratedResponseData,
+            refreshing: true,
             updatedAt: hydrated.stock?.updatedAt || new Date()
           });
         }
@@ -11371,8 +11383,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
         return res.json({
           ticker: stock.ticker,
           status: "ready",
-          refreshing: shouldKeepPolling,
           ...responseData,
+          refreshing: shouldKeepPolling,
           error: getStockResponseError(responseData, stock.error),
           updatedAt: stock.updatedAt
         });
@@ -11396,8 +11408,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
         return res.json({
           ticker: stock.ticker,
           status: "ready",
-          refreshing: true,
           ...responseData,
+          refreshing: true,
           error: getStockResponseError(responseData, stock.error),
           updatedAt: hydrated.stock?.updatedAt || stock.updatedAt
         });
@@ -11419,8 +11431,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
       return res.json({
         ticker,
         status: "ready",
-        refreshing: true,
         ...responseData,
+        refreshing: true,
         updatedAt: new Date()
       });
     }
