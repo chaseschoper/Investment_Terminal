@@ -2228,6 +2228,7 @@ useEffect(() => {
 useEffect(() => {
   let isActive = true;
   let refreshTimer;
+  let startTimer;
 
   const loadMarketHeatmap = async () => {
     if (!(marketHeatmap.companies || []).length) {
@@ -2261,18 +2262,21 @@ useEffect(() => {
     }
   };
 
-  loadMarketHeatmap();
+  const initialDelayMs = activePage === "market-overview" ? 0 : 9000;
+  startTimer = window.setTimeout(loadMarketHeatmap, initialDelayMs);
 
   return () => {
     isActive = false;
+    window.clearTimeout(startTimer);
     window.clearTimeout(refreshTimer);
   };
-}, []);
+}, [activePage]);
 
 useEffect(() => {
   if (!etfTicker) return;
 
   let isActive = true;
+  let startTimer;
 
   const loadEtfData = async () => {
     setIsEtfLoading(true);
@@ -2291,16 +2295,19 @@ useEffect(() => {
     }
   };
 
-  loadEtfData();
+  const initialDelayMs = activePage === "etfs" ? 0 : 11000;
+  startTimer = window.setTimeout(loadEtfData, initialDelayMs);
 
   return () => {
     isActive = false;
+    window.clearTimeout(startTimer);
   };
-}, [etfTicker]);
+}, [activePage, etfTicker]);
 
 useEffect(() => {
   let isActive = true;
   let refreshTimer;
+  let startTimer;
 
   const loadBroadMarketMovers = async () => {
     if (!broadMarketMovers.gainers.length && !broadMarketMovers.losers.length) {
@@ -2332,13 +2339,15 @@ useEffect(() => {
     }
   };
 
-  loadBroadMarketMovers();
+  const initialDelayMs = activePage === "market-overview" ? 0 : 13000;
+  startTimer = window.setTimeout(loadBroadMarketMovers, initialDelayMs);
 
   return () => {
     isActive = false;
+    window.clearTimeout(startTimer);
     window.clearTimeout(refreshTimer);
   };
-}, []);
+}, [activePage]);
 
 useEffect(() => {
   const timer = window.setInterval(() => {
@@ -2601,10 +2610,11 @@ useEffect(() => {
         });
     };
 
-    loadCompanyDocuments();
+    const startTimer = window.setTimeout(loadCompanyDocuments, 1800);
 
     return () => {
       isActive = false;
+      window.clearTimeout(startTimer);
       if (retryTimer) window.clearTimeout(retryTimer);
     };
   }, [ticker, loadedStockSymbol, isStockLoading]);
@@ -2666,10 +2676,11 @@ useEffect(() => {
         });
     };
 
-    loadEarningsCallPeriods();
+    const startTimer = window.setTimeout(loadEarningsCallPeriods, 1400);
 
     return () => {
       isActive = false;
+      window.clearTimeout(startTimer);
       if (retryTimer) window.clearTimeout(retryTimer);
     };
   }, [ticker, loadedStockSymbol, isStockLoading]);
@@ -2807,10 +2818,11 @@ useEffect(() => {
         });
     };
 
-    loadSimilarCompanies();
+    const startTimer = window.setTimeout(loadSimilarCompanies, 1000);
 
     return () => {
       isActive = false;
+      window.clearTimeout(startTimer);
       if (retryTimer) window.clearTimeout(retryTimer);
     };
   }, [ticker, loadedStockSymbol, isStockLoading]);

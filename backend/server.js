@@ -11109,7 +11109,7 @@ app.get("/api/similar-companies/:ticker", async (req, res) => {
     let stock = await Stock.findOne({ ticker }).lean().catch(() => null);
     let currentData = stock?.data || {};
     if ((!currentData.sector && !currentData.industry) && activeStockFetches.has(ticker)) {
-      const hydrated = await getHydratedStockDataForFirstResponse(ticker, currentData, 1800);
+      const hydrated = await getHydratedStockDataForFirstResponse(ticker, currentData, 1000);
       stock = hydrated.stock || stock;
       currentData = hydrated.data || stock?.data || currentData;
     }
@@ -11206,7 +11206,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       );
 
       startStockFetch(ticker);
-      const hydrated = await getHydratedStockDataForFirstResponse(ticker, initialData, 4200);
+      const hydrated = await getHydratedStockDataForFirstResponse(ticker, initialData, 1600);
       const quickData = await getImmediateStockSnapshot(ticker, hydrated.data || initialData);
       const responseData = await prepareStockResponseData(ticker, quickData, { fast: true });
 
@@ -11241,7 +11241,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       }
 
       if (stock.data && Object.keys(stock.data).length) {
-        const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data, 3200);
+        const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data, 1200);
         const responseData = await prepareStockResponseData(ticker, hydrated.data, { fast: true });
 
         return res.json({
@@ -11254,7 +11254,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
         });
       }
 
-      const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data || {}, 3200);
+      const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data || {}, 1200);
       const quickData = await getImmediateStockSnapshot(ticker, hydrated.data || stock.data || {});
       const responseData = await prepareStockResponseData(ticker, quickData, { fast: true });
       await Stock.findOneAndUpdate(
@@ -11292,7 +11292,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
 
       if (isStale) {
         startStockFetch(ticker);
-        const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data || {}, 3200);
+        const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data || {}, 1200);
         const fastData = await getImmediateStockSnapshot(ticker, hydrated.data || stock.data || {});
         const responseData = await prepareStockResponseData(ticker, fastData || stock.data, { fast: true });
 
@@ -11332,7 +11332,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
             }
           );
           startStockFetch(ticker);
-          const hydrated = await getHydratedStockDataForFirstResponse(ticker, responseData, 3200);
+          const hydrated = await getHydratedStockDataForFirstResponse(ticker, responseData, 1200);
           const hydratedResponseData = await prepareStockResponseData(ticker, hydrated.data || responseData, { fast: true });
 
           return res.json({
@@ -11344,7 +11344,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           });
         }
 
-        const hydrated = await getHydratedStockDataForFirstResponse(ticker, fallbackData, 2400);
+        const hydrated = await getHydratedStockDataForFirstResponse(ticker, fallbackData, 1000);
         const responseData = await prepareStockResponseData(ticker, hydrated.data || fallbackData, { fast: true });
         const shouldKeepPolling =
           !hasCompleteChartHistory({ data: responseData }) ||
@@ -11372,7 +11372,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       startStockFetch(ticker);
 
       if (stock.data && Object.keys(stock.data).length) {
-        const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data, 3200);
+        const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data, 1200);
         const responseData = await prepareStockResponseData(ticker, hydrated.data || stock.data, { fast: true });
 
         return res.json({
@@ -11385,7 +11385,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
         });
       }
 
-      const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data || {}, 3200);
+      const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data || {}, 1200);
       const quickData = await getImmediateStockSnapshot(ticker, hydrated.data || stock.data || {});
       const responseData = await prepareStockResponseData(ticker, quickData, { fast: true });
       await Stock.findOneAndUpdate(
