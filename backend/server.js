@@ -1265,8 +1265,7 @@ async function fetchStockAnalysisForecast(ticker) {
       const section = $("h2")
         .filter((_, element) => $(element).text().trim() === heading)
         .first()
-        .nextAll("table")
-        .first();
+        .next();
       const headers = section.find("tr").first().find("th,td")
         .map((_, element) => $(element).text().trim()).get();
       const average = section.find("tr").filter((_, row) =>
@@ -1282,11 +1281,6 @@ async function fetchStockAnalysisForecast(ticker) {
     };
     const revenue = readForecast("Revenue Forecast");
     const eps = readForecast("EPS Forecast");
-    const pageText = $("main").text().replace(/\s+/g, " ");
-    const readForecastSummary = (label) => {
-      const match = pageText.match(new RegExp(`${label}\\s+([+-]?(?:\\$)?[\\d,.]+\\s*(?:K|M|B|T)?)`, "i"));
-      return match ? parseAbbreviatedNumber(match[1]) : null;
-    };
     const readEmbeddedAnnualEstimate = (key) => {
       const match = forecastResponse.data.match(
         new RegExp(`${key}:\\{last:[^,}]+,this:([^,}]+)`)
@@ -1317,26 +1311,10 @@ async function fetchStockAnalysisForecast(ticker) {
 
     return {
       fiscalYear: eps.year || revenue.year,
-      currentYearRevenue: firstNumber(
-        embeddedRevenueThis,
-        revenue.value,
-        readForecastSummary("Revenue This Year")
-      ),
-      currentYearEps: firstNumber(
-        embeddedEpsThis,
-        eps.value,
-        readForecastSummary("EPS This Year")
-      ),
-      nextYearRevenue: firstNumber(
-        embeddedRevenueNext,
-        revenue.nextValue,
-        readForecastSummary("Revenue Next Year")
-      ),
-      nextYearEps: firstNumber(
-        embeddedEpsNext,
-        eps.nextValue,
-        readForecastSummary("EPS Next Year")
-      ),
+      currentYearRevenue: firstNumber(embeddedRevenueThis, revenue.value),
+      currentYearEps: firstNumber(embeddedEpsThis, eps.value),
+      nextYearRevenue: firstNumber(embeddedRevenueNext, revenue.nextValue),
+      nextYearEps: firstNumber(embeddedEpsNext, eps.nextValue),
       pe: readStatistic("PE Ratio"),
       forwardPE: forecastForwardPE,
       pegRatio: firstNumber(
@@ -3823,9 +3801,6 @@ const normalizeSharesOutstandingMillions = (candidate, marketCap, price) => {
 
 const normalizeHistoricalEps = (row, currentShares) => {
   const eps = toNumberOrNull(row?.eps);
-  if (eps !== null && /stockanalysis/i.test(String(row?.source || ""))) {
-    return eps;
-  }
   const earnings = toNumberOrNull(row?.earnings);
   const shares = toNumberOrNull(currentShares);
   if (eps === null || earnings === null || shares === null || shares <= 0 || eps === 0) {
@@ -8262,10 +8237,8 @@ async function fetchStockData(ticker) {
     estimateNextValue(currentRevenueBase, revenueGrowthRate),
     currentRevenueBase
   );
-  const sanitizeCurrentRevenueEstimate = (candidate, options = {}) => {
-    const estimate = options.trustedHighGrowth
-      ? toNumberOrNull(candidate)
-      : sanitizeNearTermRevenueEstimate(candidate, currentRevenueBase);
+  const sanitizeCurrentRevenueEstimate = (candidate) => {
+    const estimate = sanitizeNearTermRevenueEstimate(candidate, currentRevenueBase);
     if (estimate === null) return null;
     if (interimRevenueFloor && estimate < interimRevenueFloor * 1.01) return null;
     if (
@@ -8351,8 +8324,7 @@ async function fetchStockData(ticker) {
       ? previousData.analystEstimates
       : null;
   const stockAnalysisRevenueEstimate = sanitizeCurrentRevenueEstimate(
-    stockAnalysisForecast.currentYearRevenue,
-    { trustedHighGrowth: true }
+    stockAnalysisForecast.currentYearRevenue
   );
   const fmpCurrentRevenueEstimate = sanitizeCurrentRevenueEstimate(
     fmpEstimateField(fmpCurrentEstimate, "revenueAvg", "estimatedRevenueAvg")
@@ -8362,8 +8334,8 @@ async function fetchStockData(ticker) {
     normalizeFinnhubMoney(revenueEstimates[0]?.revenueAvg)
   );
   const currentRevenue =
-    stockAnalysisRevenueEstimate ??
     yahooCurrentRevenueEstimate ??
+    stockAnalysisRevenueEstimate ??
     fmpCurrentRevenueEstimate ??
     finnhubCurrentRevenueEstimate ??
     currentRevenueEstimateFallback;
@@ -8842,7 +8814,7 @@ async function fetchStockData(ticker) {
       }
     : null;
 
-  const consensusCurrentRevenueValue = stockAnalysisRevenueEstimate ?? yahooCurrentRevenueEstimate ?? nasdaqData.currentYearRevenue ?? null;
+  const consensusCurrentRevenueValue = stockAnalysisRevenueEstimate ?? nasdaqData.currentYearRevenue ?? null;
   const consensusNextRevenueValue = stockAnalysisNextRevenueEstimate ?? nasdaqData.nextYearRevenue ?? null;
   const consensusCurrentEpsValue =
     yahooCurrentEpsRaw ?? stockAnalysisForecast.currentYearEps ?? nasdaqData.currentYearEps ?? null;
@@ -8854,7 +8826,7 @@ async function fetchStockData(ticker) {
     Number.isFinite(previousBalanceSheetAsOfMs) &&
     Date.now() - previousBalanceSheetAsOfMs <= 820 * 24 * 60 * 60 * 1000;
   const displayedCurrentRevenueValue =
-    stockAnalysisRevenueEstimate ?? yahooCurrentRevenueEstimate ?? previousYahooEstimates?.currentYear?.revenue ?? consensusCurrentRevenueValue;
+    yahooCurrentRevenueEstimate ?? previousYahooEstimates?.currentYear?.revenue ?? consensusCurrentRevenueValue;
   const displayedCurrentEpsValue =
     yahooCurrentEpsRaw ?? previousYahooEstimates?.currentYear?.eps ?? consensusCurrentEpsValue;
   const estimateSharesOutstanding = normalizeSharesOutstandingMillions(
@@ -8869,7 +8841,7 @@ async function fetchStockData(ticker) {
       ? displayedCurrentEpsValue * estimateSharesOutstanding * 1000000
       : null);
   const displayedNextRevenueValue =
-    stockAnalysisNextRevenueEstimate ?? yahooNextRevenueEstimate ?? previousYahooEstimates?.nextYear?.revenue ?? consensusNextRevenueValue;
+    yahooNextRevenueEstimate ?? previousYahooEstimates?.nextYear?.revenue ?? consensusNextRevenueValue;
   const displayedNextEpsValue =
     yahooNextEpsRaw ?? previousYahooEstimates?.nextYear?.eps ?? consensusNextEpsValue;
   const displayedNextEarningsValue =
