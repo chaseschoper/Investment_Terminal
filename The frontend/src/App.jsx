@@ -3061,15 +3061,13 @@ useEffect(() => {
         attempt < 90
       ) {
         const retryDelay =
-          attempt < 10
-            ? 350
-          : attempt < 18
-              ? 550
-            : (needsMarketActivity || needsBalanceSheetMetrics) && attempt < 28
-              ? 900
-              : attempt < 40
-                ? 1300
-                : 2500;
+          attempt < 12
+            ? 250
+          : attempt < 24
+              ? 450
+            : attempt < 40
+              ? 800
+              : 1600;
         scheduleRetry(retryDelay);
       }
 

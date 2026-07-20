@@ -31,6 +31,7 @@ const openai = process.env.OPENAI_API_KEY
 const geminiApiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || "";
 const groqApiKey = process.env.GROQ_API_KEY || "";
 const activeStockFetches = new Set();
+const activeFullStockFetches = new Set();
 const activeStockFastHydrations = new Map();
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
@@ -95,7 +96,7 @@ const MR_RALLY_WEB_CONTEXT_TIMEOUT_MS = 6000;
 const MR_RALLY_COMPANY_LOOKUP_TIMEOUT_MS = 2500;
 const STOCK_PROVIDER_TIMEOUT_MS = 8000;
 const STOCK_SLOW_PROVIDER_TIMEOUT_MS = 10000;
-const STOCK_FAST_CHART_HYDRATION_WAIT_MS = 1200;
+const STOCK_FAST_CHART_HYDRATION_WAIT_MS = 450;
 const STOCK_INITIAL_SEC_TIMEOUT_MS = 9000;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
@@ -9391,16 +9392,24 @@ function startStockFetch(ticker) {
     }, 15000);
   });
 
-  chartFastHydration
-    .catch(() => null)
-    .then(() => coreFastHydration)
-    .finally(() => fetchStockData(ticker))
+  coreFastHydration
+    .finally(() => {
+      activeStockFetches.delete(ticker);
+      setTimeout(() => startFullStockRefresh(ticker), 2000);
+    });
+}
+
+function startFullStockRefresh(ticker) {
+  if (activeFullStockFetches.has(ticker)) return;
+  activeFullStockFetches.add(ticker);
+
+  fetchStockData(ticker)
     .catch(async (err) => {
       console.error(`Stock fetch failed for ${ticker}:`, err.message);
       await markStockFetchFailed(ticker, err);
     })
     .finally(() => {
-      activeStockFetches.delete(ticker);
+      activeFullStockFetches.delete(ticker);
     });
 }
 
@@ -9419,7 +9428,7 @@ async function getHydratedStockDataForFirstResponse(ticker, fallbackData = {}, w
     !hasUsableInterimHistory(hydratedData)
   ) {
     while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 180));
+      await new Promise((resolve) => setTimeout(resolve, 90));
       hydratedStock = await Stock.findOne({ ticker }).lean().catch(() => null);
       hydratedData = hydratedStock?.data || {};
       if (hasUsableInterimHistory(hydratedData)) break;
