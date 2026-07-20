@@ -1346,7 +1346,8 @@ const API_URL =
   "https://investment-terminal-jtng.onrender.com";
 const FINANCIAL_HISTORY_VERSION = 152;
 const STOCK_ESTIMATE_VERSION = 18;
-const INTERIM_HISTORY_VERSION = 4;
+const INTERIM_HISTORY_VERSION = 5;
+const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 
 const getDefaultCompanyLogoUrl = (symbol) => {
   const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
@@ -2986,13 +2987,13 @@ useEffect(() => {
         !hasCompleteCoreChartData(stableResponse);
       const needsInterimHistory =
         attempt < 40 &&
-        countInterimRows(stableResponse.revenueData || []) < 4;
+        countInterimRows(stableResponse.revenueData || []) < MIN_USABLE_INTERIM_HISTORY_ROWS;
       const needsQuarterlyHistory =
         attempt < 40 &&
         (
           response.data.interimHistoryVersion !== INTERIM_HISTORY_VERSION ||
           stableResponse.interimHistoryVersion !== INTERIM_HISTORY_VERSION ||
-          countInterimRows(stableResponse.revenueData || []) < 4
+          countInterimRows(stableResponse.revenueData || []) < MIN_USABLE_INTERIM_HISTORY_ROWS
         );
       const needsExtendedHistory =
         attempt < 40 &&
@@ -3619,9 +3620,12 @@ const profitMarginHistory = marginChartRowsWithFallback(
 const hasCompleteVisibleCoreChartData = hasCompleteCoreChartData(stockData || {});
 const hasRealHistoryRows = (rows = []) =>
   rows.filter((row) => !row?.isCurrent).length >= 2;
+const hasEnoughQuarterlyCoreRows = (rows = []) =>
+  financialChartMode !== "quarterly" ||
+  rows.filter((row) => !row?.isCurrent).length >= MIN_USABLE_INTERIM_HISTORY_ROWS;
 const hasEnoughVisibleHistoryRows = (rows = []) =>
   rows.filter((row) => !row?.isCurrent).length >= (
-    financialChartMode === "quarterly" ? 1 : 2
+    financialChartMode === "quarterly" ? 2 : 2
   );
 const isAnnualHistoryRefreshPending =
   isStockLoading ||
@@ -3633,9 +3637,11 @@ const isAnnualHistoryRefreshPending =
       stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION
     )
   );
+const currentInterimHistoryRowCount = countInterimRows(stockData?.revenueData || []);
 const isQuarterlyHistoryRefreshPending =
   isStockLoading ||
   stockData?.interimHistoryVersion !== INTERIM_HISTORY_VERSION ||
+  (stockData?.refreshing && currentInterimHistoryRowCount < MIN_USABLE_INTERIM_HISTORY_ROWS) ||
   (
     !stockData?.interimHistoryCheckedAt &&
     (
@@ -3648,7 +3654,10 @@ const isHistoryRefreshPending =
     ? isQuarterlyHistoryRefreshPending
     : isAnnualHistoryRefreshPending;
 const shouldShowCoreHistoryLoading = (rows = []) =>
-  isHistoryRefreshPending && !hasEnoughVisibleHistoryRows(rows);
+  isHistoryRefreshPending && (
+    !hasEnoughVisibleHistoryRows(rows) ||
+    !hasEnoughQuarterlyCoreRows(rows)
+  );
 const shouldShowHistoryLoading = (rows = []) =>
   isHistoryRefreshPending && !hasEnoughVisibleHistoryRows(rows);
 const shouldShowAnnualHistoryLoading = (rows = []) =>
@@ -3663,7 +3672,7 @@ const refreshQuarterlyChartHistory = () => {
 
   const hasWeakQuarterlyRows =
     stockData?.interimHistoryVersion !== INTERIM_HISTORY_VERSION ||
-    countInterimRows(stockData?.revenueData || []) < 4;
+    countInterimRows(stockData?.revenueData || []) < MIN_USABLE_INTERIM_HISTORY_ROWS;
   if (!hasWeakQuarterlyRows) return;
 
   if (stockRetryTimerRef.current) {

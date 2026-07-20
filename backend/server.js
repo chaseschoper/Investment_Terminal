@@ -61,7 +61,8 @@ const fxRateCache = new Map();
 const alphaVantageFundamentalCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 152;
 const STOCK_ESTIMATE_VERSION = 18;
-const INTERIM_HISTORY_VERSION = 4;
+const INTERIM_HISTORY_VERSION = 5;
+const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const BALANCE_SHEET_METRICS_VERSION = 9;
 const VALUATION_METRICS_VERSION = 2;
 const EARNINGS_CALL_VERSION = 18;
@@ -94,6 +95,7 @@ const MR_RALLY_WEB_CONTEXT_TIMEOUT_MS = 6000;
 const MR_RALLY_COMPANY_LOOKUP_TIMEOUT_MS = 2500;
 const STOCK_PROVIDER_TIMEOUT_MS = 8000;
 const STOCK_SLOW_PROVIDER_TIMEOUT_MS = 10000;
+const STOCK_FAST_CHART_HYDRATION_WAIT_MS = 5000;
 const STOCK_INITIAL_SEC_TIMEOUT_MS = 9000;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
@@ -4038,7 +4040,7 @@ function hasUsableInterimHistory(data = {}) {
   return (
     data.interimHistoryVersion === INTERIM_HISTORY_VERSION &&
     Boolean(data.interimHistoryCheckedAt) &&
-    interimHistoryPointCount(data) >= 4
+    interimHistoryPointCount(data) >= MIN_USABLE_INTERIM_HISTORY_ROWS
   );
 }
 
@@ -5545,29 +5547,42 @@ async function fetchStockAnalysisAnnualFinancialHistoryFast(ticker) {
 
 async function fetchStockAnalysisIncomeStatementHistory(ticker) {
   try {
-    const [annualResponse, quarterlyResponse, quarterlyCashFlowResponse] = await Promise.all([
+    const stockAnalysisRequest = (path) =>
       axios.get(
-        buildStockAnalysisUrl(ticker, "financials/income-statement/"),
+        buildStockAnalysisUrl(ticker, path),
         {
           headers: { "User-Agent": "Mozilla/5.0" },
           timeout: STOCK_PROVIDER_TIMEOUT_MS
         }
-      ),
-      axios.get(
-        buildStockAnalysisUrl(ticker, "financials/income-statement/?p=quarterly"),
-        {
-          headers: { "User-Agent": "Mozilla/5.0" },
-          timeout: STOCK_PROVIDER_TIMEOUT_MS
-        }
-      ).catch(() => ({ data: "" })),
-      axios.get(
-        buildStockAnalysisUrl(ticker, "financials/cash-flow-statement/?p=quarterly"),
-        {
-          headers: { "User-Agent": "Mozilla/5.0" },
-          timeout: STOCK_PROVIDER_TIMEOUT_MS
-        }
-      ).catch(() => ({ data: "" }))
+      );
+    let [annualResponse, quarterlyResponse, quarterlyCashFlowResponse] = await Promise.all([
+      stockAnalysisRequest("financials/income-statement/"),
+      stockAnalysisRequest("financials/income-statement/?p=quarterly").catch(() => ({ data: "" })),
+      stockAnalysisRequest("financials/cash-flow-statement/?p=quarterly").catch(() => ({ data: "" }))
     ]);
+    const countQuarterlyHeaders = (html) => {
+      const page = cheerio.load(html || "");
+      return page("table").first().find("thead tr").first().find("th").toArray()
+        .slice(1)
+        .filter((cell) => /\bQ[1-4]\s+\d{4}\b/i.test(page(cell).text().trim()))
+        .length;
+    };
+    if (countQuarterlyHeaders(quarterlyResponse.data) < 4) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const retryQuarterlyResponse = await stockAnalysisRequest("financials/income-statement/?p=quarterly")
+        .catch(() => ({ data: "" }));
+      if (countQuarterlyHeaders(retryQuarterlyResponse.data) > countQuarterlyHeaders(quarterlyResponse.data)) {
+        quarterlyResponse = retryQuarterlyResponse;
+      }
+    }
+    if (countQuarterlyHeaders(quarterlyCashFlowResponse.data) < 4) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const retryCashFlowResponse = await stockAnalysisRequest("financials/cash-flow-statement/?p=quarterly")
+        .catch(() => ({ data: "" }));
+      if (countQuarterlyHeaders(retryCashFlowResponse.data) > countQuarterlyHeaders(quarterlyCashFlowResponse.data)) {
+        quarterlyCashFlowResponse = retryCashFlowResponse;
+      }
+    }
     const { data } = annualResponse;
     const $ = cheerio.load(data);
     const table = $("table").first();
@@ -7370,21 +7385,42 @@ async function publishFastStockSnapshot(ticker) {
   const stock = await Stock.findOne({ ticker }).lean();
   const quickData = await buildFastStockSnapshot(ticker, stock?.data || {});
   if (!quickData) return;
+  const latestStock = await Stock.findOne({ ticker }).lean().catch(() => null);
+  const latestData = latestStock?.data || stock?.data || {};
+  const mergedData = withGuaranteedAnalystSection({
+    ...latestData,
+    ...quickData,
+    revenueData: Array.isArray(latestData.revenueData) && latestData.revenueData.length
+      ? latestData.revenueData
+      : quickData.revenueData,
+    revenueHistory: Array.isArray(latestData.revenueHistory) && latestData.revenueHistory.length
+      ? latestData.revenueHistory
+      : quickData.revenueHistory,
+    marginHistory: Array.isArray(latestData.marginHistory) && latestData.marginHistory.length
+      ? latestData.marginHistory
+      : quickData.marginHistory,
+    financialHistoryVersion: latestData.financialHistoryVersion ?? quickData.financialHistoryVersion,
+    financialHistoryCheckedAt: latestData.financialHistoryCheckedAt ?? quickData.financialHistoryCheckedAt,
+    interimHistoryVersion: latestData.interimHistoryVersion ?? quickData.interimHistoryVersion,
+    interimHistoryCheckedAt: latestData.interimHistoryCheckedAt ?? quickData.interimHistoryCheckedAt,
+    hasInterimHistory: latestData.hasInterimHistory ?? quickData.hasInterimHistory,
+    latestInterimPeriod: latestData.latestInterimPeriod ?? quickData.latestInterimPeriod
+  });
 
   const update = {
     ticker,
-    status: stock?.status === "ready" ? "ready" : "pending",
-    data: quickData
+    status: latestStock?.status === "ready" || stock?.status === "ready" ? "ready" : "pending",
+    data: mergedData
   };
 
-  if (stock?.status !== "ready") {
+  if (latestStock?.status !== "ready" && stock?.status !== "ready") {
     update.updatedAt = new Date();
   }
 
   await Stock.findOneAndUpdate(
-    { ticker, ...(stock?.updatedAt ? { updatedAt: stock.updatedAt } : {}) },
+    { ticker },
     update,
-    { upsert: !stock }
+    { upsert: !latestStock && !stock }
   );
 }
 
@@ -9292,8 +9328,21 @@ async function getHydratedStockDataForFirstResponse(ticker, fallbackData = {}, w
     await resolveWithin(hydration, waitMs, null);
   }
 
-  const hydratedStock = await Stock.findOne({ ticker }).lean().catch(() => null);
-  const hydratedData = hydratedStock?.data || {};
+  let hydratedStock = await Stock.findOne({ ticker }).lean().catch(() => null);
+  let hydratedData = hydratedStock?.data || {};
+  if (
+    waitMs > 0 &&
+    !hasUsableInterimHistory(fallbackData) &&
+    !hasUsableInterimHistory(hydratedData)
+  ) {
+    const deadline = Date.now() + waitMs;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 180));
+      hydratedStock = await Stock.findOne({ ticker }).lean().catch(() => null);
+      hydratedData = hydratedStock?.data || {};
+      if (hasUsableInterimHistory(hydratedData)) break;
+    }
+  }
   const fallbackHasCharts = hasAnyCoreChartHistory({ data: fallbackData });
   const hydratedHasCharts = hasAnyCoreChartHistory({ data: hydratedData });
   const hydratedHasSupplemental =
@@ -11341,7 +11390,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       );
 
       startStockFetch(ticker);
-      const hydrated = await getHydratedStockDataForFirstResponse(ticker, initialData, 1600);
+      const hydrated = await getHydratedStockDataForFirstResponse(ticker, initialData, STOCK_FAST_CHART_HYDRATION_WAIT_MS);
       const quickData = await getImmediateStockSnapshot(ticker, hydrated.data || initialData);
       const responseData = await prepareStockResponseData(ticker, quickData, { fast: true });
 
@@ -11376,7 +11425,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       }
 
       if (stock.data && Object.keys(stock.data).length) {
-        const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data, 1200);
+        const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data, STOCK_FAST_CHART_HYDRATION_WAIT_MS);
         const responseData = await prepareStockResponseData(ticker, hydrated.data, { fast: true });
 
         return res.json({
@@ -11389,7 +11438,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
         });
       }
 
-      const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data || {}, 1200);
+      const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data || {}, STOCK_FAST_CHART_HYDRATION_WAIT_MS);
       const quickData = await getImmediateStockSnapshot(ticker, hydrated.data || stock.data || {});
       const responseData = await prepareStockResponseData(ticker, quickData, { fast: true });
       await Stock.findOneAndUpdate(
@@ -11429,7 +11478,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
         Date.now() - updatedAt.getTime() > STOCK_FULL_REFRESH_MS;
       if (isStale) {
         startStockFetch(ticker);
-        const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data || {}, 1200);
+        const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data || {}, STOCK_FAST_CHART_HYDRATION_WAIT_MS);
         const fastData = await getImmediateStockSnapshot(ticker, hydrated.data || stock.data || {});
         const responseData = await prepareStockResponseData(ticker, fastData || stock.data, { fast: true });
 
@@ -11469,7 +11518,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
             }
           );
           startStockFetch(ticker);
-          const hydrated = await getHydratedStockDataForFirstResponse(ticker, responseData, 1200);
+          const hydrated = await getHydratedStockDataForFirstResponse(ticker, responseData, STOCK_FAST_CHART_HYDRATION_WAIT_MS);
           const hydratedResponseData = await prepareStockResponseData(ticker, hydrated.data || responseData, { fast: true });
 
           return res.json({
@@ -11481,7 +11530,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           });
         }
 
-        const hydrated = await getHydratedStockDataForFirstResponse(ticker, fallbackData, 1000);
+        const hydrated = await getHydratedStockDataForFirstResponse(ticker, fallbackData, STOCK_FAST_CHART_HYDRATION_WAIT_MS);
         const responseData = await prepareStockResponseData(ticker, hydrated.data || fallbackData, { fast: true });
         const shouldKeepPolling =
           !hasCompleteChartHistory({ data: responseData }) ||
@@ -11509,7 +11558,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       startStockFetch(ticker);
 
       if (stock.data && Object.keys(stock.data).length) {
-        const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data, 1200);
+        const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data, STOCK_FAST_CHART_HYDRATION_WAIT_MS);
         const responseData = await prepareStockResponseData(ticker, hydrated.data || stock.data, { fast: true });
 
         return res.json({
@@ -11522,7 +11571,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
         });
       }
 
-      const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data || {}, 1200);
+      const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data || {}, STOCK_FAST_CHART_HYDRATION_WAIT_MS);
       const quickData = await getImmediateStockSnapshot(ticker, hydrated.data || stock.data || {});
       const responseData = await prepareStockResponseData(ticker, quickData, { fast: true });
       await Stock.findOneAndUpdate(
