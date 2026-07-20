@@ -11419,16 +11419,14 @@ app.get("/api/stock/:ticker", async (req, res) => {
       );
 
       startStockFetch(ticker);
-      const hydrated = await getHydratedStockDataForFirstResponse(ticker, initialData, STOCK_FAST_CHART_HYDRATION_WAIT_MS);
-      const quickData = await getImmediateStockSnapshot(ticker, hydrated.data || initialData);
-      const responseData = await prepareStockResponseData(ticker, quickData, { fast: true });
+      const responseData = prepareCachedStockResponseData(ticker, initialData);
 
       return res.json({
         ticker,
         status: "ready",
         ...responseData,
         refreshing: true,
-        updatedAt: hydrated.stock?.updatedAt || stock.updatedAt
+        updatedAt: stock.updatedAt
       });
     }
 
@@ -11466,25 +11464,14 @@ app.get("/api/stock/:ticker", async (req, res) => {
         });
       }
 
-      const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data || {}, STOCK_FAST_CHART_HYDRATION_WAIT_MS);
-      const quickData = await getImmediateStockSnapshot(ticker, hydrated.data || stock.data || {});
-      const responseData = await prepareStockResponseData(ticker, quickData, { fast: true });
-      await Stock.findOneAndUpdate(
-        { ticker },
-        {
-          status: "pending",
-          data: responseData,
-          error: null,
-          updatedAt: new Date()
-        }
-      );
+      const responseData = prepareCachedStockResponseData(ticker, buildMinimalStockSnapshot(ticker));
 
       return res.json({
         ticker: stock.ticker,
         status: "ready",
         ...responseData,
         refreshing: true,
-        updatedAt: new Date()
+        updatedAt: stock.updatedAt || new Date()
       });
     }
 
@@ -11533,8 +11520,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           toNumberOrNull(fallbackData.price) === null;
 
         if (shouldRetryFailedSnapshot) {
-          const quickData = await getImmediateStockSnapshot(ticker, fallbackData);
-          const responseData = await prepareStockResponseData(ticker, quickData, { fast: true });
+          const responseData = prepareCachedStockResponseData(ticker, fallbackData);
           await Stock.findOneAndUpdate(
             { ticker },
             {
@@ -11545,15 +11531,13 @@ app.get("/api/stock/:ticker", async (req, res) => {
             }
           );
           startStockFetch(ticker);
-          const hydrated = await getHydratedStockDataForFirstResponse(ticker, responseData, STOCK_FAST_CHART_HYDRATION_WAIT_MS);
-          const hydratedResponseData = await prepareStockResponseData(ticker, hydrated.data || responseData, { fast: true });
 
           return res.json({
             ticker: stock.ticker,
             status: "ready",
-            ...hydratedResponseData,
+            ...responseData,
             refreshing: true,
-            updatedAt: hydrated.stock?.updatedAt || new Date()
+            updatedAt: new Date()
           });
         }
 
@@ -11595,25 +11579,14 @@ app.get("/api/stock/:ticker", async (req, res) => {
         });
       }
 
-      const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data || {}, STOCK_FAST_CHART_HYDRATION_WAIT_MS);
-      const quickData = await getImmediateStockSnapshot(ticker, hydrated.data || stock.data || {});
-      const responseData = await prepareStockResponseData(ticker, quickData, { fast: true });
-      await Stock.findOneAndUpdate(
-        { ticker },
-        {
-          status: "pending",
-          data: responseData,
-          error: null,
-          updatedAt: new Date()
-        }
-      );
+      const responseData = prepareCachedStockResponseData(ticker, buildMinimalStockSnapshot(ticker));
 
       return res.json({
         ticker,
         status: "ready",
         ...responseData,
         refreshing: true,
-        updatedAt: new Date()
+        updatedAt: stock.updatedAt || new Date()
       });
     }
 

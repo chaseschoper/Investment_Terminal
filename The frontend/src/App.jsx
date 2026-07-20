@@ -3651,14 +3651,12 @@ const isHistoryRefreshPending =
     ? isQuarterlyHistoryRefreshPending
     : isAnnualHistoryRefreshPending;
 const shouldShowCoreHistoryLoading = (rows = []) =>
-  isHistoryRefreshPending && (
-    !hasEnoughVisibleHistoryRows(rows) ||
-    !hasEnoughQuarterlyCoreRows(rows)
-  );
+  !hasEnoughVisibleHistoryRows(rows) ||
+  !hasEnoughQuarterlyCoreRows(rows);
 const shouldShowHistoryLoading = (rows = []) =>
-  isHistoryRefreshPending && !hasEnoughVisibleHistoryRows(rows);
+  !hasEnoughVisibleHistoryRows(rows) && isHistoryRefreshPending;
 const shouldShowAnnualHistoryLoading = (rows = []) =>
-  isAnnualHistoryRefreshPending && !hasRealHistoryRows(rows);
+  !hasRealHistoryRows(rows) && isAnnualHistoryRefreshPending;
 const readyHistoryRows = (rows = []) =>
   hasEnoughVisibleHistoryRows(rows) ? rows : [];
 
