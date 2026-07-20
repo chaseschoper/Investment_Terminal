@@ -1348,6 +1348,7 @@ const FINANCIAL_HISTORY_VERSION = 152;
 const STOCK_ESTIMATE_VERSION = 18;
 const INTERIM_HISTORY_VERSION = 5;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
+const MIN_DISPLAY_INTERIM_HISTORY_ROWS = 4;
 
 const getDefaultCompanyLogoUrl = (symbol) => {
   const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
@@ -3622,7 +3623,7 @@ const hasRealHistoryRows = (rows = []) =>
   rows.filter((row) => !row?.isCurrent).length >= 2;
 const hasEnoughQuarterlyCoreRows = (rows = []) =>
   financialChartMode !== "quarterly" ||
-  rows.filter((row) => !row?.isCurrent).length >= MIN_USABLE_INTERIM_HISTORY_ROWS;
+  rows.filter((row) => !row?.isCurrent).length >= MIN_DISPLAY_INTERIM_HISTORY_ROWS;
 const hasEnoughVisibleHistoryRows = (rows = []) =>
   rows.filter((row) => !row?.isCurrent).length >= (
     financialChartMode === "quarterly" ? 2 : 2
