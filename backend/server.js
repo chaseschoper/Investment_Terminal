@@ -427,7 +427,12 @@ const normalizeSp500Symbol = (symbol) =>
 
 async function fetchSp500Constituents() {
   const cached = sp500ConstituentsCache.get("current");
-  if (cached && Date.now() - cached.fetchedAt < 24 * 60 * 60 * 1000) {
+  if (
+    cached &&
+    Array.isArray(cached.companies) &&
+    cached.companies.length >= 450 &&
+    Date.now() - cached.fetchedAt < 24 * 60 * 60 * 1000
+  ) {
     return cached.companies;
   }
 
@@ -7673,8 +7678,7 @@ async function publishChartHistorySnapshot(ticker, previousData = {}, secAnnualM
       if (yearDiff !== 0) return yearDiff;
       if (a.isInterim !== b.isInterim) return a.isInterim ? 1 : -1;
       return String(a.period || "").localeCompare(String(b.period || ""));
-    })
-    .slice(-7));
+    }));
   const nextData = withGuaranteedAnalystSection({
     ...previousData,
     financialHistoryCheckedAt: new Date().toISOString(),
@@ -8079,8 +8083,7 @@ async function fetchStockData(ticker) {
       if (yearDiff !== 0) return yearDiff;
       if (a.isInterim !== b.isInterim) return a.isInterim ? 1 : -1;
       return String(a.period || "").localeCompare(String(b.period || ""));
-    })
-    .slice(-7));
+    }));
   const knownFinancialInstitution = KNOWN_FINANCIAL_INSTITUTIONS.has(ticker);
   const latestRawMarginRow =
     marginHistory.at(-1) ||
@@ -10300,6 +10303,8 @@ app.get("/api/market-heatmap", async (req, res) => {
   const cachedAge = cached ? Date.now() - cached.fetchedAt : Infinity;
   const freshCacheMs = 75 * 1000;
   const staleCacheMs = 20 * 60 * 1000;
+  const hasFullHeatmapPayload = (payload) =>
+    Array.isArray(payload?.companies) && payload.companies.length >= 450;
 
   const cachedNeedsRefresh = cached?.data?.companies?.some((company) => !hasCompleteHeatmapQuote(company));
 
@@ -10317,7 +10322,7 @@ app.get("/api/market-heatmap", async (req, res) => {
     return marketHeatmapRefreshPromise;
   };
 
-  if (cached?.data?.companies?.length && cachedAge < freshCacheMs && !cachedNeedsRefresh) {
+  if (hasFullHeatmapPayload(cached?.data) && cachedAge < freshCacheMs && !cachedNeedsRefresh) {
     return res.json(cached.data);
   }
 
@@ -10431,7 +10436,7 @@ app.get("/api/market-heatmap", async (req, res) => {
     ));
     const data = buildMarketHeatmapPayload(companies, false);
 
-    if (companies.some((company) => toNumberOrNull(company.price) !== null)) {
+    if (companies.length >= 450 && companies.some((company) => toNumberOrNull(company.price) !== null)) {
       marketHeatmapCache.set("sp500", {
         fetchedAt: Date.now(),
         data
@@ -10441,7 +10446,7 @@ app.get("/api/market-heatmap", async (req, res) => {
     return data;
   };
 
-  if (cached?.data?.companies?.length && cachedAge < staleCacheMs) {
+  if (hasFullHeatmapPayload(cached?.data) && cachedAge < staleCacheMs) {
     startHeatmapRefresh().catch((err) => {
       console.log("Market heat map background refresh skipped:", err.message);
     });
@@ -10449,7 +10454,10 @@ app.get("/api/market-heatmap", async (req, res) => {
   }
 
   const cachedFallbackData = await resolveWithin(buildFromFallbackCache(), 950, null);
-  if (cachedFallbackData?.companies?.some((company) => hasCompleteHeatmapQuote(company))) {
+  if (
+    hasFullHeatmapPayload(cachedFallbackData) &&
+    cachedFallbackData.companies.some((company) => hasCompleteHeatmapQuote(company))
+  ) {
     startHeatmapRefresh().catch((err) => {
       console.log("Market heat map background refresh skipped:", err.message);
     });
@@ -10469,7 +10477,7 @@ app.get("/api/market-heatmap", async (req, res) => {
   const bestData = countCompleteQuotes(data) >= countCompleteQuotes(slowCachedFallbackData)
     ? data
     : slowCachedFallbackData;
-  if (bestData?.companies?.length) return res.json({
+  if (hasFullHeatmapPayload(bestData)) return res.json({
     ...bestData,
     refreshing: bestData.companies.some((company) =>
       toNumberOrNull(company.price) === null ||
@@ -10477,13 +10485,16 @@ app.get("/api/market-heatmap", async (req, res) => {
     )
   });
 
+  const fallbackCompanies = await fetchSp500Constituents();
   return res.json({
-    companies: (await fetchSp500Constituents()).map((company) => ({
-      ...company,
-      price: null,
-      change: null,
-      percentChange: null
-    })),
+    companies: fallbackCompanies.length >= 450
+      ? fallbackCompanies.map((company) => ({
+          ...company,
+          price: null,
+          change: null,
+          percentChange: null
+        }))
+      : [],
     sectors: [],
     updatedAt: new Date().toISOString(),
     stale: true,

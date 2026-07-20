@@ -806,6 +806,11 @@ const calculateChartGrowth = (current, previous) => {
   return ((current - previous) / Math.abs(previous)) * 100;
 };
 
+const calculateMarginPercent = (numerator, revenue) =>
+  isNumber(numerator) && isNumber(revenue) && revenue !== 0
+    ? (numerator / revenue) * 100
+    : null;
+
 const buildAnnualGrowthRows = (rows, key) => {
   const annualRows = (rows || [])
     .filter((row) =>
@@ -877,6 +882,37 @@ const mergeChartRows = (rows, key) => {
     if (a.isInterim !== b.isInterim) return a.isInterim ? 1 : -1;
     return String(a.period).localeCompare(String(b.period));
   });
+};
+
+const mergeMultiMetricRows = (rows = [], keys = []) => {
+  const merged = new Map();
+
+  (rows || []).forEach((item) => {
+    if (!item?.year) return;
+    const period = item.period || String(item.year);
+    const mergeKey = item.isInterim ? `${item.year}:${period}` : `${item.year}:annual`;
+    const existing = merged.get(mergeKey) || {};
+    const next = {
+      ...existing,
+      ...item,
+      period,
+      isInterim: Boolean(item.isInterim),
+      isCurrent: Boolean(item.isCurrent)
+    };
+    keys.forEach((key) => {
+      next[key] = isNumber(item[key]) ? item[key] : existing[key] ?? null;
+    });
+    merged.set(mergeKey, next);
+  });
+
+  return [...merged.values()]
+    .filter((row) => keys.some((key) => isNumber(row[key])))
+    .sort((a, b) => {
+      const yearDiff = Number(a.year) - Number(b.year);
+      if (yearDiff !== 0) return yearDiff;
+      if (a.isInterim !== b.isInterim) return a.isInterim ? 1 : -1;
+      return String(a.period || "").localeCompare(String(b.period || ""));
+    });
 };
 
 const CHART_STABLE_FIELDS = [
@@ -2273,10 +2309,13 @@ useEffect(() => {
           !isNumber(company.price) || !isNumber(company.percentChange)
         );
         nextRefreshMs = hasMissingQuotes || response.data?.refreshing ? 4000 : 90 * 1000;
-        setMarketHeatmap({
-          companies,
-          sectors: Array.isArray(response.data?.sectors) ? response.data.sectors : [],
-          updatedAt: response.data?.updatedAt || null
+        setMarketHeatmap((previous) => {
+          if (!companies.length && (previous.companies || []).length) return previous;
+          return {
+            companies,
+            sectors: Array.isArray(response.data?.sectors) ? response.data.sectors : [],
+            updatedAt: response.data?.updatedAt || null
+          };
         });
       }
     } catch (error) {
@@ -3518,19 +3557,50 @@ const allMarginHistory = (stockData?.marginHistory || [])
     row?.year &&
     (row.isInterim || row.year <= new Date().getFullYear())
   );
-const annualMarginHistory = filterChartRowsByMode(allMarginHistory, financialChartMode);
-const grossMarginHistory = chartRowsWithCurrentFallback(
-  annualMarginHistory.filter((row) => isNumber(row.grossMargin)),
+const marginHistoryFromFinancials = (financialHistory || [])
+  .map((row) => ({
+    year: row.year,
+    period: row.period || String(row.year),
+    isInterim: Boolean(row.isInterim),
+    isCurrent: Boolean(row.isCurrent),
+    grossMargin: calculateMarginPercent(row.grossProfit, row.revenue),
+    operatingMargin: calculateMarginPercent(row.operatingIncome, row.revenue),
+    profitMargin: calculateMarginPercent(row.earnings, row.revenue),
+    source: row.source
+  }))
+  .filter((row) =>
+    row.year &&
+    !row.isCurrent &&
+    (
+      isNumber(row.grossMargin) ||
+      isNumber(row.operatingMargin) ||
+      isNumber(row.profitMargin)
+    )
+  );
+const mergedMarginHistory = mergeMultiMetricRows(
+  [
+    ...marginHistoryFromFinancials,
+    ...allMarginHistory
+  ],
+  ["grossMargin", "operatingMargin", "profitMargin"]
+);
+const visibleMarginHistory = filterChartRowsByMode(mergedMarginHistory, financialChartMode);
+const marginChartRowsWithFallback = (rows, key, value) =>
+  financialChartMode === "quarterly"
+    ? rows
+    : chartRowsWithCurrentFallback(rows, key, value);
+const grossMarginHistory = marginChartRowsWithFallback(
+  visibleMarginHistory.filter((row) => isNumber(row.grossMargin)),
   "grossMargin",
   stockData?.grossMargins
 );
-const operatingMarginHistory = chartRowsWithCurrentFallback(
-  annualMarginHistory.filter((row) => isNumber(row.operatingMargin)),
+const operatingMarginHistory = marginChartRowsWithFallback(
+  visibleMarginHistory.filter((row) => isNumber(row.operatingMargin)),
   "operatingMargin",
   stockData?.operatingMargins
 );
-const profitMarginHistory = chartRowsWithCurrentFallback(
-  annualMarginHistory.filter((row) => isNumber(row.profitMargin)),
+const profitMarginHistory = marginChartRowsWithFallback(
+  visibleMarginHistory.filter((row) => isNumber(row.profitMargin)),
   "profitMargin",
   stockData?.profitMargins
 );
