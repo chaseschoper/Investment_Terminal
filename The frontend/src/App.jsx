@@ -1310,7 +1310,7 @@ const API_URL =
   "https://investment-terminal-jtng.onrender.com";
 const FINANCIAL_HISTORY_VERSION = 152;
 const STOCK_ESTIMATE_VERSION = 18;
-const INTERIM_HISTORY_VERSION = 3;
+const INTERIM_HISTORY_VERSION = 4;
 
 const getDefaultCompanyLogoUrl = (symbol) => {
   const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
@@ -2947,7 +2947,14 @@ useEffect(() => {
         !hasCompleteCoreChartData(stableResponse);
       const needsInterimHistory =
         attempt < 40 &&
-        countInterimRows(stableResponse.revenueData || []) < 1;
+        countInterimRows(stableResponse.revenueData || []) < 4;
+      const needsQuarterlyHistory =
+        attempt < 40 &&
+        (
+          response.data.interimHistoryVersion !== INTERIM_HISTORY_VERSION ||
+          stableResponse.interimHistoryVersion !== INTERIM_HISTORY_VERSION ||
+          countInterimRows(stableResponse.revenueData || []) < 4
+        );
       const needsExtendedHistory =
         attempt < 40 &&
         !hasExtendedHistoricalChartData(stableResponse);
@@ -2970,6 +2977,7 @@ useEffect(() => {
         (
           needsFreshHistory ||
           needsInterimHistory ||
+          needsQuarterlyHistory ||
           needsExtendedHistory ||
           needsMoreMetricCards ||
           needsMarketActivity ||
@@ -2983,7 +2991,7 @@ useEffect(() => {
         const retryDelay =
           attempt < 10
             ? 350
-            : attempt < 18
+          : attempt < 18
               ? 550
             : (needsMarketActivity || needsBalanceSheetMetrics) && attempt < 28
               ? 900
@@ -3447,15 +3455,19 @@ const currentPoint = (key, value, transform = (item) => item) =>
     : [];
 const chartRowsWithCurrentFallback = (rows, key, value, transform) =>
   rows.length ? rows : currentPoint(key, value, transform);
+const chartRowsWithCurrentFallbackForMode = (rows, key, value, transform) =>
+  financialChartMode === "quarterly"
+    ? rows
+    : chartRowsWithCurrentFallback(rows, key, value, transform);
 const operatingCashflowHistory =
-  chartRowsWithCurrentFallback(
+  chartRowsWithCurrentFallbackForMode(
     filterChartRowsByMode(buildChartRows(financialHistory, "operatingCashflow"), financialChartMode),
     "operatingCashflow",
     stockData?.operatingCashflow,
     (value) => value / 1e9
   );
 const freeCashflowHistory =
-  chartRowsWithCurrentFallback(
+  chartRowsWithCurrentFallbackForMode(
     filterChartRowsByMode(buildChartRows(financialHistory, "freeCashflow"), financialChartMode),
     "freeCashflow",
     stockData?.freeCashflow,
@@ -3485,7 +3497,7 @@ const latestOperatingCashflowFromChart = latestChartMetricDollars(
   "operatingCashflow"
 );
 const sharesOutstandingHistory =
-  chartRowsWithCurrentFallback(
+  chartRowsWithCurrentFallbackForMode(
     filterChartRowsByMode(buildChartRows(financialHistory, "sharesOutstanding"), financialChartMode),
     "sharesOutstanding",
     stockData?.sharesOutstanding
@@ -3497,8 +3509,9 @@ const historicalPeHistoryBase = (stockData?.historicalPe || [])
     (row.isInterim || row.isCurrent || row.year <= new Date().getFullYear()) &&
     isNumber(row.pe)
   );
+const annualHistoricalPeHistoryBase = filterChartRowsByMode(historicalPeHistoryBase, "annual");
 const historicalPeHistory =
-  chartRowsWithCurrentFallback(filterChartRowsByMode(historicalPeHistoryBase, financialChartMode), "pe", stockData?.pe);
+  chartRowsWithCurrentFallback(annualHistoricalPeHistoryBase, "pe", stockData?.pe);
 const allMarginHistory = (stockData?.marginHistory || [])
   .map((row) => ({ ...row, period: row.period || String(row.year) }))
   .filter((row) =>
@@ -3525,22 +3538,40 @@ const profitMarginHistory = chartRowsWithCurrentFallback(
 const hasCompleteVisibleCoreChartData = hasCompleteCoreChartData(stockData || {});
 const hasRealHistoryRows = (rows = []) =>
   rows.filter((row) => !row?.isCurrent).length >= 2;
-const isHistoryRefreshPending =
+const hasEnoughVisibleHistoryRows = (rows = []) =>
+  rows.filter((row) => !row?.isCurrent).length >= (
+    financialChartMode === "quarterly" ? 4 : 2
+  );
+const isAnnualHistoryRefreshPending =
   isStockLoading ||
   stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
-  stockData?.interimHistoryVersion !== INTERIM_HISTORY_VERSION ||
   (
     !stockData?.financialHistoryCheckedAt &&
     (
       stockData?.refreshing ||
-      stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
+      stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION
+    )
+  );
+const isQuarterlyHistoryRefreshPending =
+  isStockLoading ||
+  stockData?.interimHistoryVersion !== INTERIM_HISTORY_VERSION ||
+  (
+    !stockData?.interimHistoryCheckedAt &&
+    (
+      stockData?.refreshing ||
       stockData?.interimHistoryVersion !== INTERIM_HISTORY_VERSION
     )
   );
+const isHistoryRefreshPending =
+  financialChartMode === "quarterly"
+    ? isQuarterlyHistoryRefreshPending
+    : isAnnualHistoryRefreshPending;
 const shouldShowCoreHistoryLoading = (rows = []) =>
-  isHistoryRefreshPending && !hasRealHistoryRows(rows);
+  isHistoryRefreshPending && !hasEnoughVisibleHistoryRows(rows);
 const shouldShowHistoryLoading = (rows = []) =>
-  isHistoryRefreshPending && !hasRealHistoryRows(rows);
+  isHistoryRefreshPending && !hasEnoughVisibleHistoryRows(rows);
+const shouldShowAnnualHistoryLoading = (rows = []) =>
+  isAnnualHistoryRefreshPending && !hasRealHistoryRows(rows);
 const readyHistoryRows = (rows = []) =>
   hasRealHistoryRows(rows) ? rows : [];
 
@@ -5767,8 +5798,8 @@ return (
     color="#60a5fa"
     formatter={(value) => `${Number(value).toFixed(1)}x`}
     valueLabel="P/E"
-    loading={shouldShowHistoryLoading(historicalPeHistory)}
-    mode={financialChartMode}
+    loading={shouldShowAnnualHistoryLoading(historicalPeHistory)}
+    mode="annual"
   />
   <HistoricalLineChart
     title={stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin History"}

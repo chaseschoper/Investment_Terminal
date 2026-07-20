@@ -61,7 +61,7 @@ const fxRateCache = new Map();
 const alphaVantageFundamentalCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 152;
 const STOCK_ESTIMATE_VERSION = 18;
-const INTERIM_HISTORY_VERSION = 3;
+const INTERIM_HISTORY_VERSION = 4;
 const BALANCE_SHEET_METRICS_VERSION = 9;
 const VALUATION_METRICS_VERSION = 2;
 const EARNINGS_CALL_VERSION = 18;
@@ -10448,15 +10448,27 @@ app.get("/api/market-heatmap", async (req, res) => {
     return res.json({ ...cached.data, stale: true, refreshing: cachedNeedsRefresh });
   }
 
-  const [data, cachedFallbackData] = await Promise.all([
+  const cachedFallbackData = await resolveWithin(buildFromFallbackCache(), 950, null);
+  if (cachedFallbackData?.companies?.some((company) => hasCompleteHeatmapQuote(company))) {
+    startHeatmapRefresh().catch((err) => {
+      console.log("Market heat map background refresh skipped:", err.message);
+    });
+    return res.json({
+      ...cachedFallbackData,
+      stale: true,
+      refreshing: true
+    });
+  }
+
+  const [data, slowCachedFallbackData] = await Promise.all([
     resolveWithin(startHeatmapRefresh(), 2600, null),
     resolveWithin(buildFromFallbackCache(), 1300, null)
   ]);
   const countCompleteQuotes = (payload) =>
     (payload?.companies || []).filter(hasCompleteHeatmapQuote).length;
-  const bestData = countCompleteQuotes(data) >= countCompleteQuotes(cachedFallbackData)
+  const bestData = countCompleteQuotes(data) >= countCompleteQuotes(slowCachedFallbackData)
     ? data
-    : cachedFallbackData;
+    : slowCachedFallbackData;
   if (bestData?.companies?.length) return res.json({
     ...bestData,
     refreshing: bestData.companies.some((company) =>
