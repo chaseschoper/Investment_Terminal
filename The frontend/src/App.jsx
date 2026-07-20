@@ -3010,9 +3010,20 @@ useEffect(() => {
         !stableResponse.balanceSheetCheckedAt &&
         !isNumber(stableResponse.totalCash) &&
         !isNumber(stableResponse.totalDebt);
+      const shouldContinueStockWarmup =
+        response.data.refreshing ||
+        needsNewStockWarmup ||
+        needsFreshHistory ||
+        needsInterimHistory ||
+        needsQuarterlyHistory ||
+        needsExtendedHistory ||
+        needsMoreMetricCards ||
+        needsAnnualEstimates ||
+        needsQuarterEstimate ||
+        needsBalanceSheetMetrics;
 
       if (
-        (response.data.refreshing || needsNewStockWarmup) &&
+        shouldContinueStockWarmup &&
         (
           needsFreshHistory ||
           needsInterimHistory ||
@@ -3610,7 +3621,7 @@ const hasRealHistoryRows = (rows = []) =>
   rows.filter((row) => !row?.isCurrent).length >= 2;
 const hasEnoughVisibleHistoryRows = (rows = []) =>
   rows.filter((row) => !row?.isCurrent).length >= (
-    financialChartMode === "quarterly" ? 4 : 2
+    financialChartMode === "quarterly" ? 1 : 2
   );
 const isAnnualHistoryRefreshPending =
   isStockLoading ||
@@ -3643,7 +3654,25 @@ const shouldShowHistoryLoading = (rows = []) =>
 const shouldShowAnnualHistoryLoading = (rows = []) =>
   isAnnualHistoryRefreshPending && !hasRealHistoryRows(rows);
 const readyHistoryRows = (rows = []) =>
-  hasRealHistoryRows(rows) ? rows : [];
+  hasEnoughVisibleHistoryRows(rows) ? rows : [];
+
+const refreshQuarterlyChartHistory = () => {
+  setFinancialChartMode("quarterly");
+  const symbol = String(ticker || stockData?.symbol || "").trim().toUpperCase();
+  if (!symbol) return;
+
+  const hasWeakQuarterlyRows =
+    stockData?.interimHistoryVersion !== INTERIM_HISTORY_VERSION ||
+    countInterimRows(stockData?.revenueData || []) < 4;
+  if (!hasWeakQuarterlyRows) return;
+
+  if (stockRetryTimerRef.current) {
+    window.clearTimeout(stockRetryTimerRef.current);
+    stockRetryTimerRef.current = null;
+  }
+  const requestId = ++latestStockRequest.current;
+  loadStock(symbol, 0, requestId);
+};
 
 const estimateFromHistoryYear = (year, fallback = {}) => {
   const row = financialHistory.find(
@@ -5595,7 +5624,7 @@ return (
       <button
         className={`chart-mode-button ${financialChartMode === "quarterly" ? "active" : ""}`}
         type="button"
-        onClick={() => setFinancialChartMode("quarterly")}
+        onClick={refreshQuarterlyChartHistory}
       >
         Quarterly
       </button>
