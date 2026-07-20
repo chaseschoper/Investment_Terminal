@@ -1115,11 +1115,7 @@ const hasExtendedHistoricalChartData = (stock = {}) => {
 
 const shouldKeepWarmingNewStock = (stock = {}) =>
   !hasCompleteCoreChartData(stock) ||
-  !hasExtendedHistoricalChartData(stock) ||
-  !hasAnyOverviewMetricData(stock) ||
-  overviewMetricCount(stock) < 8 ||
-  !hasAnnualEstimateData(stock) ||
-  !hasNextQuarterData(stock);
+  !hasExtendedHistoricalChartData(stock);
 
 const stabilizeRefreshingStockData = (previous, incoming) => {
   if (
@@ -3004,19 +3000,14 @@ useEffect(() => {
       const needsExtendedHistory =
         attempt < 40 &&
         !hasExtendedHistoricalChartData(stableResponse);
-      const needsMoreMetricCards =
-        attempt < 28 &&
-        overviewMetricCount(stableResponse) < 12;
+      const needsMoreMetricCards = false;
       const needsNewStockWarmup =
         (!hadCachedStock || attempt < 30) &&
         shouldKeepWarmingNewStock(stableResponse);
-      const needsMarketActivity = attempt < 28 && !hasMarketActivityLoaded(stableResponse);
-      const needsAnnualEstimates = attempt < 28 && !hasAnnualEstimateData(stableResponse);
-      const needsQuarterEstimate = attempt < 28 && !hasNextQuarterData(stableResponse);
-      const needsBalanceSheetMetrics =
-        !stableResponse.balanceSheetCheckedAt &&
-        !isNumber(stableResponse.totalCash) &&
-        !isNumber(stableResponse.totalDebt);
+      const needsMarketActivity = false;
+      const needsAnnualEstimates = false;
+      const needsQuarterEstimate = false;
+      const needsBalanceSheetMetrics = false;
       const shouldContinueStockWarmup =
         needsNewStockWarmup ||
         needsFreshHistory ||

@@ -4965,6 +4965,10 @@ async function prepareStockResponseData(ticker, data = {}, options = {}) {
   return normalizeForeignAdrStockData(ticker, repairedData);
 }
 
+function prepareCachedStockResponseData(ticker, data = {}) {
+  return withGuaranteedAnalystSection(applyStockEarningsDateOverrides(ticker, data || {}));
+}
+
 async function fetchYahooTimeSeriesFinancials(ticker) {
   try {
     const period1 = Math.floor(new Date("2016-01-01").getTime() / 1000);
@@ -11450,8 +11454,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       }
 
       if (stock.data && Object.keys(stock.data).length) {
-        const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data, STOCK_FAST_CHART_HYDRATION_WAIT_MS);
-        const responseData = await prepareStockResponseData(ticker, hydrated.data, { fast: true });
+        const responseData = prepareCachedStockResponseData(ticker, stock.data);
 
         return res.json({
           ticker: stock.ticker,
@@ -11459,7 +11462,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           ...responseData,
           refreshing: true,
           error: getStockResponseError(responseData, stock.error),
-          updatedAt: hydrated.stock?.updatedAt || stock.updatedAt
+          updatedAt: stock.updatedAt
         });
       }
 
@@ -11504,9 +11507,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
         Date.now() - updatedAt.getTime() > STOCK_FULL_REFRESH_MS;
       if (isStale) {
         startStockFetch(ticker);
-        const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data || {}, STOCK_FAST_CHART_HYDRATION_WAIT_MS);
-        const fastData = await getImmediateStockSnapshot(ticker, hydrated.data || stock.data || {});
-        const responseData = await prepareStockResponseData(ticker, fastData || stock.data, { fast: true });
+        const responseData = prepareCachedStockResponseData(ticker, stock.data || {});
 
         return res.json({
           ticker: stock.ticker,
@@ -11514,7 +11515,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           ...responseData,
           refreshing: isOutdated || isCoreIncomplete,
           error: getStockResponseError(responseData, stock.error),
-          updatedAt: hydrated.stock?.updatedAt || stock.updatedAt
+          updatedAt: stock.updatedAt
         });
       }
     }
@@ -11556,11 +11557,9 @@ app.get("/api/stock/:ticker", async (req, res) => {
           });
         }
 
-        const hydrated = await getHydratedStockDataForFirstResponse(ticker, fallbackData, STOCK_FAST_CHART_HYDRATION_WAIT_MS);
-        const responseData = await prepareStockResponseData(ticker, hydrated.data || fallbackData, { fast: true });
+        const responseData = prepareCachedStockResponseData(ticker, fallbackData);
         const shouldKeepPolling =
-          !hasCompleteChartHistory({ data: responseData }) ||
-          !hasCompleteSupplementalData({ data: responseData });
+          !hasCompleteChartHistory({ data: responseData });
 
         return res.json({
           ticker: stock.ticker,
@@ -11584,8 +11583,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       startStockFetch(ticker);
 
       if (stock.data && Object.keys(stock.data).length) {
-        const hydrated = await getHydratedStockDataForFirstResponse(ticker, stock.data, STOCK_FAST_CHART_HYDRATION_WAIT_MS);
-        const responseData = await prepareStockResponseData(ticker, hydrated.data || stock.data, { fast: true });
+        const responseData = prepareCachedStockResponseData(ticker, stock.data);
 
         return res.json({
           ticker: stock.ticker,
@@ -11593,7 +11591,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           ...responseData,
           refreshing: true,
           error: getStockResponseError(responseData, stock.error),
-          updatedAt: hydrated.stock?.updatedAt || stock.updatedAt
+          updatedAt: stock.updatedAt
         });
       }
 
@@ -11619,7 +11617,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       });
     }
 
-    const responseData = await prepareStockResponseData(ticker, stock.data);
+    const responseData = prepareCachedStockResponseData(ticker, stock.data);
 
     return res.json({
       ticker: stock.ticker,
