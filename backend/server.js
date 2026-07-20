@@ -59,7 +59,7 @@ const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const alphaVantageFundamentalCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 152;
+const FINANCIAL_HISTORY_VERSION = 153;
 const STOCK_ESTIMATE_VERSION = 18;
 const INTERIM_HISTORY_VERSION = 5;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
@@ -5559,9 +5559,10 @@ async function fetchStockAnalysisIncomeStatementHistory(ticker) {
           timeout: STOCK_PROVIDER_TIMEOUT_MS
         }
       );
-    let [annualResponse, quarterlyResponse, quarterlyCashFlowResponse] = await Promise.all([
+    let [annualResponse, quarterlyResponse, annualCashFlowResponse, quarterlyCashFlowResponse] = await Promise.all([
       stockAnalysisRequest("financials/income-statement/"),
       stockAnalysisRequest("financials/income-statement/?p=quarterly").catch(() => ({ data: "" })),
+      stockAnalysisRequest("financials/cash-flow-statement/").catch(() => ({ data: "" })),
       stockAnalysisRequest("financials/cash-flow-statement/?p=quarterly").catch(() => ({ data: "" }))
     ]);
     const countQuarterlyHeaders = (html) => {
@@ -5625,6 +5626,28 @@ async function fetchStockAnalysisIncomeStatementHistory(ticker) {
     const grossProfitValues = valuesFor("Gross Profit", "Net Interest Income");
     const operatingIncomeValues = valuesFor("Operating Income", "Pretax Income");
     const epsValues = valuesFor("EPS (Diluted)", "EPS Diluted", "Diluted EPS");
+    const annualCashFlow = cheerio.load(annualCashFlowResponse.data || "");
+    const annualCashValuesByLabel = new Map();
+
+    annualCashFlow("table").first().find("tbody tr").each((_, row) => {
+      const cells = annualCashFlow(row).find("td").toArray();
+      const label = annualCashFlow(cells[0]).text().trim().replace(/\s+/g, " ");
+      if (!label) return;
+      annualCashValuesByLabel.set(
+        label.toLowerCase(),
+        cells.slice(1).map((cell) => parseStockAnalysisNumber(annualCashFlow(cell).text()))
+      );
+    });
+
+    const annualCashValuesFor = (...labels) => {
+      for (const label of labels) {
+        const values = annualCashValuesByLabel.get(label.toLowerCase());
+        if (values) return values;
+      }
+      return [];
+    };
+    const annualOperatingCashflowValues = annualCashValuesFor("Operating Cash Flow");
+    const annualFreeCashflowValues = annualCashValuesFor("Free Cash Flow");
 
     const annualRows = headers
       .map((header, index) => {
@@ -5638,6 +5661,8 @@ async function fetchStockAnalysisIncomeStatementHistory(ticker) {
           earnings: earningsValues[index + valueOffset] !== undefined ? earningsValues[index + valueOffset] / 1000 : null,
           grossProfit: grossProfitValues[index + valueOffset] !== undefined ? grossProfitValues[index + valueOffset] / 1000 : null,
           operatingIncome: operatingIncomeValues[index + valueOffset] !== undefined ? operatingIncomeValues[index + valueOffset] / 1000 : null,
+          operatingCashflow: annualOperatingCashflowValues[index + valueOffset] !== undefined ? annualOperatingCashflowValues[index + valueOffset] / 1000 : null,
+          freeCashflow: annualFreeCashflowValues[index + valueOffset] !== undefined ? annualFreeCashflowValues[index + valueOffset] / 1000 : null,
           eps: epsValues[index + valueOffset] ?? null,
           sourceCurrency: statementCurrency,
           source: "StockAnalysis financials"
@@ -9283,6 +9308,29 @@ async function publishFastFinancialHistorySnapshot(ticker) {
       eps: row.eps,
       source: row.source
     }));
+  const marginPercent = (numerator, revenue) => {
+    const numeratorNumber = toNumberOrNull(numerator);
+    const revenueNumber = toNumberOrNull(revenue);
+    return numeratorNumber !== null && revenueNumber ? (numeratorNumber / revenueNumber) * 100 : null;
+  };
+  const marginHistory = cleanFinancialHistoryRows(revenueData
+    .map((row) => ({
+      year: row.year,
+      period: row.period || String(row.year),
+      isInterim: Boolean(row.isInterim),
+      grossMargin: marginPercent(row.grossProfit, row.revenue),
+      operatingMargin: marginPercent(row.operatingIncome, row.revenue),
+      profitMargin: marginPercent(row.earnings, row.revenue),
+      source: row.source
+    }))
+    .filter((row) =>
+      row.year &&
+      (
+        toNumberOrNull(row.grossMargin) !== null ||
+        toNumberOrNull(row.operatingMargin) !== null ||
+        toNumberOrNull(row.profitMargin) !== null
+      )
+    ));
 
   await Stock.findOneAndUpdate(
     { ticker },
@@ -9290,6 +9338,7 @@ async function publishFastFinancialHistorySnapshot(ticker) {
       $set: {
         "data.revenueData": revenueData,
         "data.revenueHistory": revenueHistory,
+        "data.marginHistory": marginHistory.length ? marginHistory : previousData.marginHistory || [],
         "data.financialHistoryVersion": FINANCIAL_HISTORY_VERSION,
         "data.financialHistoryCheckedAt": checkedAt,
         "data.interimHistoryCheckedAt": checkedAt,
@@ -9341,7 +9390,8 @@ function startStockFetch(ticker) {
     }, 15000);
   });
 
-  fetchStockData(ticker)
+  coreFastHydration
+    .finally(() => fetchStockData(ticker))
     .catch(async (err) => {
       console.error(`Stock fetch failed for ${ticker}:`, err.message);
       await markStockFetchFailed(ticker, err);
@@ -11419,14 +11469,19 @@ app.get("/api/stock/:ticker", async (req, res) => {
       );
 
       startStockFetch(ticker);
-      const responseData = prepareCachedStockResponseData(ticker, initialData);
+      const hydrated = await getHydratedStockDataForFirstResponse(
+        ticker,
+        initialData,
+        STOCK_FAST_CHART_HYDRATION_WAIT_MS
+      );
+      const responseData = prepareCachedStockResponseData(ticker, hydrated.data || initialData);
 
       return res.json({
         ticker,
         status: "ready",
         ...responseData,
         refreshing: true,
-        updatedAt: stock.updatedAt
+        updatedAt: hydrated.stock?.updatedAt || stock.updatedAt
       });
     }
 
@@ -11452,7 +11507,17 @@ app.get("/api/stock/:ticker", async (req, res) => {
       }
 
       if (stock.data && Object.keys(stock.data).length) {
-        const responseData = prepareCachedStockResponseData(ticker, stock.data);
+        const needsFastHydration =
+          !hasCompleteChartHistory(stock) ||
+          !hasUsableInterimHistory(stock.data || {});
+        const hydrated = needsFastHydration
+          ? await getHydratedStockDataForFirstResponse(
+              ticker,
+              stock.data,
+              STOCK_FAST_CHART_HYDRATION_WAIT_MS
+            )
+          : { stock, data: stock.data };
+        const responseData = prepareCachedStockResponseData(ticker, hydrated.data || stock.data);
 
         return res.json({
           ticker: stock.ticker,
@@ -11460,7 +11525,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           ...responseData,
           refreshing: true,
           error: getStockResponseError(responseData, stock.error),
-          updatedAt: stock.updatedAt
+          updatedAt: hydrated.stock?.updatedAt || stock.updatedAt
         });
       }
 
@@ -11494,7 +11559,17 @@ app.get("/api/stock/:ticker", async (req, res) => {
         Date.now() - updatedAt.getTime() > STOCK_FULL_REFRESH_MS;
       if (isStale) {
         startStockFetch(ticker);
-        const responseData = prepareCachedStockResponseData(ticker, stock.data || {});
+        const needsFastHydration =
+          isCoreIncomplete ||
+          !hasUsableInterimHistory(stock.data || {});
+        const hydrated = needsFastHydration
+          ? await getHydratedStockDataForFirstResponse(
+              ticker,
+              stock.data || {},
+              STOCK_FAST_CHART_HYDRATION_WAIT_MS
+            )
+          : { stock, data: stock.data || {} };
+        const responseData = prepareCachedStockResponseData(ticker, hydrated.data || stock.data || {});
 
         return res.json({
           ticker: stock.ticker,
@@ -11502,7 +11577,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           ...responseData,
           refreshing: isOutdated || isCoreIncomplete,
           error: getStockResponseError(responseData, stock.error),
-          updatedAt: stock.updatedAt
+          updatedAt: hydrated.stock?.updatedAt || stock.updatedAt
         });
       }
     }
