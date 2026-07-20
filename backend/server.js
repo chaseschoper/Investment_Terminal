@@ -9395,7 +9395,7 @@ function startStockFetch(ticker) {
   coreFastHydration
     .finally(() => {
       activeStockFetches.delete(ticker);
-      setTimeout(() => startFullStockRefresh(ticker), 2000);
+      setTimeout(() => startFullStockRefresh(ticker), 45000);
     });
 }
 
@@ -9403,7 +9403,21 @@ function startFullStockRefresh(ticker) {
   if (activeFullStockFetches.has(ticker)) return;
   activeFullStockFetches.add(ticker);
 
-  fetchStockData(ticker)
+  Promise.resolve()
+    .then(async () => {
+      const stock = await Stock.findOne({ ticker }).lean().catch(() => null);
+      const data = stock?.data || {};
+      const hasFastOverviewData =
+        data.financialHistoryVersion === FINANCIAL_HISTORY_VERSION &&
+        data.valuationMetricsVersion === VALUATION_METRICS_VERSION &&
+        data.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION &&
+        data.estimateDataVersion === STOCK_ESTIMATE_VERSION &&
+        hasCompleteChartHistory(stock) &&
+        hasUsableInterimHistory(data);
+
+      if (hasFastOverviewData) return null;
+      return fetchStockData(ticker);
+    })
     .catch(async (err) => {
       console.error(`Stock fetch failed for ${ticker}:`, err.message);
       await markStockFetchFailed(ticker, err);
@@ -10622,30 +10636,7 @@ app.get("/api/market-heatmap", async (req, res) => {
       }
     });
 
-    const seededSymbols = new Set(
-      seededResults
-        .filter((company) => toNumberOrNull(company.price) !== null && toNumberOrNull(company.percentChange) !== null)
-        .map((company) => company.symbol)
-    );
-    const queue = heatmapCompanies.filter((company) => !seededSymbols.has(company.symbol));
-    const results = [];
-    const workerCount = Math.min(8, queue.length);
-
-    await resolveWithin(Promise.all(Array.from({ length: workerCount }, async () => {
-      while (queue.length) {
-        const company = queue.shift();
-        const quote = await resolveWithin(fetchSimilarCompanyQuote(company.symbol), 2200, {}).catch(() => ({}));
-        results.push(normalizeHeatmapCompanyQuote(company, {
-          price: toNumberOrNull(quote.price),
-          marketCap: toNumberOrNull(quote.marketCap),
-          change: toNumberOrNull(quote.change),
-          percentChange: toNumberOrNull(quote.percentChange),
-          previousClose: toNumberOrNull(quote.previousClose)
-        }));
-      }
-    })), 9000, null);
-
-    const bySymbol = new Map([...seededResults, ...results].map((company) => [company.symbol, company]));
+    const bySymbol = new Map(seededResults.map((company) => [company.symbol, company]));
     const companies = heatmapCompanies.map((company) => (
       bySymbol.get(company.symbol) || normalizeHeatmapCompanyQuote(company, {
         price: toNumberOrNull(livePriceCache.get(company.symbol)?.price),
@@ -10690,8 +10681,8 @@ app.get("/api/market-heatmap", async (req, res) => {
   }
 
   const [data, slowCachedFallbackData] = await Promise.all([
-    resolveWithin(startHeatmapRefresh(), 2600, null),
-    resolveWithin(buildFromFallbackCache(), 1300, null)
+    resolveWithin(startHeatmapRefresh(), 1200, null),
+    resolveWithin(buildFromFallbackCache(), 700, null)
   ]);
   const countCompleteQuotes = (payload) =>
     (payload?.companies || []).filter(hasCompleteHeatmapQuote).length;
