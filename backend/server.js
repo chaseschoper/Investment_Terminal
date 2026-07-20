@@ -95,7 +95,7 @@ const MR_RALLY_WEB_CONTEXT_TIMEOUT_MS = 6000;
 const MR_RALLY_COMPANY_LOOKUP_TIMEOUT_MS = 2500;
 const STOCK_PROVIDER_TIMEOUT_MS = 8000;
 const STOCK_SLOW_PROVIDER_TIMEOUT_MS = 10000;
-const STOCK_FAST_CHART_HYDRATION_WAIT_MS = 5000;
+const STOCK_FAST_CHART_HYDRATION_WAIT_MS = 1200;
 const STOCK_INITIAL_SEC_TIMEOUT_MS = 9000;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
@@ -9323,6 +9323,7 @@ function startStockFetch(ticker) {
 }
 
 async function getHydratedStockDataForFirstResponse(ticker, fallbackData = {}, waitMs = 2200) {
+  const deadline = Date.now() + waitMs;
   const hydration = activeStockFastHydrations.get(ticker);
   if (hydration) {
     await resolveWithin(hydration, waitMs, null);
@@ -9335,7 +9336,6 @@ async function getHydratedStockDataForFirstResponse(ticker, fallbackData = {}, w
     !hasUsableInterimHistory(fallbackData) &&
     !hasUsableInterimHistory(hydratedData)
   ) {
-    const deadline = Date.now() + waitMs;
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 180));
       hydratedStock = await Stock.findOne({ ticker }).lean().catch(() => null);

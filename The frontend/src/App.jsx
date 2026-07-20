@@ -3012,13 +3012,13 @@ useEffect(() => {
         !isNumber(stableResponse.totalCash) &&
         !isNumber(stableResponse.totalDebt);
       const shouldContinueStockWarmup =
-        response.data.refreshing ||
         needsNewStockWarmup ||
         needsFreshHistory ||
         needsInterimHistory ||
         needsQuarterlyHistory ||
         needsExtendedHistory ||
         needsMoreMetricCards ||
+        needsMarketActivity ||
         needsAnnualEstimates ||
         needsQuarterEstimate ||
         needsBalanceSheetMetrics;
