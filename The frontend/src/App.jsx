@@ -826,6 +826,19 @@ const buildAnnualGrowthRows = (rows, key) => {
   });
 };
 
+const isAnnualChartRow = (row) =>
+  row?.year && !row?.isInterim && !row?.isCurrent;
+
+const isQuarterlyChartRow = (row) =>
+  row?.year && row?.isInterim && !row?.isCurrent;
+
+const filterChartRowsByMode = (rows = [], mode = "annual") =>
+  (rows || []).filter((row) =>
+    mode === "quarterly"
+      ? isQuarterlyChartRow(row)
+      : isAnnualChartRow(row)
+  );
+
 const buildChartRows = (rows, key) =>
   (rows || [])
     .map((item) => ({
@@ -1065,8 +1078,7 @@ const shouldKeepWarmingNewStock = (stock = {}) =>
   !hasAnyOverviewMetricData(stock) ||
   overviewMetricCount(stock) < 8 ||
   !hasAnnualEstimateData(stock) ||
-  !hasNextQuarterData(stock) ||
-  !hasMarketActivityData(stock);
+  !hasNextQuarterData(stock);
 
 const stabilizeRefreshingStockData = (previous, incoming) => {
   if (
@@ -1298,6 +1310,7 @@ const API_URL =
   "https://investment-terminal-jtng.onrender.com";
 const FINANCIAL_HISTORY_VERSION = 152;
 const STOCK_ESTIMATE_VERSION = 18;
+const INTERIM_HISTORY_VERSION = 3;
 
 const getDefaultCompanyLogoUrl = (symbol) => {
   const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
@@ -1561,13 +1574,23 @@ function EpsBeatMissChart({ rows = [] }) {
   );
 }
 
-function HistoricalLineChart({ title, data, dataKey, color, formatter, valueLabel, loading = false }) {
+function HistoricalLineChart({
+  title,
+  data,
+  dataKey,
+  color,
+  formatter,
+  valueLabel,
+  loading = false,
+  mode = "annual"
+}) {
+  const periodLabel = mode === "quarterly" ? "quarterly" : "annual";
   return (
     <section className="historical-chart-panel">
       <h3>{title}</h3>
       <div className="historical-chart-canvas">
         {loading ? (
-          <StockDataLoading label="Loading annual history..." />
+          <StockDataLoading label={`Loading ${periodLabel} history...`} />
         ) : data.length ? (
           <ResponsiveContainer width="100%" height={300}>
             <LineChart
@@ -1595,7 +1618,7 @@ function HistoricalLineChart({ title, data, dataKey, color, formatter, valueLabe
             </LineChart>
           </ResponsiveContainer>
         ) : (
-          <div className="historical-chart-empty">No annual history available.</div>
+          <div className="historical-chart-empty">No {periodLabel} history available.</div>
         )}
       </div>
     </section>
@@ -1917,6 +1940,9 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
 
   const [stockChartRange, setStockChartRange] =
     useState("1D");
+
+  const [financialChartMode, setFinancialChartMode] =
+    useState("annual");
 
   const [stockChartData, setStockChartData] =
     useState([]);
@@ -3385,7 +3411,7 @@ const financialHistory =
 const revenueHistorySource =
   buildChartRows(stockData?.revenueHistory || [], "revenue");
 
-const revenueHistory =
+const allRevenueHistory =
   mergeChartRows(
     [
       ...buildChartRows(financialHistory, "revenue"),
@@ -3393,18 +3419,21 @@ const revenueHistory =
     ],
     "revenue"
   );
+const revenueHistory = filterChartRowsByMode(allRevenueHistory, financialChartMode);
 
-const earningsHistory =
+const allEarningsHistory =
   buildChartRows(financialHistory, "earnings");
+const earningsHistory = filterChartRowsByMode(allEarningsHistory, financialChartMode);
 
-const epsHistory =
+const allEpsHistory =
   buildChartRows(financialHistory, "eps");
+const epsHistory = filterChartRowsByMode(allEpsHistory, financialChartMode);
 const epsBeatMissRows = Array.isArray(stockData?.epsBeatMiss)
   ? stockData.epsBeatMiss
   : [];
-const revenueGrowthRows = buildAnnualGrowthRows(revenueHistory, "revenue");
-const earningsGrowthRows = buildAnnualGrowthRows(earningsHistory, "earnings");
-const epsGrowthRows = buildAnnualGrowthRows(epsHistory, "eps");
+const revenueGrowthRows = buildAnnualGrowthRows(allRevenueHistory, "revenue");
+const earningsGrowthRows = buildAnnualGrowthRows(allEarningsHistory, "earnings");
+const epsGrowthRows = buildAnnualGrowthRows(allEpsHistory, "eps");
 const currentChartYear = new Date().getFullYear();
 const currentPoint = (key, value, transform = (item) => item) =>
   isNumber(value)
@@ -3420,14 +3449,14 @@ const chartRowsWithCurrentFallback = (rows, key, value, transform) =>
   rows.length ? rows : currentPoint(key, value, transform);
 const operatingCashflowHistory =
   chartRowsWithCurrentFallback(
-    buildChartRows(financialHistory, "operatingCashflow"),
+    filterChartRowsByMode(buildChartRows(financialHistory, "operatingCashflow"), financialChartMode),
     "operatingCashflow",
     stockData?.operatingCashflow,
     (value) => value / 1e9
   );
 const freeCashflowHistory =
   chartRowsWithCurrentFallback(
-    buildChartRows(financialHistory, "freeCashflow"),
+    filterChartRowsByMode(buildChartRows(financialHistory, "freeCashflow"), financialChartMode),
     "freeCashflow",
     stockData?.freeCashflow,
     (value) => value / 1e9
@@ -3457,7 +3486,7 @@ const latestOperatingCashflowFromChart = latestChartMetricDollars(
 );
 const sharesOutstandingHistory =
   chartRowsWithCurrentFallback(
-    buildChartRows(financialHistory, "sharesOutstanding"),
+    filterChartRowsByMode(buildChartRows(financialHistory, "sharesOutstanding"), financialChartMode),
     "sharesOutstanding",
     stockData?.sharesOutstanding
   );
@@ -3469,13 +3498,14 @@ const historicalPeHistoryBase = (stockData?.historicalPe || [])
     isNumber(row.pe)
   );
 const historicalPeHistory =
-  chartRowsWithCurrentFallback(historicalPeHistoryBase, "pe", stockData?.pe);
-const annualMarginHistory = (stockData?.marginHistory || [])
+  chartRowsWithCurrentFallback(filterChartRowsByMode(historicalPeHistoryBase, financialChartMode), "pe", stockData?.pe);
+const allMarginHistory = (stockData?.marginHistory || [])
   .map((row) => ({ ...row, period: row.period || String(row.year) }))
   .filter((row) =>
     row?.year &&
     (row.isInterim || row.year <= new Date().getFullYear())
   );
+const annualMarginHistory = filterChartRowsByMode(allMarginHistory, financialChartMode);
 const grossMarginHistory = chartRowsWithCurrentFallback(
   annualMarginHistory.filter((row) => isNumber(row.grossMargin)),
   "grossMargin",
@@ -3498,17 +3528,19 @@ const hasRealHistoryRows = (rows = []) =>
 const isHistoryRefreshPending =
   isStockLoading ||
   stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
+  stockData?.interimHistoryVersion !== INTERIM_HISTORY_VERSION ||
   (
     !stockData?.financialHistoryCheckedAt &&
     (
       stockData?.refreshing ||
-      stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION
+      stockData?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
+      stockData?.interimHistoryVersion !== INTERIM_HISTORY_VERSION
     )
   );
 const shouldShowCoreHistoryLoading = (rows = []) =>
-  (isHistoryRefreshPending || stockData?.refreshing) && !hasRealHistoryRows(rows);
+  isHistoryRefreshPending && !hasRealHistoryRows(rows);
 const shouldShowHistoryLoading = (rows = []) =>
-  (isHistoryRefreshPending || stockData?.refreshing) && !hasRealHistoryRows(rows);
+  isHistoryRefreshPending && !hasRealHistoryRows(rows);
 const readyHistoryRows = (rows = []) =>
   hasRealHistoryRows(rows) ? rows : [];
 
@@ -3732,7 +3764,9 @@ const areEstimatesRefreshing =
     !isNumber(nextYearEstimate?.eps)
   );
 const isNextQuarterRefreshing =
-  (isStockLoading || stockData?.refreshing || stockData?.estimateDataVersion !== STOCK_ESTIMATE_VERSION) &&
+  (isStockLoading ||
+    stockData?.estimateDataVersion !== STOCK_ESTIMATE_VERSION ||
+    !stockData?.quarterEstimateCheckedAt) &&
   !stockData?.quarterEstimateCheckedAt &&
   (
     !isNumber(nextQuarterEstimate?.revenue) ||
@@ -3750,6 +3784,14 @@ const hasUsableMetricSnapshot =
     isNumber(stockData?.priceToBook) ||
     isNumber(stockData?.priceToFreeCashflow) ||
     isNumber(stockData?.priceToOperatingCashflow) ||
+    isNumber(stockData?.totalCash) ||
+    isNumber(stockData?.totalDebt) ||
+    isNumber(stockData?.cashAndCashEquivalents) ||
+    isNumber(stockData?.netCash) ||
+    isNumber(stockData?.netCashPerShare) ||
+    isNumber(stockData?.equityBookValue) ||
+    isNumber(stockData?.bookValuePerShare) ||
+    isNumber(stockData?.workingCapital) ||
     isNumber(stockData?.revenueGrowth) ||
     isNumber(stockData?.earningsGrowth) ||
     isNumber(stockData?.grossMargins) ||
@@ -3771,12 +3813,14 @@ const stockValue = (value) =>
     ? "Loading..."
     : value;
 const metricValue = (value) =>
-  (areMetricsRefreshing || stockData?.refreshing) && (value === "N/A" || value === null || value === undefined)
+  areMetricsRefreshing && (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
     : stockValue(value);
+const isBalanceSheetMetricsRefreshing =
+  (isInitialStockLoad || isStockLoading || !stockData?.balanceSheetCheckedAt) &&
+  !stockData?.balanceSheetCheckedAt;
 const balanceSheetValue = (value) =>
-  (areMetricsRefreshing || stockData?.refreshing) &&
-  !stockData?.balanceSheetCheckedAt &&
+  (areMetricsRefreshing || isBalanceSheetMetricsRefreshing) &&
   (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
     : stockValue(value);
@@ -3791,9 +3835,12 @@ const nextQuarterValue = (value) =>
 const analystUpdateRows = stockData.analystUpdates || [];
 const institutionalHolderRows = stockData.institutionalHolders || [];
 const insiderMoveRows = stockData.insiderTransactions || [];
-const isAnalystUpdatesLoading = (isInitialStockLoad || stockData?.refreshing) && !analystUpdateRows.length;
-const isInstitutionalHoldersLoading = (isInitialStockLoad || stockData?.refreshing) && !institutionalHolderRows.length;
-const isInsiderMovesLoading = (isInitialStockLoad || stockData?.refreshing) && !insiderMoveRows.length;
+const isMarketActivityRefreshing =
+  (isInitialStockLoad || stockData?.refreshing) &&
+  !stockData?.marketActivityUpdatedAt;
+const isAnalystUpdatesLoading = isMarketActivityRefreshing && !analystUpdateRows.length;
+const isInstitutionalHoldersLoading = isMarketActivityRefreshing && !institutionalHolderRows.length;
+const isInsiderMovesLoading = isMarketActivityRefreshing && !insiderMoveRows.length;
 const selectedEarningsDay = (earnings?.days || []).find(
   (day) => day.date === selectedEarningsDate
 ) || { date: selectedEarningsDate, events: [] };
@@ -5431,9 +5478,28 @@ return (
 
 <div className="chart-section" id="financials">
 
-  <h2 className="section-title">
-    Revenue Chart
-  </h2>
+  <div className="chart-section-header">
+    <h2 className="section-title">
+      Revenue Chart
+    </h2>
+
+    <div className="chart-mode-toggle" aria-label="Financial chart period">
+      <button
+        className={`chart-mode-button ${financialChartMode === "annual" ? "active" : ""}`}
+        type="button"
+        onClick={() => setFinancialChartMode("annual")}
+      >
+        Annual
+      </button>
+      <button
+        className={`chart-mode-button ${financialChartMode === "quarterly" ? "active" : ""}`}
+        type="button"
+        onClick={() => setFinancialChartMode("quarterly")}
+      >
+        Quarterly
+      </button>
+    </div>
+  </div>
 
 <div className="chart-box">
 
@@ -5489,10 +5555,12 @@ return (
 
     </ResponsiveContainer>
 
-    <ChartGrowthStrip
-      label="Revenue growth"
-      rows={revenueGrowthRows}
-    />
+    {financialChartMode === "annual" && (
+      <ChartGrowthStrip
+        label="Revenue growth"
+        rows={revenueGrowthRows}
+      />
+    )}
   </>
 
   ) : (
@@ -5575,10 +5643,12 @@ return (
 
       </ResponsiveContainer>
 
-      <ChartGrowthStrip
-        label="Net income growth"
-        rows={earningsGrowthRows}
-      />
+      {financialChartMode === "annual" && (
+        <ChartGrowthStrip
+          label="Net income growth"
+          rows={earningsGrowthRows}
+        />
+      )}
       </>
 
     ) : (
@@ -5664,10 +5734,12 @@ return (
 
       <EpsBeatMissChart rows={epsBeatMissRows} />
 
-      <ChartGrowthStrip
-        label="EPS growth"
-        rows={epsGrowthRows}
-      />
+      {financialChartMode === "annual" && (
+        <ChartGrowthStrip
+          label="EPS growth"
+          rows={epsGrowthRows}
+        />
+      )}
       </>
 
     ) : (
@@ -5696,6 +5768,7 @@ return (
     formatter={(value) => `${Number(value).toFixed(1)}x`}
     valueLabel="P/E"
     loading={shouldShowHistoryLoading(historicalPeHistory)}
+    mode={financialChartMode}
   />
   <HistoricalLineChart
     title={stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin History"}
@@ -5705,6 +5778,7 @@ return (
     formatter={(value) => `${Number(value).toFixed(1)}%`}
     valueLabel={stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin"}
     loading={shouldShowHistoryLoading(grossMarginHistory)}
+    mode={financialChartMode}
   />
   <HistoricalLineChart
     title={stockData.isFinancialCompany ? "Pre-Tax Margin History" : "Operating Margin History"}
@@ -5714,6 +5788,7 @@ return (
     formatter={(value) => `${Number(value).toFixed(1)}%`}
     valueLabel={stockData.isFinancialCompany ? "Pre-Tax Margin" : "Operating Margin"}
     loading={shouldShowHistoryLoading(operatingMarginHistory)}
+    mode={financialChartMode}
   />
   <HistoricalLineChart
     title="Profit Margin History"
@@ -5723,6 +5798,7 @@ return (
     formatter={(value) => `${Number(value).toFixed(1)}%`}
     valueLabel="Profit Margin"
     loading={shouldShowHistoryLoading(profitMarginHistory)}
+    mode={financialChartMode}
   />
   <HistoricalLineChart
     title="Operating Cash Flow History"
@@ -5732,6 +5808,7 @@ return (
     formatter={formatChartBillions}
     valueLabel="Operating Cash Flow"
     loading={shouldShowHistoryLoading(operatingCashflowHistory)}
+    mode={financialChartMode}
   />
   <HistoricalLineChart
     title="Free Cash Flow History"
@@ -5741,6 +5818,7 @@ return (
     formatter={formatChartBillions}
     valueLabel="Free Cash Flow"
     loading={shouldShowHistoryLoading(freeCashflowHistory)}
+    mode={financialChartMode}
   />
   <HistoricalLineChart
     title="Shares Outstanding History"
@@ -5750,6 +5828,7 @@ return (
     formatter={formatSharesMillions}
     valueLabel="Shares"
     loading={shouldShowHistoryLoading(sharesOutstandingHistory)}
+    mode={financialChartMode}
   />
 </div>
 

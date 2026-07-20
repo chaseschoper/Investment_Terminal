@@ -1797,12 +1797,25 @@ body {
   margin-top: 40px;
 }
 
+.chart-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
 .section-title {
   display: flex;
   align-items: center;
   gap: 14px;
   font-size: 26px;
   margin-bottom: 18px;
+}
+
+.chart-section-header .section-title {
+  margin-bottom: 0;
 }
 
 .section-title::after {
@@ -1812,6 +1825,33 @@ body {
   border-radius: 999px;
   background: linear-gradient(90deg, #14b8a6 0%, #38bdf8 52%, #2563eb 100%);
   opacity: 0.72;
+}
+
+.chart-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px;
+  border: 1px solid rgba(56, 189, 248, 0.32);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.82);
+  box-shadow: 0 12px 28px rgba(2, 6, 23, 0.24);
+}
+
+.chart-mode-button {
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 14px;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.chart-mode-button.active {
+  background: linear-gradient(135deg, #0f766e, #2563eb);
+  color: #ffffff;
 }
 
 .chart-box {

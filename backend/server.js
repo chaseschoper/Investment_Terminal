@@ -61,7 +61,7 @@ const fxRateCache = new Map();
 const alphaVantageFundamentalCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 152;
 const STOCK_ESTIMATE_VERSION = 18;
-const INTERIM_HISTORY_VERSION = 2;
+const INTERIM_HISTORY_VERSION = 3;
 const BALANCE_SHEET_METRICS_VERSION = 9;
 const VALUATION_METRICS_VERSION = 2;
 const EARNINGS_CALL_VERSION = 18;
@@ -3503,8 +3503,29 @@ function keepLatestInterimRowPerMissingAnnualYear(rows = []) {
   });
 }
 
+function removeSupersededYtdInterimRows(rows = []) {
+  const trueQuarterKeys = new Set(
+    (rows || [])
+      .filter((row) => row?.isInterim && !/ytd/i.test(String(row.period || "")))
+      .map((row) => {
+        const match = String(row.period || "").match(/Q([1-4])/i);
+        return row?.year && match ? `${row.year}:Q${match[1]}` : null;
+      })
+      .filter(Boolean)
+  );
+
+  if (!trueQuarterKeys.size) return rows;
+
+  return (rows || []).filter((row) => {
+    if (!row?.isInterim || !/ytd/i.test(String(row.period || ""))) return true;
+    return false;
+  });
+}
+
 function cleanFinancialHistoryRows(rows = []) {
-  return keepLatestInterimRowPerMissingAnnualYear(removeDuplicateInterimAnnualRows(rows));
+  return keepLatestInterimRowPerMissingAnnualYear(
+    removeSupersededYtdInterimRows(removeDuplicateInterimAnnualRows(rows))
+  );
 }
 
 function limitHistoricalFinancialRows(rows, limit = 7) {
@@ -3527,7 +3548,7 @@ function limitHistoricalFinancialRows(rows, limit = 7) {
     .flatMap(([, rowsForYear]) =>
       rowsForYear
         .sort((a, b) => String(a.period || "").localeCompare(String(b.period || "")))
-        .slice(-3)
+        .slice(-4)
     );
   const mergedRows = [...annualRows, ...interimRows].sort((a, b) => {
     const yearDiff = Number(a.year) - Number(b.year);
@@ -3677,12 +3698,6 @@ function removeStaleModeledFallbackRows(rows = []) {
 }
 
 function removeDuplicateInterimAnnualRows(rows) {
-  const annualRowsByYear = new Map();
-  (rows || [])
-    .filter((row) => row?.year && !row?.isInterim)
-    .forEach((row) => {
-      annualRowsByYear.set(Number(row.year), row);
-    });
   const annualYears = new Set(
     (rows || [])
       .filter((row) => row?.year && !row?.isInterim)
@@ -3701,11 +3716,9 @@ function removeDuplicateInterimAnnualRows(rows) {
     if (!row?.year || !duplicateInterimYears.has(Number(row.year))) return true;
 
     const source = String(row.source || "");
-    const annualSource = String(annualRowsByYear.get(Number(row.year))?.source || "");
-
     if (row.isInterim) {
       if (/current metric fallback|modeled fallback/i.test(source)) return false;
-      return /current metric fallback|modeled fallback/i.test(annualSource);
+      return true;
     }
 
     return true;
@@ -4785,7 +4798,7 @@ async function prepareStockResponseData(ticker, data = {}, options = {}) {
       ? resolveWithin(fetchStockAnalysisValuationMetrics(ticker), options.fast ? 900 : 1200, {})
       : Promise.resolve({}),
     needsBalanceSheetMetrics
-      ? resolveWithin(fetchLatestBalanceSheetMetrics(ticker, { fast: true }), options.fast ? 1100 : 1600, {})
+      ? resolveWithin(fetchLatestBalanceSheetMetrics(ticker, { fast: true }), options.fast ? 650 : 1600, {})
       : Promise.resolve({})
   ]);
 
@@ -4820,11 +4833,7 @@ async function prepareStockResponseData(ticker, data = {}, options = {}) {
   }
 
   if (needsBalanceSheetMetrics) {
-    const balanceCheckedAt = balanceSheetMetrics.balanceSheetCheckedAt || new Date().toISOString();
-    const balancePatch = {
-      balanceSheetCheckedAt: balanceCheckedAt,
-      balanceSheetMetricsVersion: BALANCE_SHEET_METRICS_VERSION
-    };
+    const balancePatch = {};
     const balanceFields = [
       "totalCash",
       "totalDebt",
@@ -4839,22 +4848,28 @@ async function prepareStockResponseData(ticker, data = {}, options = {}) {
       const value = toNumberOrNull(balanceSheetMetrics[field]);
       if (value !== null) balancePatch[field] = value;
     });
-    if (balanceSheetMetrics.balanceSheetAsOf) balancePatch.balanceSheetAsOf = balanceSheetMetrics.balanceSheetAsOf;
-    if (balanceSheetMetrics.balanceSheetSource) balancePatch.balanceSheetSource = balanceSheetMetrics.balanceSheetSource;
-    baseData = {
-      ...baseData,
-      ...balancePatch
-    };
-    Stock.findOneAndUpdate(
-      { ticker },
-      {
-        $set: Object.fromEntries(
-          Object.entries(balancePatch).map(([key, value]) => [`data.${key}`, value])
-        )
-      }
-    ).catch((err) => {
-      console.log("Fast balance response cache skipped:", ticker, err.message);
-    });
+    const hasBalancePatchValue = balanceFields.some((field) => toNumberOrNull(balancePatch[field]) !== null);
+    if (hasBalancePatchValue || !options.fast) {
+      const balanceCheckedAt = balanceSheetMetrics.balanceSheetCheckedAt || new Date().toISOString();
+      balancePatch.balanceSheetCheckedAt = balanceCheckedAt;
+      balancePatch.balanceSheetMetricsVersion = BALANCE_SHEET_METRICS_VERSION;
+      if (balanceSheetMetrics.balanceSheetAsOf) balancePatch.balanceSheetAsOf = balanceSheetMetrics.balanceSheetAsOf;
+      if (balanceSheetMetrics.balanceSheetSource) balancePatch.balanceSheetSource = balanceSheetMetrics.balanceSheetSource;
+      baseData = {
+        ...baseData,
+        ...balancePatch
+      };
+      Stock.findOneAndUpdate(
+        { ticker },
+        {
+          $set: Object.fromEntries(
+            Object.entries(balancePatch).map(([key, value]) => [`data.${key}`, value])
+          )
+        }
+      ).catch((err) => {
+        console.log("Fast balance response cache skipped:", ticker, err.message);
+      });
+    }
   }
   const repairedData = options.fast
     ? baseData
@@ -5241,7 +5256,7 @@ async function fetchFmpQuarterlyFinancialHistory(ticker) {
         row.operatingCashflow !== null ||
         row.freeCashflow !== null
       )
-      .slice(-3);
+      .slice(-28);
   } catch (err) {
     setFmpCooldown(err, "quarterly financials", ticker);
     console.log("FMP quarterly financials skipped:", ticker, err.response?.status || err.message);
@@ -5584,7 +5599,6 @@ async function fetchStockAnalysisIncomeStatementHistory(ticker) {
     };
     const quarterOperatingCashflowValues = quarterCashValuesFor("Operating Cash Flow");
     const quarterFreeCashflowValues = quarterCashValuesFor("Free Cash Flow");
-    const runningByFiscalYear = new Map();
     const quarterlyRows = quarterHeaders
       .map((header, index) => ({
         ...header,
@@ -5596,40 +5610,26 @@ async function fetchStockAnalysisIncomeStatementHistory(ticker) {
         operatingCashflow: quarterOperatingCashflowValues[index],
         freeCashflow: quarterFreeCashflowValues[index]
       }))
-      .filter((row) => row.year && row.quarter && row.quarter < 4)
+      .filter((row) => row.year && row.quarter)
       .sort((a, b) => {
         const yearDiff = a.year - b.year;
         if (yearDiff !== 0) return yearDiff;
         return a.quarter - b.quarter;
       })
-      .map((row) => {
-        const previous = runningByFiscalYear.get(row.year) || {};
-        const add = (field, value) => {
-          const number = toNumberOrNull(value);
-          return number !== null ? (previous[field] || 0) + number / 1000 : previous[field] ?? null;
-        };
-        const next = {
-          revenue: add("revenue", row.revenue),
-          earnings: add("earnings", row.earnings),
-          grossProfit: add("grossProfit", row.grossProfit),
-          operatingIncome: add("operatingIncome", row.operatingIncome),
-          operatingCashflow: add("operatingCashflow", row.operatingCashflow),
-          freeCashflow: add("freeCashflow", row.freeCashflow),
-          eps: toNumberOrNull(row.eps) !== null
-            ? (previous.eps || 0) + toNumberOrNull(row.eps)
-            : previous.eps ?? null
-        };
-        runningByFiscalYear.set(row.year, next);
-
-        return {
-          year: row.year,
-          period: `${row.year} Q${row.quarter} YTD`,
-          isInterim: true,
-          ...next,
-          sourceCurrency: statementCurrency,
-          source: "StockAnalysis quarterly financials"
-        };
-      })
+      .map((row) => ({
+        year: row.year,
+        period: `${row.year} Q${row.quarter}`,
+        isInterim: true,
+        revenue: toNumberOrNull(row.revenue) !== null ? toNumberOrNull(row.revenue) / 1000 : null,
+        earnings: toNumberOrNull(row.earnings) !== null ? toNumberOrNull(row.earnings) / 1000 : null,
+        grossProfit: toNumberOrNull(row.grossProfit) !== null ? toNumberOrNull(row.grossProfit) / 1000 : null,
+        operatingIncome: toNumberOrNull(row.operatingIncome) !== null ? toNumberOrNull(row.operatingIncome) / 1000 : null,
+        operatingCashflow: toNumberOrNull(row.operatingCashflow) !== null ? toNumberOrNull(row.operatingCashflow) / 1000 : null,
+        freeCashflow: toNumberOrNull(row.freeCashflow) !== null ? toNumberOrNull(row.freeCashflow) / 1000 : null,
+        eps: toNumberOrNull(row.eps),
+        sourceCurrency: statementCurrency,
+        source: "StockAnalysis quarterly financials"
+      }))
       .filter((row) =>
         row.revenue !== null ||
         row.earnings !== null ||
@@ -5638,8 +5638,7 @@ async function fetchStockAnalysisIncomeStatementHistory(ticker) {
         row.operatingIncome !== null ||
         row.operatingCashflow !== null ||
         row.freeCashflow !== null
-      )
-      .slice(-3);
+      );
 
     return [...annualRows, ...quarterlyRows].sort((a, b) => {
       const yearDiff = Number(a.year) - Number(b.year);
@@ -9158,7 +9157,7 @@ function startStockFetch(ticker) {
 
   activeStockFetches.add(ticker);
 
-  const fastHydration = Promise.allSettled([
+  const coreFastHydration = Promise.allSettled([
     publishFastFinancialHistorySnapshot(ticker).catch((err) => {
       console.log("Fast financial history snapshot skipped:", ticker, err.message);
     }),
@@ -9176,18 +9175,22 @@ function startStockFetch(ticker) {
     }),
     publishBalanceSheetSnapshot(ticker).catch((err) => {
       console.log("Balance sheet snapshot skipped:", ticker, err.message);
-    }),
+    })
+  ]);
+  activeStockFastHydrations.set(ticker, coreFastHydration);
+
+  Promise.allSettled([
+    coreFastHydration,
     publishMarketActivitySnapshot(ticker).catch((err) => {
       console.log("Market activity snapshot skipped:", ticker, err.message);
     })
   ]).finally(() => {
     setTimeout(() => {
-      if (activeStockFastHydrations.get(ticker) === fastHydration) {
+      if (activeStockFastHydrations.get(ticker) === coreFastHydration) {
         activeStockFastHydrations.delete(ticker);
       }
     }, 15000);
   });
-  activeStockFastHydrations.set(ticker, fastHydration);
 
   fetchStockData(ticker)
     .catch(async (err) => {
