@@ -1669,7 +1669,6 @@ function App() {
   const latestStockRequest = useRef(0);
   const stockRetryTimerRef = useRef(null);
   const stockMemoryCacheRef = useRef(new Map());
-  const supplementalRefreshAttemptsRef = useRef(new Map());
   const stockChartMemoryCacheRef = useRef(new Map());
   const latestComparisonRequest = useRef(0);
   const latestAiRequest = useRef(0);
@@ -2605,7 +2604,6 @@ useEffect(() => {
     }
     const requestId = ++latestStockRequest.current;
     const cachedStock = stockMemoryCacheRef.current.get(ticker) || null;
-    supplementalRefreshAttemptsRef.current.clear();
     latestAiRequest.current += 1;
     latestEarningsCallRequest.current += 1;
     setStockData(cachedStock);
@@ -3096,102 +3094,6 @@ useEffect(() => {
 
     }
   };
-
-  useEffect(() => {
-    if (!stockData?.symbol && !stockData?.ticker) return undefined;
-    const symbol = String(stockData.symbol || stockData.ticker || ticker || "")
-      .trim()
-      .toUpperCase();
-    if (!symbol || symbol !== String(ticker || "").trim().toUpperCase()) return undefined;
-
-    const refreshGroups = [];
-    if (
-      stockData.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
-      stockData.interimHistoryVersion !== INTERIM_HISTORY_VERSION ||
-      countInterimRows(stockData.revenueData || []) < MIN_USABLE_INTERIM_HISTORY_ROWS ||
-      !hasExtendedHistoricalChartData(stockData)
-    ) {
-      refreshGroups.push(["history"]);
-    }
-
-    const metricParts = [];
-    if (
-      stockData.valuationMetricsVersion !== VALUATION_METRICS_VERSION ||
-      overviewMetricCount(stockData) < 24
-    ) {
-      metricParts.push("metrics");
-    }
-    if (
-      stockData.balanceSheetMetricsVersion !== BALANCE_SHEET_METRICS_VERSION ||
-      !stockData.balanceSheetCheckedAt
-    ) {
-      metricParts.push("balance");
-    }
-    if (metricParts.length) refreshGroups.push(metricParts);
-
-    if (
-      stockData.estimateDataVersion !== STOCK_ESTIMATE_VERSION ||
-      !hasNextQuarterData(stockData) ||
-      !hasAnnualEstimateData(stockData)
-    ) {
-      refreshGroups.push(["estimates"]);
-    }
-    if (!hasMarketActivityLoaded(stockData)) {
-      refreshGroups.push(["activity"]);
-    }
-
-    if (!refreshGroups.length) return undefined;
-
-    let cancelled = false;
-    const timers = [];
-
-    refreshGroups.forEach((group) => {
-      const groupParts = [...group].sort();
-      const refreshKey = `${symbol}:${groupParts.join(",")}`;
-      const attempts = supplementalRefreshAttemptsRef.current.get(refreshKey) || 0;
-      if (attempts >= 4) return;
-      supplementalRefreshAttemptsRef.current.set(refreshKey, attempts + 1);
-
-      const timer = window.setTimeout(async () => {
-        try {
-          const response = await axios.get(
-            `${API_URL}/api/stock/${symbol}/overview-refresh`,
-            {
-              params: { parts: groupParts.join(",") },
-              timeout: groupParts.includes("activity") ? 9000 : 6500
-            }
-          );
-          if (cancelled) return;
-
-          setStockData((previous) => {
-            if (
-              !previous ||
-              String(previous.symbol || previous.ticker || "").toUpperCase() !== symbol
-            ) {
-              return previous;
-            }
-
-            const merged = stabilizeRefreshingStockData(previous, {
-              ...response.data,
-              refreshing: true
-            });
-            stockMemoryCacheRef.current.set(symbol, merged);
-            return merged;
-          });
-        } catch (error) {
-          if (!cancelled) {
-            console.error("Overview section refresh failed", error);
-          }
-        }
-      }, attempts === 0 ? 120 : 650);
-      timers.push(timer);
-    });
-
-    return () => {
-      cancelled = true;
-      timers.forEach((timer) => window.clearTimeout(timer));
-    };
-  }, [ticker, stockData]);
 
 useEffect(() => {
 
@@ -4073,8 +3975,8 @@ const metricValue = (value) =>
     ? "Loading..."
     : stockValue(value);
 const isBalanceSheetMetricsRefreshing =
-  (isInitialStockLoad || isStockLoading || !stockData?.balanceSheetCheckedAt) &&
-  !stockData?.balanceSheetCheckedAt;
+  isInitialStockLoad ||
+  (isStockLoading && !hasUsableMetricSnapshot && !stockData?.balanceSheetCheckedAt);
 const balanceSheetValue = (value) =>
   (areMetricsRefreshing || isBalanceSheetMetricsRefreshing) &&
   (value === "N/A" || value === null || value === undefined)
