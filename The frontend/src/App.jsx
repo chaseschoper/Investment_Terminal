@@ -920,7 +920,6 @@ const CHART_STABLE_FIELDS = [
   "revenueHistory",
   "marginHistory",
   "historicalPe",
-  "analystEstimates",
   "totalCash",
   "totalDebt",
   "cashAndCashEquivalents",
@@ -1345,9 +1344,11 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 152;
+const FINANCIAL_HISTORY_VERSION = 153;
 const STOCK_ESTIMATE_VERSION = 18;
 const INTERIM_HISTORY_VERSION = 5;
+const VALUATION_METRICS_VERSION = 2;
+const BALANCE_SHEET_METRICS_VERSION = 9;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const MIN_DISPLAY_INTERIM_HISTORY_ROWS = 4;
 
@@ -3000,14 +3001,37 @@ useEffect(() => {
       const needsExtendedHistory =
         attempt < 40 &&
         !hasExtendedHistoricalChartData(stableResponse);
-      const needsMoreMetricCards = false;
+      const hasCurrentValuationMetrics =
+        stableResponse.valuationMetricsVersion === VALUATION_METRICS_VERSION;
+      const hasCurrentBalanceSheetMetrics =
+        stableResponse.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION;
+      const needsMoreMetricCards =
+        attempt < 35 &&
+        (
+          !hasCurrentValuationMetrics ||
+          overviewMetricCount(stableResponse) < 24
+        );
       const needsNewStockWarmup =
         (!hadCachedStock || attempt < 30) &&
         shouldKeepWarmingNewStock(stableResponse);
-      const needsMarketActivity = false;
-      const needsAnnualEstimates = false;
-      const needsQuarterEstimate = false;
-      const needsBalanceSheetMetrics = false;
+      const needsMarketActivity =
+        attempt < 25 &&
+        !hasMarketActivityLoaded(stableResponse);
+      const needsAnnualEstimates =
+        attempt < 30 &&
+        (
+          stableResponse.estimateDataVersion !== STOCK_ESTIMATE_VERSION ||
+          !hasAnnualEstimateData(stableResponse)
+        );
+      const needsQuarterEstimate =
+        attempt < 30 &&
+        !hasNextQuarterData(stableResponse);
+      const needsBalanceSheetMetrics =
+        attempt < 35 &&
+        (
+          !hasCurrentBalanceSheetMetrics ||
+          !stableResponse.balanceSheetCheckedAt
+        );
       const shouldContinueStockWarmup =
         needsNewStockWarmup ||
         needsFreshHistory ||

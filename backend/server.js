@@ -9355,10 +9355,11 @@ function startStockFetch(ticker) {
 
   activeStockFetches.add(ticker);
 
+  const chartFastHydration = publishFastFinancialHistorySnapshot(ticker).catch((err) => {
+    console.log("Fast financial history snapshot skipped:", ticker, err.message);
+  });
   const coreFastHydration = Promise.allSettled([
-    publishFastFinancialHistorySnapshot(ticker).catch((err) => {
-      console.log("Fast financial history snapshot skipped:", ticker, err.message);
-    }),
+    chartFastHydration,
     publishFastStockSnapshot(ticker).catch((err) => {
       console.log("Fast stock snapshot skipped:", ticker, err.message);
     }),
@@ -9375,7 +9376,7 @@ function startStockFetch(ticker) {
       console.log("Balance sheet snapshot skipped:", ticker, err.message);
     })
   ]);
-  activeStockFastHydrations.set(ticker, coreFastHydration);
+  activeStockFastHydrations.set(ticker, chartFastHydration);
 
   Promise.allSettled([
     coreFastHydration,
@@ -9384,13 +9385,15 @@ function startStockFetch(ticker) {
     })
   ]).finally(() => {
     setTimeout(() => {
-      if (activeStockFastHydrations.get(ticker) === coreFastHydration) {
+      if (activeStockFastHydrations.get(ticker) === chartFastHydration) {
         activeStockFastHydrations.delete(ticker);
       }
     }, 15000);
   });
 
-  coreFastHydration
+  chartFastHydration
+    .catch(() => null)
+    .then(() => coreFastHydration)
     .finally(() => fetchStockData(ticker))
     .catch(async (err) => {
       console.error(`Stock fetch failed for ${ticker}:`, err.message);
