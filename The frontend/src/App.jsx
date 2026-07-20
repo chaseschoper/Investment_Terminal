@@ -1016,6 +1016,11 @@ const hasMarketActivityData = (stock = {}) =>
   (Array.isArray(stock.institutionalHolders) && stock.institutionalHolders.length > 0) ||
   (Array.isArray(stock.insiderTransactions) && stock.insiderTransactions.length > 0);
 
+const hasMarketActivityLoaded = (stock = {}) =>
+  Boolean(stock.analystUpdatesCheckedAt || (Array.isArray(stock.analystUpdates) && stock.analystUpdates.length)) &&
+  Boolean(stock.institutionalHoldersCheckedAt || (Array.isArray(stock.institutionalHolders) && stock.institutionalHolders.length)) &&
+  Boolean(stock.insiderTransactionsCheckedAt || (Array.isArray(stock.insiderTransactions) && stock.insiderTransactions.length));
+
 const hasAnyOverviewMetricData = (stock = {}) =>
   isNumber(stock.marketCap) ||
   isNumber(stock.pe) ||
@@ -3000,14 +3005,14 @@ useEffect(() => {
         attempt < 40 &&
         !hasExtendedHistoricalChartData(stableResponse);
       const needsMoreMetricCards =
-        response.data.refreshing &&
+        attempt < 28 &&
         overviewMetricCount(stableResponse) < 12;
       const needsNewStockWarmup =
         (!hadCachedStock || attempt < 30) &&
         shouldKeepWarmingNewStock(stableResponse);
-      const needsMarketActivity = response.data.refreshing && !hasMarketActivityData(stableResponse);
-      const needsAnnualEstimates = response.data.refreshing && !hasAnnualEstimateData(stableResponse);
-      const needsQuarterEstimate = response.data.refreshing && !hasNextQuarterData(stableResponse);
+      const needsMarketActivity = attempt < 28 && !hasMarketActivityLoaded(stableResponse);
+      const needsAnnualEstimates = attempt < 28 && !hasAnnualEstimateData(stableResponse);
+      const needsQuarterEstimate = attempt < 28 && !hasNextQuarterData(stableResponse);
       const needsBalanceSheetMetrics =
         !stableResponse.balanceSheetCheckedAt &&
         !isNumber(stableResponse.totalCash) &&
@@ -3975,12 +3980,18 @@ const nextQuarterValue = (value) =>
 const analystUpdateRows = stockData.analystUpdates || [];
 const institutionalHolderRows = stockData.institutionalHolders || [];
 const insiderMoveRows = stockData.insiderTransactions || [];
-const isMarketActivityRefreshing =
+const isAnalystUpdatesLoading =
   (isInitialStockLoad || stockData?.refreshing) &&
-  !stockData?.marketActivityUpdatedAt;
-const isAnalystUpdatesLoading = isMarketActivityRefreshing && !analystUpdateRows.length;
-const isInstitutionalHoldersLoading = isMarketActivityRefreshing && !institutionalHolderRows.length;
-const isInsiderMovesLoading = isMarketActivityRefreshing && !insiderMoveRows.length;
+  !stockData?.analystUpdatesCheckedAt &&
+  !analystUpdateRows.length;
+const isInstitutionalHoldersLoading =
+  (isInitialStockLoad || stockData?.refreshing) &&
+  !stockData?.institutionalHoldersCheckedAt &&
+  !institutionalHolderRows.length;
+const isInsiderMovesLoading =
+  (isInitialStockLoad || stockData?.refreshing) &&
+  !stockData?.insiderTransactionsCheckedAt &&
+  !insiderMoveRows.length;
 const selectedEarningsDay = (earnings?.days || []).find(
   (day) => day.date === selectedEarningsDate
 ) || { date: selectedEarningsDate, events: [] };

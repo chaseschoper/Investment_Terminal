@@ -7575,6 +7575,7 @@ async function publishMarketActivitySnapshot(ticker) {
   if (!stock) return;
   const publishRows = async (field, rowsPromise, timeoutMs) => {
     const rows = await resolveWithin(rowsPromise, timeoutMs, []);
+    const checkedAt = new Date().toISOString();
     if (!Array.isArray(rows) || !rows.length) return;
 
     await Stock.findOneAndUpdate(
@@ -7582,7 +7583,8 @@ async function publishMarketActivitySnapshot(ticker) {
       {
         $set: {
           [`data.${field}`]: rows,
-          "data.marketActivityUpdatedAt": new Date().toISOString()
+          [`data.${field}CheckedAt`]: checkedAt,
+          "data.marketActivityUpdatedAt": checkedAt
         }
       }
     );
@@ -7592,12 +7594,15 @@ async function publishMarketActivitySnapshot(ticker) {
     const $set = {};
     if (Array.isArray(data.analystUpdates) && data.analystUpdates.length) {
       $set["data.analystUpdates"] = data.analystUpdates;
+      $set["data.analystUpdatesCheckedAt"] = new Date().toISOString();
     }
     if (Array.isArray(data.institutionalHolders) && data.institutionalHolders.length) {
       $set["data.institutionalHolders"] = data.institutionalHolders;
+      $set["data.institutionalHoldersCheckedAt"] = new Date().toISOString();
     }
     if (Array.isArray(data.insiderTransactions) && data.insiderTransactions.length) {
       $set["data.insiderTransactions"] = data.insiderTransactions;
+      $set["data.insiderTransactionsCheckedAt"] = new Date().toISOString();
     }
     if (data.holderSummary && Object.keys(data.holderSummary).length) {
       $set["data.holderSummary"] = data.holderSummary;
@@ -7614,9 +7619,11 @@ async function publishMarketActivitySnapshot(ticker) {
     const $set = {};
     if (Array.isArray(data.analystUpdates) && data.analystUpdates.length) {
       $set["data.analystUpdates"] = data.analystUpdates;
+      $set["data.analystUpdatesCheckedAt"] = new Date().toISOString();
     }
     if (Array.isArray(data.institutionalHolders) && data.institutionalHolders.length) {
       $set["data.institutionalHolders"] = data.institutionalHolders;
+      $set["data.institutionalHoldersCheckedAt"] = new Date().toISOString();
     }
     if (!Object.keys($set).length) return;
     $set["data.marketActivityUpdatedAt"] = new Date().toISOString();
@@ -7633,7 +7640,14 @@ async function publishMarketActivitySnapshot(ticker) {
 
   await Stock.findOneAndUpdate(
     { ticker },
-    { $set: { "data.marketActivityUpdatedAt": new Date().toISOString() } }
+    {
+      $set: {
+        "data.analystUpdatesCheckedAt": new Date().toISOString(),
+        "data.institutionalHoldersCheckedAt": new Date().toISOString(),
+        "data.insiderTransactionsCheckedAt": new Date().toISOString(),
+        "data.marketActivityUpdatedAt": new Date().toISOString()
+      }
+    }
   );
 }
 
@@ -7735,9 +7749,20 @@ function buildMinimalStockSnapshot(ticker, previousData = {}) {
   });
 }
 
-const getImmediateStockSnapshot = async (ticker, previousData = {}) =>
-  (await resolveWithin(buildFastStockSnapshot(ticker, previousData), 1200, null)) ||
-  buildMinimalStockSnapshot(ticker, previousData);
+const getImmediateStockSnapshot = async (ticker, previousData = {}) => {
+  const hasRenderableSnapshot =
+    toNumberOrNull(previousData.price) !== null &&
+    (
+      hasAnyCoreChartHistory({ data: previousData }) ||
+      hasCompleteSupplementalData({ data: previousData })
+    );
+  if (hasRenderableSnapshot) {
+    return buildMinimalStockSnapshot(ticker, previousData);
+  }
+
+  return (await resolveWithin(buildFastStockSnapshot(ticker, previousData), 750, null)) ||
+    buildMinimalStockSnapshot(ticker, previousData);
+};
 
 async function publishChartHistorySnapshot(ticker, previousData = {}, secAnnualMargins = {}, sharesOutstanding = null) {
   if (!Array.isArray(secAnnualMargins.history) || !secAnnualMargins.history.length) return;
@@ -11467,13 +11492,14 @@ app.get("/api/stock/:ticker", async (req, res) => {
         stock.data?.estimateDataVersion !== STOCK_ESTIMATE_VERSION;
       const needsInterimHistoryRefresh =
         !hasUsableInterimHistory(stock.data || {});
-      const isIncomplete =
+      const isCoreIncomplete =
         needsInterimHistoryRefresh ||
-        !hasCompleteChartHistory(stock) ||
-        !hasCompleteSupplementalData(stock);
+        !hasCompleteChartHistory(stock);
+      const isSupplementalIncomplete = !hasCompleteSupplementalData(stock);
       const isStale =
         isOutdated ||
-        isIncomplete ||
+        isCoreIncomplete ||
+        isSupplementalIncomplete ||
         !updatedAt ||
         Date.now() - updatedAt.getTime() > STOCK_FULL_REFRESH_MS;
       if (isStale) {
@@ -11486,7 +11512,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           ticker: stock.ticker,
           status: "ready",
           ...responseData,
-          refreshing: true,
+          refreshing: isOutdated || isCoreIncomplete,
           error: getStockResponseError(responseData, stock.error),
           updatedAt: hydrated.stock?.updatedAt || stock.updatedAt
         });
