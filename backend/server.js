@@ -436,6 +436,43 @@ async function fetchSp500Constituents() {
     return cached.companies;
   }
 
+  const normalizeConstituentRows = (rows = []) => {
+    const companies = rows
+      .map((row) => ({
+        symbol: normalizeSp500Symbol(row.symbol),
+        name: String(row.name || "").trim(),
+        sector: String(row.sector || "").trim() || "Other",
+        industry: String(row.industry || "").trim(),
+        weight: 1
+      }))
+      .filter((company) => company.symbol && company.name);
+    const bySymbol = new Map(companies.map((company) => [company.symbol, company]));
+    return [...bySymbol.values()];
+  };
+
+  const parseCsvLine = (line = "") => {
+    const values = [];
+    let current = "";
+    let inQuotes = false;
+    for (let index = 0; index < line.length; index += 1) {
+      const char = line[index];
+      const next = line[index + 1];
+      if (char === "\"" && inQuotes && next === "\"") {
+        current += "\"";
+        index += 1;
+      } else if (char === "\"") {
+        inQuotes = !inQuotes;
+      } else if (char === "," && !inQuotes) {
+        values.push(current);
+        current = "";
+      } else {
+        current += char;
+      }
+    }
+    values.push(current);
+    return values.map((value) => value.trim());
+  };
+
   try {
     const { data } = await axios.get("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", {
       headers: {
@@ -445,7 +482,7 @@ async function fetchSp500Constituents() {
       timeout: 7000
     });
     const $ = cheerio.load(data || "");
-    const companies = [];
+    const rows = [];
 
     $("#constituents tbody tr").each((_, row) => {
       const cells = $(row).find("td");
@@ -453,22 +490,45 @@ async function fetchSp500Constituents() {
       const name = cells.eq(1).text().trim();
       const sector = cells.eq(2).text().trim() || "Other";
       const industry = cells.eq(3).text().trim() || "";
-      if (!symbol || !name) return;
-      companies.push({
-        symbol,
-        name,
-        sector,
-        industry,
-        weight: 1
-      });
+      rows.push({ symbol, name, sector, industry });
     });
 
+    const companies = normalizeConstituentRows(rows);
     if (companies.length >= 450) {
       sp500ConstituentsCache.set("current", { companies, fetchedAt: Date.now() });
       return companies;
     }
   } catch (err) {
     console.log("S&P 500 constituents skipped:", err.response?.status || err.message);
+  }
+
+  try {
+    const { data } = await axios.get("https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv", {
+      headers: {
+        "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
+        Accept: "text/csv,*/*;q=0.8"
+      },
+      timeout: 4500
+    });
+    const lines = String(data || "").split(/\r?\n/).filter(Boolean);
+    const headers = parseCsvLine(lines.shift() || "").map((header) => header.toLowerCase());
+    const rows = lines.map((line) => {
+      const values = parseCsvLine(line);
+      const valueFor = (name) => values[headers.indexOf(name)] || "";
+      return {
+        symbol: valueFor("symbol"),
+        name: valueFor("name"),
+        sector: valueFor("sector"),
+        industry: valueFor("sub-industry")
+      };
+    });
+    const companies = normalizeConstituentRows(rows);
+    if (companies.length >= 450) {
+      sp500ConstituentsCache.set("current", { companies, fetchedAt: Date.now() });
+      return companies;
+    }
+  } catch (err) {
+    console.log("S&P 500 CSV constituents skipped:", err.response?.status || err.message);
   }
 
   return SP500_HEATMAP_COMPANIES;
@@ -3958,6 +4018,30 @@ function hasChartHistory(stock, key) {
   return chartHistoryPointCount(stock, key) >= 2;
 }
 
+function interimHistoryPointCount(data = {}) {
+  const periods = new Set();
+  (data.revenueData || []).forEach((row) => {
+    if (!row?.isInterim || row?.isCurrent) return;
+    if (
+      toNumberOrNull(row.revenue) === null &&
+      toNumberOrNull(row.earnings) === null &&
+      toNumberOrNull(row.eps) === null
+    ) {
+      return;
+    }
+    periods.add(row.period || `${row.year}-interim`);
+  });
+  return periods.size;
+}
+
+function hasUsableInterimHistory(data = {}) {
+  return (
+    data.interimHistoryVersion === INTERIM_HISTORY_VERSION &&
+    Boolean(data.interimHistoryCheckedAt) &&
+    interimHistoryPointCount(data) >= 4
+  );
+}
+
 function hasCompleteChartHistory(stock) {
   const data = stock?.data || {};
   const latestHistoryYear = Math.max(
@@ -3975,10 +4059,7 @@ function hasCompleteChartHistory(stock) {
     hasChartHistory(stock, "eps") &&
     (
       !needsInterimCheck ||
-      (
-        Boolean(data.interimHistoryCheckedAt) &&
-        data.interimHistoryVersion === INTERIM_HISTORY_VERSION
-      )
+      hasUsableInterimHistory(data)
     )
   );
 }
@@ -9106,7 +9187,7 @@ async function publishFastFinancialHistorySnapshot(ticker) {
   if (
     hasCompleteChartHistory({ data: previousData }) &&
     previousData.financialHistoryVersion === FINANCIAL_HISTORY_VERSION &&
-    previousData.interimHistoryVersion === INTERIM_HISTORY_VERSION &&
+    hasUsableInterimHistory(previousData) &&
     previousData.financialHistoryCheckedAt
   ) {
     return;
@@ -11336,7 +11417,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
         stock.data?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
         stock.data?.estimateDataVersion !== STOCK_ESTIMATE_VERSION;
       const needsInterimHistoryRefresh =
-        stock.data?.interimHistoryVersion !== INTERIM_HISTORY_VERSION;
+        !hasUsableInterimHistory(stock.data || {});
       const isIncomplete =
         needsInterimHistoryRefresh ||
         !hasCompleteChartHistory(stock) ||
