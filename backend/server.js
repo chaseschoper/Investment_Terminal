@@ -5192,8 +5192,7 @@ function prepareCachedStockResponseData(ticker, data = {}) {
   return withGuaranteedAnalystSection(applyStockEarningsDateOverrides(ticker, data || {}));
 }
 
-async function prepareCachedStockResponseDataFast(ticker, data = {}) {
-  let responseData = prepareCachedStockResponseData(ticker, data);
+function hasCachedHistoricalPe(responseData = {}) {
   const annualPeRows = Array.isArray(responseData.historicalPe)
     ? responseData.historicalPe.filter((row) =>
         !row?.isInterim &&
@@ -5204,33 +5203,39 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
   const hasStockAnalysisHistoricalPe =
     responseData.historicalPeSource === "StockAnalysis ratios" ||
     annualPeRows.some((row) => String(row?.source || "").includes("StockAnalysis"));
-  if (annualPeRows.length >= 3 && hasStockAnalysisHistoricalPe) return responseData;
+  return annualPeRows.length >= 3 && hasStockAnalysisHistoricalPe;
+}
+
+async function prepareCachedStockResponseDataFast(ticker, data = {}) {
+  let responseData = prepareCachedStockResponseData(ticker, data);
+  if (hasCachedHistoricalPe(responseData)) return responseData;
 
   const stockAnalysisPeRows = await resolveWithin(fetchStockAnalysisHistoricalPe(ticker), 1400, []);
   if (!Array.isArray(stockAnalysisPeRows) || !stockAnalysisPeRows.length) {
-    if (annualPeRows.length >= 3) return responseData;
     return responseData;
   }
 
   const currentRows = Array.isArray(responseData.historicalPe)
     ? responseData.historicalPe.filter((row) => row?.isInterim || row?.isCurrent)
     : [];
+  const historicalPe = [...stockAnalysisPeRows, ...currentRows]
+    .filter((row) => toNumberOrNull(row.pe) !== null && Math.abs(toNumberOrNull(row.pe)) < 1000)
+    .slice(-7);
+  const historicalPeCheckedAt = new Date().toISOString();
   responseData = {
     ...responseData,
-    historicalPe: [...stockAnalysisPeRows, ...currentRows]
-      .filter((row) => toNumberOrNull(row.pe) !== null && Math.abs(toNumberOrNull(row.pe)) < 1000)
-      .slice(-7),
+    historicalPe,
     historicalPeSource: "StockAnalysis ratios",
-    historicalPeCheckedAt: new Date().toISOString()
+    historicalPeCheckedAt
   };
 
   Stock.findOneAndUpdate(
     { ticker },
     {
       $set: {
-        "data.historicalPe": responseData.historicalPe,
-        "data.historicalPeSource": responseData.historicalPeSource,
-        "data.historicalPeCheckedAt": responseData.historicalPeCheckedAt
+        "data.historicalPe": historicalPe,
+        "data.historicalPeSource": "StockAnalysis ratios",
+        "data.historicalPeCheckedAt": historicalPeCheckedAt
       }
     }
   ).catch((err) => {
@@ -9744,12 +9749,12 @@ function startStockFetch(ticker) {
       console.log("Balance sheet snapshot skipped:", ticker, err.message);
     })
   ]);
-  activeStockFastHydrations.set(ticker, chartFastHydration);
+  activeStockFastHydrations.set(ticker, coreFastHydration);
   enqueueMarketActivitySnapshot(ticker);
 
-  chartFastHydration.finally(() => {
+  coreFastHydration.finally(() => {
     setTimeout(() => {
-      if (activeStockFastHydrations.get(ticker) === chartFastHydration) {
+      if (activeStockFastHydrations.get(ticker) === coreFastHydration) {
         activeStockFastHydrations.delete(ticker);
       }
     }, 15000);
@@ -9845,6 +9850,18 @@ function startFullStockRefresh(ticker) {
 
 async function getHydratedStockDataForFirstResponse(ticker, fallbackData = {}, waitMs = 2200, options = {}) {
   const waitForInterimHistory = options.waitForInterimHistory !== false;
+  if (
+    !waitForInterimHistory &&
+    hasAnyCoreChartHistory({ data: fallbackData })
+  ) {
+    const hydratedStock = await Stock.findOne({ ticker }).lean().catch(() => null);
+    const hydratedData = hydratedStock?.data || {};
+    return {
+      stock: hydratedStock,
+      data: Object.keys(hydratedData).length ? hydratedData : fallbackData
+    };
+  }
+
   const deadline = Date.now() + waitMs;
   const hydration = activeStockFastHydrations.get(ticker);
   if (hydration) {
