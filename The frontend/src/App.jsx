@@ -2314,7 +2314,7 @@ useEffect(() => {
         const hasMissingQuotes = companies.some((company) =>
           !isNumber(company.price) || !isNumber(company.percentChange)
         );
-        nextRefreshMs = hasMissingQuotes || response.data?.refreshing ? 4000 : 90 * 1000;
+        nextRefreshMs = hasMissingQuotes || response.data?.refreshing ? 15000 : 90 * 1000;
         setMarketHeatmap((previous) => {
           if (!companies.length && (previous.companies || []).length) return previous;
           return {
@@ -2497,7 +2497,7 @@ useEffect(() => {
   };
 
   const loadPriceHistory = async (showLoading = true, attempt = 0) => {
-    if (!ticker) return;
+    if (!ticker || activePage !== "overview") return;
     const cacheKey = `${ticker}:${stockChartRange}`;
     const cachedChart = stockChartMemoryCacheRef.current.get(cacheKey);
     if (showLoading) {
@@ -2592,7 +2592,7 @@ useEffect(() => {
     window.clearInterval(refreshTimer);
     if (retryTimer) window.clearTimeout(retryTimer);
   };
-}, [ticker, stockChartRange]);
+}, [ticker, stockChartRange, activePage]);
 
   /*
     LOAD STOCK WHEN TICKER CHANGES
@@ -2637,7 +2637,7 @@ useEffect(() => {
   }, []);
 
   useEffect(() => {
-    if (!loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
+    if (activePage !== "overview" || !loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
     let isActive = true;
     let retryTimer;
 
@@ -2682,17 +2682,17 @@ useEffect(() => {
         });
     };
 
-    const startTimer = window.setTimeout(loadCompanyDocuments, 1800);
+    const startTimer = window.setTimeout(loadCompanyDocuments, 3600);
 
     return () => {
       isActive = false;
       window.clearTimeout(startTimer);
       if (retryTimer) window.clearTimeout(retryTimer);
     };
-  }, [ticker, loadedStockSymbol, isStockLoading]);
+  }, [ticker, loadedStockSymbol, isStockLoading, activePage]);
 
   useEffect(() => {
-    if (!loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
+    if (activePage !== "overview" || !loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
     let isActive = true;
     let retryTimer;
     setIsTranscriptPeriodsLoading(true);
@@ -2748,17 +2748,17 @@ useEffect(() => {
         });
     };
 
-    const startTimer = window.setTimeout(loadEarningsCallPeriods, 1400);
+    const startTimer = window.setTimeout(loadEarningsCallPeriods, 2600);
 
     return () => {
       isActive = false;
       window.clearTimeout(startTimer);
       if (retryTimer) window.clearTimeout(retryTimer);
     };
-  }, [ticker, loadedStockSymbol, isStockLoading]);
+  }, [ticker, loadedStockSymbol, isStockLoading, activePage]);
 
   useEffect(() => {
-    if (!loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading || isTranscriptPeriodsLoading) return;
+    if (activePage !== "overview" || !loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading || isTranscriptPeriodsLoading) return;
     const requestId = ++latestEarningsCallRequest.current;
     const selectedPeriod = transcriptPeriodOptions.find((period) => period.value === selectedTranscriptPeriod);
     if (!selectedPeriod) {
@@ -2819,10 +2819,10 @@ useEffect(() => {
       });
 
     return () => window.clearTimeout(timer);
-  }, [ticker, loadedStockSymbol, isStockLoading, isTranscriptPeriodsLoading, selectedTranscriptPeriod, transcriptPeriodOptions]);
+  }, [ticker, loadedStockSymbol, isStockLoading, isTranscriptPeriodsLoading, selectedTranscriptPeriod, transcriptPeriodOptions, activePage]);
 
   useEffect(() => {
-    if (!stockData?.price || stockData.symbol !== ticker) return;
+    if (activePage !== "overview" || !stockData?.price || stockData.symbol !== ticker) return;
 
     const requestId = ++latestAiRequest.current;
     const timer = window.setTimeout(() => {
@@ -2840,13 +2840,13 @@ useEffect(() => {
             setIsAiLoading(false);
           }
         });
-    }, 1200);
+    }, 4800);
 
     return () => window.clearTimeout(timer);
-  }, [ticker, stockData?.price, stockData?.updatedAt]);
+  }, [ticker, stockData?.price, stockData?.updatedAt, activePage]);
 
   useEffect(() => {
-    if (!loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
+    if (activePage !== "overview" || !loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
 
     let isActive = true;
     let retryTimer;
@@ -2890,14 +2890,14 @@ useEffect(() => {
         });
     };
 
-    const startTimer = window.setTimeout(loadSimilarCompanies, 1000);
+    const startTimer = window.setTimeout(loadSimilarCompanies, 1800);
 
     return () => {
       isActive = false;
       window.clearTimeout(startTimer);
       if (retryTimer) window.clearTimeout(retryTimer);
     };
-  }, [ticker, loadedStockSymbol, isStockLoading]);
+  }, [ticker, loadedStockSymbol, isStockLoading, activePage]);
 
   /*
     LOAD EARNINGS ON START
@@ -2958,7 +2958,10 @@ useEffect(() => {
       const response =
         await axios.get(
           `${API_URL}/api/stock/${symbol}`,
-          { timeout: 15000 }
+          {
+            params: { mode: financialChartMode },
+            timeout: 9000
+          }
         );
 
       if (requestId !== latestStockRequest.current) {
@@ -2990,10 +2993,13 @@ useEffect(() => {
       const needsFreshHistory =
         response.data.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
         !hasCompleteCoreChartData(stableResponse);
+      const isQuarterlyView = financialChartMode === "quarterly";
       const needsInterimHistory =
+        isQuarterlyView &&
         attempt < 40 &&
         countInterimRows(stableResponse.revenueData || []) < MIN_USABLE_INTERIM_HISTORY_ROWS;
       const needsQuarterlyHistory =
+        isQuarterlyView &&
         attempt < 40 &&
         (
           response.data.interimHistoryVersion !== INTERIM_HISTORY_VERSION ||
@@ -3001,34 +3007,31 @@ useEffect(() => {
           countInterimRows(stableResponse.revenueData || []) < MIN_USABLE_INTERIM_HISTORY_ROWS
         );
       const needsExtendedHistory =
-        attempt < 40 &&
+        attempt < 12 &&
+        !stableResponse.financialHistoryCheckedAt &&
         !hasExtendedHistoricalChartData(stableResponse);
       const hasCurrentValuationMetrics =
         stableResponse.valuationMetricsVersion === VALUATION_METRICS_VERSION;
       const hasCurrentBalanceSheetMetrics =
         stableResponse.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION;
       const needsMoreMetricCards =
-        attempt < 35 &&
-        (
-          !hasCurrentValuationMetrics ||
-          overviewMetricCount(stableResponse) < 24
-        );
+        attempt < 20 &&
+        !hasCurrentValuationMetrics;
       const needsNewStockWarmup =
         (!hadCachedStock || attempt < 30) &&
         shouldKeepWarmingNewStock(stableResponse);
       const needsMarketActivity =
         false;
       const needsAnnualEstimates =
-        attempt < 30 &&
-        (
-          stableResponse.estimateDataVersion !== STOCK_ESTIMATE_VERSION ||
-          !hasAnnualEstimateData(stableResponse)
-        );
+        attempt < 20 &&
+        stableResponse.estimateDataVersion !== STOCK_ESTIMATE_VERSION &&
+        !hasAnnualEstimateData(stableResponse);
       const needsQuarterEstimate =
-        attempt < 30 &&
+        attempt < 20 &&
+        !stableResponse.quarterEstimateCheckedAt &&
         !hasNextQuarterData(stableResponse);
       const needsBalanceSheetMetrics =
-        attempt < 35 &&
+        attempt < 20 &&
         (
           !hasCurrentBalanceSheetMetrics ||
           !stableResponse.balanceSheetCheckedAt
@@ -3060,14 +3063,12 @@ useEffect(() => {
         ) &&
         attempt < 90
       ) {
-        const retryDelay =
-          attempt < 12
-            ? 250
-          : attempt < 24
-              ? 450
-            : attempt < 40
-              ? 800
-              : 1600;
+      const retryDelay =
+          attempt < 10
+            ? 300
+            : attempt < 24
+              ? 700
+              : 1400;
         scheduleRetry(retryDelay);
       }
 
@@ -3657,11 +3658,15 @@ const isAnnualHistoryRefreshPending =
     )
   );
 const currentInterimHistoryRowCount = countInterimRows(stockData?.revenueData || []);
+const hasCheckedInterimHistory =
+  stockData?.interimHistoryVersion === INTERIM_HISTORY_VERSION &&
+  Boolean(stockData?.interimHistoryCheckedAt);
 const isQuarterlyHistoryRefreshPending =
   isStockLoading ||
-  stockData?.interimHistoryVersion !== INTERIM_HISTORY_VERSION ||
-  (stockData?.refreshing && currentInterimHistoryRowCount < MIN_USABLE_INTERIM_HISTORY_ROWS) ||
+  (!hasCheckedInterimHistory && stockData?.interimHistoryVersion !== INTERIM_HISTORY_VERSION) ||
+  (!hasCheckedInterimHistory && stockData?.refreshing && currentInterimHistoryRowCount < MIN_USABLE_INTERIM_HISTORY_ROWS) ||
   (
+    !hasCheckedInterimHistory &&
     !stockData?.interimHistoryCheckedAt &&
     (
       stockData?.refreshing ||

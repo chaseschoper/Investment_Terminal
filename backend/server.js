@@ -112,6 +112,7 @@ let yahooQuoteSummaryCooldownUntil = 0;
 let yahooEarningsTrendCooldownUntil = 0;
 let yahooAnalysisPageCooldownUntil = 0;
 let fmpCooldownUntil = 0;
+let stockAnalysisCooldownUntil = 0;
 let secTickerMapPromise;
 let secTickerMapRetryAfter = 0;
 const COMMON_SEC_CIKS = new Map(Object.entries({
@@ -734,11 +735,18 @@ function setFmpCooldown(err, label, ticker) {
   console.log(`FMP cooldown active after ${label}:`, ticker, err.response?.status || err.message);
 }
 
+function setStockAnalysisCooldown(err, label, ticker) {
+  if (!isTooManyRequestsError(err)) return;
+  stockAnalysisCooldownUntil = Math.max(stockAnalysisCooldownUntil, Date.now() + 2 * 60 * 1000);
+  console.log(`StockAnalysis cooldown active after ${label}:`, ticker, err.response?.status || err.message);
+}
+
 const canUseYahoo = () => Date.now() >= yahooCooldownUntil;
 const canUseYahooQuoteSummary = () => Date.now() >= yahooQuoteSummaryCooldownUntil;
 const canUseYahooEarningsTrend = () => Date.now() >= yahooEarningsTrendCooldownUntil;
 const canUseYahooAnalysisPage = () => Date.now() >= yahooAnalysisPageCooldownUntil;
 const canUseFmp = () => Date.now() >= fmpCooldownUntil;
+const canUseStockAnalysis = () => Date.now() >= stockAnalysisCooldownUntil;
 
 async function getFinnhub(url) {
   const requestUrl = `${url}&token=${process.env.FINNHUB_API_KEY}`;
@@ -857,6 +865,7 @@ async function fetchYahooMarketMoverList(type) {
 }
 
 async function fetchStockAnalysisMarketMoverList(type) {
+  if (!canUseStockAnalysis()) return [];
   const path = type === "losers" ? "losers" : "gainers";
 
   try {
@@ -878,6 +887,7 @@ async function fetchStockAnalysisMarketMoverList(type) {
       };
     }).get();
   } catch (err) {
+    setStockAnalysisCooldown(err, `market ${path}`, path);
     console.log(`StockAnalysis market ${path} skipped:`, err.response?.status || err.message);
     return [];
   }
@@ -1228,6 +1238,7 @@ async function fetchStockAnalysisValuationMetrics(ticker) {
   if (cached && Date.now() - cached.fetchedAt < 15 * 60 * 1000) {
     return cached.data;
   }
+  if (!canUseStockAnalysis()) return cached?.data || {};
 
   try {
     const { data } = await axios.get(buildStockAnalysisUrl(ticker, "statistics/"), {
@@ -1305,12 +1316,14 @@ async function fetchStockAnalysisValuationMetrics(ticker) {
     }
     return valuation;
   } catch (err) {
+    setStockAnalysisCooldown(err, "valuation metrics", ticker);
     console.log("StockAnalysis valuation metrics skipped:", ticker, err.response?.status || err.message);
     return {};
   }
 }
 
 async function fetchStockAnalysisForecast(ticker) {
+  if (!canUseStockAnalysis()) return {};
   try {
     const headers = {
       "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36"
@@ -1402,7 +1415,8 @@ async function fetchStockAnalysisForecast(ticker) {
       ratingCount
     };
   } catch (err) {
-    console.log("StockAnalysis forecast skipped:", ticker, err.message);
+    setStockAnalysisCooldown(err, "forecast", ticker);
+    console.log("StockAnalysis forecast skipped:", ticker, err.response?.status || err.message);
     return {};
   }
 }
@@ -4070,6 +4084,14 @@ function hasCompleteChartHistory(stock) {
   );
 }
 
+function hasAnnualCoreChartHistory(stock) {
+  return (
+    hasChartHistory(stock, "revenue") &&
+    hasChartHistory(stock, "earnings") &&
+    hasChartHistory(stock, "eps")
+  );
+}
+
 function hasAnyCoreChartHistory(stock) {
   return (
     hasChartHistory(stock, "revenue") ||
@@ -5372,6 +5394,7 @@ const parseStockAnalysisNumber = (value) => {
 };
 
 async function fetchStockAnalysisBalanceSheetMetrics(ticker) {
+  if (!canUseStockAnalysis()) return {};
   try {
     const { data } = await axios.get(
       buildStockAnalysisUrl(ticker, "financials/balance-sheet/"),
@@ -5477,12 +5500,14 @@ async function fetchStockAnalysisBalanceSheetMetrics(ticker) {
       balanceSheetSource: "StockAnalysis latest balance sheet"
     };
   } catch (err) {
+    setStockAnalysisCooldown(err, "balance sheet", ticker);
     console.log("StockAnalysis balance sheet skipped:", ticker, err.response?.status || err.message);
     return {};
   }
 }
 
 async function fetchStockAnalysisAnnualFinancialHistoryFast(ticker) {
+  if (!canUseStockAnalysis()) return [];
   try {
     const { data } = await axios.get(
       buildStockAnalysisUrl(ticker, "financials/income-statement/"),
@@ -5548,12 +5573,14 @@ async function fetchStockAnalysisAnnualFinancialHistoryFast(ticker) {
       .filter((row) => row?.year)
       .sort((a, b) => a.year - b.year);
   } catch (err) {
+    setStockAnalysisCooldown(err, "fast annual financials", ticker);
     console.log("StockAnalysis fast annual financials skipped:", ticker, err.response?.status || err.message);
     return [];
   }
 }
 
 async function fetchStockAnalysisIncomeStatementHistory(ticker) {
+  if (!canUseStockAnalysis()) return [];
   try {
     const stockAnalysisRequest = (path) =>
       axios.get(
@@ -5781,6 +5808,7 @@ async function fetchStockAnalysisIncomeStatementHistory(ticker) {
       return String(a.period || "").localeCompare(String(b.period || ""));
     });
   } catch (err) {
+    setStockAnalysisCooldown(err, "financials", ticker);
     console.log("StockAnalysis financials skipped:", ticker, err.response?.status || err.message);
     return [];
   }
@@ -7606,6 +7634,21 @@ async function buildMarketActivitySnapshot(ticker, previousData = {}) {
 async function publishMarketActivitySnapshot(ticker) {
   const stock = await Stock.findOne({ ticker }).lean();
   if (!stock) return;
+  const data = stock.data || {};
+  const lastCheckedAt = data.marketActivityUpdatedAt
+    ? new Date(data.marketActivityUpdatedAt).getTime()
+    : 0;
+  const checkedRecently = lastCheckedAt && Date.now() - lastCheckedAt < 6 * 60 * 60 * 1000;
+  const failedRecently = lastCheckedAt && Date.now() - lastCheckedAt < 20 * 60 * 1000;
+  const hasMarketActivityRows =
+    (Array.isArray(data.analystUpdates) && data.analystUpdates.length) ||
+    (Array.isArray(data.institutionalHolders) && data.institutionalHolders.length) ||
+    (Array.isArray(data.insiderTransactions) && data.insiderTransactions.length);
+
+  if ((checkedRecently && hasMarketActivityRows) || failedRecently) {
+    return;
+  }
+
   const publishRows = async (field, rowsPromise, timeoutMs) => {
     const rows = await resolveWithin(rowsPromise, timeoutMs, []);
     const checkedAt = new Date().toISOString();
@@ -9380,12 +9423,12 @@ function startStockFetch(ticker) {
       console.log("Balance sheet snapshot skipped:", ticker, err.message);
     })
   ]);
-  activeStockFastHydrations.set(ticker, coreFastHydration);
+  activeStockFastHydrations.set(ticker, chartFastHydration);
   enqueueMarketActivitySnapshot(ticker);
 
-  coreFastHydration.finally(() => {
+  chartFastHydration.finally(() => {
     setTimeout(() => {
-      if (activeStockFastHydrations.get(ticker) === coreFastHydration) {
+      if (activeStockFastHydrations.get(ticker) === chartFastHydration) {
         activeStockFastHydrations.delete(ticker);
       }
     }, 15000);
@@ -9461,7 +9504,8 @@ function startFullStockRefresh(ticker) {
     });
 }
 
-async function getHydratedStockDataForFirstResponse(ticker, fallbackData = {}, waitMs = 2200) {
+async function getHydratedStockDataForFirstResponse(ticker, fallbackData = {}, waitMs = 2200, options = {}) {
+  const waitForInterimHistory = options.waitForInterimHistory !== false;
   const deadline = Date.now() + waitMs;
   const hydration = activeStockFastHydrations.get(ticker);
   if (hydration) {
@@ -9472,6 +9516,7 @@ async function getHydratedStockDataForFirstResponse(ticker, fallbackData = {}, w
   let hydratedData = hydratedStock?.data || {};
   if (
     waitMs > 0 &&
+    waitForInterimHistory &&
     !hasUsableInterimHistory(fallbackData) &&
     !hasUsableInterimHistory(hydratedData)
   ) {
@@ -10097,6 +10142,9 @@ const parseStockAnalysisFundHoldings = ($) =>
 
 async function fetchStockAnalysisMutualFundData(ticker, upstreamError = null) {
   const symbol = String(ticker || "").trim().toUpperCase();
+  if (!canUseStockAnalysis()) {
+    throw upstreamError || new Error("StockAnalysis cooldown active");
+  }
   const stockAnalysisSymbol = normalizeTickerForStockAnalysis(symbol);
   const [overviewResponse, holdingsResponse] = await Promise.all([
     axios.get(`https://stockanalysis.com/quote/mutf/${stockAnalysisSymbol}/`, {
@@ -10108,6 +10156,7 @@ async function fetchStockAnalysisMutualFundData(ticker, upstreamError = null) {
       timeout: 6500
     }).catch(() => ({ data: "" }))
   ]).catch((err) => {
+    setStockAnalysisCooldown(err, "mutual fund data", symbol);
     throw upstreamError || err;
   });
 
@@ -10421,6 +10470,13 @@ async function fetchEtfData(ticker) {
   const stockAnalysisSymbol = normalizeTickerForStockAnalysis(symbol);
   const cached = etfDataCache.get(symbol);
   if (cached && Date.now() - cached.fetchedAt < 60 * 60 * 1000) return cached.data;
+  if (!canUseStockAnalysis()) {
+    try {
+      return await fetchNasdaqFundFallback(symbol, new Error("StockAnalysis cooldown active"));
+    } catch (fundErr) {
+      return fetchYahooFundFallback(symbol, fundErr);
+    }
+  }
 
   let overviewResponse;
   let holdingsResponse;
@@ -10436,6 +10492,7 @@ async function fetchEtfData(ticker) {
     }).catch(() => ({ data: "" }))
     ]);
   } catch (err) {
+    setStockAnalysisCooldown(err, "ETF data", symbol);
     try {
       return await fetchStockAnalysisMutualFundData(symbol, err);
     } catch (stockAnalysisFundErr) {
@@ -10742,7 +10799,7 @@ app.get("/api/market-heatmap", async (req, res) => {
     900,
     SP500_HEATMAP_COMPANIES
   );
-  return res.json({
+  const fallbackPayload = {
     companies: fallbackCompanies.length
       ? fallbackCompanies.map((company) => ({
           ...company,
@@ -10755,7 +10812,14 @@ app.get("/api/market-heatmap", async (req, res) => {
     updatedAt: new Date().toISOString(),
     stale: true,
     refreshing: true
-  });
+  };
+  if (hasFullHeatmapPayload(fallbackPayload)) {
+    marketHeatmapCache.set("sp500", {
+      fetchedAt: Date.now() - freshCacheMs,
+      data: fallbackPayload
+    });
+  }
+  return res.json(fallbackPayload);
 });
 
 function normalizeMarketMoverRow(row = {}) {
@@ -10906,6 +10970,7 @@ app.get("/api/market-indices", async (req, res) => {
   };
 
   const fetchStockAnalysisIndexMoves = async () => {
+    if (!canUseStockAnalysis()) return new Map();
     try {
       const response = await axios.get("https://stockanalysis.com/markets/active/", {
         headers: {
@@ -10933,6 +10998,7 @@ app.get("/api/market-indices", async (req, res) => {
 
       return moves;
     } catch (err) {
+      setStockAnalysisCooldown(err, "index moves", "indices");
       console.log("StockAnalysis index moves skipped:", err.response?.status || err.message);
       return new Map();
     }
@@ -11497,6 +11563,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
         error: "Invalid ticker"
       });
     }
+    const wantsQuarterlyHistory = String(req.query.mode || "").trim().toLowerCase() === "quarterly";
 
     let stock = await Stock.findOne({ ticker });
     if (!stock) {
@@ -11519,7 +11586,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
       const hydrated = await getHydratedStockDataForFirstResponse(
         ticker,
         initialData,
-        STOCK_FAST_CHART_HYDRATION_WAIT_MS
+        STOCK_FAST_CHART_HYDRATION_WAIT_MS,
+        { waitForInterimHistory: wantsQuarterlyHistory }
       );
       const responseData = prepareCachedStockResponseData(ticker, hydrated.data || initialData);
 
@@ -11555,13 +11623,14 @@ app.get("/api/stock/:ticker", async (req, res) => {
 
       if (stock.data && Object.keys(stock.data).length) {
         const needsFastHydration =
-          !hasCompleteChartHistory(stock) ||
-          !hasUsableInterimHistory(stock.data || {});
+          !(wantsQuarterlyHistory ? hasCompleteChartHistory(stock) : hasAnnualCoreChartHistory(stock)) ||
+          (wantsQuarterlyHistory && !hasUsableInterimHistory(stock.data || {}));
         const hydrated = needsFastHydration
           ? await getHydratedStockDataForFirstResponse(
               ticker,
               stock.data,
-              STOCK_FAST_CHART_HYDRATION_WAIT_MS
+              STOCK_FAST_CHART_HYDRATION_WAIT_MS,
+              { waitForInterimHistory: wantsQuarterlyHistory }
             )
           : { stock, data: stock.data };
         const responseData = prepareCachedStockResponseData(ticker, hydrated.data || stock.data);
@@ -11593,10 +11662,20 @@ app.get("/api/stock/:ticker", async (req, res) => {
         stock.data?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
         stock.data?.estimateDataVersion !== STOCK_ESTIMATE_VERSION;
       const needsInterimHistoryRefresh =
-        !hasUsableInterimHistory(stock.data || {});
+        !hasUsableInterimHistory(stock.data || {}) &&
+        !(
+          stock.data?.interimHistoryVersion === INTERIM_HISTORY_VERSION &&
+          stock.data?.interimHistoryCheckedAt
+        );
+      const hasCheckedAnnualHistory =
+        stock.data?.financialHistoryVersion === FINANCIAL_HISTORY_VERSION &&
+        Boolean(stock.data?.financialHistoryCheckedAt);
+      const requestedChartHistoryReady = wantsQuarterlyHistory
+        ? hasCompleteChartHistory(stock)
+        : hasAnnualCoreChartHistory(stock);
       const isCoreIncomplete =
-        needsInterimHistoryRefresh ||
-        !hasCompleteChartHistory(stock);
+        (wantsQuarterlyHistory && needsInterimHistoryRefresh) ||
+        (!requestedChartHistoryReady && !hasCheckedAnnualHistory);
       const isStale =
         isOutdated ||
         isCoreIncomplete ||
@@ -11606,12 +11685,13 @@ app.get("/api/stock/:ticker", async (req, res) => {
         startStockFetch(ticker);
         const needsFastHydration =
           isCoreIncomplete ||
-          !hasUsableInterimHistory(stock.data || {});
+          (wantsQuarterlyHistory && !hasUsableInterimHistory(stock.data || {}));
         const hydrated = needsFastHydration
           ? await getHydratedStockDataForFirstResponse(
               ticker,
               stock.data || {},
-              STOCK_FAST_CHART_HYDRATION_WAIT_MS
+              STOCK_FAST_CHART_HYDRATION_WAIT_MS,
+              { waitForInterimHistory: wantsQuarterlyHistory }
             )
           : { stock, data: stock.data || {} };
         const responseData = prepareCachedStockResponseData(ticker, hydrated.data || stock.data || {});
@@ -11620,7 +11700,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           ticker: stock.ticker,
           status: "ready",
           ...responseData,
-          refreshing: isOutdated || isCoreIncomplete,
+          refreshing: isCoreIncomplete,
           error: getStockResponseError(responseData, stock.error),
           updatedAt: hydrated.stock?.updatedAt || stock.updatedAt
         });
@@ -14500,6 +14580,7 @@ function parseStockAnalysisTranscript(html, ticker, requestedPeriod = null, page
 
 async function fetchStockAnalysisEarningsCall(ticker, requestedPeriod = null) {
   if (!requestedPeriod) return null;
+  if (!canUseStockAnalysis()) return null;
   const symbol = normalizeTickerForStockAnalysis(ticker);
   if (!symbol || !/^[a-z0-9.-]{1,15}$/.test(symbol)) return null;
 
@@ -14532,6 +14613,7 @@ async function fetchStockAnalysisEarningsCall(ticker, requestedPeriod = null) {
       return parsed;
     }
   } catch (err) {
+    setStockAnalysisCooldown(err, "transcript", ticker);
     console.log("StockAnalysis transcript skipped:", ticker, requestedPeriod.year, requestedPeriod.quarter, err.response?.status || err.message);
   }
 
@@ -15086,6 +15168,7 @@ function buildStockAnalysisTranscriptIndexUrls(ticker) {
 async function fetchStockAnalysisSearchCandidates(query) {
   const cleaned = String(query || "").trim();
   if (!cleaned) return [];
+  if (!canUseStockAnalysis()) return [];
   try {
     const response = await axios.get("https://stockanalysis.com/api/search", {
       params: { q: cleaned },
@@ -15099,6 +15182,7 @@ async function fetchStockAnalysisSearchCandidates(query) {
     if (response.status >= 400) return [];
     return Array.isArray(response.data?.data) ? response.data.data : [];
   } catch (err) {
+    setStockAnalysisCooldown(err, "transcript search", cleaned);
     console.log("StockAnalysis transcript search skipped:", cleaned, err.response?.status || err.message);
     return [];
   }
@@ -15225,6 +15309,7 @@ async function discoverStockAnalysisTranscriptIndexUrls(ticker) {
 
 async function fetchStockAnalysisPeriodsFromIndexUrls(ticker, indexUrls) {
   if (!indexUrls.length) return [];
+  if (!canUseStockAnalysis()) return [];
 
   for (const indexUrl of indexUrls) {
     try {
@@ -15254,6 +15339,7 @@ async function fetchStockAnalysisPeriodsFromIndexUrls(ticker, indexUrls) {
       );
       if (periods.length) return periods;
     } catch (err) {
+      setStockAnalysisCooldown(err, "transcript periods", ticker);
       console.log("StockAnalysis transcript periods skipped:", ticker, indexUrl, err.response?.status || err.message);
     }
   }
@@ -15262,6 +15348,7 @@ async function fetchStockAnalysisPeriodsFromIndexUrls(ticker, indexUrls) {
 }
 
 async function fetchStockAnalysisEarningsCallPeriods(ticker) {
+  if (!canUseStockAnalysis()) return [];
   const directUrls = buildStockAnalysisTranscriptIndexUrls(ticker);
   const directPeriods = await fetchStockAnalysisPeriodsFromIndexUrls(ticker, directUrls);
   if (directPeriods.length) return directPeriods;
@@ -15447,6 +15534,7 @@ async function fetchStockAnalysisEarningsCalendarRows(targetDates = []) {
         ? cachedRows.filter((row) => targetSet.has(row.date))
         : cachedRows;
     }
+    if (!canUseStockAnalysis()) return [];
 
     const response = await axios.get("https://stockanalysis.com/stocks/earnings-calendar/", {
       headers: STOCK_ANALYSIS_HEADERS,
@@ -15484,6 +15572,7 @@ async function fetchStockAnalysisEarningsCalendarRows(targetDates = []) {
       ? allRows.filter((row) => targetSet.has(row.date))
       : allRows;
   } catch (err) {
+    setStockAnalysisCooldown(err, "earnings calendar", "calendar");
     console.log("StockAnalysis earnings calendar skipped:", err.response?.status || err.message);
     return [];
   }
