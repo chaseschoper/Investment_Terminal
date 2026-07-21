@@ -830,53 +830,65 @@ async function fetchYahooSparkQuotes(symbols = []) {
   const queue = [...chunks];
   const workerCount = Math.min(1, queue.length);
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const normalizeV8SparkRows = (payload = {}) =>
+    Object.entries(payload || {})
+      .filter(([symbol, row]) => symbol && row && typeof row === "object" && Array.isArray(row.close))
+      .map(([symbol, row]) => ({
+        symbol,
+        response: [{
+          meta: {
+            symbol,
+            regularMarketPrice: row.close[row.close.length - 1],
+            chartPreviousClose: row.chartPreviousClose ?? null,
+            marketCap: row.marketCap ?? null
+          },
+          indicators: {
+            quote: [{ close: row.close }]
+          }
+        }]
+      }));
   const fetchSparkChunk = async (chunk, attempt = 0) => {
-    try {
-      const response = await axios.get("https://query1.finance.yahoo.com/v7/finance/spark", {
-        params: {
-          symbols: chunk.join(","),
-          range: "5d",
-          interval: "1d"
-        },
-        headers: {
-          "User-Agent": STOCK_ANALYSIS_HEADERS["User-Agent"],
-          Accept: "application/json,text/plain,*/*"
-        },
-        timeout: 4500
-      });
-      return response.data?.spark?.result;
-    } catch (err) {
+    for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
       try {
-        const fallbackResponse = await axios.get("https://query1.finance.yahoo.com/v8/finance/spark", {
+        const response = await axios.get(`https://${host}/v8/finance/spark`, {
           params: {
             symbols: chunk.join(","),
             range: "5d",
             interval: "1d"
           },
           headers: {
-            "User-Agent": STOCK_ANALYSIS_HEADERS["User-Agent"],
+            "User-Agent": "Mozilla/5.0",
             Accept: "application/json,text/plain,*/*"
           },
           timeout: 4500
         });
-        return Object.entries(fallbackResponse.data || {}).map(([symbol, row]) => ({
-          symbol,
-          response: [{
-            meta: {
-              symbol,
-              regularMarketPrice: Array.isArray(row?.close) ? row.close[row.close.length - 1] : null,
-              chartPreviousClose: null
-            },
-            indicators: {
-              quote: [{ close: Array.isArray(row?.close) ? row.close : [] }]
-            }
-          }]
-        }));
-      } catch (_) {
-        // Retry below handles temporary provider throttling.
+        const rows = normalizeV8SparkRows(response.data);
+        if (rows.length) return rows;
+      } catch (err) {
+        if (err.response?.status === 429 && attempt < 1 && host === "query2.finance.yahoo.com") {
+          await sleep(1200);
+          return fetchSparkChunk(chunk, attempt + 1);
+        }
       }
+    }
+
+    try {
+      const fallbackResponse = await axios.get("https://query1.finance.yahoo.com/v7/finance/spark", {
+        params: {
+          symbols: chunk.join(","),
+          range: "5d",
+          interval: "1d"
+        },
+        headers: {
+          "User-Agent": "Mozilla/5.0",
+          Accept: "application/json,text/plain,*/*"
+        },
+        timeout: 4500
+      });
+      return fallbackResponse.data?.spark?.result || [];
+    } catch (err) {
       if (err.response?.status === 429 && attempt < 1) {
-        await sleep(700);
+        await sleep(1200);
         return fetchSparkChunk(chunk, attempt + 1);
       }
       console.log("Yahoo spark heatmap chunk skipped:", chunk.slice(0, 3).join(","), err.response?.status || err.message);
@@ -5160,10 +5172,16 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
         toNumberOrNull(row?.pe) !== null
       )
     : [];
-  if (annualPeRows.length >= 3) return responseData;
+  const hasStockAnalysisHistoricalPe =
+    responseData.historicalPeSource === "StockAnalysis ratios" ||
+    annualPeRows.some((row) => String(row?.source || "").includes("StockAnalysis"));
+  if (annualPeRows.length >= 3 && hasStockAnalysisHistoricalPe) return responseData;
 
   const stockAnalysisPeRows = await resolveWithin(fetchStockAnalysisHistoricalPe(ticker), 1400, []);
-  if (!Array.isArray(stockAnalysisPeRows) || !stockAnalysisPeRows.length) return responseData;
+  if (!Array.isArray(stockAnalysisPeRows) || !stockAnalysisPeRows.length) {
+    if (annualPeRows.length >= 3) return responseData;
+    return responseData;
+  }
 
   const currentRows = Array.isArray(responseData.historicalPe)
     ? responseData.historicalPe.filter((row) => row?.isInterim || row?.isCurrent)
@@ -7939,12 +7957,20 @@ async function publishMarketActivitySnapshot(ticker) {
 }
 
 async function buildFastStockSnapshot(ticker, previousData = {}) {
-  const [yahooData, chartQuote, calendarQuarterEstimate, stockAnalysisValuation, stockAnalysisForecast] = await Promise.all([
+  const [
+    yahooData,
+    chartQuote,
+    calendarQuarterEstimate,
+    stockAnalysisValuation,
+    stockAnalysisForecast,
+    balanceSheetMetrics
+  ] = await Promise.all([
     resolveWithin(fetchYahooQuickQuote(ticker), 900, {}),
     resolveWithin(fetchYahooChartQuote(ticker), 1200, {}),
     resolveWithin(fetchCalendarQuarterEstimate(ticker, { fast: true }), 1400, previousData.analystEstimates?.nextQuarter || {}),
-    resolveWithin(fetchStockAnalysisValuationMetrics(ticker), 1800, {}),
-    resolveWithin(fetchStockAnalysisForecast(ticker), 2200, {})
+    resolveWithin(fetchStockAnalysisValuationMetrics(ticker), 1600, {}),
+    resolveWithin(fetchStockAnalysisForecast(ticker), 1800, {}),
+    resolveWithin(fetchStockAnalysisBalanceSheetMetrics(ticker), 1800, {})
   ]);
   const chartData = chartQuote?.c
     ? {
@@ -7979,7 +8005,17 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     weightedAverageCostOfCapital: stockAnalysisValuation.weightedAverageCostOfCapital ?? null,
     revenuePerEmployee: stockAnalysisValuation.revenuePerEmployee ?? null,
     profitsPerEmployee: stockAnalysisValuation.profitsPerEmployee ?? null,
-    employeeCount: stockAnalysisValuation.employeeCount ?? null
+    employeeCount: stockAnalysisValuation.employeeCount ?? null,
+    totalCash: firstNumber(balanceSheetMetrics.totalCash, balanceSheetMetrics.cashAndCashEquivalents),
+    totalDebt: balanceSheetMetrics.totalDebt ?? null,
+    cashAndCashEquivalents: firstNumber(balanceSheetMetrics.cashAndCashEquivalents, balanceSheetMetrics.totalCash),
+    netCash: balanceSheetMetrics.netCash ?? null,
+    netCashPerShare: balanceSheetMetrics.netCashPerShare ?? null,
+    equityBookValue: balanceSheetMetrics.equityBookValue ?? null,
+    bookValuePerShare: balanceSheetMetrics.bookValuePerShare ?? null,
+    workingCapital: balanceSheetMetrics.workingCapital ?? null,
+    balanceSheetAsOf: balanceSheetMetrics.balanceSheetAsOf || null,
+    balanceSheetSource: balanceSheetMetrics.balanceSheetSource || null
   };
   if (!fastData?.price) return null;
 
@@ -8029,6 +8065,12 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     ...definedValues(fastData),
     valuationMetricsCheckedAt: new Date().toISOString(),
     valuationMetricsVersion: VALUATION_METRICS_VERSION,
+    balanceSheetCheckedAt: balanceSheetMetrics && Object.keys(balanceSheetMetrics).length
+      ? new Date().toISOString()
+      : previousData.balanceSheetCheckedAt,
+    balanceSheetMetricsVersion: balanceSheetMetrics && Object.keys(balanceSheetMetrics).length
+      ? BALANCE_SHEET_METRICS_VERSION
+      : previousData.balanceSheetMetricsVersion,
     forwardPE: firstNumber(
       fastData.forwardPE,
       nextEps > 0 ? fastData.price / nextEps : null,
@@ -8066,7 +8108,7 @@ const getImmediateStockSnapshot = async (ticker, previousData = {}) => {
     return buildMinimalStockSnapshot(ticker, previousData);
   }
 
-  return (await resolveWithin(buildFastStockSnapshot(ticker, previousData), 750, null)) ||
+  return (await resolveWithin(buildFastStockSnapshot(ticker, previousData), 2200, null)) ||
     buildMinimalStockSnapshot(ticker, previousData);
 };
 
@@ -10951,35 +10993,22 @@ app.get("/api/market-heatmap", async (req, res) => {
   const fetchFreshHeatmap = async () => {
     const heatmapCompanies = await fetchSp500Constituents();
     const heatmapSymbols = heatmapCompanies.map((company) => company.symbol);
-    const quoteChunks = [];
-    for (let index = 0; index < heatmapCompanies.length; index += 100) {
-      quoteChunks.push(heatmapCompanies.slice(index, index + 100).map((company) => company.symbol));
-    }
-    const [fmpQuoteGroups, yahooSparkQuotes, savedBySymbol] = await Promise.all([
-      resolveWithin(
-        Promise.all(quoteChunks.map((symbols) => fetchFmpBatchQuotes(symbols))),
-        5200,
-        []
-      ),
+    const [yahooSparkQuotes, savedBySymbol] = await Promise.all([
       resolveWithin(fetchYahooSparkQuotes(heatmapSymbols), 8500, []),
       resolveWithin(getSavedHeatmapQuotes(heatmapSymbols), 1300, new Map())
     ]);
-    const fmpQuotes = fmpQuoteGroups.flat();
-    const fmpBySymbol = new Map((Array.isArray(fmpQuotes) ? fmpQuotes : [])
-      .map((quote) => [String(quote.symbol || "").toUpperCase(), quote]));
     const yahooBySymbol = new Map((Array.isArray(yahooSparkQuotes) ? yahooSparkQuotes : [])
       .map((quote) => [String(quote.symbol || "").toUpperCase(), quote]));
     const seededResults = heatmapCompanies.map((company) => {
-      const fmpQuote = fmpBySymbol.get(company.symbol);
       const yahooQuote = yahooBySymbol.get(company.symbol);
       const liveQuote = livePriceCache.get(company.symbol) || {};
       const savedQuote = savedBySymbol.get(company.symbol) || {};
       return normalizeHeatmapCompanyQuote(company, {
-        price: firstFiniteNumber(parseApiNumber(fmpQuote?.price), yahooQuote?.price, liveQuote.price, savedQuote.price),
-        marketCap: firstFiniteNumber(parseApiNumber(fmpQuote?.marketCap), yahooQuote?.marketCap, liveQuote.marketCap, savedQuote.marketCap),
-        change: firstFiniteNumber(parseApiNumber(fmpQuote?.change), yahooQuote?.change, liveQuote.change, savedQuote.change),
-        percentChange: firstFiniteNumber(parseApiNumber(fmpQuote?.changesPercentage), yahooQuote?.percentChange, liveQuote.percentChange, savedQuote.percentChange),
-        previousClose: firstFiniteNumber(parseApiNumber(fmpQuote?.previousClose), yahooQuote?.previousClose, liveQuote.previousClose, savedQuote.previousClose)
+        price: firstFiniteNumber(yahooQuote?.price, liveQuote.price, savedQuote.price),
+        marketCap: firstFiniteNumber(yahooQuote?.marketCap, liveQuote.marketCap, savedQuote.marketCap),
+        change: firstFiniteNumber(yahooQuote?.change, liveQuote.change, savedQuote.change),
+        percentChange: firstFiniteNumber(yahooQuote?.percentChange, liveQuote.percentChange, savedQuote.percentChange),
+        previousClose: firstFiniteNumber(yahooQuote?.previousClose, liveQuote.previousClose, savedQuote.previousClose)
       });
     });
     seededResults.forEach((company) => {
@@ -11027,11 +11056,12 @@ app.get("/api/market-heatmap", async (req, res) => {
 
   const cachedFallbackData = await resolveWithin(buildFromFallbackCache(), 950, null);
   if (
-    hasFullHeatmapPayload(cachedFallbackData) &&
-    cachedFallbackData.companies.some((company) => hasCompleteHeatmapQuote(company))
+    hasReadyHeatmapPayload(cachedFallbackData) ||
+    (hasFullHeatmapPayload(cachedFallbackData) && countCompleteQuotes(cachedFallbackData) >= 450)
   ) {
-    startHeatmapRefresh().catch((err) => {
-      console.log("Market heat map background refresh skipped:", err.message);
+    marketHeatmapCache.set("sp500", {
+      fetchedAt: Date.now(),
+      data: buildMarketHeatmapPayload(cachedFallbackData.companies, true)
     });
     return res.json({
       ...cachedFallbackData,
@@ -11047,13 +11077,21 @@ app.get("/api/market-heatmap", async (req, res) => {
   const bestData = countCompleteQuotes(data) >= countCompleteQuotes(slowCachedFallbackData)
     ? data
     : slowCachedFallbackData;
-  if (hasFullHeatmapPayload(bestData)) return res.json({
-    ...bestData,
-    refreshing: bestData.companies.some((company) =>
-      toNumberOrNull(company.price) === null ||
-      toNumberOrNull(company.percentChange) === null
-    )
-  });
+  if (hasFullHeatmapPayload(bestData)) {
+    if (countCompleteQuotes(bestData) >= 450) {
+      marketHeatmapCache.set("sp500", {
+        fetchedAt: Date.now(),
+        data: buildMarketHeatmapPayload(bestData.companies, Boolean(bestData.stale))
+      });
+    }
+    return res.json({
+      ...bestData,
+      refreshing: bestData.companies.some((company) =>
+        toNumberOrNull(company.price) === null ||
+        toNumberOrNull(company.percentChange) === null
+      )
+    });
+  }
 
   const fallbackCompanies = await resolveWithin(
     fetchSp500Constituents(),
@@ -11074,12 +11112,6 @@ app.get("/api/market-heatmap", async (req, res) => {
     stale: true,
     refreshing: true
   };
-  if (hasFullHeatmapPayload(fallbackPayload)) {
-    marketHeatmapCache.set("sp500", {
-      fetchedAt: Date.now() - freshCacheMs,
-      data: fallbackPayload
-    });
-  }
   return res.json(fallbackPayload);
 });
 

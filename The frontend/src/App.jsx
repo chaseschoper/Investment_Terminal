@@ -1010,6 +1010,19 @@ const chooseRicherRows = (previousRows, incomingRows, keys) => {
     : previousRows;
 };
 
+const chooseHistoricalPeRows = (previousRows, incomingRows) => {
+  if (!Array.isArray(previousRows) || !previousRows.length) return incomingRows;
+  if (!Array.isArray(incomingRows) || !incomingRows.length) return previousRows;
+  const incomingHasStockAnalysis = incomingRows.some((row) =>
+    String(row?.source || "").includes("StockAnalysis")
+  );
+  const previousHasStockAnalysis = previousRows.some((row) =>
+    String(row?.source || "").includes("StockAnalysis")
+  );
+  if (incomingHasStockAnalysis && !previousHasStockAnalysis) return incomingRows;
+  return chooseRicherRows(previousRows, incomingRows, ["pe"]);
+};
+
 const hasMarketActivityData = (stock = {}) =>
   (Array.isArray(stock.analystUpdates) && stock.analystUpdates.length > 0) ||
   (Array.isArray(stock.institutionalHolders) && stock.institutionalHolders.length > 0) ||
@@ -1151,7 +1164,11 @@ const stabilizeRefreshingStockData = (previous, incoming) => {
     "operatingMargin",
     "profitMargin"
   ]);
-  stable.historicalPe = chooseRicherRows(previous.historicalPe, incoming.historicalPe, ["pe"]);
+  stable.historicalPe = chooseHistoricalPeRows(previous.historicalPe, incoming.historicalPe);
+  if (incoming.historicalPeCheckedAt || incoming.historicalPeSource) {
+    stable.historicalPeCheckedAt = incoming.historicalPeCheckedAt || stable.historicalPeCheckedAt;
+    stable.historicalPeSource = incoming.historicalPeSource || stable.historicalPeSource;
+  }
   if (Array.isArray(previous.epsBeatMiss) && previous.epsBeatMiss.length && (!Array.isArray(incoming.epsBeatMiss) || incoming.epsBeatMiss.length < previous.epsBeatMiss.length)) {
     stable.epsBeatMiss = previous.epsBeatMiss;
   }
@@ -3021,7 +3038,8 @@ useEffect(() => {
         (!hadCachedStock || attempt < 30) &&
         shouldKeepWarmingNewStock(stableResponse);
       const needsMarketActivity =
-        false;
+        attempt < 20 &&
+        !hasMarketActivityLoaded(stableResponse);
       const needsAnnualEstimates =
         attempt < 20 &&
         stableResponse.estimateDataVersion !== STOCK_ESTIMATE_VERSION &&
@@ -3058,6 +3076,7 @@ useEffect(() => {
           needsMoreMetricCards ||
           needsAnnualEstimates ||
           needsQuarterEstimate ||
+          needsMarketActivity ||
           needsBalanceSheetMetrics ||
           needsNewStockWarmup
         ) &&
@@ -3969,6 +3988,12 @@ const isInitialStockLoad = isStockLoading && (!stockData?.symbol || stockData?.i
 const areMetricsRefreshing =
   isInitialStockLoad ||
   (isStockLoading && !hasUsableMetricSnapshot);
+const shouldShowHistoricalPeLoading = (rows = []) =>
+  !hasRealHistoryRows(rows) &&
+  (
+    isInitialStockLoad ||
+    (!stockData?.historicalPeCheckedAt && stockData?.refreshing)
+  );
 const stockValue = (value) =>
   areMetricsRefreshing && (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
@@ -5934,7 +5959,7 @@ return (
     color="#60a5fa"
     formatter={(value) => `${Number(value).toFixed(1)}x`}
     valueLabel="P/E"
-    loading={shouldShowAnnualHistoryLoading(historicalPeHistory)}
+    loading={shouldShowHistoricalPeLoading(historicalPeHistory)}
     mode="annual"
   />
   <HistoricalLineChart
