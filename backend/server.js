@@ -922,6 +922,25 @@ async function fetchYahooSparkQuotes(symbols = []) {
   return results;
 }
 
+async function fetchYahooSparkQuote(ticker) {
+  const rows = await fetchYahooSparkQuotes([ticker]);
+  const row = rows.find((item) =>
+    normalizeSp500Symbol(item.symbol) === normalizeSp500Symbol(ticker)
+  ) || rows[0];
+  const meta = row?.response?.[0]?.meta || {};
+  const closes = row?.response?.[0]?.indicators?.quote?.[0]?.close || [];
+  const price = firstFiniteNumber(meta.regularMarketPrice, closes[closes.length - 1]);
+  const previousClose = firstFiniteNumber(meta.chartPreviousClose, closes.length > 1 ? closes[closes.length - 2] : null);
+  const change = price !== null && previousClose > 0 ? price - previousClose : null;
+  return {
+    symbol: normalizeSp500Symbol(meta.symbol || row?.symbol || ticker),
+    price,
+    previousClose,
+    change,
+    percentChange: change !== null && previousClose > 0 ? (change / previousClose) * 100 : null
+  };
+}
+
 async function fetchFmpMarketMoverList(type) {
   if (!process.env.FMP_API_KEY || !canUseFmp()) return [];
   const endpoint = type === "losers" ? "losers" : "gainers";
@@ -4968,6 +4987,13 @@ function withGuaranteedAnalystSection(data = {}) {
         }
       }
     : data.analystEstimates;
+  const nowIso = new Date().toISOString();
+  const analystUpdatesCheckedAt = data.analystUpdatesCheckedAt ||
+    (Array.isArray(data.analystUpdates) && data.analystUpdates.length ? nowIso : null);
+  const institutionalHoldersCheckedAt = data.institutionalHoldersCheckedAt ||
+    (Array.isArray(data.institutionalHolders) && data.institutionalHolders.length ? nowIso : null);
+  const insiderTransactionsCheckedAt = data.insiderTransactionsCheckedAt ||
+    (Array.isArray(data.insiderTransactions) && data.insiderTransactions.length ? nowIso : null);
 
   return {
     ...data,
@@ -4994,6 +5020,9 @@ function withGuaranteedAnalystSection(data = {}) {
     analystEstimates: yahooLockedEstimates || hasSuppliedAnalystEstimates
       ? suppliedAnalystEstimates
       : fallbackAnalystEstimates,
+    analystUpdatesCheckedAt,
+    institutionalHoldersCheckedAt,
+    insiderTransactionsCheckedAt,
     revenueHistory: guaranteedRevenueHistory,
     marginHistory: guaranteedMarginHistory,
     revenueData: guaranteedRevenueData
@@ -7958,6 +7987,7 @@ async function publishMarketActivitySnapshot(ticker) {
 
 async function buildFastStockSnapshot(ticker, previousData = {}) {
   const [
+    sparkQuote,
     yahooData,
     chartQuote,
     calendarQuarterEstimate,
@@ -7965,6 +7995,7 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     stockAnalysisForecast,
     balanceSheetMetrics
   ] = await Promise.all([
+    resolveWithin(fetchYahooSparkQuote(ticker), 1200, {}),
     resolveWithin(fetchYahooQuickQuote(ticker), 900, {}),
     resolveWithin(fetchYahooChartQuote(ticker), 1200, {}),
     resolveWithin(fetchCalendarQuarterEstimate(ticker, { fast: true }), 1400, previousData.analystEstimates?.nextQuarter || {}),
@@ -7972,13 +8003,13 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     resolveWithin(fetchStockAnalysisForecast(ticker), 1800, {}),
     resolveWithin(fetchStockAnalysisBalanceSheetMetrics(ticker), 1800, {})
   ]);
-  const chartData = chartQuote?.c
+  const chartData = chartQuote?.c || sparkQuote?.price
     ? {
-        price: chartQuote.c,
-        change: chartQuote.d,
-        percentChange: chartQuote.dp,
+        price: firstNumber(chartQuote.c, sparkQuote.price),
+        change: firstNumber(chartQuote.d, sparkQuote.change),
+        percentChange: firstNumber(chartQuote.dp, sparkQuote.percentChange),
         extendedHours: chartQuote.extendedHours || null,
-        previousClose: chartQuote.pc,
+        previousClose: firstNumber(chartQuote.pc, sparkQuote.previousClose),
         high: chartQuote.h,
         low: chartQuote.l,
         open: chartQuote.o
@@ -8017,7 +8048,18 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     balanceSheetAsOf: balanceSheetMetrics.balanceSheetAsOf || null,
     balanceSheetSource: balanceSheetMetrics.balanceSheetSource || null
   };
-  if (!fastData?.price) return null;
+  const hasFastSnapshotData =
+    toNumberOrNull(fastData.price) !== null ||
+    STOCK_ANALYSIS_VALUATION_FIELDS.some((field) => toNumberOrNull(fastData[field]) !== null) ||
+    toNumberOrNull(fastData.totalCash) !== null ||
+    toNumberOrNull(fastData.totalDebt) !== null ||
+    toNumberOrNull(stockAnalysisForecast.currentYearRevenue) !== null ||
+    toNumberOrNull(stockAnalysisForecast.currentYearEps) !== null ||
+    toNumberOrNull(stockAnalysisForecast.nextYearRevenue) !== null ||
+    toNumberOrNull(stockAnalysisForecast.nextYearEps) !== null ||
+    toNumberOrNull(calendarQuarterEstimate.revenue) !== null ||
+    toNumberOrNull(calendarQuarterEstimate.eps) !== null;
+  if (!hasFastSnapshotData) return null;
 
   const definedValues = (data = {}) => Object.fromEntries(
     Object.entries(data).filter(([, value]) => value !== null && value !== undefined)
