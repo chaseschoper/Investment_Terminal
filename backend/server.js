@@ -7732,6 +7732,42 @@ async function publishFastStockSnapshot(ticker) {
   );
 }
 
+function hasFastRenderableOverview(stock) {
+  const data = stock?.data || stock || {};
+  const hasCoreCharts = hasAnnualCoreChartHistory({ data });
+  const hasOverviewMetrics =
+    data.valuationMetricsVersion === VALUATION_METRICS_VERSION ||
+    data.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION ||
+    toNumberOrNull(data.marketCap) !== null ||
+    toNumberOrNull(data.pe) !== null ||
+    toNumberOrNull(data.forwardPE) !== null ||
+    toNumberOrNull(data.totalCash) !== null ||
+    toNumberOrNull(data.totalDebt) !== null;
+  const hasEstimates =
+    data.estimateDataVersion === STOCK_ESTIMATE_VERSION ||
+    toNumberOrNull(data.analystEstimates?.currentYear?.revenue) !== null ||
+    toNumberOrNull(data.analystEstimates?.currentYear?.eps) !== null ||
+    toNumberOrNull(data.analystEstimates?.nextYear?.revenue) !== null ||
+    toNumberOrNull(data.analystEstimates?.nextYear?.eps) !== null ||
+    toNumberOrNull(data.analystEstimates?.nextQuarter?.revenue) !== null ||
+    toNumberOrNull(data.analystEstimates?.nextQuarter?.eps) !== null;
+
+  return hasCoreCharts && (hasOverviewMetrics || hasEstimates);
+}
+
+async function markFastOverviewReady(ticker) {
+  const stock = await Stock.findOne({ ticker }).lean().catch(() => null);
+  if (!stock || stock.status === "ready" || !hasFastRenderableOverview(stock)) return;
+
+  await Stock.findOneAndUpdate(
+    { ticker },
+    {
+      status: "ready",
+      updatedAt: new Date()
+    }
+  );
+}
+
 async function publishValuationMetricsSnapshot(ticker) {
   const valuation = await resolveWithin(fetchStockAnalysisValuationMetrics(ticker), 5000, {});
   const $set = {
@@ -9720,6 +9756,86 @@ async function publishFastFinancialHistorySnapshot(ticker) {
   );
 }
 
+async function hydrateQuarterlyHistoryForResponse(ticker, previousData = {}, timeoutMs = 1800) {
+  if (hasUsableInterimHistory(previousData)) return previousData;
+
+  const stockAnalysisRows = await resolveWithin(
+    fetchStockAnalysisIncomeStatementHistory(ticker),
+    timeoutMs,
+    []
+  );
+  if (!Array.isArray(stockAnalysisRows) || !stockAnalysisRows.some((row) => row?.isInterim)) {
+    return previousData;
+  }
+
+  const revenueData = cleanFinancialHistoryRows(finalizeFinancialHistory(
+    mergeHistoricalFinancials(stockAnalysisRows, previousData.revenueData || []),
+    previousData.sharesOutstanding || null
+  ));
+  if (interimHistoryPointCount({ revenueData }) < MIN_USABLE_INTERIM_HISTORY_ROWS) return previousData;
+
+  const revenueHistory = revenueData
+    .filter((row) => !row?.isInterim && !row?.isCurrent)
+    .map((row) => ({
+      year: row.year,
+      revenue: row.revenue,
+      earnings: row.earnings,
+      eps: row.eps,
+      source: row.source
+    }));
+  const marginPercent = (numerator, revenue) => {
+    const numeratorNumber = toNumberOrNull(numerator);
+    const revenueNumber = toNumberOrNull(revenue);
+    return numeratorNumber !== null && revenueNumber ? (numeratorNumber / revenueNumber) * 100 : null;
+  };
+  const marginHistory = cleanFinancialHistoryRows(revenueData
+    .map((row) => ({
+      year: row.year,
+      period: row.period || String(row.year),
+      isInterim: Boolean(row.isInterim),
+      grossMargin: marginPercent(row.grossProfit, row.revenue),
+      operatingMargin: marginPercent(row.operatingIncome, row.revenue),
+      profitMargin: marginPercent(row.earnings, row.revenue),
+      source: row.source
+    }))
+    .filter((row) =>
+      row.year &&
+      (
+        toNumberOrNull(row.grossMargin) !== null ||
+        toNumberOrNull(row.operatingMargin) !== null ||
+        toNumberOrNull(row.profitMargin) !== null
+      )
+    ));
+  const checkedAt = new Date().toISOString();
+  const nextData = {
+    ...previousData,
+    revenueData,
+    revenueHistory,
+    marginHistory: marginHistory.length ? marginHistory : previousData.marginHistory || [],
+    financialHistoryVersion: FINANCIAL_HISTORY_VERSION,
+    financialHistoryCheckedAt: checkedAt,
+    interimHistoryCheckedAt: checkedAt,
+    interimHistoryVersion: INTERIM_HISTORY_VERSION,
+    hasInterimHistory: true,
+    latestInterimPeriod: revenueData.findLast((row) => row.isInterim)?.period || null
+  };
+
+  Stock.findOneAndUpdate(
+    { ticker },
+    {
+      $set: {
+        status: hasFastRenderableOverview(nextData) ? "ready" : "pending",
+        data: nextData,
+        updatedAt: new Date()
+      }
+    }
+  ).catch((err) => {
+    console.log("Quarterly response hydration cache skipped:", ticker, err.message);
+  });
+
+  return nextData;
+}
+
 function startStockFetch(ticker) {
   if (activeStockFetches.has(ticker)) return;
 
@@ -9761,8 +9877,13 @@ function startStockFetch(ticker) {
   });
 
   coreFastHydration
+    .then(() => markFastOverviewReady(ticker))
+    .catch((err) => {
+      console.log("Fast overview ready marker skipped:", ticker, err.message);
+    })
     .finally(() => {
       activeStockFetches.delete(ticker);
+      setTimeout(() => startFullStockRefresh(ticker), 1200);
     });
 }
 
@@ -9898,15 +10019,22 @@ async function getHydratedStockDataForFirstResponse(ticker, fallbackData = {}, w
     Boolean(hydratedData.valuationMetricsCheckedAt);
 
   if (hydratedHasCharts || hydratedHasSupplemental || !fallbackHasCharts) {
+    const selectedData = Object.keys(hydratedData).length ? hydratedData : fallbackData;
+    const responseData = waitForInterimHistory && !hasUsableInterimHistory(selectedData)
+      ? await hydrateQuarterlyHistoryForResponse(ticker, selectedData)
+      : selectedData;
     return {
       stock: hydratedStock,
-      data: Object.keys(hydratedData).length ? hydratedData : fallbackData
+      data: responseData
     };
   }
 
+  const responseData = waitForInterimHistory && !hasUsableInterimHistory(fallbackData)
+    ? await hydrateQuarterlyHistoryForResponse(ticker, fallbackData)
+    : fallbackData;
   return {
     stock: hydratedStock,
-    data: fallbackData
+    data: responseData
   };
 }
 
@@ -11943,12 +12071,13 @@ app.get("/api/stock/:ticker", async (req, res) => {
       );
       const responseData = await prepareCachedStockResponseDataFast(ticker, hydrated.data || initialData);
       maybeEnqueueMarketActivitySnapshot(ticker, responseData);
+      const isStillRefreshing = !hasFastRenderableOverview(responseData);
 
       return res.json({
         ticker,
         status: "ready",
         ...responseData,
-        refreshing: true,
+        refreshing: isStillRefreshing,
         updatedAt: hydrated.stock?.updatedAt || stock.updatedAt
       });
     }
@@ -11988,12 +12117,13 @@ app.get("/api/stock/:ticker", async (req, res) => {
           : { stock, data: stock.data };
         const responseData = await prepareCachedStockResponseDataFast(ticker, hydrated.data || stock.data);
         maybeEnqueueMarketActivitySnapshot(ticker, responseData);
+        const isStillRefreshing = !hasFastRenderableOverview(responseData);
 
         return res.json({
           ticker: stock.ticker,
           status: "ready",
           ...responseData,
-          refreshing: true,
+          refreshing: isStillRefreshing,
           error: getStockResponseError(responseData, stock.error),
           updatedAt: hydrated.stock?.updatedAt || stock.updatedAt
         });
@@ -12001,12 +12131,13 @@ app.get("/api/stock/:ticker", async (req, res) => {
 
       const responseData = await prepareCachedStockResponseDataFast(ticker, buildMinimalStockSnapshot(ticker));
       maybeEnqueueMarketActivitySnapshot(ticker, responseData);
+      const isStillRefreshing = !hasFastRenderableOverview(responseData);
 
       return res.json({
         ticker: stock.ticker,
         status: "ready",
         ...responseData,
-        refreshing: true,
+        refreshing: isStillRefreshing,
         updatedAt: stock.updatedAt || new Date()
       });
     }

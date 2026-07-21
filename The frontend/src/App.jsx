@@ -3082,8 +3082,21 @@ useEffect(() => {
         ) &&
         attempt < 90
       ) {
-      const retryDelay =
-          attempt < 10
+        const onlySlowMarketActivity =
+          needsMarketActivity &&
+          !needsNewStockWarmup &&
+          !needsFreshHistory &&
+          !needsInterimHistory &&
+          !needsQuarterlyHistory &&
+          !needsExtendedHistory &&
+          !needsMoreMetricCards &&
+          !needsAnnualEstimates &&
+          !needsQuarterEstimate &&
+          !needsBalanceSheetMetrics;
+        const retryDelay =
+          onlySlowMarketActivity
+            ? 2500
+            : attempt < 10
             ? 300
             : attempt < 24
               ? 700
