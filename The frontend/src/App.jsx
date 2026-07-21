@@ -2294,6 +2294,8 @@ useEffect(() => {
 }, []);
 
 useEffect(() => {
+  if (activePage !== "market-overview") return;
+
   let isActive = true;
   let refreshTimer;
   let startTimer;
@@ -2333,8 +2335,7 @@ useEffect(() => {
     }
   };
 
-  const initialDelayMs = activePage === "market-overview" ? 0 : 9000;
-  startTimer = window.setTimeout(loadMarketHeatmap, initialDelayMs);
+  startTimer = window.setTimeout(loadMarketHeatmap, 0);
 
   return () => {
     isActive = false;
@@ -2344,7 +2345,7 @@ useEffect(() => {
 }, [activePage]);
 
 useEffect(() => {
-  if (!etfTicker) return;
+  if (activePage !== "etfs" || !etfTicker) return;
 
   let isActive = true;
   let startTimer;
@@ -2366,8 +2367,7 @@ useEffect(() => {
     }
   };
 
-  const initialDelayMs = activePage === "etfs" ? 0 : 11000;
-  startTimer = window.setTimeout(loadEtfData, initialDelayMs);
+  startTimer = window.setTimeout(loadEtfData, 0);
 
   return () => {
     isActive = false;
@@ -2376,6 +2376,8 @@ useEffect(() => {
 }, [activePage, etfTicker]);
 
 useEffect(() => {
+  if (activePage !== "market-overview") return;
+
   let isActive = true;
   let refreshTimer;
   let startTimer;
@@ -2410,8 +2412,7 @@ useEffect(() => {
     }
   };
 
-  const initialDelayMs = activePage === "market-overview" ? 0 : 13000;
-  startTimer = window.setTimeout(loadBroadMarketMovers, initialDelayMs);
+  startTimer = window.setTimeout(loadBroadMarketMovers, 0);
 
   return () => {
     isActive = false;
@@ -2903,15 +2904,16 @@ useEffect(() => {
   */
 
   useEffect(() => {
+    if (activePage !== "earnings-calendar") return;
 
     const timer = window.setTimeout(
       () => loadEarnings(earningsWeekStart),
-      firstStockLoadSettled.current ? 250 : 2200
+      0
     );
 
     return () => window.clearTimeout(timer);
 
-  }, [earningsWeekStart]);
+  }, [activePage, earningsWeekStart]);
 
   /*
     LOAD PORTFOLIO PRICES
@@ -3015,8 +3017,7 @@ useEffect(() => {
         (!hadCachedStock || attempt < 30) &&
         shouldKeepWarmingNewStock(stableResponse);
       const needsMarketActivity =
-        attempt < 25 &&
-        !hasMarketActivityLoaded(stableResponse);
+        false;
       const needsAnnualEstimates =
         attempt < 30 &&
         (
@@ -3052,7 +3053,6 @@ useEffect(() => {
           needsQuarterlyHistory ||
           needsExtendedHistory ||
           needsMoreMetricCards ||
-          needsMarketActivity ||
           needsAnnualEstimates ||
           needsQuarterEstimate ||
           needsBalanceSheetMetrics ||

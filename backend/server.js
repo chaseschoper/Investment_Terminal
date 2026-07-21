@@ -33,6 +33,9 @@ const groqApiKey = process.env.GROQ_API_KEY || "";
 const activeStockFetches = new Set();
 const activeFullStockFetches = new Set();
 const activeStockFastHydrations = new Map();
+const marketActivityQueue = [];
+const queuedMarketActivityFetches = new Set();
+let marketActivityWorkerRunning = false;
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
@@ -96,7 +99,7 @@ const MR_RALLY_WEB_CONTEXT_TIMEOUT_MS = 6000;
 const MR_RALLY_COMPANY_LOOKUP_TIMEOUT_MS = 2500;
 const STOCK_PROVIDER_TIMEOUT_MS = 8000;
 const STOCK_SLOW_PROVIDER_TIMEOUT_MS = 10000;
-const STOCK_FAST_CHART_HYDRATION_WAIT_MS = 450;
+const STOCK_FAST_CHART_HYDRATION_WAIT_MS = 2400;
 const STOCK_INITIAL_SEC_TIMEOUT_MS = 9000;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
@@ -477,41 +480,12 @@ async function fetchSp500Constituents() {
   };
 
   try {
-    const { data } = await axios.get("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", {
-      headers: {
-        "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-      },
-      timeout: 7000
-    });
-    const $ = cheerio.load(data || "");
-    const rows = [];
-
-    $("#constituents tbody tr").each((_, row) => {
-      const cells = $(row).find("td");
-      const symbol = normalizeSp500Symbol(cells.eq(0).text());
-      const name = cells.eq(1).text().trim();
-      const sector = cells.eq(2).text().trim() || "Other";
-      const industry = cells.eq(3).text().trim() || "";
-      rows.push({ symbol, name, sector, industry });
-    });
-
-    const companies = normalizeConstituentRows(rows);
-    if (companies.length >= 450) {
-      sp500ConstituentsCache.set("current", { companies, fetchedAt: Date.now() });
-      return companies;
-    }
-  } catch (err) {
-    console.log("S&P 500 constituents skipped:", err.response?.status || err.message);
-  }
-
-  try {
     const { data } = await axios.get("https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv", {
       headers: {
         "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
         Accept: "text/csv,*/*;q=0.8"
       },
-      timeout: 4500
+      timeout: 1200
     });
     const lines = String(data || "").split(/\r?\n/).filter(Boolean);
     const headers = parseCsvLine(lines.shift() || "").map((header) => header.toLowerCase());
@@ -532,6 +506,35 @@ async function fetchSp500Constituents() {
     }
   } catch (err) {
     console.log("S&P 500 CSV constituents skipped:", err.response?.status || err.message);
+  }
+
+  try {
+    const { data } = await axios.get("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", {
+      headers: {
+        "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+      },
+      timeout: 1200
+    });
+    const $ = cheerio.load(data || "");
+    const rows = [];
+
+    $("#constituents tbody tr").each((_, row) => {
+      const cells = $(row).find("td");
+      const symbol = normalizeSp500Symbol(cells.eq(0).text());
+      const name = cells.eq(1).text().trim();
+      const sector = cells.eq(2).text().trim() || "Other";
+      const industry = cells.eq(3).text().trim() || "";
+      rows.push({ symbol, name, sector, industry });
+    });
+
+    const companies = normalizeConstituentRows(rows);
+    if (companies.length >= 450) {
+      sp500ConstituentsCache.set("current", { companies, fetchedAt: Date.now() });
+      return companies;
+    }
+  } catch (err) {
+    console.log("S&P 500 constituents skipped:", err.response?.status || err.message);
   }
 
   return SP500_HEATMAP_COMPANIES;
@@ -9377,16 +9380,12 @@ function startStockFetch(ticker) {
       console.log("Balance sheet snapshot skipped:", ticker, err.message);
     })
   ]);
-  activeStockFastHydrations.set(ticker, chartFastHydration);
+  activeStockFastHydrations.set(ticker, coreFastHydration);
+  enqueueMarketActivitySnapshot(ticker);
 
-  Promise.allSettled([
-    coreFastHydration,
-    publishMarketActivitySnapshot(ticker).catch((err) => {
-      console.log("Market activity snapshot skipped:", ticker, err.message);
-    })
-  ]).finally(() => {
+  coreFastHydration.finally(() => {
     setTimeout(() => {
-      if (activeStockFastHydrations.get(ticker) === chartFastHydration) {
+      if (activeStockFastHydrations.get(ticker) === coreFastHydration) {
         activeStockFastHydrations.delete(ticker);
       }
     }, 15000);
@@ -9395,8 +9394,43 @@ function startStockFetch(ticker) {
   coreFastHydration
     .finally(() => {
       activeStockFetches.delete(ticker);
-      setTimeout(() => startFullStockRefresh(ticker), 45000);
     });
+}
+
+function enqueueMarketActivitySnapshot(ticker) {
+  if (!ticker || queuedMarketActivityFetches.has(ticker)) return;
+  if (marketActivityQueue.length >= 30) {
+    const droppedTicker = marketActivityQueue.shift();
+    if (droppedTicker) queuedMarketActivityFetches.delete(droppedTicker);
+  }
+  marketActivityQueue.push(ticker);
+  queuedMarketActivityFetches.add(ticker);
+  runMarketActivityQueue().catch((err) => {
+    console.log("Market activity queue skipped:", err.message);
+  });
+}
+
+async function runMarketActivityQueue() {
+  if (marketActivityWorkerRunning) return;
+  marketActivityWorkerRunning = true;
+
+  try {
+    while (marketActivityQueue.length) {
+      const ticker = marketActivityQueue.shift();
+      queuedMarketActivityFetches.delete(ticker);
+      await publishMarketActivitySnapshot(ticker).catch((err) => {
+        console.log("Market activity snapshot skipped:", ticker, err.message);
+      });
+      await wait(500);
+    }
+  } finally {
+    marketActivityWorkerRunning = false;
+    if (marketActivityQueue.length) {
+      runMarketActivityQueue().catch((err) => {
+        console.log("Market activity queue skipped:", err.message);
+      });
+    }
+  }
 }
 
 function startFullStockRefresh(ticker) {
@@ -9446,6 +9480,12 @@ async function getHydratedStockDataForFirstResponse(ticker, fallbackData = {}, w
       hydratedStock = await Stock.findOne({ ticker }).lean().catch(() => null);
       hydratedData = hydratedStock?.data || {};
       if (hasUsableInterimHistory(hydratedData)) break;
+      if (
+        hydratedData.interimHistoryVersion === INTERIM_HISTORY_VERSION &&
+        hydratedData.interimHistoryCheckedAt
+      ) {
+        break;
+      }
     }
   }
   const fallbackHasCharts = hasAnyCoreChartHistory({ data: fallbackData });
@@ -10061,11 +10101,11 @@ async function fetchStockAnalysisMutualFundData(ticker, upstreamError = null) {
   const [overviewResponse, holdingsResponse] = await Promise.all([
     axios.get(`https://stockanalysis.com/quote/mutf/${stockAnalysisSymbol}/`, {
       headers: STOCK_ANALYSIS_HEADERS,
-      timeout: 8000
+      timeout: 6500
     }),
     axios.get(`https://stockanalysis.com/quote/mutf/${stockAnalysisSymbol}/holdings/`, {
       headers: STOCK_ANALYSIS_HEADERS,
-      timeout: 8000
+      timeout: 6500
     }).catch(() => ({ data: "" }))
   ]).catch((err) => {
     throw upstreamError || err;
@@ -10197,13 +10237,13 @@ async function fetchNasdaqFundFallback(ticker, upstreamError = null) {
     axios.get(`https://api.nasdaq.com/api/quote/${symbol}/info`, {
       params: { assetclass: "mutualfunds" },
       headers,
-      timeout: 8000,
+      timeout: 6500,
       validateStatus: () => true
     }),
     axios.get(`https://api.nasdaq.com/api/quote/${symbol}/summary`, {
       params: { assetclass: "mutualfunds" },
       headers,
-      timeout: 8000,
+      timeout: 6500,
       validateStatus: () => true
     }).catch(() => ({ data: null }))
   ]);
@@ -10274,7 +10314,7 @@ async function fetchYahooFundFallback(ticker, stockAnalysisError = null) {
   const chartResponse = await axios.get(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`, {
     params: { range: "1mo", interval: "1d" },
     headers: { "User-Agent": STOCK_ANALYSIS_HEADERS["User-Agent"] },
-    timeout: 8000
+    timeout: 6500
   }).catch((err) => {
     throw err;
   });
@@ -10380,7 +10420,7 @@ async function fetchEtfData(ticker) {
   const symbol = String(ticker || "").trim().toUpperCase();
   const stockAnalysisSymbol = normalizeTickerForStockAnalysis(symbol);
   const cached = etfDataCache.get(symbol);
-  if (cached && Date.now() - cached.fetchedAt < 5 * 60 * 1000) return cached.data;
+  if (cached && Date.now() - cached.fetchedAt < 60 * 60 * 1000) return cached.data;
 
   let overviewResponse;
   let holdingsResponse;
@@ -10388,11 +10428,11 @@ async function fetchEtfData(ticker) {
     [overviewResponse, holdingsResponse] = await Promise.all([
     axios.get(`https://stockanalysis.com/etf/${stockAnalysisSymbol}/`, {
       headers: STOCK_ANALYSIS_HEADERS,
-      timeout: 8000
+      timeout: 6500
     }),
     axios.get(`https://stockanalysis.com/etf/${stockAnalysisSymbol}/holdings/`, {
       headers: STOCK_ANALYSIS_HEADERS,
-      timeout: 8000
+      timeout: 6500
     }).catch(() => ({ data: "" }))
     ]);
   } catch (err) {
@@ -10697,9 +10737,13 @@ app.get("/api/market-heatmap", async (req, res) => {
     )
   });
 
-  const fallbackCompanies = await fetchSp500Constituents();
+  const fallbackCompanies = await resolveWithin(
+    fetchSp500Constituents(),
+    900,
+    SP500_HEATMAP_COMPANIES
+  );
   return res.json({
-    companies: fallbackCompanies.length >= 450
+    companies: fallbackCompanies.length
       ? fallbackCompanies.map((company) => ({
           ...company,
           price: null,
@@ -11553,11 +11597,9 @@ app.get("/api/stock/:ticker", async (req, res) => {
       const isCoreIncomplete =
         needsInterimHistoryRefresh ||
         !hasCompleteChartHistory(stock);
-      const isSupplementalIncomplete = !hasCompleteSupplementalData(stock);
       const isStale =
         isOutdated ||
         isCoreIncomplete ||
-        isSupplementalIncomplete ||
         !updatedAt ||
         Date.now() - updatedAt.getTime() > STOCK_FULL_REFRESH_MS;
       if (isStale) {
@@ -15471,7 +15513,7 @@ app.get("/api/earnings", async (req, res) => {
   paddedStart.setUTCDate(paddedStart.getUTCDate() - 45);
   const cacheKey = `v2:${dates[0]}`;
   const cached = earningsCalendarCache.get(cacheKey);
-  if (cached && Date.now() - cached.cachedAt < 15 * 60 * 1000 && cached.data?.days?.some((day) => day.events?.length)) {
+  if (cached && Date.now() - cached.cachedAt < 60 * 60 * 1000 && cached.data?.days?.some((day) => day.events?.length)) {
     return res.json(cached.data);
   }
 
@@ -15483,7 +15525,7 @@ app.get("/api/earnings", async (req, res) => {
       Referer: "https://www.nasdaq.com/"
     };
     const [stockAnalysisRows, finnhubResponse, ...nasdaqResponses] = await Promise.all([
-      resolveWithin(fetchStockAnalysisEarningsCalendarRows(dates), 7500, []),
+      resolveWithin(fetchStockAnalysisEarningsCalendarRows(dates), 3500, []),
       process.env.FINNHUB_API_KEY
         ? axios.get("https://finnhub.io/api/v1/calendar/earnings", {
             params: {
@@ -15491,7 +15533,7 @@ app.get("/api/earnings", async (req, res) => {
               to: dates[6],
               token: process.env.FINNHUB_API_KEY
             },
-            timeout: 15000
+            timeout: 5000
           }).catch((err) => {
             console.log("Finnhub earnings calendar skipped:", err.response?.status || err.message);
             return { data: { earningsCalendar: [] } };
@@ -15501,7 +15543,7 @@ app.get("/api/earnings", async (req, res) => {
         axios.get("https://api.nasdaq.com/api/calendar/earnings", {
           params: { date },
           headers: nasdaqHeaders,
-          timeout: 15000
+          timeout: 5000
         }).catch((err) => {
           console.log("Nasdaq earnings calendar skipped:", date, err.response?.status || err.message);
           return { data: { data: { rows: [] } } };
