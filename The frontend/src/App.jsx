@@ -2307,7 +2307,7 @@ useEffect(() => {
     let nextRefreshMs = 90 * 1000;
     try {
       const response = await axios.get(`${API_URL}/api/market-heatmap`, {
-        timeout: 6500,
+        timeout: 9500,
       });
       if (isActive) {
         const companies = Array.isArray(response.data?.companies) ? response.data.companies : [];
@@ -4943,12 +4943,12 @@ return (
                             setTicker(company.symbol);
                             setActivePage("overview");
                           }}
-                          title={`${company.name} ${isNumber(company.percentChange) ? formatSignedPercent(company.percentChange) : "Loading"}`}
+                          title={`${company.name} ${isNumber(company.percentChange) ? formatSignedPercent(company.percentChange) : "Quote pending"}`}
                         >
                           <span className="heatmap-symbol">{company.symbol}</span>
                           <span className="heatmap-name">{company.name}</span>
-                          <strong>{isNumber(company.percentChange) ? formatSignedPercent(company.percentChange) : "Loading"}</strong>
-                          <small>{isNumber(company.price) ? formatPrice(company.price) : "Loading"}</small>
+                          <strong>{isNumber(company.percentChange) ? formatSignedPercent(company.percentChange) : "--"}</strong>
+                          <small>{isNumber(company.price) ? formatPrice(company.price) : "Quote pending"}</small>
                         </button>
                       ))}
                     </div>

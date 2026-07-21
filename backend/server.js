@@ -55,6 +55,7 @@ const marketBeatAnalystCache = new Map();
 const secInsiderTransactionCache = new Map();
 const epsSurpriseCache = new Map();
 const stockAnalysisValuationCache = new Map();
+const stockAnalysisHistoricalPeCache = new Map();
 let stockAnalysisEarningsCalendarPageCache = null;
 const sp500ConstituentsCache = new Map();
 const etfDataCache = new Map();
@@ -814,6 +815,101 @@ async function fetchFmpBatchQuotes(symbols = []) {
   }
 }
 
+async function fetchYahooSparkQuotes(symbols = []) {
+  const uniqueSymbols = [...new Set((symbols || [])
+    .map((symbol) => String(symbol || "").trim().toUpperCase())
+    .filter(Boolean))];
+  if (!uniqueSymbols.length) return [];
+
+  const chunks = [];
+  for (let index = 0; index < uniqueSymbols.length; index += 20) {
+    chunks.push(uniqueSymbols.slice(index, index + 20));
+  }
+
+  const results = [];
+  const queue = [...chunks];
+  const workerCount = Math.min(1, queue.length);
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const fetchSparkChunk = async (chunk, attempt = 0) => {
+    try {
+      const response = await axios.get("https://query1.finance.yahoo.com/v7/finance/spark", {
+        params: {
+          symbols: chunk.join(","),
+          range: "5d",
+          interval: "1d"
+        },
+        headers: {
+          "User-Agent": STOCK_ANALYSIS_HEADERS["User-Agent"],
+          Accept: "application/json,text/plain,*/*"
+        },
+        timeout: 4500
+      });
+      return response.data?.spark?.result;
+    } catch (err) {
+      try {
+        const fallbackResponse = await axios.get("https://query1.finance.yahoo.com/v8/finance/spark", {
+          params: {
+            symbols: chunk.join(","),
+            range: "5d",
+            interval: "1d"
+          },
+          headers: {
+            "User-Agent": STOCK_ANALYSIS_HEADERS["User-Agent"],
+            Accept: "application/json,text/plain,*/*"
+          },
+          timeout: 4500
+        });
+        return Object.entries(fallbackResponse.data || {}).map(([symbol, row]) => ({
+          symbol,
+          response: [{
+            meta: {
+              symbol,
+              regularMarketPrice: Array.isArray(row?.close) ? row.close[row.close.length - 1] : null,
+              chartPreviousClose: null
+            },
+            indicators: {
+              quote: [{ close: Array.isArray(row?.close) ? row.close : [] }]
+            }
+          }]
+        }));
+      } catch (_) {
+        // Retry below handles temporary provider throttling.
+      }
+      if (err.response?.status === 429 && attempt < 1) {
+        await sleep(700);
+        return fetchSparkChunk(chunk, attempt + 1);
+      }
+      console.log("Yahoo spark heatmap chunk skipped:", chunk.slice(0, 3).join(","), err.response?.status || err.message);
+      return [];
+    }
+  };
+
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (queue.length) {
+      const chunk = queue.shift();
+      const rows = await fetchSparkChunk(chunk);
+      if (!Array.isArray(rows)) continue;
+      rows.forEach((row) => {
+        const meta = row?.response?.[0]?.meta || {};
+        const close = row?.response?.[0]?.indicators?.quote?.[0]?.close || row?.close || [];
+        const price = firstFiniteNumber(meta.regularMarketPrice, close[close.length - 1]);
+        const previousClose = firstFiniteNumber(meta.chartPreviousClose, close.length > 1 ? close[close.length - 2] : null);
+        const change = price !== null && previousClose > 0 ? price - previousClose : null;
+        results.push({
+          symbol: normalizeSp500Symbol(row.symbol || meta.symbol),
+          price,
+          marketCap: firstFiniteNumber(meta.marketCap),
+          change,
+          percentChange: change !== null && previousClose > 0 ? (change / previousClose) * 100 : null,
+          previousClose
+        });
+      });
+    }
+  }));
+
+  return results;
+}
+
 async function fetchFmpMarketMoverList(type) {
   if (!process.env.FMP_API_KEY || !canUseFmp()) return [];
   const endpoint = type === "losers" ? "losers" : "gainers";
@@ -1238,7 +1334,6 @@ async function fetchStockAnalysisValuationMetrics(ticker) {
   if (cached && Date.now() - cached.fetchedAt < 15 * 60 * 1000) {
     return cached.data;
   }
-  if (!canUseStockAnalysis()) return cached?.data || {};
 
   try {
     const { data } = await axios.get(buildStockAnalysisUrl(ticker, "statistics/"), {
@@ -1323,7 +1418,6 @@ async function fetchStockAnalysisValuationMetrics(ticker) {
 }
 
 async function fetchStockAnalysisForecast(ticker) {
-  if (!canUseStockAnalysis()) return {};
   try {
     const headers = {
       "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36"
@@ -2667,6 +2761,63 @@ function recalculatedHistoricalPe(rows = [], yearEndPrices = []) {
     .slice(-6);
 }
 
+async function fetchStockAnalysisHistoricalPe(ticker) {
+  const symbol = getStockAnalysisPath(ticker);
+  const cached = stockAnalysisHistoricalPeCache.get(symbol);
+  if (cached && Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1000) {
+    return cached.data;
+  }
+
+  try {
+    const { data } = await axios.get(buildStockAnalysisUrl(ticker, "financials/ratios/"), {
+      headers: STOCK_ANALYSIS_HEADERS,
+      timeout: 5500
+    });
+    const $ = cheerio.load(data || "");
+    const table = $("table").first();
+    if (!table.length) return [];
+
+    const headers = table.find("thead tr").first().find("th").toArray()
+      .slice(1)
+      .map((cell) => $(cell).text().replace(/\s+/g, " ").trim());
+    let peValues = [];
+    table.find("tbody tr").each((_, row) => {
+      if (peValues.length) return;
+      const cells = $(row).find("th,td").toArray();
+      const label = $(cells[0]).text().replace(/\s+/g, " ").trim().toLowerCase();
+      if (label !== "pe ratio" && label !== "p/e ratio") return;
+      peValues = cells.slice(1).map((cell) => parseStockAnalysisNumber($(cell).text()));
+    });
+
+    const rows = headers
+      .map((header, index) => {
+        if (/^current$/i.test(header)) return null;
+        const year = Number(header.match(/\b(?:FY\s*)?(\d{4})\b/i)?.[1]);
+        const pe = toNumberOrNull(peValues[index]);
+        if (!Number.isFinite(year) || pe === null || Math.abs(pe) >= 1000) return null;
+        return {
+          year,
+          period: String(year),
+          isInterim: false,
+          pe,
+          source: "StockAnalysis ratios"
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.year - b.year)
+      .slice(-6);
+
+    if (rows.length) {
+      stockAnalysisHistoricalPeCache.set(symbol, { data: rows, fetchedAt: Date.now() });
+    }
+    return rows;
+  } catch (err) {
+    setStockAnalysisCooldown(err, "historical PE", ticker);
+    console.log("StockAnalysis historical PE skipped:", ticker, err.response?.status || err.message);
+    return [];
+  }
+}
+
 async function normalizeForeignAdrStockData(ticker, data = {}) {
   const config = FOREIGN_ADR_CONFIG[ticker];
   if (!config || data.currencyAdjustedFor === `${ticker}_${config.displayCurrency}_ADR`) {
@@ -2722,9 +2873,14 @@ async function normalizeForeignAdrStockData(ticker, data = {}) {
     : data.analystEstimates;
   const epsBeatMiss = normalizeForeignAdrEpsBeatMissRows(data.epsBeatMiss, config, usdRate);
   const yearEndPrices = await fetchYahooYearEndPrices(ticker).catch(() => []);
-  const annualHistoricalPe = Array.isArray(revenueData)
-    ? recalculatedHistoricalPe(revenueData, yearEndPrices)
+  const existingAnnualHistoricalPe = Array.isArray(data.historicalPe)
+    ? data.historicalPe.filter((row) => !row?.isInterim && !row?.isCurrent && toNumberOrNull(row?.pe) !== null)
     : [];
+  const annualHistoricalPe = existingAnnualHistoricalPe.length >= 3
+    ? existingAnnualHistoricalPe
+    : Array.isArray(revenueData)
+      ? recalculatedHistoricalPe(revenueData, yearEndPrices)
+      : [];
   const currentPeRows = Array.isArray(data.historicalPe)
     ? data.historicalPe.filter((row) => row?.isCurrent || row?.isInterim)
     : [];
@@ -4995,6 +5151,48 @@ function prepareCachedStockResponseData(ticker, data = {}) {
   return withGuaranteedAnalystSection(applyStockEarningsDateOverrides(ticker, data || {}));
 }
 
+async function prepareCachedStockResponseDataFast(ticker, data = {}) {
+  let responseData = prepareCachedStockResponseData(ticker, data);
+  const annualPeRows = Array.isArray(responseData.historicalPe)
+    ? responseData.historicalPe.filter((row) =>
+        !row?.isInterim &&
+        !row?.isCurrent &&
+        toNumberOrNull(row?.pe) !== null
+      )
+    : [];
+  if (annualPeRows.length >= 3) return responseData;
+
+  const stockAnalysisPeRows = await resolveWithin(fetchStockAnalysisHistoricalPe(ticker), 1400, []);
+  if (!Array.isArray(stockAnalysisPeRows) || !stockAnalysisPeRows.length) return responseData;
+
+  const currentRows = Array.isArray(responseData.historicalPe)
+    ? responseData.historicalPe.filter((row) => row?.isInterim || row?.isCurrent)
+    : [];
+  responseData = {
+    ...responseData,
+    historicalPe: [...stockAnalysisPeRows, ...currentRows]
+      .filter((row) => toNumberOrNull(row.pe) !== null && Math.abs(toNumberOrNull(row.pe)) < 1000)
+      .slice(-7),
+    historicalPeSource: "StockAnalysis ratios",
+    historicalPeCheckedAt: new Date().toISOString()
+  };
+
+  Stock.findOneAndUpdate(
+    { ticker },
+    {
+      $set: {
+        "data.historicalPe": responseData.historicalPe,
+        "data.historicalPeSource": responseData.historicalPeSource,
+        "data.historicalPeCheckedAt": responseData.historicalPeCheckedAt
+      }
+    }
+  ).catch((err) => {
+    console.log("Fast historical PE response cache skipped:", ticker, err.message);
+  });
+
+  return responseData;
+}
+
 async function fetchYahooTimeSeriesFinancials(ticker) {
   try {
     const period1 = Math.floor(new Date("2016-01-01").getTime() / 1000);
@@ -5394,7 +5592,6 @@ const parseStockAnalysisNumber = (value) => {
 };
 
 async function fetchStockAnalysisBalanceSheetMetrics(ticker) {
-  if (!canUseStockAnalysis()) return {};
   try {
     const { data } = await axios.get(
       buildStockAnalysisUrl(ticker, "financials/balance-sheet/"),
@@ -5507,7 +5704,6 @@ async function fetchStockAnalysisBalanceSheetMetrics(ticker) {
 }
 
 async function fetchStockAnalysisAnnualFinancialHistoryFast(ticker) {
-  if (!canUseStockAnalysis()) return [];
   try {
     const { data } = await axios.get(
       buildStockAnalysisUrl(ticker, "financials/income-statement/"),
@@ -5580,7 +5776,6 @@ async function fetchStockAnalysisAnnualFinancialHistoryFast(ticker) {
 }
 
 async function fetchStockAnalysisIncomeStatementHistory(ticker) {
-  if (!canUseStockAnalysis()) return [];
   try {
     const stockAnalysisRequest = (path) =>
       axios.get(
@@ -7568,6 +7763,22 @@ async function publishEpsBeatMissSnapshot(ticker) {
   );
 }
 
+async function publishHistoricalPeSnapshot(ticker) {
+  const historicalPe = await resolveWithin(fetchStockAnalysisHistoricalPe(ticker), 3200, []);
+  if (!Array.isArray(historicalPe) || !historicalPe.length) return;
+
+  await Stock.findOneAndUpdate(
+    { ticker },
+    {
+      $set: {
+        "data.historicalPe": historicalPe,
+        "data.historicalPeSource": "StockAnalysis ratios",
+        "data.historicalPeCheckedAt": new Date().toISOString()
+      }
+    }
+  );
+}
+
 async function publishBalanceSheetSnapshot(ticker) {
   const stock = await Stock.findOne({ ticker }).lean();
   if (!stock) return;
@@ -7639,7 +7850,7 @@ async function publishMarketActivitySnapshot(ticker) {
     ? new Date(data.marketActivityUpdatedAt).getTime()
     : 0;
   const checkedRecently = lastCheckedAt && Date.now() - lastCheckedAt < 6 * 60 * 60 * 1000;
-  const failedRecently = lastCheckedAt && Date.now() - lastCheckedAt < 20 * 60 * 1000;
+  const failedRecently = lastCheckedAt && Date.now() - lastCheckedAt < 90 * 1000;
   const hasMarketActivityRows =
     (Array.isArray(data.analystUpdates) && data.analystUpdates.length) ||
     (Array.isArray(data.institutionalHolders) && data.institutionalHolders.length) ||
@@ -7728,11 +7939,12 @@ async function publishMarketActivitySnapshot(ticker) {
 }
 
 async function buildFastStockSnapshot(ticker, previousData = {}) {
-  const [yahooData, chartQuote, calendarQuarterEstimate, stockAnalysisValuation] = await Promise.all([
+  const [yahooData, chartQuote, calendarQuarterEstimate, stockAnalysisValuation, stockAnalysisForecast] = await Promise.all([
     resolveWithin(fetchYahooQuickQuote(ticker), 900, {}),
     resolveWithin(fetchYahooChartQuote(ticker), 1200, {}),
     resolveWithin(fetchCalendarQuarterEstimate(ticker, { fast: true }), 1400, previousData.analystEstimates?.nextQuarter || {}),
-    resolveWithin(fetchStockAnalysisValuationMetrics(ticker), 1800, {})
+    resolveWithin(fetchStockAnalysisValuationMetrics(ticker), 1800, {}),
+    resolveWithin(fetchStockAnalysisForecast(ticker), 2200, {})
   ]);
   const chartData = chartQuote?.c
     ? {
@@ -7785,11 +7997,29 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     },
     currentYear: {
       ...(previousData.analystEstimates?.currentYear || {}),
-      ...definedValues(fastData.analystEstimates?.currentYear)
+      revenue: firstNumber(
+        normalizeStatementDollars(stockAnalysisForecast.currentYearRevenue),
+        previousData.analystEstimates?.currentYear?.revenue
+      ),
+      earnings: previousData.analystEstimates?.currentYear?.earnings || null,
+      eps: firstNumber(
+        toNumberOrNull(stockAnalysisForecast.currentYearEps),
+        previousData.analystEstimates?.currentYear?.eps
+      ),
+      source: "StockAnalysis"
     },
     nextYear: {
       ...(previousData.analystEstimates?.nextYear || {}),
-      ...definedValues(fastData.analystEstimates?.nextYear)
+      revenue: firstNumber(
+        normalizeStatementDollars(stockAnalysisForecast.nextYearRevenue),
+        previousData.analystEstimates?.nextYear?.revenue
+      ),
+      earnings: previousData.analystEstimates?.nextYear?.earnings || null,
+      eps: firstNumber(
+        toNumberOrNull(stockAnalysisForecast.nextYearEps),
+        previousData.analystEstimates?.nextYear?.eps
+      ),
+      source: "StockAnalysis"
     }
   };
   const epsBeatMiss = buildEpsBeatMissSeries(previousData.epsBeatMiss || [], calendarQuarterEstimate);
@@ -8052,6 +8282,7 @@ async function fetchStockData(ticker) {
     yahooYearEndPrices,
     nasdaqData,
     stockAnalysisForecast,
+    stockAnalysisHistoricalPe,
     secAnnualMargins,
     fmpCashFlowData,
     fmpPriceTargetData,
@@ -8079,6 +8310,7 @@ async function fetchStockData(ticker) {
     resolveWithin(fetchYahooYearEndPrices(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(fetchNasdaqData(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
     resolveWithin(fetchStockAnalysisForecast(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
+    resolveWithin(fetchStockAnalysisHistoricalPe(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
     earlySecAnnualMargins,
     resolveWithin(getFmpData(ticker, "cash flow", [
       "/stable/cash-flow-statement?symbol={ticker}&period=annual&limit=6",
@@ -8344,24 +8576,26 @@ async function fetchStockData(ticker) {
       : yahooSupplementalData.yearEndPrices || []
     ).map((row) => [Number(row.year), row.close])
   );
-  let historicalPe = revenueData
-    .filter((row) => !row.isInterim)
-    .map((row) => {
-      const price = toNumberOrNull(yearEndPrices.get(Number(row.year)));
-      const annualEps = toNumberOrNull(row.eps);
-      return {
-        year: row.year,
-        period: row.period || String(row.year),
-        isInterim: Boolean(row.isInterim),
-        pe: price !== null && annualEps !== null && annualEps !== 0
-          ? price / annualEps
-          : null,
-        price,
-        eps: annualEps
-      };
-    })
-    .filter((row) => row.pe !== null && Math.abs(row.pe) < 1000)
-    .slice(-6);
+  let historicalPe = Array.isArray(stockAnalysisHistoricalPe) && stockAnalysisHistoricalPe.length
+    ? stockAnalysisHistoricalPe
+    : revenueData
+      .filter((row) => !row.isInterim)
+      .map((row) => {
+        const price = toNumberOrNull(yearEndPrices.get(Number(row.year)));
+        const annualEps = toNumberOrNull(row.eps);
+        return {
+          year: row.year,
+          period: row.period || String(row.year),
+          isInterim: Boolean(row.isInterim),
+          pe: price !== null && annualEps !== null && annualEps !== 0
+            ? price / annualEps
+            : null,
+          price,
+          eps: annualEps
+        };
+      })
+      .filter((row) => row.pe !== null && Math.abs(row.pe) < 1000)
+      .slice(-6);
   const latestInterimPeRow = [...revenueData]
     .filter((row) =>
       row?.isInterim &&
@@ -9419,6 +9653,9 @@ function startStockFetch(ticker) {
     publishEpsBeatMissSnapshot(ticker).catch((err) => {
       console.log("EPS beat/miss snapshot skipped:", ticker, err.message);
     }),
+    publishHistoricalPeSnapshot(ticker).catch((err) => {
+      console.log("Historical PE snapshot skipped:", ticker, err.message);
+    }),
     publishBalanceSheetSnapshot(ticker).catch((err) => {
       console.log("Balance sheet snapshot skipped:", ticker, err.message);
     })
@@ -9451,6 +9688,24 @@ function enqueueMarketActivitySnapshot(ticker) {
   runMarketActivityQueue().catch((err) => {
     console.log("Market activity queue skipped:", err.message);
   });
+}
+
+function maybeEnqueueMarketActivitySnapshot(ticker, data = {}) {
+  const lastCheckedAt = data.marketActivityUpdatedAt
+    ? new Date(data.marketActivityUpdatedAt).getTime()
+    : 0;
+  const hasRows =
+    (Array.isArray(data.analystUpdates) && data.analystUpdates.length) ||
+    (Array.isArray(data.institutionalHolders) && data.institutionalHolders.length) ||
+    (Array.isArray(data.insiderTransactions) && data.insiderTransactions.length);
+  const checkedRecently =
+    lastCheckedAt &&
+    !Number.isNaN(lastCheckedAt) &&
+    Date.now() - lastCheckedAt < (hasRows ? 15 * 60 * 1000 : 90 * 1000);
+
+  if (!checkedRecently) {
+    enqueueMarketActivitySnapshot(ticker);
+  }
 }
 
 async function runMarketActivityQueue() {
@@ -10637,6 +10892,10 @@ app.get("/api/market-heatmap", async (req, res) => {
   const staleCacheMs = 20 * 60 * 1000;
   const hasFullHeatmapPayload = (payload) =>
     Array.isArray(payload?.companies) && payload.companies.length >= 450;
+  const countCompleteQuotes = (payload) =>
+    (payload?.companies || []).filter(hasCompleteHeatmapQuote).length;
+  const hasReadyHeatmapPayload = (payload) =>
+    hasFullHeatmapPayload(payload) && countCompleteQuotes(payload) >= 450;
 
   const cachedNeedsRefresh = cached?.data?.companies?.some((company) => !hasCompleteHeatmapQuote(company));
 
@@ -10654,7 +10913,7 @@ app.get("/api/market-heatmap", async (req, res) => {
     return marketHeatmapRefreshPromise;
   };
 
-  if (hasFullHeatmapPayload(cached?.data) && cachedAge < freshCacheMs && !cachedNeedsRefresh) {
+  if (hasReadyHeatmapPayload(cached?.data) && cachedAge < freshCacheMs && !cachedNeedsRefresh) {
     return res.json(cached.data);
   }
 
@@ -10696,27 +10955,31 @@ app.get("/api/market-heatmap", async (req, res) => {
     for (let index = 0; index < heatmapCompanies.length; index += 100) {
       quoteChunks.push(heatmapCompanies.slice(index, index + 100).map((company) => company.symbol));
     }
-    const [fmpQuoteGroups, savedBySymbol] = await Promise.all([
+    const [fmpQuoteGroups, yahooSparkQuotes, savedBySymbol] = await Promise.all([
       resolveWithin(
         Promise.all(quoteChunks.map((symbols) => fetchFmpBatchQuotes(symbols))),
         5200,
         []
       ),
+      resolveWithin(fetchYahooSparkQuotes(heatmapSymbols), 8500, []),
       resolveWithin(getSavedHeatmapQuotes(heatmapSymbols), 1300, new Map())
     ]);
     const fmpQuotes = fmpQuoteGroups.flat();
     const fmpBySymbol = new Map((Array.isArray(fmpQuotes) ? fmpQuotes : [])
       .map((quote) => [String(quote.symbol || "").toUpperCase(), quote]));
+    const yahooBySymbol = new Map((Array.isArray(yahooSparkQuotes) ? yahooSparkQuotes : [])
+      .map((quote) => [String(quote.symbol || "").toUpperCase(), quote]));
     const seededResults = heatmapCompanies.map((company) => {
       const fmpQuote = fmpBySymbol.get(company.symbol);
+      const yahooQuote = yahooBySymbol.get(company.symbol);
       const liveQuote = livePriceCache.get(company.symbol) || {};
       const savedQuote = savedBySymbol.get(company.symbol) || {};
       return normalizeHeatmapCompanyQuote(company, {
-        price: firstFiniteNumber(parseApiNumber(fmpQuote?.price), liveQuote.price, savedQuote.price),
-        marketCap: firstFiniteNumber(parseApiNumber(fmpQuote?.marketCap), liveQuote.marketCap, savedQuote.marketCap),
-        change: firstFiniteNumber(parseApiNumber(fmpQuote?.change), liveQuote.change, savedQuote.change),
-        percentChange: firstFiniteNumber(parseApiNumber(fmpQuote?.changesPercentage), liveQuote.percentChange, savedQuote.percentChange),
-        previousClose: firstFiniteNumber(parseApiNumber(fmpQuote?.previousClose), liveQuote.previousClose, savedQuote.previousClose)
+        price: firstFiniteNumber(parseApiNumber(fmpQuote?.price), yahooQuote?.price, liveQuote.price, savedQuote.price),
+        marketCap: firstFiniteNumber(parseApiNumber(fmpQuote?.marketCap), yahooQuote?.marketCap, liveQuote.marketCap, savedQuote.marketCap),
+        change: firstFiniteNumber(parseApiNumber(fmpQuote?.change), yahooQuote?.change, liveQuote.change, savedQuote.change),
+        percentChange: firstFiniteNumber(parseApiNumber(fmpQuote?.changesPercentage), yahooQuote?.percentChange, liveQuote.percentChange, savedQuote.percentChange),
+        previousClose: firstFiniteNumber(parseApiNumber(fmpQuote?.previousClose), yahooQuote?.previousClose, liveQuote.previousClose, savedQuote.previousClose)
       });
     });
     seededResults.forEach((company) => {
@@ -10745,7 +11008,7 @@ app.get("/api/market-heatmap", async (req, res) => {
     ));
     const data = buildMarketHeatmapPayload(companies, false);
 
-    if (companies.length >= 450 && companies.some((company) => toNumberOrNull(company.price) !== null)) {
+    if (companies.length >= 450 && countCompleteQuotes({ companies }) >= 300) {
       marketHeatmapCache.set("sp500", {
         fetchedAt: Date.now(),
         data
@@ -10755,7 +11018,7 @@ app.get("/api/market-heatmap", async (req, res) => {
     return data;
   };
 
-  if (hasFullHeatmapPayload(cached?.data) && cachedAge < staleCacheMs) {
+  if (hasReadyHeatmapPayload(cached?.data) && cachedAge < staleCacheMs) {
     startHeatmapRefresh().catch((err) => {
       console.log("Market heat map background refresh skipped:", err.message);
     });
@@ -10778,11 +11041,9 @@ app.get("/api/market-heatmap", async (req, res) => {
   }
 
   const [data, slowCachedFallbackData] = await Promise.all([
-    resolveWithin(startHeatmapRefresh(), 1200, null),
+    resolveWithin(startHeatmapRefresh(), 9000, null),
     resolveWithin(buildFromFallbackCache(), 700, null)
   ]);
-  const countCompleteQuotes = (payload) =>
-    (payload?.companies || []).filter(hasCompleteHeatmapQuote).length;
   const bestData = countCompleteQuotes(data) >= countCompleteQuotes(slowCachedFallbackData)
     ? data
     : slowCachedFallbackData;
@@ -11589,7 +11850,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
         STOCK_FAST_CHART_HYDRATION_WAIT_MS,
         { waitForInterimHistory: wantsQuarterlyHistory }
       );
-      const responseData = prepareCachedStockResponseData(ticker, hydrated.data || initialData);
+      const responseData = await prepareCachedStockResponseDataFast(ticker, hydrated.data || initialData);
+      maybeEnqueueMarketActivitySnapshot(ticker, responseData);
 
       return res.json({
         ticker,
@@ -11633,7 +11895,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
               { waitForInterimHistory: wantsQuarterlyHistory }
             )
           : { stock, data: stock.data };
-        const responseData = prepareCachedStockResponseData(ticker, hydrated.data || stock.data);
+        const responseData = await prepareCachedStockResponseDataFast(ticker, hydrated.data || stock.data);
+        maybeEnqueueMarketActivitySnapshot(ticker, responseData);
 
         return res.json({
           ticker: stock.ticker,
@@ -11645,7 +11908,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
         });
       }
 
-      const responseData = prepareCachedStockResponseData(ticker, buildMinimalStockSnapshot(ticker));
+      const responseData = await prepareCachedStockResponseDataFast(ticker, buildMinimalStockSnapshot(ticker));
+      maybeEnqueueMarketActivitySnapshot(ticker, responseData);
 
       return res.json({
         ticker: stock.ticker,
@@ -11694,7 +11958,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
               { waitForInterimHistory: wantsQuarterlyHistory }
             )
           : { stock, data: stock.data || {} };
-        const responseData = prepareCachedStockResponseData(ticker, hydrated.data || stock.data || {});
+        const responseData = await prepareCachedStockResponseDataFast(ticker, hydrated.data || stock.data || {});
+        maybeEnqueueMarketActivitySnapshot(ticker, responseData);
 
         return res.json({
           ticker: stock.ticker,
@@ -11720,7 +11985,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           toNumberOrNull(fallbackData.price) === null;
 
         if (shouldRetryFailedSnapshot) {
-          const responseData = prepareCachedStockResponseData(ticker, fallbackData);
+          const responseData = await prepareCachedStockResponseDataFast(ticker, fallbackData);
           await Stock.findOneAndUpdate(
             { ticker },
             {
@@ -11731,6 +11996,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
             }
           );
           startStockFetch(ticker);
+          maybeEnqueueMarketActivitySnapshot(ticker, responseData);
 
           return res.json({
             ticker: stock.ticker,
@@ -11741,9 +12007,11 @@ app.get("/api/stock/:ticker", async (req, res) => {
           });
         }
 
-        const responseData = prepareCachedStockResponseData(ticker, fallbackData);
+        const responseData = await prepareCachedStockResponseDataFast(ticker, fallbackData);
         const shouldKeepPolling =
           !hasCompleteChartHistory({ data: responseData });
+
+        maybeEnqueueMarketActivitySnapshot(ticker, responseData);
 
         return res.json({
           ticker: stock.ticker,
@@ -11767,7 +12035,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
       startStockFetch(ticker);
 
       if (stock.data && Object.keys(stock.data).length) {
-        const responseData = prepareCachedStockResponseData(ticker, stock.data);
+        const responseData = await prepareCachedStockResponseDataFast(ticker, stock.data);
+        maybeEnqueueMarketActivitySnapshot(ticker, responseData);
 
         return res.json({
           ticker: stock.ticker,
@@ -11779,7 +12048,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
         });
       }
 
-      const responseData = prepareCachedStockResponseData(ticker, buildMinimalStockSnapshot(ticker));
+      const responseData = await prepareCachedStockResponseDataFast(ticker, buildMinimalStockSnapshot(ticker));
+      maybeEnqueueMarketActivitySnapshot(ticker, responseData);
 
       return res.json({
         ticker,
@@ -11790,7 +12060,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
       });
     }
 
-    const responseData = prepareCachedStockResponseData(ticker, stock.data);
+    const responseData = await prepareCachedStockResponseDataFast(ticker, stock.data);
+    maybeEnqueueMarketActivitySnapshot(ticker, responseData);
 
     return res.json({
       ticker: stock.ticker,
