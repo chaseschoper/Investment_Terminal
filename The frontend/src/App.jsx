@@ -851,6 +851,7 @@ const buildChartRows = (rows, key) =>
       period: item.period || String(item.year),
       isInterim: Boolean(item.isInterim),
       isCurrent: Boolean(item.isCurrent),
+      source: item.source,
       [key]: isNumber(item[key])
         ? item[key]
         : null,
@@ -858,6 +859,8 @@ const buildChartRows = (rows, key) =>
     .filter((item) =>
       item.year &&
       item[key] !== null &&
+      item.source !== "Modeled fallback" &&
+      item.source !== "Current metric fallback" &&
       (item.isInterim || item.year <= new Date().getFullYear())
     );
 
@@ -1361,11 +1364,11 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 153;
-const STOCK_ESTIMATE_VERSION = 18;
-const INTERIM_HISTORY_VERSION = 5;
-const VALUATION_METRICS_VERSION = 2;
-const BALANCE_SHEET_METRICS_VERSION = 9;
+const FINANCIAL_HISTORY_VERSION = 154;
+const STOCK_ESTIMATE_VERSION = 20;
+const INTERIM_HISTORY_VERSION = 6;
+const VALUATION_METRICS_VERSION = 3;
+const BALANCE_SHEET_METRICS_VERSION = 10;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const MIN_DISPLAY_INTERIM_HISTORY_ROWS = 4;
 

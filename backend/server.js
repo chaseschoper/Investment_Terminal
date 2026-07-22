@@ -52,6 +52,7 @@ const earningsCallTranscriptCache = new Map();
 const similarCompanyMetricCache = new Map();
 const fmpDataCache = new Map();
 const fmpDataInFlight = new Map();
+const FMP_DATA_CACHE_TTL_MS = 10 * 60 * 1000;
 const fmpMarketActivityCache = new Map();
 const marketBeatAnalystCache = new Map();
 const secInsiderTransactionCache = new Map();
@@ -800,7 +801,7 @@ async function getFmpData(ticker, label, endpoints) {
       if (data && typeof data === "object") {
         fmpDataCache.set(cacheKey, {
           data,
-          expiresAt: Date.now() + 60 * 1000
+          expiresAt: Date.now() + FMP_DATA_CACHE_TTL_MS
         });
         return data;
       }
@@ -821,24 +822,16 @@ async function fetchFmpStableQuoteProfile(ticker) {
   if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return {};
 
   try {
-    const [quoteResponse, profileResponse] = await Promise.all([
-      axios.get("https://financialmodelingprep.com/stable/quote", {
-        params: { symbol, apikey: process.env.FMP_API_KEY },
-        timeout: 3500
-      }).catch((err) => {
-        setFmpCooldown(err, "stable quote", symbol);
-        return { data: [] };
-      }),
-      axios.get("https://financialmodelingprep.com/stable/profile", {
-        params: { symbol, apikey: process.env.FMP_API_KEY },
-        timeout: 3500
-      }).catch((err) => {
-        setFmpCooldown(err, "stable profile", symbol);
-        return { data: [] };
-      })
+    const [quoteData, profileData] = await Promise.all([
+      getFmpData(symbol, "stable quote", [
+        "/stable/quote?symbol={ticker}"
+      ]),
+      getFmpData(symbol, "stable profile", [
+        "/stable/profile?symbol={ticker}"
+      ])
     ]);
-    const quote = Array.isArray(quoteResponse.data) ? quoteResponse.data[0] || {} : quoteResponse.data || {};
-    const profile = Array.isArray(profileResponse.data) ? profileResponse.data[0] || {} : profileResponse.data || {};
+    const quote = Array.isArray(quoteData) ? quoteData[0] || {} : quoteData || {};
+    const profile = Array.isArray(profileData) ? profileData[0] || {} : profileData || {};
     const rangeText = firstText(profile.range);
     const rangeMatch = rangeText?.match(/([0-9.,]+)\s*-\s*([0-9.,]+)/);
 
@@ -4637,6 +4630,7 @@ function historicalGrowth(rows, field) {
 function chartHistoryPointCount(stock, key) {
   const periods = new Set();
   (stock?.data?.revenueData || []).forEach((row) => {
+    if (row?.source === "Modeled fallback" || row?.source === "Current metric fallback") return;
     if (toNumberOrNull(row?.[key]) === null || row?.isCurrent) return;
     periods.add(row.period || `${row.year}-${row.isInterim ? "interim" : "annual"}`);
   });
@@ -4650,6 +4644,7 @@ function hasChartHistory(stock, key) {
 function interimHistoryPointCount(data = {}) {
   const periods = new Set();
   (data.revenueData || []).forEach((row) => {
+    if (row?.source === "Modeled fallback" || row?.source === "Current metric fallback") return;
     if (!row?.isInterim || row?.isCurrent) return;
     if (
       toNumberOrNull(row.revenue) === null &&
@@ -4707,6 +4702,12 @@ function hasAnyCoreChartHistory(stock) {
     hasChartHistory(stock, "earnings") ||
     hasChartHistory(stock, "eps")
   );
+}
+
+function hasRequestedCoreChartHistory(data = {}, wantsQuarterlyHistory = false) {
+  return wantsQuarterlyHistory
+    ? hasCompleteChartHistory({ data })
+    : hasAnnualCoreChartHistory({ data });
 }
 
 function isCompletedStockAnalysisAnnualHeader(header = {}) {
@@ -4808,7 +4809,12 @@ function withGuaranteedAnalystSection(data = {}) {
   const yahooLockedEstimates = data.analystEstimatesSource === "Yahoo Finance";
   const isFinancialCompany = data.isFinancialCompany === true;
   const price = toNumberOrNull(data.price);
-  const revenueRows = Array.isArray(data.revenueData) ? data.revenueData : [];
+  const revenueRows = Array.isArray(data.revenueData)
+    ? data.revenueData.filter((row) =>
+        row?.source !== "Modeled fallback" &&
+        row?.source !== "Current metric fallback"
+      )
+    : [];
   const sortedRevenueRows = [...revenueRows]
     .filter((row) => row?.year)
     .sort((a, b) => a.year - b.year);
@@ -5056,7 +5062,7 @@ function withGuaranteedAnalystSection(data = {}) {
   });
   const guaranteedRevenueBaseData = mergeHistoricalFinancials(
     revenueRows,
-    modeledRevenueData
+    []
   );
   const fallbackHistoryYear = Math.max(
     latestYear,
@@ -5259,10 +5265,16 @@ function withGuaranteedAnalystSection(data = {}) {
     }
     return String(a.period || "").localeCompare(String(b.period || ""));
   });
-  const guaranteedRevenueHistory = (data.revenueHistory || []).some(
+  const cleanSuppliedRevenueHistory = Array.isArray(data.revenueHistory)
+    ? data.revenueHistory.filter((row) =>
+        row?.source !== "Modeled fallback" &&
+        row?.source !== "Current metric fallback"
+      )
+    : [];
+  const guaranteedRevenueHistory = cleanSuppliedRevenueHistory.some(
     (row) => toNumberOrNull(row.revenue) !== null
   )
-    ? data.revenueHistory
+    ? cleanSuppliedRevenueHistory
     : guaranteedRevenueData.map((row) => ({
         year: row.year,
         revenue: row.revenue,
@@ -6768,7 +6780,10 @@ async function fetchFinnhubEpsSurprises(ticker) {
 
 async function fetchFmpEpsSurprises(ticker) {
   const symbol = String(ticker || "").trim().toUpperCase();
-  if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return [];
+  if (!symbol) return [];
+  if (!process.env.FMP_API_KEY || !canUseFmp()) {
+    return fetchFinnhubEpsSurprises(symbol);
+  }
 
   const cached = readCachedMarketActivity(epsSurpriseCache, `fmp:${symbol}`);
   if (cached) return cached;
@@ -6781,7 +6796,7 @@ async function fetchFmpEpsSurprises(ticker) {
       2200,
       []
     );
-    const data = mergeEpsBeatMissRows(
+    let data = mergeEpsBeatMissRows(
       (Array.isArray(rows) ? rows : rows ? [rows] : [])
         .filter((item) => String(item.symbol || "").trim().toUpperCase() === symbol)
         .map((item) => {
@@ -6803,6 +6818,11 @@ async function fetchFmpEpsSurprises(ticker) {
     )
       .sort((a, b) => String(a.period).localeCompare(String(b.period)))
       .slice(-5);
+    if (data.length < 4) {
+      data = mergeEpsBeatMissRows(data, await resolveWithin(fetchFinnhubEpsSurprises(symbol), 1800, []))
+        .sort((a, b) => String(a.period).localeCompare(String(b.period)))
+        .slice(-5);
+    }
     return writeCachedMarketActivity(
       epsSurpriseCache,
       `fmp:${symbol}`,
@@ -6812,7 +6832,8 @@ async function fetchFmpEpsSurprises(ticker) {
   } catch (err) {
     setFmpCooldown(err, "EPS surprises", symbol);
     console.log("FMP EPS surprises skipped:", symbol, err.response?.status || err.message);
-    return writeCachedMarketActivity(epsSurpriseCache, `fmp:${symbol}`, [], 15 * 60 * 1000);
+    const fallback = await resolveWithin(fetchFinnhubEpsSurprises(symbol), 1800, []);
+    return writeCachedMarketActivity(epsSurpriseCache, `fmp:${symbol}`, fallback, fallback.length ? 6 * 60 * 60 * 1000 : 15 * 60 * 1000);
   }
 }
 
@@ -12769,7 +12790,9 @@ app.get("/api/stock/:ticker", async (req, res) => {
       );
       const responseData = await prepareCachedStockResponseDataFast(ticker, hydrated.data || initialData);
       maybeEnqueueMarketActivitySnapshot(ticker, responseData);
-      const isStillRefreshing = !hasFastRenderableOverview(responseData);
+      const isStillRefreshing =
+        !hasFastRenderableOverview(responseData) ||
+        !hasRequestedCoreChartHistory(responseData, wantsQuarterlyHistory);
 
       return res.json({
         ticker,
@@ -12815,7 +12838,9 @@ app.get("/api/stock/:ticker", async (req, res) => {
           : { stock, data: stock.data };
         const responseData = await prepareCachedStockResponseDataFast(ticker, hydrated.data || stock.data);
         maybeEnqueueMarketActivitySnapshot(ticker, responseData);
-        const isStillRefreshing = !hasFastRenderableOverview(responseData);
+        const isStillRefreshing =
+          !hasFastRenderableOverview(responseData) ||
+          !hasRequestedCoreChartHistory(responseData, wantsQuarterlyHistory);
 
         return res.json({
           ticker: stock.ticker,
@@ -12829,7 +12854,9 @@ app.get("/api/stock/:ticker", async (req, res) => {
 
       const responseData = await prepareCachedStockResponseDataFast(ticker, buildMinimalStockSnapshot(ticker));
       maybeEnqueueMarketActivitySnapshot(ticker, responseData);
-      const isStillRefreshing = !hasFastRenderableOverview(responseData);
+      const isStillRefreshing =
+        !hasFastRenderableOverview(responseData) ||
+        !hasRequestedCoreChartHistory(responseData, wantsQuarterlyHistory);
 
       return res.json({
         ticker: stock.ticker,
@@ -12858,8 +12885,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
         ? hasCompleteChartHistory(stock)
         : hasAnnualCoreChartHistory(stock);
       const isCoreIncomplete =
-        (wantsQuarterlyHistory && needsInterimHistoryRefresh) ||
-        (!requestedChartHistoryReady && !hasCheckedAnnualHistory);
+        !requestedChartHistoryReady ||
+        (wantsQuarterlyHistory && needsInterimHistoryRefresh);
       const isStale =
         isOutdated ||
         isCoreIncomplete ||
@@ -12880,12 +12907,15 @@ app.get("/api/stock/:ticker", async (req, res) => {
           : { stock, data: stock.data || {} };
         const responseData = await prepareCachedStockResponseDataFast(ticker, hydrated.data || stock.data || {});
         maybeEnqueueMarketActivitySnapshot(ticker, responseData);
+        const isStillRefreshing =
+          isCoreIncomplete ||
+          !hasRequestedCoreChartHistory(responseData, wantsQuarterlyHistory);
 
         return res.json({
           ticker: stock.ticker,
           status: "ready",
           ...responseData,
-          refreshing: isCoreIncomplete,
+          refreshing: isStillRefreshing,
           error: getStockResponseError(responseData, stock.error),
           updatedAt: hydrated.stock?.updatedAt || stock.updatedAt
         });
@@ -12929,7 +12959,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
 
         const responseData = await prepareCachedStockResponseDataFast(ticker, fallbackData);
         const shouldKeepPolling =
-          !hasCompleteChartHistory({ data: responseData });
+          !hasRequestedCoreChartHistory(responseData, wantsQuarterlyHistory);
 
         maybeEnqueueMarketActivitySnapshot(ticker, responseData);
 
@@ -12982,11 +13012,13 @@ app.get("/api/stock/:ticker", async (req, res) => {
 
     const responseData = await prepareCachedStockResponseDataFast(ticker, stock.data);
     maybeEnqueueMarketActivitySnapshot(ticker, responseData);
+    const isStillRefreshing = !hasRequestedCoreChartHistory(responseData, wantsQuarterlyHistory);
 
     return res.json({
       ticker: stock.ticker,
       status: stock.status,
       ...responseData,
+      refreshing: isStillRefreshing,
       error: getStockResponseError(responseData, stock.error),
       updatedAt: stock.updatedAt
     });
