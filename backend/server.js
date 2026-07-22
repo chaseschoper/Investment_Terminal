@@ -50,6 +50,8 @@ const companyDocumentsInFlight = new Map();
 const earningsCallPeriodsCache = new Map();
 const earningsCallTranscriptCache = new Map();
 const similarCompanyMetricCache = new Map();
+const fmpDataCache = new Map();
+const fmpDataInFlight = new Map();
 const fmpMarketActivityCache = new Map();
 const marketBeatAnalystCache = new Map();
 const secInsiderTransactionCache = new Map();
@@ -65,7 +67,7 @@ const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const alphaVantageFundamentalCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 154;
-const STOCK_ESTIMATE_VERSION = 19;
+const STOCK_ESTIMATE_VERSION = 20;
 const INTERIM_HISTORY_VERSION = 6;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const BALANCE_SHEET_METRICS_VERSION = 10;
@@ -779,17 +781,35 @@ async function getFmpData(ticker, label, endpoints) {
     const path = endpoint.replace("{ticker}", ticker);
     const separator = path.includes("?") ? "&" : "?";
     const url = `https://financialmodelingprep.com${path}${separator}apikey=${process.env.FMP_API_KEY}`;
+    const cacheKey = `${label}:${path}`;
+    const cached = fmpDataCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.data;
+    if (fmpDataInFlight.has(cacheKey)) {
+      const inFlightData = await fmpDataInFlight.get(cacheKey);
+      if (inFlightData) return inFlightData;
+      continue;
+    }
 
     try {
-      const res = await axios.get(url, { timeout: 8000 });
+      const request = axios.get(url, { timeout: 8000 });
+      fmpDataInFlight.set(cacheKey, request.then((res) => res.data).catch(() => null));
+      const res = await request;
       const data = res.data;
       if (data?.["Error Message"] || data?.error) continue;
       if (Array.isArray(data) && !data.length) continue;
-      if (data && typeof data === "object") return data;
+      if (data && typeof data === "object") {
+        fmpDataCache.set(cacheKey, {
+          data,
+          expiresAt: Date.now() + 60 * 1000
+        });
+        return data;
+      }
     } catch (err) {
       setFmpCooldown(err, label, ticker);
       console.log(`FMP ${label} endpoint skipped:`, ticker, err.response?.status || err.message);
       if (!canUseFmp()) return null;
+    } finally {
+      fmpDataInFlight.delete(cacheKey);
     }
   }
 
@@ -1559,6 +1579,42 @@ async function fetchCalendarQuarterEstimate(ticker, options = {}) {
 
   if (process.env.FMP_API_KEY && canUseFmp()) {
     try {
+      const perSymbolRows = await resolveWithin(
+        getFmpData(symbol, "earnings history", [
+          `/stable/earnings?symbol=${encodeURIComponent(symbol)}&limit=12`
+        ]),
+        options.fast ? 1100 : 2200,
+        []
+      );
+      const bestSymbolRow = (Array.isArray(perSymbolRows) ? perSymbolRows : perSymbolRows ? [perSymbolRows] : [])
+        .map((row) => ({
+          ...row,
+          reportDate: new Date(`${String(row.date || row.reportDate || "").slice(0, 10)}T12:00:00Z`),
+          epsEstimate: parseApiNumber(row.epsEstimated ?? row.epsEstimate),
+          revenueEstimate: parseApiNumber(row.revenueEstimated ?? row.revenueEstimate)
+        }))
+        .filter((row) =>
+          !Number.isNaN(row.reportDate.getTime()) &&
+          row.reportDate >= todayNoon &&
+          (row.epsEstimate !== null || row.revenueEstimate !== null)
+        )
+        .sort((a, b) => a.reportDate - b.reportDate)[0] || null;
+
+      if (bestSymbolRow) {
+        const result = applyEarningsDateOverride(symbol, {
+          revenue: bestSymbolRow.revenueEstimate,
+          earnings: null,
+          eps: bestSymbolRow.epsEstimate,
+          date: String(bestSymbolRow.date || bestSymbolRow.reportDate || "").slice(0, 10) || null,
+          fiscalQuarter: bestSymbolRow.fiscalDateEnding
+            ? String(bestSymbolRow.fiscalDateEnding).slice(0, 10)
+            : null,
+          source: "FMP earnings history"
+        });
+        earningsEstimateCalendarCache.set(symbol, { data: result, fetchedAt: Date.now() });
+        return result;
+      }
+
       const windowCount = options.fast ? 4 : 8;
       const windowSizeDays = 45;
       const fmpRows = (await Promise.all(Array.from({ length: windowCount }, (_, index) => {
@@ -5579,7 +5635,7 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
     responseData.balanceSheetMetricsVersion !== BALANCE_SHEET_METRICS_VERSION ||
     responseData.estimateDataVersion !== STOCK_ESTIMATE_VERSION ||
     responseData.analystEstimatesSource !== "FMP" ||
-    responseData.analystEstimates?.nextQuarter?.source !== "FMP earnings calendar";
+    responseData.analystEstimates?.nextQuarter?.source !== "FMP earnings history";
   if (needsFmpFastPatch) {
     const fastPatch = await resolveWithin(buildFastStockSnapshot(ticker, responseData), 2600, null);
     if (fastPatch) responseData = prepareCachedStockResponseData(ticker, fastPatch);
@@ -5612,12 +5668,33 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
       });
     }
   }
-  const hasNonFmpMarketActivityRows = [
-    ...(responseData.analystUpdates || []),
-    ...(responseData.institutionalHolders || []),
-    ...(responseData.insiderTransactions || [])
-  ].some((row) => row?.source && !/FMP/i.test(String(row.source)));
-  if (hasNonFmpMarketActivityRows) {
+  const hasNonFmpAnalystRows = (responseData.analystUpdates || [])
+    .some((row) => row?.source && !/FMP/i.test(String(row.source)));
+  const hasNonFmpInsiderRows = (responseData.insiderTransactions || [])
+    .some((row) => row?.source && !/FMP/i.test(String(row.source)));
+  const marketActivityUpdatedAt = responseData.marketActivityUpdatedAt
+    ? new Date(responseData.marketActivityUpdatedAt).getTime()
+    : 0;
+  const marketActivityCheckedRecently =
+    marketActivityUpdatedAt &&
+    !Number.isNaN(marketActivityUpdatedAt) &&
+    Date.now() - marketActivityUpdatedAt < 20 * 60 * 1000;
+  const hasMissingAnalystRows = !marketActivityCheckedRecently &&
+    (!Array.isArray(responseData.analystUpdates) || !responseData.analystUpdates.length);
+  const hasMissingInsiderRows = !marketActivityCheckedRecently &&
+    (!Array.isArray(responseData.insiderTransactions) || !responseData.insiderTransactions.length);
+  const hasMissingHolderRows = !Array.isArray(responseData.institutionalHolders) || !responseData.institutionalHolders.length;
+  const hasIncompleteInsiderRows = (responseData.insiderTransactions || []).some((row) =>
+    (row.owner || row.filerName) && !(row.transaction || row.transactionType)
+  );
+  if (
+    hasNonFmpAnalystRows ||
+    hasNonFmpInsiderRows ||
+    hasMissingAnalystRows ||
+    hasMissingInsiderRows ||
+    hasMissingHolderRows ||
+    hasIncompleteInsiderRows
+  ) {
     const fmpMarketActivity = await resolveWithin(fetchFmpMarketActivity(ticker), 1800, {
       analystUpdates: [],
       institutionalHolders: [],
@@ -6889,9 +6966,7 @@ async function fetchFmpMarketActivity(ticker) {
     resolveWithin(getFmpData(symbol, "analyst actions", [
       "/stable/grades?symbol={ticker}"
     ]), STOCK_PROVIDER_TIMEOUT_MS, null),
-    resolveWithin(getFmpData(symbol, "institutional ownership", [
-      "/stable/institutional-ownership/latest?symbol={ticker}"
-    ]), STOCK_PROVIDER_TIMEOUT_MS, null),
+    resolveWithin(fetchMarketBeatInstitutionalHolders(symbol), STOCK_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(getFmpData(symbol, "insider trading", [
       "/stable/insider-trading/search?symbol={ticker}"
     ]), STOCK_PROVIDER_TIMEOUT_MS, null)
@@ -6920,28 +6995,67 @@ async function fetchFmpMarketActivity(ticker) {
       source: "FMP"
     }))
     .filter((item) => item.firm || item.priceTarget !== null || item.action);
-  const analystUpdates = [...priceTargetUpdates, ...gradeUpdates]
+  const firmKey = (value) => String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  const latestRatingByFirm = new Map();
+  gradeUpdates.forEach((row) => {
+    const key = firmKey(row.firm);
+    if (key && row.latestRating && !latestRatingByFirm.has(key)) latestRatingByFirm.set(key, row);
+  });
+  const latestTargetByFirm = new Map();
+  priceTargetUpdates.forEach((row) => {
+    const key = firmKey(row.firm);
+    if (key && row.priceTarget !== null && !latestTargetByFirm.has(key)) latestTargetByFirm.set(key, row);
+  });
+  const analystUpdates = [
+    ...priceTargetUpdates.map((row) => {
+      const ratingRow = latestRatingByFirm.get(firmKey(row.firm));
+      return {
+        ...row,
+        latestRating: row.latestRating || ratingRow?.latestRating || "Price target update",
+        previousRating: row.previousRating || ratingRow?.previousRating || null
+      };
+    }),
+    ...gradeUpdates.map((row) => {
+      const targetRow = latestTargetByFirm.get(firmKey(row.firm));
+      return {
+        ...row,
+        priceTarget: row.priceTarget ?? targetRow?.priceTarget ?? null
+      };
+    })
+  ]
     .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
+    .filter((row, index, rows) => {
+      const key = `${firmKey(row.firm)}:${row.date || ""}:${row.latestRating || ""}:${row.priceTarget ?? ""}`;
+      return rows.findIndex((candidate) =>
+        `${firmKey(candidate.firm)}:${candidate.date || ""}:${candidate.latestRating || ""}:${candidate.priceTarget ?? ""}` === key
+      ) === index;
+    })
     .slice(0, 12);
 
-  const institutionalHolders = normalizeFmpMarketActivityRows(holdersData)
-    .map((item) => ({
-      institution: firstText(item.investorName, item.holder, item.name, item.institution, item.ownerName, item.cik),
-      shares: toNumberOrNull(item.sharesNumber ?? item.shares ?? item.position ?? item.share),
-      value: toNumberOrNull(item.value ?? item.marketValue ?? item.marketValueHolding ?? item.marketValueUsd),
-      percentHeld: toNumberOrNull(item.ownership ?? item.percentHeld ?? item.weight ?? item.portfolioWeight),
-      percentChange: toNumberOrNull(item.changeInSharesPercentage ?? item.percentChange ?? item.change),
-      reportDate: yahooDateToIso(item.date || item.filingDate || item.reportDate || item.asOfDate),
-      source: "FMP"
-    }))
+  const institutionalHolders = (Array.isArray(holdersData) ? holdersData : [])
     .filter((item) => item.institution)
     .slice(0, 10);
 
   const insiderTransactions = normalizeFmpMarketActivityRows(insiderData)
     .filter((item) => String(item.symbol || "").trim().toUpperCase() === symbol)
     .map((item) => ({
+      filerName: firstText(item.reportingName, item.ownerName, item.name),
+      relation: firstText(item.typeOfOwner, item.relationship, item.title, item.reportingCik),
+      transaction: firstText(
+        item.transactionType,
+        item.acquisitionOrDisposition === "A" ? "Acquisition" : null,
+        item.acquisitionOrDisposition === "D" ? "Disposition" : null,
+        item.transactionCode,
+        "Reported transaction"
+      ),
       owner: firstText(item.reportingName, item.ownerName, item.name),
-      transactionType: firstText(item.transactionType, item.acquisitionOrDisposition),
+      transactionType: firstText(
+        item.transactionType,
+        item.acquisitionOrDisposition === "A" ? "Acquisition" : null,
+        item.acquisitionOrDisposition === "D" ? "Disposition" : null,
+        item.transactionCode,
+        "Reported transaction"
+      ),
       shares: toNumberOrNull(item.securitiesTransacted ?? item.shares),
       value: toNumberOrNull(item.price) !== null && toNumberOrNull(item.securitiesTransacted) !== null
         ? toNumberOrNull(item.price) * toNumberOrNull(item.securitiesTransacted)
@@ -8359,7 +8473,7 @@ async function publishQuarterEstimateSnapshot(ticker) {
     eps: toNumberOrNull(estimate.eps),
     date: estimate.date || null,
     fiscalQuarter: estimate.fiscalQuarter || null,
-    source: "FMP earnings calendar"
+    source: estimate.source || "FMP earnings history"
   };
 
   await Stock.findOneAndUpdate(
@@ -8367,7 +8481,7 @@ async function publishQuarterEstimateSnapshot(ticker) {
     {
       $set: {
         "data.analystEstimates.nextQuarter": nextQuarter,
-        "data.analystEstimatesSources.nextQuarter": "FMP earnings calendar",
+        "data.analystEstimatesSources.nextQuarter": estimate.source || "FMP earnings history",
         "data.quarterEstimateCheckedAt": new Date().toISOString(),
         "data.estimateDataVersion": STOCK_ESTIMATE_VERSION,
         ...(hasEstimate
@@ -8492,13 +8606,18 @@ async function publishMarketActivitySnapshot(ticker) {
     (Array.isArray(data.analystUpdates) && data.analystUpdates.length) ||
     (Array.isArray(data.institutionalHolders) && data.institutionalHolders.length) ||
     (Array.isArray(data.insiderTransactions) && data.insiderTransactions.length);
-  const hasOnlyFmpMarketActivityRows = [
-    ...(data.analystUpdates || []),
-    ...(data.institutionalHolders || []),
-    ...(data.insiderTransactions || [])
-  ].every((row) => !row?.source || /FMP/i.test(String(row.source)));
+  const hasAllMarketActivitySections =
+    Array.isArray(data.analystUpdates) && data.analystUpdates.length &&
+    Array.isArray(data.institutionalHolders) && data.institutionalHolders.length &&
+    Array.isArray(data.insiderTransactions) && data.insiderTransactions.length;
+  const hasOnlyAcceptedMarketActivityRows =
+    (data.analystUpdates || []).every((row) => !row?.source || /FMP/i.test(String(row.source))) &&
+    (data.insiderTransactions || []).every((row) => !row?.source || /FMP/i.test(String(row.source))) &&
+    (data.institutionalHolders || []).every((row) =>
+      !row?.source || /FMP|MarketBeat/i.test(String(row.source))
+    );
 
-  if (((checkedRecently && hasMarketActivityRows) || failedRecently) && hasOnlyFmpMarketActivityRows) {
+  if (((checkedRecently && hasAllMarketActivitySections) || failedRecently) && hasOnlyAcceptedMarketActivityRows) {
     return;
   }
 
@@ -8638,7 +8757,7 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
       eps: toNumberOrNull(calendarQuarterEstimate.eps),
       date: calendarQuarterEstimate.date || null,
       fiscalQuarter: calendarQuarterEstimate.fiscalQuarter || null,
-      source: "FMP earnings calendar"
+      source: calendarQuarterEstimate.source || "FMP earnings history"
     },
     currentYear: {
       ...(previousData.analystEstimates?.currentYear || {}),
@@ -8694,7 +8813,7 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     analystEstimates,
     epsBeatMiss,
     analystEstimatesSources: {
-      nextQuarter: "FMP earnings calendar",
+      nextQuarter: calendarQuarterEstimate.source || "FMP earnings history",
       currentYear: "FMP",
       nextYear: "FMP",
       followingYear: "FMP"
@@ -10072,7 +10191,7 @@ async function fetchStockData(ticker) {
     ),
     analystEstimatesSource: "FMP",
     analystEstimatesSources: {
-      nextQuarter: "FMP earnings calendar",
+      nextQuarter: calendarQuarterEstimate.source || "FMP earnings history",
       currentYear: "FMP",
       nextYear: "FMP",
       followingYear: "FMP"
@@ -10084,7 +10203,7 @@ async function fetchStockData(ticker) {
         eps: toNumberOrNull(calendarQuarterEstimate.eps),
         date: calendarQuarterEstimate.date || null,
         fiscalQuarter: calendarQuarterEstimate.fiscalQuarter || null,
-        source: "FMP earnings calendar"
+        source: calendarQuarterEstimate.source || "FMP earnings history"
       },
       currentYear: {
         revenue: displayedCurrentRevenueValue,
@@ -16670,22 +16789,25 @@ app.get("/api/earnings", async (req, res) => {
     date.setUTCDate(date.getUTCDate() + index);
     return toIsoDate(date);
   });
-  const cacheKey = `fmp:v1:${dates[0]}`;
+  const cacheKey = `fmp:v2:${dates[0]}`;
   const cached = earningsCalendarCache.get(cacheKey);
   if (cached && Date.now() - cached.cachedAt < 60 * 60 * 1000 && cached.data?.days?.some((day) => day.events?.length)) {
     return res.json(cached.data);
   }
 
   try {
-    const fmpRows = process.env.FMP_API_KEY && canUseFmp()
-      ? await resolveWithin(
+    const [fmpRows, stockAnalysisRows] = await Promise.all([
+      process.env.FMP_API_KEY && canUseFmp()
+        ? resolveWithin(
           getFmpData("calendar", "earnings calendar page", [
             `/stable/earnings-calendar?from=${dates[0]}&to=${dates[6]}`
           ]),
           3500,
           []
         )
-      : [];
+        : Promise.resolve([]),
+      resolveWithin(fetchStockAnalysisEarningsCalendarRows(dates), 3500, [])
+    ]);
     const timeLabels = {
       bmo: "Before open",
       amc: "After close",
@@ -16693,22 +16815,52 @@ app.get("/api/earnings", async (req, res) => {
       "time-pre-market": "Before open",
       "time-after-hours": "After close"
     };
+    const stockAnalysisByDateSymbol = new Map(
+      (Array.isArray(stockAnalysisRows) ? stockAnalysisRows : [])
+        .map((row) => [`${row.date}:${String(row.symbol || "").trim().toUpperCase()}`, row])
+    );
+    const rawFmpList = Array.isArray(fmpRows) ? fmpRows : fmpRows ? [fmpRows] : [];
+    const fallbackStockAnalysisList = Array.isArray(stockAnalysisRows) ? stockAnalysisRows : [];
+    const fmpList = rawFmpList.length ? rawFmpList : fallbackStockAnalysisList;
+    const calendarSymbols = [...new Set(fmpList
+      .map((row) => String(row.symbol || "").trim().toUpperCase())
+      .filter(Boolean))];
+    const savedStocks = calendarSymbols.length
+      ? await resolveWithin(
+          Stock.find({ ticker: { $in: calendarSymbols } })
+            .select("ticker data.marketCap data.price")
+            .lean(),
+          1800,
+          []
+        )
+      : [];
+    const savedMarketCapBySymbol = new Map(
+      (Array.isArray(savedStocks) ? savedStocks : [])
+        .map((stock) => [String(stock.ticker || "").toUpperCase(), toNumberOrNull(stock.data?.marketCap)])
+        .filter(([, marketCap]) => marketCap !== null)
+    );
     const eventsByDate = new Map();
-    (Array.isArray(fmpRows) ? fmpRows : fmpRows ? [fmpRows] : []).forEach((row) => {
+    fmpList.forEach((row) => {
       const date = String(row.date || "").slice(0, 10);
       if (!dates.includes(date)) return;
       const symbol = String(row.symbol || "").trim().toUpperCase();
       if (!symbol) return;
+      const stockAnalysisRow = stockAnalysisByDateSymbol.get(`${date}:${symbol}`) || {};
+      const reportTimeCode = String(row.time || row.reportTime || stockAnalysisRow.reportTimeCode || "").toLowerCase();
       const event = {
         date,
         symbol,
-        company: row.name || row.company || symbol,
+        company: row.name || row.company || stockAnalysisRow.company || symbol,
         logo: getFinnhubLogoUrl(symbol),
-        marketCap: toNumberOrNull(row.marketCap),
-        reportTime: timeLabels[String(row.time || row.reportTime || "").toLowerCase()] || row.time || "Time not supplied",
+        marketCap: firstFiniteNumber(
+          row.marketCap,
+          savedMarketCapBySymbol.get(symbol),
+          stockAnalysisRow.marketCap
+        ),
+        reportTime: timeLabels[reportTimeCode] || row.time || stockAnalysisRow.reportTimeCode || "Time not supplied",
         fiscalQuarter: row.fiscalDateEnding ? String(row.fiscalDateEnding).slice(0, 10) : null,
-        epsEstimate: parseApiNumber(row.epsEstimated ?? row.epsEstimate),
-        revenueEstimate: parseApiNumber(row.revenueEstimated ?? row.revenueEstimate),
+        epsEstimate: firstFiniteNumber(row.epsEstimated, row.epsEstimate, stockAnalysisRow.epsEstimate),
+        revenueEstimate: firstFiniteNumber(row.revenueEstimated, row.revenueEstimate, stockAnalysisRow.revenueEstimate),
         epsActual: parseApiNumber(row.epsActual),
         revenueActual: parseApiNumber(row.revenueActual),
         source: "FMP earnings calendar"
