@@ -372,10 +372,10 @@ const KNOWN_FINANCIAL_INSTITUTIONS = new Set([
 ]);
 
 const MARKET_INDICES = [
-  { key: "sp500", label: "S&P 500", yahooSymbol: "^GSPC", futuresSymbol: "ES=F", investingPath: "us-spx-500", stockAnalysisLabel: "S&P500" },
-  { key: "dow", label: "Dow Jones", yahooSymbol: "^DJI", futuresSymbol: "YM=F", investingPath: "us-30", stockAnalysisLabel: "Dow Jones" },
-  { key: "nasdaq", label: "Nasdaq 100", yahooSymbol: "^NDX", futuresSymbol: "NQ=F", investingPath: "nq-100", stockAnalysisLabel: "Nasdaq 100" },
-  { key: "russell2000", label: "Russell 2000", yahooSymbol: "^RUT", futuresSymbol: "RTY=F", investingPath: "smallcap-2000", stockAnalysisLabel: "Russell 2000" }
+  { key: "sp500", label: "S&P 500", yahooSymbol: "^GSPC", fmpSymbol: "^GSPC", futuresSymbol: "ES=F", investingPath: "us-spx-500", stockAnalysisLabel: "S&P500" },
+  { key: "dow", label: "Dow Jones", yahooSymbol: "^DJI", fmpSymbol: "^DJI", futuresSymbol: "YM=F", investingPath: "us-30", stockAnalysisLabel: "Dow Jones" },
+  { key: "nasdaq", label: "Nasdaq", yahooSymbol: "^NDX", fmpSymbol: "^IXIC", futuresSymbol: "NQ=F", investingPath: "nq-100", stockAnalysisLabel: "Nasdaq" },
+  { key: "russell2000", label: "Russell 2000", yahooSymbol: "^RUT", fmpSymbol: "^RUT", futuresSymbol: "RTY=F", investingPath: "smallcap-2000", stockAnalysisLabel: "Russell 2000" }
 ];
 
 const SP500_HEATMAP_COMPANIES = [
@@ -796,6 +796,195 @@ async function getFmpData(ticker, label, endpoints) {
   return null;
 }
 
+async function fetchFmpStableQuoteProfile(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return {};
+
+  try {
+    const [quoteResponse, profileResponse] = await Promise.all([
+      axios.get("https://financialmodelingprep.com/stable/quote", {
+        params: { symbol, apikey: process.env.FMP_API_KEY },
+        timeout: 3500
+      }).catch((err) => {
+        setFmpCooldown(err, "stable quote", symbol);
+        return { data: [] };
+      }),
+      axios.get("https://financialmodelingprep.com/stable/profile", {
+        params: { symbol, apikey: process.env.FMP_API_KEY },
+        timeout: 3500
+      }).catch((err) => {
+        setFmpCooldown(err, "stable profile", symbol);
+        return { data: [] };
+      })
+    ]);
+    const quote = Array.isArray(quoteResponse.data) ? quoteResponse.data[0] || {} : quoteResponse.data || {};
+    const profile = Array.isArray(profileResponse.data) ? profileResponse.data[0] || {} : profileResponse.data || {};
+    const rangeText = firstText(profile.range);
+    const rangeMatch = rangeText?.match(/([0-9.,]+)\s*-\s*([0-9.,]+)/);
+
+    return {
+      name: firstText(profile.companyName, quote.name, symbol),
+      symbol,
+      currency: firstText(profile.currency),
+      financialCurrency: firstText(profile.currency),
+      sector: firstText(profile.sector),
+      industry: firstText(profile.industry),
+      logo: firstText(profile.image, getFinnhubLogoUrl(symbol)),
+      price: firstFiniteNumber(quote.price, profile.price),
+      change: firstFiniteNumber(quote.change, profile.change),
+      percentChange: firstFiniteNumber(quote.changePercentage, profile.changePercentage),
+      previousClose: firstFiniteNumber(quote.previousClose),
+      high: firstFiniteNumber(quote.dayHigh),
+      low: firstFiniteNumber(quote.dayLow),
+      open: firstFiniteNumber(quote.open),
+      marketCap: firstFiniteNumber(quote.marketCap, profile.marketCap),
+      fiftyTwoWeekHigh: firstFiniteNumber(quote.yearHigh, rangeMatch ? parseApiNumber(rangeMatch[2]) : null),
+      fiftyTwoWeekLow: firstFiniteNumber(quote.yearLow, rangeMatch ? parseApiNumber(rangeMatch[1]) : null),
+      beta: firstFiniteNumber(profile.beta),
+      dividendYield: normalizeDividendYield(profile.lastDividend && quote.price ? profile.lastDividend / quote.price : null),
+      fmpProfileSource: "FMP stable quote/profile"
+    };
+  } catch (err) {
+    setFmpCooldown(err, "stable quote/profile", symbol);
+    console.log("FMP stable quote/profile skipped:", symbol, err.response?.status || err.message);
+    return {};
+  }
+}
+
+async function fetchFmpStableValuationMetrics(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return {};
+
+  try {
+    const [metricsResponse, ratiosResponse, estimatesResponse] = await Promise.all([
+      axios.get("https://financialmodelingprep.com/stable/key-metrics-ttm", {
+        params: { symbol, apikey: process.env.FMP_API_KEY },
+        timeout: 3500
+      }).catch((err) => {
+        setFmpCooldown(err, "stable key metrics", symbol);
+        return { data: [] };
+      }),
+      axios.get("https://financialmodelingprep.com/stable/ratios-ttm", {
+        params: { symbol, apikey: process.env.FMP_API_KEY },
+        timeout: 3500
+      }).catch((err) => {
+        setFmpCooldown(err, "stable ratios", symbol);
+        return { data: [] };
+      }),
+      axios.get("https://financialmodelingprep.com/stable/analyst-estimates", {
+        params: { symbol, period: "annual", limit: 2, apikey: process.env.FMP_API_KEY },
+        timeout: 3500
+      }).catch((err) => {
+        setFmpCooldown(err, "stable estimates for valuation", symbol);
+        return { data: [] };
+      })
+    ]);
+    const metrics = Array.isArray(metricsResponse.data) ? metricsResponse.data[0] || {} : metricsResponse.data || {};
+    const ratios = Array.isArray(ratiosResponse.data) ? ratiosResponse.data[0] || {} : ratiosResponse.data || {};
+    const estimates = Array.isArray(estimatesResponse.data) ? estimatesResponse.data : [];
+    const nextRevenue = estimates
+      .map((row) => toNumberOrNull(row.revenueAvg ?? row.estimatedRevenueAvg))
+      .find((value) => value !== null && value > 0);
+    const marketCap = firstFiniteNumber(metrics.marketCap);
+    const percent = (value) => {
+      const number = toNumberOrNull(value);
+      return number === null ? null : number * 100;
+    };
+
+    return {
+      pe: firstFiniteNumber(ratios.priceToEarningsRatioTTM),
+      forwardPS: firstFiniteNumber(
+        marketCap && nextRevenue ? marketCap / nextRevenue : null,
+        ratios.priceToSalesRatioTTM
+      ),
+      priceToSales: firstFiniteNumber(ratios.priceToSalesRatioTTM),
+      priceToBook: firstFiniteNumber(ratios.priceToBookRatioTTM),
+      priceToTangibleBook: firstFiniteNumber(ratios.priceToFairValueTTM),
+      priceToFreeCashflow: firstFiniteNumber(ratios.priceToFreeCashFlowRatioTTM),
+      priceToOperatingCashflow: firstFiniteNumber(ratios.priceToOperatingCashFlowRatioTTM),
+      pegRatio: firstFiniteNumber(
+        ratios.priceToEarningsGrowthRatioTTM,
+        ratios.forwardPriceToEarningsGrowthRatioTTM
+      ),
+      pretaxMargin: percent(ratios.pretaxProfitMarginTTM),
+      ebitdaMargin: percent(ratios.ebitdaMarginTTM),
+      ebitMargin: percent(ratios.ebitMarginTTM),
+      fcfMargin: percent(ratios.freeCashFlowOperatingCashFlowRatioTTM),
+      returnOnEquity: percent(metrics.returnOnEquityTTM),
+      returnOnAssets: percent(metrics.returnOnAssetsTTM),
+      returnOnInvestedCapital: percent(metrics.returnOnInvestedCapitalTTM),
+      returnOnCapitalEmployed: percent(metrics.returnOnCapitalEmployedTTM),
+      bookValuePerShare: firstFiniteNumber(ratios.bookValuePerShareTTM),
+      workingCapital: firstFiniteNumber(metrics.workingCapitalTTM),
+      marketCap,
+      valuationMetricsSource: "FMP stable ratios/key metrics"
+    };
+  } catch (err) {
+    setFmpCooldown(err, "stable valuation metrics", symbol);
+    console.log("FMP stable valuation metrics skipped:", symbol, err.response?.status || err.message);
+    return {};
+  }
+}
+
+async function fetchFmpStableBalanceSheetMetrics(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return {};
+
+  try {
+    const response = await axios.get("https://financialmodelingprep.com/stable/balance-sheet-statement", {
+      params: {
+        symbol,
+        period: "quarter",
+        limit: 1,
+        apikey: process.env.FMP_API_KEY
+      },
+      timeout: 3500
+    });
+    const row = Array.isArray(response.data) ? response.data[0] || {} : response.data || {};
+    if (!Object.keys(row).length) return {};
+    const shortTermDebt = toNumberOrNull(row.shortTermDebt);
+    const longTermDebt = toNumberOrNull(row.longTermDebt);
+    const combinedDebt =
+      shortTermDebt !== null || longTermDebt !== null
+        ? (shortTermDebt || 0) + (longTermDebt || 0)
+        : null;
+    const totalCash = firstFiniteNumber(
+      row.cashAndCashEquivalents,
+      row.cashAndShortTermInvestments,
+      row.cash
+    );
+    const totalDebt = firstFiniteNumber(
+      row.totalDebt,
+      combinedDebt,
+      row.longTermDebt
+    );
+    const shares = firstFiniteNumber(row.commonStockSharesOutstanding, row.weightedAverageShsOutDil);
+
+    return {
+      totalCash,
+      totalDebt,
+      cashAndCashEquivalents: totalCash,
+      netCash: totalCash !== null || totalDebt !== null ? (totalCash || 0) - (totalDebt || 0) : null,
+      netCashPerShare: shares && (totalCash !== null || totalDebt !== null)
+        ? ((totalCash || 0) - (totalDebt || 0)) / shares
+        : null,
+      equityBookValue: firstFiniteNumber(row.totalStockholdersEquity, row.totalEquity),
+      bookValuePerShare: shares && firstFiniteNumber(row.totalStockholdersEquity, row.totalEquity) !== null
+        ? firstFiniteNumber(row.totalStockholdersEquity, row.totalEquity) / shares
+        : null,
+      workingCapital: firstFiniteNumber(row.totalCurrentAssets) !== null || firstFiniteNumber(row.totalCurrentLiabilities) !== null
+        ? (firstFiniteNumber(row.totalCurrentAssets) || 0) - (firstFiniteNumber(row.totalCurrentLiabilities) || 0)
+        : null,
+      balanceSheetAsOf: row.date || row.filingDate || null,
+      balanceSheetSource: "FMP stable latest balance sheet"
+    };
+  } catch (err) {
+    setFmpCooldown(err, "stable balance sheet", symbol);
+    console.log("FMP stable balance sheet skipped:", symbol, err.response?.status || err.message);
+    return {};
+  }
+}
+
 async function fetchFmpBatchQuotes(symbols = []) {
   if (!process.env.FMP_API_KEY || !canUseFmp() || !symbols.length) return [];
 
@@ -812,6 +1001,93 @@ async function fetchFmpBatchQuotes(symbols = []) {
     setFmpCooldown(err, "batch quote", symbols.slice(0, 3).join(","));
     console.log("FMP batch quote skipped:", err.response?.status || err.message);
     return [];
+  }
+}
+
+function getFmpPriceHistoryDateRange(requestedRange) {
+  const end = new Date();
+  end.setUTCHours(23, 59, 59, 999);
+  const start = new Date(end);
+
+  if (requestedRange === "1M") start.setUTCMonth(start.getUTCMonth() - 1);
+  else if (requestedRange === "1Y") start.setUTCFullYear(start.getUTCFullYear() - 1);
+  else if (requestedRange === "YTD") {
+    start.setUTCMonth(0, 1);
+    start.setUTCHours(0, 0, 0, 0);
+  } else if (requestedRange === "5Y") start.setUTCFullYear(start.getUTCFullYear() - 5);
+  else if (requestedRange === "10Y") start.setUTCFullYear(start.getUTCFullYear() - 10);
+  else if (requestedRange === "MAX") start.setUTCFullYear(start.getUTCFullYear() - 25);
+  else return null;
+
+  return {
+    from: start.toISOString().slice(0, 10),
+    to: end.toISOString().slice(0, 10)
+  };
+}
+
+async function fetchFmpPriceHistory(ticker, requestedRange) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return null;
+  if (requestedRange === "1D" || requestedRange === "1W") return null;
+  const range = getFmpPriceHistoryDateRange(requestedRange);
+  if (!range) return null;
+
+  try {
+    const response = await axios.get("https://financialmodelingprep.com/stable/historical-price-eod/light", {
+      params: {
+        symbol,
+        from: range.from,
+        to: range.to,
+        apikey: process.env.FMP_API_KEY
+      },
+      timeout: 3500
+    });
+    const rows = Array.isArray(response.data) ? response.data : [];
+    const points = rows
+      .map((row) => {
+        const price = firstFiniteNumber(row.price, row.close, row.adjClose);
+        const date = new Date(`${row.date}T16:00:00Z`);
+        if (price === null || Number.isNaN(date.getTime())) return null;
+        return {
+          time: date.getTime(),
+          date: date.toISOString(),
+          price,
+          volume: firstFiniteNumber(row.volume)
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.time - b.time);
+
+    if (points.length < 2) return null;
+
+    const latestPoint = points.at(-1);
+    const firstPoint = points[0];
+    const previousPoint = points.at(-2);
+    const latestPrice = latestPoint.price;
+    const changeBase = requestedRange === "1M" ? previousPoint?.price : firstPoint?.price;
+    const change = latestPrice !== null && changeBase
+      ? latestPrice - changeBase
+      : null;
+
+    return {
+      symbol,
+      sourceSymbol: symbol,
+      range: requestedRange,
+      interval: "1d",
+      source: "FMP historical price",
+      points,
+      latest: {
+        price: latestPrice,
+        change,
+        percentChange: change !== null && changeBase ? (change / changeBase) * 100 : null,
+        previousClose: previousPoint?.price ?? null
+      },
+      updatedAt: new Date().toISOString()
+    };
+  } catch (err) {
+    setFmpCooldown(err, "price history", symbol);
+    console.log("FMP price history skipped:", symbol, requestedRange, err.response?.status || err.message);
+    return null;
   }
 }
 
@@ -1207,6 +1483,53 @@ async function fetchCalendarQuarterEstimate(ticker, options = {}) {
   const today = new Date();
   const todayNoon = new Date(today);
   todayNoon.setUTCHours(12, 0, 0, 0);
+
+  if (process.env.FMP_API_KEY && canUseFmp()) {
+    try {
+      const to = new Date(todayNoon);
+      to.setUTCDate(to.getUTCDate() + (options.fast ? 180 : 365));
+      const fmpRows = await resolveWithin(
+        getFmpData(symbol, "earnings calendar", [
+          `/stable/earnings-calendar?from=${todayNoon.toISOString().slice(0, 10)}&to=${to.toISOString().slice(0, 10)}`
+        ]),
+        options.fast ? 1500 : 2600,
+        []
+      );
+      const bestFmpRow = (Array.isArray(fmpRows) ? fmpRows : fmpRows ? [fmpRows] : [])
+        .filter((row) => calendarSymbols.has(String(row.symbol || "").trim().toUpperCase()))
+        .map((row) => ({
+          ...row,
+          reportDate: new Date(`${row.date}T12:00:00Z`),
+          epsEstimate: parseApiNumber(row.epsEstimated ?? row.epsEstimate),
+          revenueEstimate: parseApiNumber(row.revenueEstimated ?? row.revenueEstimate)
+        }))
+        .filter((row) =>
+          !Number.isNaN(row.reportDate.getTime()) &&
+          row.reportDate >= todayNoon &&
+          (row.epsEstimate !== null || row.revenueEstimate !== null)
+        )
+        .sort((a, b) => a.reportDate - b.reportDate)[0] || null;
+
+      if (bestFmpRow) {
+        const result = applyEarningsDateOverride(symbol, {
+          revenue: bestFmpRow.revenueEstimate,
+          earnings: null,
+          eps: bestFmpRow.epsEstimate,
+          date: bestFmpRow.date || null,
+          fiscalQuarter: bestFmpRow.fiscalDateEnding
+            ? String(bestFmpRow.fiscalDateEnding).slice(0, 10)
+            : null,
+          source: "FMP earnings calendar"
+        });
+        earningsEstimateCalendarCache.set(symbol, { data: result, fetchedAt: Date.now() });
+        return result;
+      }
+    } catch (err) {
+      setFmpCooldown(err, "earnings calendar", symbol);
+      console.log("FMP ticker earnings calendar skipped:", symbol, err.response?.status || err.message);
+    }
+  }
+
   const calendarDates = Array.from({ length: options.fast ? 150 : 240 }, (_, index) => {
     const date = new Date(todayNoon);
     date.setUTCDate(date.getUTCDate() + index);
@@ -3343,6 +3666,27 @@ async function getPrimaryQuote(ticker, previousData = {}) {
   const previousQuote = normalizeQuotePayload({}, previousData);
 
   try {
+    const fmpQuote = await resolveWithin(fetchFmpStableQuoteProfile(ticker), 1300, {});
+    if (toNumberOrNull(fmpQuote?.price) !== null) {
+      return normalizeQuotePayload(
+        {
+          c: fmpQuote.price,
+          d: fmpQuote.change,
+          dp: fmpQuote.percentChange,
+          pc: fmpQuote.previousClose,
+          h: fmpQuote.high,
+          l: fmpQuote.low,
+          o: fmpQuote.open,
+          currency: fmpQuote.currency
+        },
+        previousData
+      );
+    }
+  } catch (err) {
+    console.log("FMP primary quote skipped:", ticker, err.response?.status || err.message);
+  }
+
+  try {
     const finnhubQuote = normalizeQuotePayload(
       await getFinnhub(`https://finnhub.io/api/v1/quote?symbol=${ticker}`),
       previousData
@@ -5106,7 +5450,15 @@ async function prepareStockResponseData(ticker, data = {}, options = {}) {
   const needsBalanceSheetMetrics = !baseData.balanceSheetCheckedAt || !hasBalanceSheetValue;
   const [valuation, balanceSheetMetrics] = await Promise.all([
     missingValuationMetrics
-      ? resolveWithin(fetchStockAnalysisValuationMetrics(ticker), options.fast ? 900 : 1200, {})
+      ? Promise.all([
+          resolveWithin(fetchFmpStableValuationMetrics(ticker), options.fast ? 900 : 1200, {}),
+          resolveWithin(fetchStockAnalysisValuationMetrics(ticker), options.fast ? 900 : 1200, {})
+        ]).then(([fmpValuation, stockAnalysisValuation]) => ({
+          ...(stockAnalysisValuation || {}),
+          ...Object.fromEntries(
+            Object.entries(fmpValuation || {}).filter(([, value]) => value !== null && value !== undefined)
+          )
+        }))
       : Promise.resolve({}),
     needsBalanceSheetMetrics
       ? resolveWithin(fetchLatestBalanceSheetMetrics(ticker, { fast: true }), options.fast ? 650 : 1600, {})
@@ -5461,46 +5813,47 @@ async function fetchFmpIncomeStatementHistory(ticker) {
   if (!process.env.FMP_API_KEY) return [];
   if (!canUseFmp()) return [];
 
-  const urls = [
-    `https://financialmodelingprep.com/stable/income-statement?symbol=${ticker}&period=annual&limit=6&apikey=${process.env.FMP_API_KEY}`,
-    `https://financialmodelingprep.com/api/v3/income-statement/${ticker}?period=annual&limit=6&apikey=${process.env.FMP_API_KEY}`
-  ];
+  try {
+    const incomeRes = await axios.get("https://financialmodelingprep.com/stable/income-statement", {
+      params: {
+        symbol: ticker,
+        period: "annual",
+        limit: 7,
+        apikey: process.env.FMP_API_KEY
+      },
+      timeout: 3500
+    });
+    const incomeRows = Array.isArray(incomeRes.data) ? incomeRes.data : [];
 
-  for (const url of urls) {
-    try {
-      const incomeRes = await axios.get(url);
-      const incomeRows = Array.isArray(incomeRes.data) ? incomeRes.data : [];
+    const rows = incomeRows
+      .map((row) => ({
+        year: Number(row.calendarYear || row.fiscalYear || String(row.date || "").slice(0, 4)),
+        period: String(row.fiscalYear || row.calendarYear || String(row.date || "").slice(0, 4)),
+        revenue: toBillions(row.revenue),
+        earnings: toBillions(row.netIncome),
+        grossProfit: toBillions(row.grossProfit),
+        operatingIncome: toBillions(row.operatingIncome),
+        eps: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
+        sharesOutstanding: toNumberOrNull(
+          row.weightedAverageShsOutDil ??
+          row.weightedAverageShsOutDiluted ??
+          row.weightedAverageShsOut
+        )
+          ? toNumberOrNull(
+              row.weightedAverageShsOutDil ??
+              row.weightedAverageShsOutDiluted ??
+              row.weightedAverageShsOut
+            ) / 1000000
+          : null,
+        source: "FMP stable income statement"
+      }))
+      .filter((row) => row.year)
+      .sort((a, b) => a.year - b.year);
 
-      const rows = incomeRows
-        .map((row) => ({
-          year: Number(row.calendarYear || String(row.date || "").slice(0, 4)),
-          revenue: toBillions(row.revenue),
-          earnings: toBillions(row.netIncome),
-          grossProfit: toBillions(row.grossProfit),
-          operatingIncome: toBillions(row.operatingIncome),
-          eps: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
-          sharesOutstanding: toNumberOrNull(
-            row.weightedAverageShsOutDil ??
-            row.weightedAverageShsOutDiluted ??
-            row.weightedAverageShsOut
-          )
-            ? toNumberOrNull(
-                row.weightedAverageShsOutDil ??
-                row.weightedAverageShsOutDiluted ??
-                row.weightedAverageShsOut
-              ) / 1000000
-            : null,
-          source: "FMP income statement"
-        }))
-        .filter((row) => row.year)
-        .sort((a, b) => a.year - b.year);
-
-      if (rows.length) return rows;
-    } catch (err) {
-      setFmpCooldown(err, "income statement", ticker);
-      console.log("FMP income statement skipped:", ticker, err.message);
-      if (!canUseFmp()) return [];
-    }
+    if (rows.length) return rows;
+  } catch (err) {
+    setFmpCooldown(err, "stable income statement", ticker);
+    console.log("FMP income statement skipped:", ticker, err.response?.status || err.message);
   }
 
   return [];
@@ -5541,12 +5894,10 @@ async function fetchFmpQuarterlyFinancialHistory(ticker) {
   try {
     const [incomeData, cashFlowData] = await Promise.all([
       getFmpData(ticker, "quarterly income statement", [
-        "/stable/income-statement?symbol={ticker}&period=quarter&limit=8",
-        "/api/v3/income-statement/{ticker}?period=quarter&limit=8"
+        "/stable/income-statement?symbol={ticker}&period=quarter&limit=20"
       ]),
       getFmpData(ticker, "quarterly cash flow", [
-        "/stable/cash-flow-statement?symbol={ticker}&period=quarter&limit=8",
-        "/api/v3/cash-flow-statement/{ticker}?period=quarter&limit=8"
+        "/stable/cash-flow-statement?symbol={ticker}&period=quarter&limit=20"
       ])
     ]);
     const incomeRows = (Array.isArray(incomeData) ? incomeData : incomeData ? [incomeData] : [])
@@ -5555,7 +5906,7 @@ async function fetchFmpQuarterlyFinancialHistory(ticker) {
         fiscalYear: Number(row.calendarYear || row.fiscalYear || String(row.date || "").slice(0, 4)),
         fiscalQuarter: fmpQuarterNumber(row)
       }))
-      .filter((row) => row.fiscalYear && row.fiscalQuarter && row.fiscalQuarter < 4)
+      .filter((row) => row.fiscalYear && row.fiscalQuarter)
       .sort((a, b) => {
         const yearDiff = a.fiscalYear - b.fiscalYear;
         if (yearDiff !== 0) return yearDiff;
@@ -5571,38 +5922,25 @@ async function fetchFmpQuarterlyFinancialHistory(ticker) {
           return [`${fiscalYear}:${fiscalQuarter}`, row];
         })
     );
-    const runningByYear = new Map();
 
     return incomeRows
       .map((row) => {
-        const key = row.fiscalYear;
-        const previous = runningByYear.get(key) || {};
         const cash = cashByYearQuarter.get(`${row.fiscalYear}:${row.fiscalQuarter}`) || {};
-        const addBillions = (field, value) => {
-          const current = toBillions(value);
-          return current !== null ? (previous[field] || 0) + current : previous[field] ?? null;
-        };
-        const next = {
-          revenue: addBillions("revenue", row.revenue),
-          earnings: addBillions("earnings", row.netIncome),
-          grossProfit: addBillions("grossProfit", row.grossProfit),
-          operatingIncome: addBillions("operatingIncome", row.operatingIncome),
-          operatingCashflow: addBillions(
-            "operatingCashflow",
+        return {
+          year: row.fiscalYear,
+          period: `${row.fiscalYear} Q${row.fiscalQuarter}`,
+          isInterim: true,
+          revenue: toBillions(row.revenue),
+          earnings: toBillions(row.netIncome),
+          grossProfit: toBillions(row.grossProfit),
+          operatingIncome: toBillions(row.operatingIncome),
+          operatingCashflow: toBillions(
             cash.operatingCashFlow ??
               cash.operatingCashflow ??
               cash.netCashProvidedByOperatingActivities
           ),
-          freeCashflow: addBillions("freeCashflow", cash.freeCashFlow ?? cash.freeCashflow),
-          eps: (previous.eps || 0) + (toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps) || 0)
-        };
-        runningByYear.set(key, next);
-
-        return {
-          year: row.fiscalYear,
-          period: `${row.fiscalYear} Q${row.fiscalQuarter} YTD`,
-          isInterim: true,
-          ...next,
+          freeCashflow: toBillions(cash.freeCashFlow ?? cash.freeCashflow),
+          eps: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
           sharesOutstanding: toNumberOrNull(
             row.weightedAverageShsOutDil ??
               row.weightedAverageShsOutDiluted ??
@@ -5624,12 +5962,42 @@ async function fetchFmpQuarterlyFinancialHistory(ticker) {
         row.operatingCashflow !== null ||
         row.freeCashflow !== null
       )
-      .slice(-28);
+      .slice(-40);
   } catch (err) {
     setFmpCooldown(err, "quarterly financials", ticker);
     console.log("FMP quarterly financials skipped:", ticker, err.response?.status || err.message);
     return [];
   }
+}
+
+async function fetchFmpFinancialHistory(ticker) {
+  const [annualRows, quarterlyRows, annualCashData] = await Promise.all([
+    fetchFmpIncomeStatementHistory(ticker),
+    fetchFmpQuarterlyFinancialHistory(ticker),
+    getFmpData(ticker, "annual cash flow", [
+      "/stable/cash-flow-statement?symbol={ticker}&period=annual&limit=7"
+    ])
+  ]);
+  const annualCashRows = (Array.isArray(annualCashData) ? annualCashData : annualCashData ? [annualCashData] : [])
+    .map((row) => ({
+      year: Number(row.calendarYear || row.fiscalYear || String(row.date || "").slice(0, 4)),
+      period: String(row.fiscalYear || row.calendarYear || String(row.date || "").slice(0, 4)),
+      operatingCashflow: toBillions(
+        row.operatingCashFlow ??
+          row.operatingCashflow ??
+          row.netCashProvidedByOperatingActivities
+      ),
+      freeCashflow: toBillions(row.freeCashFlow ?? row.freeCashflow),
+      source: "FMP stable cash flow statement"
+    }))
+    .filter((row) => row.year)
+    .sort((a, b) => a.year - b.year);
+
+  return mergeHistoricalFinancials(
+    [...annualRows, ...quarterlyRows],
+    annualCashRows,
+    Infinity
+  );
 }
 
 const parseStockAnalysisNumber = (value) => {
@@ -7134,6 +7502,13 @@ async function fetchLatestBalanceSheetMetrics(ticker, options = {}) {
   });
 
   try {
+    const fmpResult = await fetchFmpStableBalanceSheetMetrics(symbol);
+    if (hasBalanceSheetData(fmpResult)) return withCheckedAt(fmpResult);
+  } catch (err) {
+    console.log("FMP stable balance sheet metrics skipped:", symbol, err.response?.status || err.message);
+  }
+
+  try {
     const stockAnalysisResult = await fetchStockAnalysisBalanceSheetMetrics(symbol);
     if (hasBalanceSheetData(stockAnalysisResult)) return withCheckedAt(stockAnalysisResult);
   } catch (err) {
@@ -7769,7 +8144,16 @@ async function markFastOverviewReady(ticker) {
 }
 
 async function publishValuationMetricsSnapshot(ticker) {
-  const valuation = await resolveWithin(fetchStockAnalysisValuationMetrics(ticker), 5000, {});
+  const [fmpValuation, stockAnalysisValuation] = await Promise.all([
+    resolveWithin(fetchFmpStableValuationMetrics(ticker), 2200, {}),
+    resolveWithin(fetchStockAnalysisValuationMetrics(ticker), 5000, {})
+  ]);
+  const valuation = {
+    ...stockAnalysisValuation,
+    ...Object.fromEntries(
+      Object.entries(fmpValuation || {}).filter(([, value]) => value !== null && value !== undefined)
+    )
+  };
   const $set = {
     "data.valuationMetricsCheckedAt": new Date().toISOString(),
     "data.valuationMetricsVersion": VALUATION_METRICS_VERSION
@@ -8028,64 +8412,83 @@ async function publishMarketActivitySnapshot(ticker) {
 
 async function buildFastStockSnapshot(ticker, previousData = {}) {
   const [
+    fmpProfile,
     sparkQuote,
     yahooData,
     chartQuote,
     calendarQuarterEstimate,
+    fmpValuation,
     stockAnalysisValuation,
     stockAnalysisForecast,
     balanceSheetMetrics
   ] = await Promise.all([
+    resolveWithin(fetchFmpStableQuoteProfile(ticker), 1200, {}),
     resolveWithin(fetchYahooSparkQuote(ticker), 1200, {}),
     resolveWithin(fetchYahooQuickQuote(ticker), 900, {}),
     resolveWithin(fetchYahooChartQuote(ticker), 1200, {}),
     resolveWithin(fetchCalendarQuarterEstimate(ticker, { fast: true }), 1400, previousData.analystEstimates?.nextQuarter || {}),
+    resolveWithin(fetchFmpStableValuationMetrics(ticker), 1400, {}),
     resolveWithin(fetchStockAnalysisValuationMetrics(ticker), 1600, {}),
     resolveWithin(fetchStockAnalysisForecast(ticker), 1800, {}),
     resolveWithin(fetchStockAnalysisBalanceSheetMetrics(ticker), 1800, {})
   ]);
+  const definedValues = (data = {}) => Object.fromEntries(
+    Object.entries(data).filter(([, value]) => value !== null && value !== undefined)
+  );
   const chartData = chartQuote?.c || sparkQuote?.price
     ? {
-        price: firstNumber(chartQuote.c, sparkQuote.price),
-        change: firstNumber(chartQuote.d, sparkQuote.change),
-        percentChange: firstNumber(chartQuote.dp, sparkQuote.percentChange),
+        price: firstNumber(fmpProfile.price, chartQuote.c, sparkQuote.price),
+        change: firstNumber(fmpProfile.change, chartQuote.d, sparkQuote.change),
+        percentChange: firstNumber(fmpProfile.percentChange, chartQuote.dp, sparkQuote.percentChange),
         extendedHours: chartQuote.extendedHours || null,
-        previousClose: firstNumber(chartQuote.pc, sparkQuote.previousClose),
-        high: chartQuote.h,
-        low: chartQuote.l,
-        open: chartQuote.o
+        previousClose: firstNumber(fmpProfile.previousClose, chartQuote.pc, sparkQuote.previousClose),
+        high: firstNumber(fmpProfile.high, chartQuote.h),
+        low: firstNumber(fmpProfile.low, chartQuote.l),
+        open: firstNumber(fmpProfile.open, chartQuote.o)
       }
-    : {};
+    : definedValues(fmpProfile);
   const fastData = {
     ...chartData,
     ...yahooData,
-    pe: firstNumber(yahooData.pe, stockAnalysisValuation.pe),
+    name: firstText(fmpProfile.name, yahooData.name),
+    symbol: ticker,
+    currency: firstText(fmpProfile.currency, yahooData.currency),
+    financialCurrency: firstText(fmpProfile.financialCurrency, yahooData.financialCurrency),
+    sector: firstText(fmpProfile.sector, yahooData.sector),
+    industry: firstText(fmpProfile.industry, yahooData.industry),
+    logo: firstText(fmpProfile.logo, yahooData.logo, getFinnhubLogoUrl(ticker)),
+    marketCap: firstNumber(fmpProfile.marketCap, fmpValuation.marketCap, yahooData.marketCap),
+    fiftyTwoWeekHigh: firstNumber(fmpProfile.fiftyTwoWeekHigh, yahooData.fiftyTwoWeekHigh),
+    fiftyTwoWeekLow: firstNumber(fmpProfile.fiftyTwoWeekLow, yahooData.fiftyTwoWeekLow),
+    pe: firstNumber(fmpValuation.pe, yahooData.pe, stockAnalysisValuation.pe),
     forwardPE: firstNumber(yahooData.forwardPE, stockAnalysisValuation.forwardPE),
-    pegRatio: firstNumber(yahooData.pegRatio, stockAnalysisValuation.pegRatio),
-    forwardPS: stockAnalysisValuation.forwardPS ?? null,
-    priceToTangibleBook: stockAnalysisValuation.priceToTangibleBook ?? null,
-    priceToFreeCashflow: stockAnalysisValuation.priceToFreeCashflow ?? null,
-    priceToOperatingCashflow: stockAnalysisValuation.priceToOperatingCashflow ?? null,
-    pretaxMargin: stockAnalysisValuation.pretaxMargin ?? null,
-    ebitdaMargin: stockAnalysisValuation.ebitdaMargin ?? null,
-    ebitMargin: stockAnalysisValuation.ebitMargin ?? null,
-    fcfMargin: stockAnalysisValuation.fcfMargin ?? null,
-    returnOnEquity: stockAnalysisValuation.returnOnEquity ?? null,
-    returnOnAssets: stockAnalysisValuation.returnOnAssets ?? null,
-    returnOnInvestedCapital: stockAnalysisValuation.returnOnInvestedCapital ?? null,
-    returnOnCapitalEmployed: stockAnalysisValuation.returnOnCapitalEmployed ?? null,
-    weightedAverageCostOfCapital: stockAnalysisValuation.weightedAverageCostOfCapital ?? null,
-    revenuePerEmployee: stockAnalysisValuation.revenuePerEmployee ?? null,
-    profitsPerEmployee: stockAnalysisValuation.profitsPerEmployee ?? null,
-    employeeCount: stockAnalysisValuation.employeeCount ?? null,
+    pegRatio: firstNumber(fmpValuation.pegRatio, yahooData.pegRatio, stockAnalysisValuation.pegRatio),
+    forwardPS: firstNumber(fmpValuation.forwardPS, stockAnalysisValuation.forwardPS),
+    priceToSales: firstNumber(fmpValuation.priceToSales, yahooData.priceToSales),
+    priceToBook: firstNumber(fmpValuation.priceToBook, yahooData.priceToBook, stockAnalysisValuation.priceToBook),
+    priceToTangibleBook: firstNumber(fmpValuation.priceToTangibleBook, stockAnalysisValuation.priceToTangibleBook),
+    priceToFreeCashflow: firstNumber(fmpValuation.priceToFreeCashflow, stockAnalysisValuation.priceToFreeCashflow),
+    priceToOperatingCashflow: firstNumber(fmpValuation.priceToOperatingCashflow, stockAnalysisValuation.priceToOperatingCashflow),
+    pretaxMargin: firstNumber(fmpValuation.pretaxMargin, stockAnalysisValuation.pretaxMargin),
+    ebitdaMargin: firstNumber(fmpValuation.ebitdaMargin, stockAnalysisValuation.ebitdaMargin),
+    ebitMargin: firstNumber(fmpValuation.ebitMargin, stockAnalysisValuation.ebitMargin),
+    fcfMargin: firstNumber(fmpValuation.fcfMargin, stockAnalysisValuation.fcfMargin),
+    returnOnEquity: firstNumber(fmpValuation.returnOnEquity, stockAnalysisValuation.returnOnEquity),
+    returnOnAssets: firstNumber(fmpValuation.returnOnAssets, stockAnalysisValuation.returnOnAssets),
+    returnOnInvestedCapital: firstNumber(fmpValuation.returnOnInvestedCapital, stockAnalysisValuation.returnOnInvestedCapital),
+    returnOnCapitalEmployed: firstNumber(fmpValuation.returnOnCapitalEmployed, stockAnalysisValuation.returnOnCapitalEmployed),
+    weightedAverageCostOfCapital: firstNumber(fmpValuation.weightedAverageCostOfCapital, stockAnalysisValuation.weightedAverageCostOfCapital),
+    revenuePerEmployee: firstNumber(fmpValuation.revenuePerEmployee, stockAnalysisValuation.revenuePerEmployee),
+    profitsPerEmployee: firstNumber(fmpValuation.profitsPerEmployee, stockAnalysisValuation.profitsPerEmployee),
+    employeeCount: firstNumber(fmpValuation.employeeCount, stockAnalysisValuation.employeeCount),
     totalCash: firstNumber(balanceSheetMetrics.totalCash, balanceSheetMetrics.cashAndCashEquivalents),
     totalDebt: balanceSheetMetrics.totalDebt ?? null,
     cashAndCashEquivalents: firstNumber(balanceSheetMetrics.cashAndCashEquivalents, balanceSheetMetrics.totalCash),
     netCash: balanceSheetMetrics.netCash ?? null,
     netCashPerShare: balanceSheetMetrics.netCashPerShare ?? null,
     equityBookValue: balanceSheetMetrics.equityBookValue ?? null,
-    bookValuePerShare: balanceSheetMetrics.bookValuePerShare ?? null,
-    workingCapital: balanceSheetMetrics.workingCapital ?? null,
+    bookValuePerShare: firstNumber(balanceSheetMetrics.bookValuePerShare, fmpValuation.bookValuePerShare),
+    workingCapital: firstNumber(balanceSheetMetrics.workingCapital, fmpValuation.workingCapital),
     balanceSheetAsOf: balanceSheetMetrics.balanceSheetAsOf || null,
     balanceSheetSource: balanceSheetMetrics.balanceSheetSource || null
   };
@@ -8102,9 +8505,6 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     toNumberOrNull(calendarQuarterEstimate.eps) !== null;
   if (!hasFastSnapshotData) return null;
 
-  const definedValues = (data = {}) => Object.fromEntries(
-    Object.entries(data).filter(([, value]) => value !== null && value !== undefined)
-  );
   const analystEstimates = {
     nextQuarter: {
       revenue: normalizeStatementDollars(calendarQuarterEstimate.revenue),
@@ -8415,6 +8815,8 @@ async function fetchStockData(ticker) {
     fmpRatingData,
     stockAnalysisFinancialData,
     stockAnalysisValuation,
+    fmpStableValuation,
+    fmpQuoteProfile,
     calendarQuarterEstimate,
     finnhubAnalystUpdates,
     fmpMarketActivity,
@@ -8429,7 +8831,7 @@ async function fetchStockData(ticker) {
     revenueEstimate
   ] = await Promise.all([
     resolveWithin(fetchYahooFinancialHistory(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, []),
-    resolveWithin(fetchFmpIncomeStatementHistory(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, []),
+    resolveWithin(fetchFmpFinancialHistory(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(fetchAlphaVantageIncomeStatementHistory(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(getYahooSupplementalData(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
     resolveWithin(fetchYahooYearEndPrices(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
@@ -8455,6 +8857,8 @@ async function fetchStockData(ticker) {
     ]), STOCK_PROVIDER_TIMEOUT_MS, null),
     resolveWithin(fetchStockAnalysisIncomeStatementHistory(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(fetchStockAnalysisValuationMetrics(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
+    resolveWithin(fetchFmpStableValuationMetrics(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
+    resolveWithin(fetchFmpStableQuoteProfile(ticker), 1600, {}),
     resolveWithin(fetchCalendarQuarterEstimate(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, {}),
     resolveWithin(fetchFinnhubAnalystUpdates(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
     resolveWithin(fetchFmpMarketActivity(ticker), STOCK_PROVIDER_TIMEOUT_MS, { analystUpdates: [], institutionalHolders: [] }),
@@ -8477,14 +8881,7 @@ async function fetchStockData(ticker) {
       return {};
     }), STOCK_PROVIDER_TIMEOUT_MS, {})
   ]);
-  const hasSecInterimRows = (secAnnualMargins.history || []).some((row) => row?.isInterim);
-  const fmpQuarterlyFinancialData = hasSecInterimRows
-    ? []
-    : await resolveWithin(
-        fetchFmpQuarterlyFinancialHistory(ticker),
-        STOCK_PROVIDER_TIMEOUT_MS,
-        []
-      );
+  const fmpQuarterlyFinancialData = [];
   fmpCashFlow = Array.isArray(fmpCashFlowData)
     ? fmpCashFlowData
     : fmpCashFlowData
@@ -8527,27 +8924,29 @@ async function fetchStockData(ticker) {
   const reportedAnnualData = foreignAdrConfig
     ? mergeAllHistoricalFinancials(
         previousRealRevenueData,
+        fmpIncomeStatementData,
         stockAnalysisFinancialData,
         yahooFinancialData,
         getRecentEarningsReleaseAnnualRows(ticker)
       )
     : mergeAllHistoricalFinancials(
         previousRealRevenueData,
+        fmpIncomeStatementData,
+        stockAnalysisFinancialData,
         finnhubMetricData,
         finnhubReportedData,
         yahooFinancialData,
         alphaVantageIncomeStatementData,
-        fmpIncomeStatementData,
-        stockAnalysisFinancialData,
         getRecentEarningsReleaseAnnualRows(ticker)
       );
   const supplementalAnnualData = mergeAllHistoricalFinancials(
     fmpCashFlowHistory,
-    stockAnalysisFinancialData,
     fmpQuarterlyFinancialData,
+    stockAnalysisFinancialData,
     secAnnualMargins.history || []
   );
   const historicalMarketCap =
+    fmpQuoteProfile.marketCap ??
     nasdaqData.marketCap ??
     yahooSupplementalData.marketCap ??
     (profile.marketCapitalization
@@ -8955,6 +9354,7 @@ async function fetchStockData(ticker) {
     fmpFollowingRevenueEstimate ??
     estimateDecayedForwardValue(nextRevenue, currentRevenueBase);
   const preliminaryMarketCap =
+    fmpQuoteProfile.marketCap ??
     nasdaqData.marketCap ??
     yahooSupplementalData.marketCap ??
     (profile.marketCapitalization
@@ -9080,6 +9480,7 @@ async function fetchStockData(ticker) {
     metrics.epsInclExtraItemsTTM
   );
   const marketReportedPE = firstNumber(
+    fmpStableValuation.pe,
     metrics.peTTM,
     stockAnalysisForecast.pe,
     yahooSupplementalData.pe,
@@ -9137,6 +9538,7 @@ async function fetchStockData(ticker) {
     forwardEpsValue > 0 ? quote.c / forwardEpsValue : null
   );
   const pegRatio = firstNumber(
+    fmpStableValuation.pegRatio,
     yahooSupplementalData.pegRatio,
     stockAnalysisForecast.pegRatio,
     metrics.forwardPEG,
@@ -9275,6 +9677,7 @@ async function fetchStockData(ticker) {
     nextEpsValue ? quote.c / nextEpsValue : null
   );
   const priceToSales = firstNumber(
+    fmpStableValuation.priceToSales,
     yahooSupplementalData.priceToSales,
     metrics.psTTM,
     metrics.psAnnual,
@@ -9284,6 +9687,8 @@ async function fetchStockData(ticker) {
   );
   const bookValuePerShare = normalizeBookValuePerShare(
     firstNumber(
+      fmpStableValuation.bookValuePerShare,
+      balanceSheetMetrics.bookValuePerShare,
       metrics.bookValuePerShareAnnual,
       metrics.bookValuePerShareQuarterly,
       yahooSupplementalData.bookValuePerShare
@@ -9292,6 +9697,7 @@ async function fetchStockData(ticker) {
     ticker
   );
   const priceToBook = firstNumber(
+    fmpStableValuation.priceToBook,
     reconcilePriceToBook(yahooSupplementalData.priceToBook, quote.c, bookValuePerShare),
     metrics.pbAnnual,
     metrics.pbQuarterly,
@@ -9370,17 +9776,20 @@ async function fetchStockData(ticker) {
     metrics.dividendYieldTTM
   );
   const dividendYield = normalizeDividendYield(
-    nasdaqData.dividendYield ?? (finnhubDividendYield !== null
+    fmpQuoteProfile.dividendYield ??
+      nasdaqData.dividendYield ?? (finnhubDividendYield !== null
       ? finnhubDividendYield / 100
       : yahooSupplementalData.dividendYield)
   );
   const fiftyTwoWeekHigh = firstNumber(
+    fmpQuoteProfile.fiftyTwoWeekHigh,
     nasdaqData.fiftyTwoWeekHigh,
     yahooSupplementalData.fiftyTwoWeekHigh,
     metrics["52WeekHigh"],
     metrics["52WeekHighPrice"]
   );
   const fiftyTwoWeekLow = firstNumber(
+    fmpQuoteProfile.fiftyTwoWeekLow,
     nasdaqData.fiftyTwoWeekLow,
     yahooSupplementalData.fiftyTwoWeekLow,
     metrics["52WeekLow"],
@@ -9443,28 +9852,29 @@ async function fetchStockData(ticker) {
     bankMetrics: displayedBankMetrics,
     marginHistory,
     historicalPe,
-    name: profile.name || ticker,
+    name: firstText(fmpQuoteProfile.name, profile.name, ticker),
     symbol: ticker,
-    currency: firstText(yahooSupplementalData.currency, quote.currency, previousData?.currency),
-    financialCurrency: firstText(yahooSupplementalData.financialCurrency, yahooSupplementalData.currency, quote.currency, previousData?.financialCurrency),
+    currency: firstText(fmpQuoteProfile.currency, yahooSupplementalData.currency, quote.currency, previousData?.currency),
+    financialCurrency: firstText(fmpQuoteProfile.financialCurrency, yahooSupplementalData.financialCurrency, yahooSupplementalData.currency, quote.currency, previousData?.financialCurrency),
     sourceFinancialCurrency: stockAnalysisFinancialCurrency || previousData?.sourceFinancialCurrency || null,
-    sector: firstText(profile.gicsSector, profile.sector, yahooSupplementalData.sector, previousData?.sector),
-    industry: firstText(profile.finnhubIndustry, profile.gicsSubIndustry, profile.industry, yahooSupplementalData.industry, previousData?.industry),
-    logo: profile.logo || getFinnhubLogoUrl(ticker),
+    sector: firstText(fmpQuoteProfile.sector, profile.gicsSector, profile.sector, yahooSupplementalData.sector, previousData?.sector),
+    industry: firstText(fmpQuoteProfile.industry, profile.finnhubIndustry, profile.gicsSubIndustry, profile.industry, yahooSupplementalData.industry, previousData?.industry),
+    logo: firstText(fmpQuoteProfile.logo, profile.logo, getFinnhubLogoUrl(ticker)),
     price: quote.c,
     change: quote.d,
     percentChange: quote.dp,
     extendedHours: yahooSupplementalData.extendedHours || null,
     previousClose: quote.pc,
-    high: quote.h,
-    low: quote.l,
-    open: quote.o,
+    high: firstFiniteNumber(fmpQuoteProfile.high, quote.h),
+    low: firstFiniteNumber(fmpQuoteProfile.low, quote.l),
+    open: firstFiniteNumber(fmpQuoteProfile.open, quote.o),
     dividendYield,
     fiftyTwoWeekHigh,
     fiftyTwoWeekLow,
     marketCap,
     totalCash: firstFiniteNumber(
       balanceSheetMetrics.totalCash,
+      fmpStableValuation.cashAndCashEquivalents,
       canReusePreviousBalanceSheetMetrics ? previousData?.totalCash : null
     ),
     totalDebt: firstFiniteNumber(
@@ -9474,6 +9884,7 @@ async function fetchStockData(ticker) {
     cashAndCashEquivalents: firstFiniteNumber(
       balanceSheetMetrics.cashAndCashEquivalents,
       balanceSheetMetrics.totalCash,
+      fmpStableValuation.cashAndCashEquivalents,
       canReusePreviousBalanceSheetMetrics ? previousData?.cashAndCashEquivalents : null
     ),
     netCash: firstFiniteNumber(
@@ -9486,6 +9897,7 @@ async function fetchStockData(ticker) {
     ),
     equityBookValue: firstFiniteNumber(
       balanceSheetMetrics.equityBookValue,
+      fmpStableValuation.equityBookValue,
       canReusePreviousBalanceSheetMetrics ? previousData?.equityBookValue : null
     ),
     bookValuePerShare: firstFiniteNumber(
@@ -9495,6 +9907,7 @@ async function fetchStockData(ticker) {
     ),
     workingCapital: firstFiniteNumber(
       balanceSheetMetrics.workingCapital,
+      fmpStableValuation.workingCapital,
       canReusePreviousBalanceSheetMetrics ? previousData?.workingCapital : null
     ),
     balanceSheetAsOf:
@@ -9509,20 +9922,20 @@ async function fetchStockData(ticker) {
     sharesOutstanding: sharesOutstandingValue,
     pe,
     forwardPE,
-    forwardPS: firstFiniteNumber(stockAnalysisForecast.forwardPS, stockAnalysisValuation.forwardPS),
-    priceToTangibleBook: stockAnalysisValuation.priceToTangibleBook ?? null,
-    priceToFreeCashflow: stockAnalysisValuation.priceToFreeCashflow ?? null,
-    priceToOperatingCashflow: stockAnalysisValuation.priceToOperatingCashflow ?? null,
+    forwardPS: firstFiniteNumber(fmpStableValuation.forwardPS, stockAnalysisForecast.forwardPS, stockAnalysisValuation.forwardPS),
+    priceToTangibleBook: firstFiniteNumber(fmpStableValuation.priceToTangibleBook, stockAnalysisValuation.priceToTangibleBook),
+    priceToFreeCashflow: firstFiniteNumber(fmpStableValuation.priceToFreeCashflow, stockAnalysisValuation.priceToFreeCashflow),
+    priceToOperatingCashflow: firstFiniteNumber(fmpStableValuation.priceToOperatingCashflow, stockAnalysisValuation.priceToOperatingCashflow),
     pegRatio,
-    pretaxMargin: stockAnalysisValuation.pretaxMargin ?? null,
-    ebitdaMargin: stockAnalysisValuation.ebitdaMargin ?? null,
-    ebitMargin: stockAnalysisValuation.ebitMargin ?? null,
-    fcfMargin: stockAnalysisValuation.fcfMargin ?? null,
-    returnOnEquity: stockAnalysisValuation.returnOnEquity ?? null,
-    returnOnAssets: stockAnalysisValuation.returnOnAssets ?? null,
-    returnOnInvestedCapital: stockAnalysisValuation.returnOnInvestedCapital ?? null,
-    returnOnCapitalEmployed: stockAnalysisValuation.returnOnCapitalEmployed ?? null,
-    weightedAverageCostOfCapital: stockAnalysisValuation.weightedAverageCostOfCapital ?? null,
+    pretaxMargin: firstFiniteNumber(fmpStableValuation.pretaxMargin, stockAnalysisValuation.pretaxMargin),
+    ebitdaMargin: firstFiniteNumber(fmpStableValuation.ebitdaMargin, stockAnalysisValuation.ebitdaMargin),
+    ebitMargin: firstFiniteNumber(fmpStableValuation.ebitMargin, stockAnalysisValuation.ebitMargin),
+    fcfMargin: firstFiniteNumber(fmpStableValuation.fcfMargin, stockAnalysisValuation.fcfMargin),
+    returnOnEquity: firstFiniteNumber(fmpStableValuation.returnOnEquity, stockAnalysisValuation.returnOnEquity),
+    returnOnAssets: firstFiniteNumber(fmpStableValuation.returnOnAssets, stockAnalysisValuation.returnOnAssets),
+    returnOnInvestedCapital: firstFiniteNumber(fmpStableValuation.returnOnInvestedCapital, stockAnalysisValuation.returnOnInvestedCapital),
+    returnOnCapitalEmployed: firstFiniteNumber(fmpStableValuation.returnOnCapitalEmployed, stockAnalysisValuation.returnOnCapitalEmployed),
+    weightedAverageCostOfCapital: firstFiniteNumber(fmpStableValuation.weightedAverageCostOfCapital, stockAnalysisValuation.weightedAverageCostOfCapital),
     revenuePerEmployee: stockAnalysisValuation.revenuePerEmployee ?? null,
     profitsPerEmployee: stockAnalysisValuation.profitsPerEmployee ?? null,
     employeeCount: stockAnalysisValuation.employeeCount ?? null,
@@ -9689,15 +10102,19 @@ async function publishFastFinancialHistorySnapshot(ticker) {
     return;
   }
 
-  const stockAnalysisRows = await resolveWithin(
-    fetchStockAnalysisIncomeStatementHistory(ticker),
-    4200,
-    []
+  const [fmpRows, stockAnalysisRows] = await Promise.all([
+    resolveWithin(fetchFmpFinancialHistory(ticker), 2200, []),
+    resolveWithin(fetchStockAnalysisIncomeStatementHistory(ticker), 4200, [])
+  ]);
+  const financialRows = mergeHistoricalFinancials(
+    Array.isArray(fmpRows) ? fmpRows : [],
+    Array.isArray(stockAnalysisRows) ? stockAnalysisRows : [],
+    Infinity
   );
-  if (!Array.isArray(stockAnalysisRows) || !stockAnalysisRows.length) return;
+  if (!Array.isArray(financialRows) || !financialRows.length) return;
 
   const revenueData = cleanFinancialHistoryRows(finalizeFinancialHistory(
-    mergeHistoricalFinancials(stockAnalysisRows, previousData.revenueData || []),
+    mergeHistoricalFinancials(financialRows, previousData.revenueData || [], Infinity),
     previousData.sharesOutstanding || null
   ));
   const checkedAt = new Date().toISOString();
@@ -9759,17 +10176,30 @@ async function publishFastFinancialHistorySnapshot(ticker) {
 async function hydrateQuarterlyHistoryForResponse(ticker, previousData = {}, timeoutMs = 1800) {
   if (hasUsableInterimHistory(previousData)) return previousData;
 
-  const stockAnalysisRows = await resolveWithin(
-    fetchStockAnalysisIncomeStatementHistory(ticker),
+  const fmpRows = await resolveWithin(
+    fetchFmpFinancialHistory(ticker),
     timeoutMs,
     []
   );
-  if (!Array.isArray(stockAnalysisRows) || !stockAnalysisRows.some((row) => row?.isInterim)) {
+  let financialRows = Array.isArray(fmpRows) ? fmpRows : [];
+  if (!financialRows.some((row) => row?.isInterim)) {
+    const stockAnalysisRows = await resolveWithin(
+      fetchStockAnalysisIncomeStatementHistory(ticker),
+      timeoutMs,
+      []
+    );
+    financialRows = mergeHistoricalFinancials(
+      Array.isArray(fmpRows) ? fmpRows : [],
+      Array.isArray(stockAnalysisRows) ? stockAnalysisRows : [],
+      Infinity
+    );
+  }
+  if (!financialRows.some((row) => row?.isInterim)) {
     return previousData;
   }
 
   const revenueData = cleanFinancialHistoryRows(finalizeFinancialHistory(
-    mergeHistoricalFinancials(stockAnalysisRows, previousData.revenueData || []),
+    mergeHistoricalFinancials(financialRows, previousData.revenueData || [], Infinity),
     previousData.sharesOutstanding || null
   ));
   if (interimHistoryPointCount({ revenueData }) < MIN_USABLE_INTERIM_HISTORY_ROWS) return previousData;
@@ -10078,6 +10508,31 @@ function getFallbackSimilarSymbols(ticker, stockData = {}) {
   return [];
 }
 
+async function fetchFmpSimilarCompanyPeers(ticker) {
+  if (!process.env.FMP_API_KEY || !canUseFmp()) return [];
+  const symbol = normalizePeerSymbol(ticker);
+  if (!symbol) return [];
+
+  try {
+    const data = await getFmpData(symbol, "stock peers", [
+      "/stable/stock-peers?symbol={ticker}"
+    ]);
+    const rows = Array.isArray(data) ? data : data ? [data] : [];
+    return rows
+      .map((row) => ({
+        symbol: normalizePeerSymbol(row.symbol || row.ticker),
+        name: firstText(row.companyName, row.name),
+        price: firstFiniteNumber(row.price),
+        marketCap: firstFiniteNumber(row.mktCap, row.marketCap)
+      }))
+      .filter((row) => row.symbol && row.symbol !== symbol);
+  } catch (err) {
+    setFmpCooldown(err, "stock peers", symbol);
+    console.log("FMP stock peers skipped:", symbol, err.response?.status || err.message);
+    return [];
+  }
+}
+
 async function buildSimilarCompanyItem(symbol) {
   const normalizedSymbol = normalizePeerSymbol(symbol);
   const stock = await Stock.findOne({ ticker: normalizedSymbol }).lean().catch(() => null);
@@ -10111,8 +10566,21 @@ async function fetchSimilarCompanyQuote(symbol) {
   let quote = null;
   let extendedHours = null;
 
+  const fmpQuote = await resolveWithin(fetchFmpStableQuoteProfile(symbol), 1200, null).catch(() => null);
+  if (fmpQuote && toNumberOrNull(fmpQuote.price) !== null) {
+    quote = normalizeQuotePayload({}, {
+      price: fmpQuote.price,
+      change: fmpQuote.change,
+      percentChange: fmpQuote.percentChange,
+      previousClose: fmpQuote.previousClose,
+      high: fmpQuote.high,
+      low: fmpQuote.low,
+      open: fmpQuote.open
+    });
+  }
+
   const quickData = await resolveWithin(fetchYahooQuickQuote(symbol), 1600, null).catch(() => null);
-  if (quickData) {
+  if (quickData && (toNumberOrNull(quote?.c) === null || toNumberOrNull(quote?.dp) === null)) {
     extendedHours = quickData.extendedHours || null;
     quote = normalizeQuotePayload({}, quickData);
   }
@@ -10187,12 +10655,15 @@ async function fetchSimilarCompanyForwardPe(symbol) {
     return cached.forwardPE;
   }
 
-  const metrics = await resolveWithin(
-    getFinnhub(`https://finnhub.io/api/v1/stock/metric?symbol=${symbol}&metric=all`),
-    2200,
-    null
-  ).catch(() => null);
-  const forwardPE = firstFiniteNumber(metrics?.metric?.forwardPE, metrics?.metric?.peNormalizedAnnual);
+  const [fmpValuation, metrics] = await Promise.all([
+    resolveWithin(fetchFmpStableValuationMetrics(symbol), 1200, {}),
+    resolveWithin(
+      getFinnhub(`https://finnhub.io/api/v1/stock/metric?symbol=${symbol}&metric=all`),
+      2200,
+      null
+    ).catch(() => null)
+  ]);
+  const forwardPE = firstFiniteNumber(fmpValuation?.forwardPE, metrics?.metric?.forwardPE, metrics?.metric?.peNormalizedAnnual);
 
   if (forwardPE !== null) {
     similarCompanyMetricCache.set(symbol, {
@@ -11487,6 +11958,12 @@ app.get("/api/market-indices", async (req, res) => {
   const applyStockAnalysisMove = (index, indexQuote, stockAnalysisMoves) => {
     const move = stockAnalysisMoves.get(index.key);
     if (!move || toNumberOrNull(move.percentChange) === null) return indexQuote;
+    if (
+      /^FMP/i.test(String(indexQuote?.source || "")) &&
+      toNumberOrNull(indexQuote?.percentChange) !== null
+    ) {
+      return indexQuote;
+    }
 
     const quote = indexQuote || cachedByKey.get(index.key);
     const price = toNumberOrNull(quote?.price);
@@ -11510,6 +11987,35 @@ app.get("/api/market-indices", async (req, res) => {
         ? `StockAnalysis / ${quote?.source || "cached index"}`
         : "StockAnalysis"
     };
+  };
+
+  const fetchFmpIndex = async (index) => {
+    if (!process.env.FMP_API_KEY || !canUseFmp()) return null;
+    const symbol = index.fmpSymbol || index.yahooSymbol;
+    const response = await axios.get("https://financialmodelingprep.com/stable/quote", {
+      params: {
+        symbol,
+        apikey: process.env.FMP_API_KEY
+      },
+      timeout: 1600,
+      validateStatus: () => true
+    });
+    if (response.status >= 400) {
+      const error = new Error(`FMP index quote ${response.status}`);
+      error.response = response;
+      throw error;
+    }
+    const quote = Array.isArray(response.data) ? response.data[0] : response.data;
+    const indexQuote = buildIndexQuote(
+      index,
+      symbol,
+      quote?.price,
+      quote?.change,
+      quote?.changePercentage,
+      "FMP"
+    );
+    if (!indexQuote) throw new Error(`Missing ${index.label} FMP quote`);
+    return indexQuote;
   };
 
   const fetchInvestingIndex = async (index) => {
@@ -11659,28 +12165,31 @@ app.get("/api/market-indices", async (req, res) => {
 
   const fetchBestIndexQuote = async (index) => {
     const sources = [
+      ["FMP", fetchFmpIndex],
       ["Yahoo chart", fetchYahooChartIndex],
       ["Yahoo quote", fetchYahooIndex],
       ["Investing.com", fetchInvestingIndex]
     ];
-    const attempts = sources.map(([label, fetchIndex]) =>
-      resolveWithin(Promise.resolve()
+    for (const [label, fetchIndex] of sources) {
+      const indexQuote = await resolveWithin(Promise.resolve()
         .then(() => fetchIndex(index))
-        .then((indexQuote) => {
-          if (!indexQuote) throw new Error(`Missing ${index.label} ${label} quote`);
-          return indexQuote;
+        .then((quote) => {
+          if (!quote) throw new Error(`Missing ${index.label} ${label} quote`);
+          return quote;
         })
         .catch((err) => {
           if (/^Yahoo/i.test(label)) {
             setYahooCooldown(err, `market index ${label}`, index.label);
+          } else if (label === "FMP" && err?.response?.status !== 402 && err?.response?.status !== 403) {
+            setFmpCooldown(err, "market index", index.label);
           }
           console.log(`Market index ${label} skipped:`, index.label, err.response?.status || err.message);
           return null;
-        }), label === "Investing.com" ? 2600 : 2200, null)
-    );
+        }), label === "Investing.com" ? 2600 : 1800, null);
+      if (indexQuote) return indexQuote;
+    }
 
-    const settled = await Promise.all(attempts);
-    return settled.find(Boolean) || null;
+    return null;
   };
 
   const fetchFreshIndices = async () => {
@@ -11844,6 +12353,24 @@ app.get("/api/price-history/:ticker", async (req, res) => {
       }
     }
 
+    const fmpHistory = await resolveWithin(
+      fetchFmpPriceHistory(ticker, requestedRange),
+      2400,
+      null
+    );
+    if (fmpHistory?.points?.length) {
+      const data = {
+        ...fmpHistory,
+        symbol: requestedTicker,
+        sourceSymbol: ticker
+      };
+      priceHistoryCache.set(cacheKey, {
+        fetchedAt: Date.now(),
+        data
+      });
+      return res.json(data);
+    }
+
     const params = {
       interval: rangeConfig.interval
     };
@@ -11972,17 +12499,21 @@ app.get("/api/similar-companies/:ticker", async (req, res) => {
     }
     let peerSymbols = [];
 
-    const finnhubPeers = await resolveWithin(
-      getFinnhub(`https://finnhub.io/api/v1/stock/peers?symbol=${ticker}`),
-      4500,
-      []
-    );
+    const [fmpPeers, finnhubPeers] = await Promise.all([
+      resolveWithin(fetchFmpSimilarCompanyPeers(ticker), 1800, []),
+      resolveWithin(
+        getFinnhub(`https://finnhub.io/api/v1/stock/peers?symbol=${ticker}`),
+        2500,
+        []
+      )
+    ]);
 
     if (Array.isArray(finnhubPeers)) {
       peerSymbols = finnhubPeers;
     }
 
     peerSymbols = [
+      ...(Array.isArray(fmpPeers) ? fmpPeers.map((row) => row.symbol) : []),
       ...getFallbackSimilarSymbols(ticker, currentData),
       ...peerSymbols
     ]
@@ -11998,9 +12529,19 @@ app.get("/api/similar-companies/:ticker", async (req, res) => {
       peerSymbols = ["MSFT", "AAPL", "GOOGL", "AMZN", "META", "NVDA"].filter((symbol) => symbol !== ticker);
     }
 
+    const fmpPeerBySymbol = new Map((Array.isArray(fmpPeers) ? fmpPeers : []).map((row) => [row.symbol, row]));
     const companies = await hydrateSimilarCompaniesFast((await Promise.all(
       peerSymbols.map(async (symbol) => {
-        return buildSimilarCompanyItem(symbol);
+        const company = await buildSimilarCompanyItem(symbol);
+        const fmpPeer = fmpPeerBySymbol.get(symbol) || {};
+        return company
+          ? {
+              ...company,
+              name: firstText(fmpPeer.name, company.name),
+              price: firstFiniteNumber(fmpPeer.price, company.price),
+              marketCap: firstFiniteNumber(fmpPeer.marketCap, company.marketCap)
+            }
+          : null;
       })
     ))
       .filter(Boolean)
