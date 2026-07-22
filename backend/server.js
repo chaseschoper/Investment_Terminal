@@ -64,12 +64,12 @@ const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const alphaVantageFundamentalCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 153;
-const STOCK_ESTIMATE_VERSION = 18;
-const INTERIM_HISTORY_VERSION = 5;
+const FINANCIAL_HISTORY_VERSION = 154;
+const STOCK_ESTIMATE_VERSION = 19;
+const INTERIM_HISTORY_VERSION = 6;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
-const BALANCE_SHEET_METRICS_VERSION = 9;
-const VALUATION_METRICS_VERSION = 2;
+const BALANCE_SHEET_METRICS_VERSION = 10;
+const VALUATION_METRICS_VERSION = 3;
 const EARNINGS_CALL_VERSION = 18;
 const STOCK_ANALYSIS_VALUATION_FIELDS = [
   "pe",
@@ -732,7 +732,7 @@ function setYahooAnalysisPageCooldown(err, label, ticker) {
 
 function setFmpCooldown(err, label, ticker) {
   if (!isTooManyRequestsError(err)) return;
-  fmpCooldownUntil = Math.max(fmpCooldownUntil, Date.now() + 90 * 1000);
+  fmpCooldownUntil = Math.max(fmpCooldownUntil, Date.now() + 10 * 1000);
   console.log(`FMP cooldown active after ${label}:`, ticker, err.response?.status || err.message);
 }
 
@@ -841,6 +841,7 @@ async function fetchFmpStableQuoteProfile(ticker) {
       fiftyTwoWeekHigh: firstFiniteNumber(quote.yearHigh, rangeMatch ? parseApiNumber(rangeMatch[2]) : null),
       fiftyTwoWeekLow: firstFiniteNumber(quote.yearLow, rangeMatch ? parseApiNumber(rangeMatch[1]) : null),
       beta: firstFiniteNumber(profile.beta),
+      employeeCount: firstFiniteNumber(profile.fullTimeEmployees),
       dividendYield: normalizeDividendYield(profile.lastDividend && quote.price ? profile.lastDividend / quote.price : null),
       fmpProfileSource: "FMP stable quote/profile"
     };
@@ -881,11 +882,30 @@ async function fetchFmpStableValuationMetrics(ticker) {
     ]);
     const metrics = Array.isArray(metricsResponse.data) ? metricsResponse.data[0] || {} : metricsResponse.data || {};
     const ratios = Array.isArray(ratiosResponse.data) ? ratiosResponse.data[0] || {} : ratiosResponse.data || {};
-    const estimates = Array.isArray(estimatesResponse.data) ? estimatesResponse.data : [];
-    const nextRevenue = estimates
-      .map((row) => toNumberOrNull(row.revenueAvg ?? row.estimatedRevenueAvg))
-      .find((value) => value !== null && value > 0);
+    const estimates = (Array.isArray(estimatesResponse.data) ? estimatesResponse.data : [])
+      .map((row) => ({
+        ...row,
+        estimateDate: new Date(`${String(row.date || "").slice(0, 10)}T12:00:00Z`)
+      }))
+      .filter((row) => !Number.isNaN(row.estimateDate.getTime()))
+      .sort((a, b) => a.estimateDate - b.estimateDate);
+    const currentYearEstimate = estimates.find((row) =>
+      row.estimateDate.getUTCFullYear() >= new Date().getUTCFullYear()
+    ) || estimates[0] || {};
+    const nextYearEstimate =
+      estimates.find((row) => row !== currentYearEstimate && row.estimateDate > currentYearEstimate.estimateDate) ||
+      estimates[1] ||
+      {};
+    const nextYearEps = toNumberOrNull(nextYearEstimate.epsAvg ?? nextYearEstimate.estimatedEpsAvg);
+    const nextRevenue = toNumberOrNull(nextYearEstimate.revenueAvg ?? nextYearEstimate.estimatedRevenueAvg);
     const marketCap = firstFiniteNumber(metrics.marketCap);
+    const currentPrice = firstFiniteNumber(
+      metrics.stockPrice,
+      metrics.price,
+      marketCap && metrics.weightedAverageShsOut
+        ? marketCap / metrics.weightedAverageShsOut
+        : null
+    );
     const percent = (value) => {
       const number = toNumberOrNull(value);
       return number === null ? null : number * 100;
@@ -893,6 +913,7 @@ async function fetchFmpStableValuationMetrics(ticker) {
 
     return {
       pe: firstFiniteNumber(ratios.priceToEarningsRatioTTM),
+      forwardPE: firstFiniteNumber(currentPrice && nextYearEps ? currentPrice / nextYearEps : null),
       forwardPS: firstFiniteNumber(
         marketCap && nextRevenue ? marketCap / nextRevenue : null,
         ratios.priceToSalesRatioTTM
@@ -917,12 +938,52 @@ async function fetchFmpStableValuationMetrics(ticker) {
       bookValuePerShare: firstFiniteNumber(ratios.bookValuePerShareTTM),
       workingCapital: firstFiniteNumber(metrics.workingCapitalTTM),
       marketCap,
+      currentYearRevenue: toNumberOrNull(currentYearEstimate.revenueAvg ?? currentYearEstimate.estimatedRevenueAvg),
+      currentYearEps: toNumberOrNull(currentYearEstimate.epsAvg ?? currentYearEstimate.estimatedEpsAvg),
+      currentYearNetIncome: toNumberOrNull(currentYearEstimate.netIncomeAvg ?? currentYearEstimate.estimatedNetIncomeAvg),
+      nextYearRevenue: toNumberOrNull(nextYearEstimate.revenueAvg ?? nextYearEstimate.estimatedRevenueAvg),
+      nextYearEps,
+      nextYearNetIncome: toNumberOrNull(nextYearEstimate.netIncomeAvg ?? nextYearEstimate.estimatedNetIncomeAvg),
       valuationMetricsSource: "FMP stable ratios/key metrics"
     };
   } catch (err) {
     setFmpCooldown(err, "stable valuation metrics", symbol);
     console.log("FMP stable valuation metrics skipped:", symbol, err.response?.status || err.message);
     return {};
+  }
+}
+
+async function fetchFmpHistoricalPe(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return [];
+
+  try {
+    const response = await axios.get("https://financialmodelingprep.com/stable/ratios", {
+      params: {
+        symbol,
+        period: "annual",
+        limit: 8,
+        apikey: process.env.FMP_API_KEY
+      },
+      timeout: 3500
+    });
+    return (Array.isArray(response.data) ? response.data : [])
+      .map((row) => ({
+        year: Number(row.fiscalYear || String(row.date || "").slice(0, 4)),
+        period: String(row.fiscalYear || String(row.date || "").slice(0, 4)),
+        isInterim: false,
+        pe: toNumberOrNull(row.priceToEarningsRatio),
+        price: null,
+        eps: null,
+        source: "FMP annual ratios"
+      }))
+      .filter((row) => row.year && row.pe !== null && Number.isFinite(row.pe) && Math.abs(row.pe) < 1000)
+      .sort((a, b) => a.year - b.year)
+      .slice(-7);
+  } catch (err) {
+    setFmpCooldown(err, "historical PE", symbol);
+    console.log("FMP historical PE skipped:", symbol, err.response?.status || err.message);
+    return [];
   }
 }
 
@@ -1089,6 +1150,19 @@ async function fetchFmpPriceHistory(ticker, requestedRange) {
     console.log("FMP price history skipped:", symbol, requestedRange, err.response?.status || err.message);
     return null;
   }
+}
+
+async function fetchFmpFiftyTwoWeekRange(ticker) {
+  const history = await resolveWithin(fetchFmpPriceHistory(ticker, "1Y"), 1800, null);
+  const prices = (history?.points || [])
+    .map((point) => toNumberOrNull(point.price))
+    .filter((value) => value !== null && value > 0);
+  if (!prices.length) return {};
+  return {
+    fiftyTwoWeekHigh: Math.max(...prices),
+    fiftyTwoWeekLow: Math.min(...prices),
+    source: "FMP 1Y price history"
+  };
 }
 
 async function fetchYahooSparkQuotes(symbols = []) {
@@ -1460,7 +1534,6 @@ async function fetchNasdaqEarningsDate(ticker, referenceDate) {
 async function fetchCalendarQuarterEstimate(ticker, options = {}) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol) return {};
-  const timeoutMs = options.fast ? 3500 : 8000;
   const calendarSymbols = new Set([
     symbol,
     ...(FOREIGN_ADR_CONFIG[symbol]?.localSymbols || [])
@@ -1477,7 +1550,7 @@ async function fetchCalendarQuarterEstimate(ticker, options = {}) {
     eps: null,
     date: null,
     fiscalQuarter: null,
-    source: "Earnings calendar"
+    source: "FMP earnings calendar"
   };
 
   const today = new Date();
@@ -1486,15 +1559,21 @@ async function fetchCalendarQuarterEstimate(ticker, options = {}) {
 
   if (process.env.FMP_API_KEY && canUseFmp()) {
     try {
-      const to = new Date(todayNoon);
-      to.setUTCDate(to.getUTCDate() + (options.fast ? 180 : 365));
-      const fmpRows = await resolveWithin(
-        getFmpData(symbol, "earnings calendar", [
-          `/stable/earnings-calendar?from=${todayNoon.toISOString().slice(0, 10)}&to=${to.toISOString().slice(0, 10)}`
-        ]),
-        options.fast ? 1500 : 2600,
-        []
-      );
+      const windowCount = options.fast ? 4 : 8;
+      const windowSizeDays = 45;
+      const fmpRows = (await Promise.all(Array.from({ length: windowCount }, (_, index) => {
+        const from = new Date(todayNoon);
+        from.setUTCDate(from.getUTCDate() + index * windowSizeDays);
+        const to = new Date(todayNoon);
+        to.setUTCDate(to.getUTCDate() + ((index + 1) * windowSizeDays) - 1);
+        return resolveWithin(
+          getFmpData(symbol, "earnings calendar", [
+            `/stable/earnings-calendar?from=${from.toISOString().slice(0, 10)}&to=${to.toISOString().slice(0, 10)}`
+          ]),
+          options.fast ? 900 : 1400,
+          []
+        );
+      }))).flatMap((rows) => Array.isArray(rows) ? rows : rows ? [rows] : []);
       const bestFmpRow = (Array.isArray(fmpRows) ? fmpRows : fmpRows ? [fmpRows] : [])
         .filter((row) => calendarSymbols.has(String(row.symbol || "").trim().toUpperCase()))
         .map((row) => ({
@@ -1530,99 +1609,8 @@ async function fetchCalendarQuarterEstimate(ticker, options = {}) {
     }
   }
 
-  const calendarDates = Array.from({ length: options.fast ? 150 : 240 }, (_, index) => {
-    const date = new Date(todayNoon);
-    date.setUTCDate(date.getUTCDate() + index);
-    return date.toISOString().slice(0, 10);
-  });
-  const stockAnalysisRows = await resolveWithin(
-    fetchStockAnalysisEarningsCalendarRows(calendarDates),
-    options.fast ? 1700 : 3500,
-    []
-  );
-  const stockAnalysisRow = (stockAnalysisRows || [])
-    .filter((row) => calendarSymbols.has(String(row.symbol || "").toUpperCase()))
-    .filter((row) => toNumberOrNull(row.epsEstimate) !== null || toNumberOrNull(row.revenueEstimate) !== null)
-    .sort((a, b) => String(a.date).localeCompare(String(b.date)))[0];
-  if (stockAnalysisRow) {
-    const result = applyEarningsDateOverride(symbol, {
-      revenue: stockAnalysisRow.revenueEstimate,
-      earnings: null,
-      eps: stockAnalysisRow.epsEstimate,
-      date: stockAnalysisRow.date || null,
-      fiscalQuarter: null,
-      source: "StockAnalysis earnings calendar"
-    });
-    earningsEstimateCalendarCache.set(symbol, { data: result, fetchedAt: Date.now() });
-    return result;
-  }
-
-  if (!process.env.FINNHUB_API_KEY) return emptyResult;
-
-  try {
-    const from = new Date(today);
-    from.setUTCDate(from.getUTCDate() - 45);
-    const to = new Date(today);
-    to.setUTCDate(to.getUTCDate() + 520);
-
-    const { data } = await axios.get("https://finnhub.io/api/v1/calendar/earnings", {
-      params: {
-        from: from.toISOString().slice(0, 10),
-        to: to.toISOString().slice(0, 10),
-        symbol,
-        token: process.env.FINNHUB_API_KEY
-      },
-      timeout: timeoutMs
-    });
-
-    const rows = (data?.earningsCalendar || [])
-      .filter((row) => calendarSymbols.has(String(row.symbol || "").toUpperCase()))
-      .map((row) => ({
-        ...row,
-        reportDate: new Date(`${row.date}T12:00:00Z`),
-        epsEstimate: parseApiNumber(row.epsEstimate),
-        revenueEstimate: parseApiNumber(row.revenueEstimate)
-      }))
-      .filter((row) =>
-        !Number.isNaN(row.reportDate.getTime()) &&
-        row.reportDate >= todayNoon &&
-        (row.epsEstimate !== null || row.revenueEstimate !== null)
-      )
-      .sort((a, b) => a.reportDate - b.reportDate);
-
-    const bestRow = rows.find((row) =>
-      row.epsEstimate !== null && row.revenueEstimate !== null
-    ) || rows[0] || null;
-    const confirmedDate = bestRow
-      ? await resolveWithin(fetchNasdaqEarningsDate(symbol, bestRow.date), options.fast ? 1200 : 3500, null)
-      : null;
-    const result = bestRow
-      ? {
-          revenue: bestRow.revenueEstimate,
-          earnings: null,
-          eps: bestRow.epsEstimate,
-          date: confirmedDate || bestRow.date || null,
-          fiscalQuarter: bestRow.quarter && bestRow.year
-            ? `Q${bestRow.quarter} ${bestRow.year}`
-            : null,
-          source: "Earnings calendar"
-        }
-      : {
-          revenue: null,
-          earnings: null,
-          eps: null,
-          date: null,
-          fiscalQuarter: null,
-          source: "Earnings calendar"
-        };
-
-    const correctedResult = applyEarningsDateOverride(symbol, result);
-    earningsEstimateCalendarCache.set(symbol, { data: correctedResult, fetchedAt: Date.now() });
-    return correctedResult;
-  } catch (err) {
-    console.log("Ticker earnings estimate calendar skipped:", symbol, err.response?.status || err.message);
-    return emptyResult;
-  }
+  earningsEstimateCalendarCache.set(symbol, { data: emptyResult, fetchedAt: Date.now() });
+  return emptyResult;
 }
 
 async function fetchNasdaqData(ticker) {
@@ -2173,6 +2161,35 @@ const buildSecFilingList = (filings, cik, limit = 90) =>
     })
     .filter((document) => document.url || document.indexUrl);
 
+const buildFmpFilingDocumentItem = (filing, fallbackTitle = null) => {
+  const form = filing?.formType || filing?.form || null;
+  return {
+    form,
+    title: fallbackTitle || `${form || "Filing"} filing`,
+    filingDate: String(filing?.filingDate || filing?.date || "").slice(0, 10) || null,
+    reportDate: String(filing?.acceptedDate || filing?.filingDate || "").slice(0, 10) || null,
+    items: filing?.items || null,
+    url: filing?.finalLink || filing?.link || null,
+    indexUrl: filing?.link || filing?.finalLink || null,
+    accessionNumber: filing?.accessionNumber || null,
+    type: "SEC",
+    source: "FMP SEC filings"
+  };
+};
+
+async function fetchFmpCompanyFilings(symbol) {
+  if (!process.env.FMP_API_KEY || !canUseFmp()) return [];
+  const now = new Date();
+  const from = new Date(now);
+  from.setUTCFullYear(from.getUTCFullYear() - 5);
+  const rows = await getFmpData(symbol, "SEC filings", [
+    `/stable/sec-filings-search/symbol?symbol={ticker}&from=${from.toISOString().slice(0, 10)}&to=${now.toISOString().slice(0, 10)}&page=0&limit=250`
+  ]);
+  return (Array.isArray(rows) ? rows : rows ? [rows] : [])
+    .filter((row) => String(row?.symbol || "").trim().toUpperCase() === symbol)
+    .sort((a, b) => String(b.filingDate || b.acceptedDate || "").localeCompare(String(a.filingDate || a.acceptedDate || "")));
+}
+
 const findLatestSecFact = (companyFacts, concepts, {
   units = ["USD"],
   formTypes = ["10-Q", "10-Q/A", "10-K", "10-K/A"],
@@ -2350,23 +2367,82 @@ async function fetchCompanyDocuments(ticker) {
   if (inFlight) return inFlight;
 
   const fetchPromise = (async () => {
-    const cik = await resolveSecCikForTicker(symbol);
-    if (!cik) {
-      return { available: false, symbol, message: "SEC documents are not available for this ticker yet." };
-    }
-
-    let submissionsResponse;
     try {
-      submissionsResponse = await axios.get(`https://data.sec.gov/submissions/CIK${cik}.json`, {
-        headers: { "User-Agent": "InvestmentTerminal/1.0 contact@investmentterminal.app" },
-        timeout: 16000
-      });
+      const [filings, fmpProfile] = await Promise.all([
+        resolveWithin(fetchFmpCompanyFilings(symbol), 3500, []),
+        resolveWithin(fetchFmpStableQuoteProfile(symbol), 1200, {})
+      ]);
+      if (!filings.length) {
+        const data = {
+          available: false,
+          symbol,
+          companyName: fmpProfile.name || symbol,
+          updatedAt: new Date().toISOString(),
+          filings: {},
+          allSecFilings: [],
+          filingCounts: { all: 0 },
+          resultDocuments: [],
+          investorRelationsDocuments: [],
+          earningsExhibits: [],
+          message: "FMP filings are not available for this ticker yet."
+        };
+        companyDocumentsCache.set(symbol, { data, fetchedAt: Date.now() });
+        return data;
+      }
+
+      const allSecFilings = filings.map((filing) => {
+        const document = buildFmpFilingDocumentItem(filing);
+        const category = getSecFilingCategory(document.form);
+        return {
+          ...document,
+          title: `${document.form || "Filing"} filing`,
+          category,
+          categoryLabel: getSecFilingCategoryLabel(category)
+        };
+      }).filter((document) => document.url || document.indexUrl);
+      const filingCounts = allSecFilings.reduce((counts, filing) => {
+        counts[filing.category] = (counts[filing.category] || 0) + 1;
+        counts.all = (counts.all || 0) + 1;
+        return counts;
+      }, { all: 0 });
+      const latest10k = filings.find((filing) => /^10-K/i.test(filing.formType || filing.form || ""));
+      const latest10q = filings.find((filing) => /^10-Q/i.test(filing.formType || filing.form || ""));
+      const latest8k = filings.find((filing) => /^8-K/i.test(filing.formType || filing.form || ""));
+      const latestEarnings8k =
+        filings.find((filing) =>
+          /^8-K/i.test(filing.formType || filing.form || "") &&
+          (filing.hasFinancials === true || /results|earnings|quarter|annual|financial/i.test(`${filing.finalLink || ""} ${filing.link || ""}`))
+        ) || latest8k;
+      const resultDocuments = [latestEarnings8k]
+        .filter(Boolean)
+        .map((filing) => buildFmpFilingDocumentItem(filing, "Latest earnings/results filing"));
+
+      const data = {
+        available: true,
+        symbol,
+        companyName: fmpProfile.name || symbol,
+        cik: filings.find((filing) => filing.cik)?.cik || null,
+        updatedAt: new Date().toISOString(),
+        filings: {
+          tenK: latest10k ? buildFmpFilingDocumentItem(latest10k, "Latest 10-K annual report") : null,
+          tenQ: latest10q ? buildFmpFilingDocumentItem(latest10q, "Latest 10-Q quarterly report") : null,
+          earningsRelease: latestEarnings8k ? buildFmpFilingDocumentItem(latestEarnings8k, "Latest earnings/results 8-K") : null,
+          latest8K: latest8k ? buildFmpFilingDocumentItem(latest8k, "Latest 8-K") : null
+        },
+        allSecFilings,
+        filingCounts,
+        resultDocuments,
+        investorRelationsDocuments: [],
+        earningsExhibits: resultDocuments
+      };
+
+      companyDocumentsCache.set(symbol, { data, fetchedAt: Date.now() });
+      return data;
     } catch (err) {
-      console.log("SEC submissions skipped:", symbol, cik, err.response?.status || err.message);
-      return {
+      console.log("FMP company filings skipped:", symbol, err.response?.status || err.message);
+      const data = {
         available: false,
         symbol,
-        cik,
         companyName: symbol,
         updatedAt: new Date().toISOString(),
         filings: {},
@@ -2375,65 +2451,11 @@ async function fetchCompanyDocuments(ticker) {
         resultDocuments: [],
         investorRelationsDocuments: [],
         earningsExhibits: [],
-        message: "SEC filings are temporarily unavailable for this ticker."
+        message: "FMP filings are temporarily unavailable for this ticker."
       };
+      companyDocumentsCache.set(symbol, { data, fetchedAt: Date.now() });
+      return data;
     }
-
-    const filings = normalizeSecRecentFilings(submissionsResponse.data?.filings?.recent || {});
-    const allSecFilings = buildSecFilingList(filings, cik);
-    const filingCounts = allSecFilings.reduce((counts, filing) => {
-      counts[filing.category] = (counts[filing.category] || 0) + 1;
-      counts.all = (counts.all || 0) + 1;
-      return counts;
-    }, { all: 0 });
-    const latest10k = filings.find((filing) => /^10-K/i.test(filing.form));
-    const latest10q = filings.find((filing) => /^10-Q/i.test(filing.form));
-    const latest8k = filings.find((filing) => filing.form === "8-K" || filing.form === "8-K/A");
-    const latestEarnings8k =
-      filings.find((filing) =>
-        /^8-K/i.test(filing.form) &&
-        (/2\.02/.test(String(filing.items || "")) ||
-          /results|earnings|quarter|annual|financial/i.test(`${filing.primaryDocDescription || ""} ${filing.primaryDocument || ""}`))
-      ) || latest8k;
-    const [earningsExhibits, investorRelationsDocuments] = await Promise.all([
-      fetchSecFilingExhibits(cik, latestEarnings8k),
-      resolveWithin(
-        fetchInvestorRelationsDocuments(symbol).catch((err) => {
-          console.log("IR result documents skipped:", symbol, err.response?.status || err.message);
-          return [];
-        }),
-        12000,
-        []
-      )
-    ]);
-    const resultDocumentMap = new Map();
-    [...investorRelationsDocuments, ...earningsExhibits].forEach((document) => {
-      if (document?.url && !resultDocumentMap.has(document.url)) {
-        resultDocumentMap.set(document.url, document);
-      }
-    });
-
-    const data = {
-      available: true,
-      symbol,
-      companyName: submissionsResponse.data?.name || symbol,
-      cik,
-      updatedAt: new Date().toISOString(),
-      filings: {
-        tenK: latest10k ? buildSecDocumentItem(latest10k, cik, "Latest 10-K annual report") : null,
-        tenQ: latest10q ? buildSecDocumentItem(latest10q, cik, "Latest 10-Q quarterly report") : null,
-        earningsRelease: latestEarnings8k ? buildSecDocumentItem(latestEarnings8k, cik, "Latest earnings/results 8-K") : null,
-        latest8K: latest8k ? buildSecDocumentItem(latest8k, cik, "Latest 8-K") : null
-      },
-      allSecFilings,
-      filingCounts,
-      resultDocuments: [...resultDocumentMap.values()],
-      investorRelationsDocuments,
-      earningsExhibits
-    };
-
-    companyDocumentsCache.set(symbol, { data, fetchedAt: Date.now() });
-    return data;
   })().finally(() => {
     companyDocumentsInFlight.delete(symbol);
   });
@@ -5450,15 +5472,7 @@ async function prepareStockResponseData(ticker, data = {}, options = {}) {
   const needsBalanceSheetMetrics = !baseData.balanceSheetCheckedAt || !hasBalanceSheetValue;
   const [valuation, balanceSheetMetrics] = await Promise.all([
     missingValuationMetrics
-      ? Promise.all([
-          resolveWithin(fetchFmpStableValuationMetrics(ticker), options.fast ? 900 : 1200, {}),
-          resolveWithin(fetchStockAnalysisValuationMetrics(ticker), options.fast ? 900 : 1200, {})
-        ]).then(([fmpValuation, stockAnalysisValuation]) => ({
-          ...(stockAnalysisValuation || {}),
-          ...Object.fromEntries(
-            Object.entries(fmpValuation || {}).filter(([, value]) => value !== null && value !== undefined)
-          )
-        }))
+      ? resolveWithin(fetchFmpStableValuationMetrics(ticker), options.fast ? 900 : 1200, {})
       : Promise.resolve({}),
     needsBalanceSheetMetrics
       ? resolveWithin(fetchLatestBalanceSheetMetrics(ticker, { fast: true }), options.fast ? 650 : 1600, {})
@@ -5552,32 +5566,109 @@ function hasCachedHistoricalPe(responseData = {}) {
         toNumberOrNull(row?.pe) !== null
       )
     : [];
-  const hasStockAnalysisHistoricalPe =
-    responseData.historicalPeSource === "StockAnalysis ratios" ||
-    annualPeRows.some((row) => String(row?.source || "").includes("StockAnalysis"));
-  return annualPeRows.length >= 3 && hasStockAnalysisHistoricalPe;
+  const hasFmpHistoricalPe =
+    responseData.historicalPeSource === "FMP annual ratios" ||
+    annualPeRows.some((row) => String(row?.source || "").includes("FMP"));
+  return annualPeRows.length >= 3 && hasFmpHistoricalPe;
 }
 
 async function prepareCachedStockResponseDataFast(ticker, data = {}) {
   let responseData = prepareCachedStockResponseData(ticker, data);
+  const needsFmpFastPatch =
+    responseData.valuationMetricsVersion !== VALUATION_METRICS_VERSION ||
+    responseData.balanceSheetMetricsVersion !== BALANCE_SHEET_METRICS_VERSION ||
+    responseData.estimateDataVersion !== STOCK_ESTIMATE_VERSION ||
+    responseData.analystEstimatesSource !== "FMP" ||
+    responseData.analystEstimates?.nextQuarter?.source !== "FMP earnings calendar";
+  if (needsFmpFastPatch) {
+    const fastPatch = await resolveWithin(buildFastStockSnapshot(ticker, responseData), 2600, null);
+    if (fastPatch) responseData = prepareCachedStockResponseData(ticker, fastPatch);
+  }
+  const hasNonFmpEpsBeatMissRows = (responseData.epsBeatMiss || []).some((row) =>
+    row?.source && !/FMP/i.test(String(row.source))
+  );
+  if (hasNonFmpEpsBeatMissRows) {
+    const fmpEpsBeatMissRows = await resolveWithin(fetchFmpEpsSurprises(ticker), 1400, []);
+    if (Array.isArray(fmpEpsBeatMissRows) && fmpEpsBeatMissRows.length) {
+      const epsBeatMiss = buildEpsBeatMissSeries(
+        fmpEpsBeatMissRows,
+        responseData.analystEstimates?.nextQuarter || {}
+      );
+      responseData = {
+        ...responseData,
+        epsBeatMiss,
+        epsBeatMissCheckedAt: new Date().toISOString()
+      };
+      Stock.findOneAndUpdate(
+        { ticker },
+        {
+          $set: {
+            "data.epsBeatMiss": epsBeatMiss,
+            "data.epsBeatMissCheckedAt": responseData.epsBeatMissCheckedAt
+          }
+        }
+      ).catch((err) => {
+        console.log("Fast EPS beat/miss response cache skipped:", ticker, err.message);
+      });
+    }
+  }
+  const hasNonFmpMarketActivityRows = [
+    ...(responseData.analystUpdates || []),
+    ...(responseData.institutionalHolders || []),
+    ...(responseData.insiderTransactions || [])
+  ].some((row) => row?.source && !/FMP/i.test(String(row.source)));
+  if (hasNonFmpMarketActivityRows) {
+    const fmpMarketActivity = await resolveWithin(fetchFmpMarketActivity(ticker), 1800, {
+      analystUpdates: [],
+      institutionalHolders: [],
+      insiderTransactions: []
+    });
+    const marketActivityUpdatedAt = new Date().toISOString();
+    responseData = {
+      ...responseData,
+      analystUpdates: fmpMarketActivity.analystUpdates || [],
+      institutionalHolders: fmpMarketActivity.institutionalHolders || [],
+      insiderTransactions: fmpMarketActivity.insiderTransactions || [],
+      analystUpdatesCheckedAt: marketActivityUpdatedAt,
+      institutionalHoldersCheckedAt: marketActivityUpdatedAt,
+      insiderTransactionsCheckedAt: marketActivityUpdatedAt,
+      marketActivityUpdatedAt
+    };
+    Stock.findOneAndUpdate(
+      { ticker },
+      {
+        $set: {
+          "data.analystUpdates": responseData.analystUpdates,
+          "data.institutionalHolders": responseData.institutionalHolders,
+          "data.insiderTransactions": responseData.insiderTransactions,
+          "data.analystUpdatesCheckedAt": marketActivityUpdatedAt,
+          "data.institutionalHoldersCheckedAt": marketActivityUpdatedAt,
+          "data.insiderTransactionsCheckedAt": marketActivityUpdatedAt,
+          "data.marketActivityUpdatedAt": marketActivityUpdatedAt
+        }
+      }
+    ).catch((err) => {
+      console.log("Fast FMP market activity response cache skipped:", ticker, err.message);
+    });
+  }
   if (hasCachedHistoricalPe(responseData)) return responseData;
 
-  const stockAnalysisPeRows = await resolveWithin(fetchStockAnalysisHistoricalPe(ticker), 1400, []);
-  if (!Array.isArray(stockAnalysisPeRows) || !stockAnalysisPeRows.length) {
+  const fmpPeRows = await resolveWithin(fetchFmpHistoricalPe(ticker), 1000, []);
+  if (!Array.isArray(fmpPeRows) || !fmpPeRows.length) {
     return responseData;
   }
 
   const currentRows = Array.isArray(responseData.historicalPe)
     ? responseData.historicalPe.filter((row) => row?.isInterim || row?.isCurrent)
     : [];
-  const historicalPe = [...stockAnalysisPeRows, ...currentRows]
+  const historicalPe = [...fmpPeRows, ...currentRows]
     .filter((row) => toNumberOrNull(row.pe) !== null && Math.abs(toNumberOrNull(row.pe)) < 1000)
     .slice(-7);
   const historicalPeCheckedAt = new Date().toISOString();
   responseData = {
     ...responseData,
     historicalPe,
-    historicalPeSource: "StockAnalysis ratios",
+    historicalPeSource: "FMP annual ratios",
     historicalPeCheckedAt
   };
 
@@ -5586,7 +5677,7 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
     {
       $set: {
         "data.historicalPe": historicalPe,
-        "data.historicalPeSource": "StockAnalysis ratios",
+        "data.historicalPeSource": "FMP annual ratios",
         "data.historicalPeCheckedAt": historicalPeCheckedAt
       }
     }
@@ -6598,6 +6689,56 @@ async function fetchFinnhubEpsSurprises(ticker) {
   }
 }
 
+async function fetchFmpEpsSurprises(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return [];
+
+  const cached = readCachedMarketActivity(epsSurpriseCache, `fmp:${symbol}`);
+  if (cached) return cached;
+
+  try {
+    const rows = await resolveWithin(
+      getFmpData(symbol, "earnings history", [
+        `/stable/earnings?symbol={ticker}&limit=8`
+      ]),
+      2200,
+      []
+    );
+    const data = mergeEpsBeatMissRows(
+      (Array.isArray(rows) ? rows : rows ? [rows] : [])
+        .filter((item) => String(item.symbol || "").trim().toUpperCase() === symbol)
+        .map((item) => {
+          const estimate = toNumberOrNull(item.epsEstimated ?? item.epsEstimate);
+          const actual = toNumberOrNull(item.epsActual);
+          const surprise = actual !== null && estimate !== null ? actual - estimate : null;
+          return {
+            period: yahooDateToIso(item.date),
+            estimate,
+            actual,
+            surprise,
+            surprisePercent: surprise !== null && estimate
+              ? (surprise / Math.abs(estimate)) * 100
+              : null,
+            source: "FMP earnings history"
+          };
+        })
+        .filter((item) => item.period && (item.estimate !== null || item.actual !== null))
+    )
+      .sort((a, b) => String(a.period).localeCompare(String(b.period)))
+      .slice(-5);
+    return writeCachedMarketActivity(
+      epsSurpriseCache,
+      `fmp:${symbol}`,
+      data,
+      data.length ? 6 * 60 * 60 * 1000 : 20 * 60 * 1000
+    );
+  } catch (err) {
+    setFmpCooldown(err, "EPS surprises", symbol);
+    console.log("FMP EPS surprises skipped:", symbol, err.response?.status || err.message);
+    return writeCachedMarketActivity(epsSurpriseCache, `fmp:${symbol}`, [], 15 * 60 * 1000);
+  }
+}
+
 const parseEpsBeatMissFiscalLabel = (value) => {
   const text = String(value || "").trim();
   if (!text) return {};
@@ -6695,7 +6836,7 @@ const buildEpsBeatMissSeries = (reportedRows = [], nextQuarterEstimate = {}) => 
       actual: null,
       surprise: null,
       surprisePercent: null,
-      source: "Earnings calendar"
+      source: "FMP earnings calendar"
     });
   }
 
@@ -6734,26 +6875,29 @@ const normalizeFmpMarketActivityRows = (data) => {
 async function fetchFmpMarketActivity(ticker) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol || !process.env.FMP_API_KEY) {
-    return { analystUpdates: [], institutionalHolders: [] };
+    return { analystUpdates: [], institutionalHolders: [], insiderTransactions: [] };
   }
 
   const cached = readCachedMarketActivity(fmpMarketActivityCache, symbol);
   if (cached) return cached;
 
-  const emptyResult = { analystUpdates: [], institutionalHolders: [] };
-  const [gradesData, holdersData] = await Promise.all([
+  const emptyResult = { analystUpdates: [], institutionalHolders: [], insiderTransactions: [] };
+  const [priceTargetNewsData, gradesData, holdersData, insiderData] = await Promise.all([
+    resolveWithin(getFmpData(symbol, "analyst price target news", [
+      "/stable/price-target-news?symbol={ticker}"
+    ]), STOCK_PROVIDER_TIMEOUT_MS, null),
     resolveWithin(getFmpData(symbol, "analyst actions", [
-      "/stable/grades-historical?symbol={ticker}",
-      "/api/v3/grade/{ticker}"
+      "/stable/grades?symbol={ticker}"
     ]), STOCK_PROVIDER_TIMEOUT_MS, null),
     resolveWithin(getFmpData(symbol, "institutional ownership", [
-      "/stable/institutional-ownership/latest?symbol={ticker}",
-      "/api/v4/institutional-ownership/symbol-ownership?symbol={ticker}",
-      "/api/v4/institutional-ownership/institutional-holders/symbol-ownership?symbol={ticker}"
+      "/stable/institutional-ownership/latest?symbol={ticker}"
+    ]), STOCK_PROVIDER_TIMEOUT_MS, null),
+    resolveWithin(getFmpData(symbol, "insider trading", [
+      "/stable/insider-trading/search?symbol={ticker}"
     ]), STOCK_PROVIDER_TIMEOUT_MS, null)
   ]);
 
-  const analystUpdates = normalizeFmpMarketActivityRows(gradesData)
+  const gradeUpdates = normalizeFmpMarketActivityRows(gradesData)
     .map((item) => ({
       firm: firstText(item.gradingCompany, item.company, item.firm, item.analyst, item.institution),
       latestRating: firstText(item.newGrade, item.toGrade, item.rating, item.grade, item.newRating),
@@ -6764,6 +6908,20 @@ async function fetchFmpMarketActivity(ticker) {
       source: "FMP"
     }))
     .filter((item) => item.firm || item.latestRating)
+  const priceTargetUpdates = normalizeFmpMarketActivityRows(priceTargetNewsData)
+    .map((item) => ({
+      firm: firstText(item.analystCompany, item.gradingCompany, item.company, item.firm),
+      analyst: firstText(item.analystName),
+      latestRating: firstText(item.newGrade, item.rating),
+      previousRating: firstText(item.previousGrade),
+      action: firstText(item.newsTitle, item.action, "price target"),
+      priceTarget: toNumberOrNull(item.priceTarget ?? item.adjPriceTarget ?? item.targetPrice),
+      date: yahooDateToIso(item.publishedDate || item.date),
+      source: "FMP"
+    }))
+    .filter((item) => item.firm || item.priceTarget !== null || item.action);
+  const analystUpdates = [...priceTargetUpdates, ...gradeUpdates]
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
     .slice(0, 12);
 
   const institutionalHolders = normalizeFmpMarketActivityRows(holdersData)
@@ -6779,8 +6937,25 @@ async function fetchFmpMarketActivity(ticker) {
     .filter((item) => item.institution)
     .slice(0, 10);
 
-  const result = { analystUpdates, institutionalHolders };
-  const hasData = analystUpdates.length || institutionalHolders.length;
+  const insiderTransactions = normalizeFmpMarketActivityRows(insiderData)
+    .filter((item) => String(item.symbol || "").trim().toUpperCase() === symbol)
+    .map((item) => ({
+      owner: firstText(item.reportingName, item.ownerName, item.name),
+      transactionType: firstText(item.transactionType, item.acquisitionOrDisposition),
+      shares: toNumberOrNull(item.securitiesTransacted ?? item.shares),
+      value: toNumberOrNull(item.price) !== null && toNumberOrNull(item.securitiesTransacted) !== null
+        ? toNumberOrNull(item.price) * toNumberOrNull(item.securitiesTransacted)
+        : null,
+      price: toNumberOrNull(item.price),
+      sharesOwned: toNumberOrNull(item.securitiesOwned),
+      date: yahooDateToIso(item.transactionDate || item.filingDate),
+      source: "FMP"
+    }))
+    .filter((item) => item.owner || item.transactionType)
+    .slice(0, 12);
+
+  const result = { analystUpdates, institutionalHolders, insiderTransactions };
+  const hasData = analystUpdates.length || institutionalHolders.length || insiderTransactions.length;
   return writeCachedMarketActivity(
     fmpMarketActivityCache,
     symbol,
@@ -7508,6 +7683,8 @@ async function fetchLatestBalanceSheetMetrics(ticker, options = {}) {
     console.log("FMP stable balance sheet metrics skipped:", symbol, err.response?.status || err.message);
   }
 
+  return withCheckedAt({});
+
   try {
     const stockAnalysisResult = await fetchStockAnalysisBalanceSheetMetrics(symbol);
     if (hasBalanceSheetData(stockAnalysisResult)) return withCheckedAt(stockAnalysisResult);
@@ -8144,16 +8321,7 @@ async function markFastOverviewReady(ticker) {
 }
 
 async function publishValuationMetricsSnapshot(ticker) {
-  const [fmpValuation, stockAnalysisValuation] = await Promise.all([
-    resolveWithin(fetchFmpStableValuationMetrics(ticker), 2200, {}),
-    resolveWithin(fetchStockAnalysisValuationMetrics(ticker), 5000, {})
-  ]);
-  const valuation = {
-    ...stockAnalysisValuation,
-    ...Object.fromEntries(
-      Object.entries(fmpValuation || {}).filter(([, value]) => value !== null && value !== undefined)
-    )
-  };
+  const valuation = await resolveWithin(fetchFmpStableValuationMetrics(ticker), 2200, {});
   const $set = {
     "data.valuationMetricsCheckedAt": new Date().toISOString(),
     "data.valuationMetricsVersion": VALUATION_METRICS_VERSION
@@ -8191,7 +8359,7 @@ async function publishQuarterEstimateSnapshot(ticker) {
     eps: toNumberOrNull(estimate.eps),
     date: estimate.date || null,
     fiscalQuarter: estimate.fiscalQuarter || null,
-    source: "Earnings calendar"
+    source: "FMP earnings calendar"
   };
 
   await Stock.findOneAndUpdate(
@@ -8199,7 +8367,7 @@ async function publishQuarterEstimateSnapshot(ticker) {
     {
       $set: {
         "data.analystEstimates.nextQuarter": nextQuarter,
-        "data.analystEstimatesSources.nextQuarter": "Earnings calendar",
+        "data.analystEstimatesSources.nextQuarter": "FMP earnings calendar",
         "data.quarterEstimateCheckedAt": new Date().toISOString(),
         "data.estimateDataVersion": STOCK_ESTIMATE_VERSION,
         ...(hasEstimate
@@ -8213,14 +8381,11 @@ async function publishQuarterEstimateSnapshot(ticker) {
 async function publishEpsBeatMissSnapshot(ticker) {
   const stock = await Stock.findOne({ ticker }).lean();
   if (!stock) return;
-  const [calendarQuarterEstimate, marketBeatRows, finnhubRows] = await Promise.all([
+  const [calendarQuarterEstimate, fmpRows] = await Promise.all([
     resolveWithin(fetchCalendarQuarterEstimate(ticker, { fast: true }), 2200, stock.data?.analystEstimates?.nextQuarter || {}),
-    resolveWithin(fetchMarketBeatEpsSurprises(ticker), 2600, []),
-    resolveWithin(fetchFinnhubEpsSurprises(ticker), 2600, [])
+    resolveWithin(fetchFmpEpsSurprises(ticker), 5200, [])
   ]);
-  const reportedRows = marketBeatRows?.length >= 3
-    ? marketBeatRows
-    : mergeEpsBeatMissRows(stock.data?.epsBeatMiss || [], finnhubRows || []);
+  const reportedRows = mergeEpsBeatMissRows(stock.data?.epsBeatMiss || [], fmpRows || []);
   const epsBeatMiss = buildEpsBeatMissSeries(reportedRows, calendarQuarterEstimate);
   if (!Array.isArray(epsBeatMiss) || !epsBeatMiss.length) return;
 
@@ -8236,7 +8401,7 @@ async function publishEpsBeatMissSnapshot(ticker) {
 }
 
 async function publishHistoricalPeSnapshot(ticker) {
-  const historicalPe = await resolveWithin(fetchStockAnalysisHistoricalPe(ticker), 3200, []);
+  const historicalPe = await resolveWithin(fetchFmpHistoricalPe(ticker), 1800, []);
   if (!Array.isArray(historicalPe) || !historicalPe.length) return;
 
   await Stock.findOneAndUpdate(
@@ -8244,7 +8409,7 @@ async function publishHistoricalPeSnapshot(ticker) {
     {
       $set: {
         "data.historicalPe": historicalPe,
-        "data.historicalPeSource": "StockAnalysis ratios",
+        "data.historicalPeSource": "FMP annual ratios",
         "data.historicalPeCheckedAt": new Date().toISOString()
       }
     }
@@ -8327,87 +8492,36 @@ async function publishMarketActivitySnapshot(ticker) {
     (Array.isArray(data.analystUpdates) && data.analystUpdates.length) ||
     (Array.isArray(data.institutionalHolders) && data.institutionalHolders.length) ||
     (Array.isArray(data.insiderTransactions) && data.insiderTransactions.length);
+  const hasOnlyFmpMarketActivityRows = [
+    ...(data.analystUpdates || []),
+    ...(data.institutionalHolders || []),
+    ...(data.insiderTransactions || [])
+  ].every((row) => !row?.source || /FMP/i.test(String(row.source)));
 
-  if ((checkedRecently && hasMarketActivityRows) || failedRecently) {
+  if (((checkedRecently && hasMarketActivityRows) || failedRecently) && hasOnlyFmpMarketActivityRows) {
     return;
   }
 
-  const publishRows = async (field, rowsPromise, timeoutMs) => {
-    const rows = await resolveWithin(rowsPromise, timeoutMs, []);
-    const checkedAt = new Date().toISOString();
-    if (!Array.isArray(rows) || !rows.length) return;
-
-    await Stock.findOneAndUpdate(
-      { ticker },
-      {
-        $set: {
-          [`data.${field}`]: rows,
-          [`data.${field}CheckedAt`]: checkedAt,
-          "data.marketActivityUpdatedAt": checkedAt
-        }
-      }
-    );
-  };
-  const publishYahooRows = async () => {
-    const data = await resolveWithin(getYahooSupplementalData(ticker), 2200, {});
-    const $set = {};
-    if (Array.isArray(data.analystUpdates) && data.analystUpdates.length) {
-      $set["data.analystUpdates"] = data.analystUpdates;
-      $set["data.analystUpdatesCheckedAt"] = new Date().toISOString();
-    }
-    if (Array.isArray(data.institutionalHolders) && data.institutionalHolders.length) {
-      $set["data.institutionalHolders"] = data.institutionalHolders;
-      $set["data.institutionalHoldersCheckedAt"] = new Date().toISOString();
-    }
-    if (Array.isArray(data.insiderTransactions) && data.insiderTransactions.length) {
-      $set["data.insiderTransactions"] = data.insiderTransactions;
-      $set["data.insiderTransactionsCheckedAt"] = new Date().toISOString();
-    }
-    if (data.holderSummary && Object.keys(data.holderSummary).length) {
-      $set["data.holderSummary"] = data.holderSummary;
-    }
-    if (data.analystTargets && Object.keys(data.analystTargets).length) {
-      $set["data.analystTargets"] = data.analystTargets;
-    }
-    if (!Object.keys($set).length) return;
-    $set["data.marketActivityUpdatedAt"] = new Date().toISOString();
-    await Stock.findOneAndUpdate({ ticker }, { $set });
-  };
   const publishFmpRows = async () => {
-    const data = await resolveWithin(fetchFmpMarketActivity(ticker), 2200, { analystUpdates: [], institutionalHolders: [] });
-    const $set = {};
-    if (Array.isArray(data.analystUpdates) && data.analystUpdates.length) {
-      $set["data.analystUpdates"] = data.analystUpdates;
-      $set["data.analystUpdatesCheckedAt"] = new Date().toISOString();
-    }
-    if (Array.isArray(data.institutionalHolders) && data.institutionalHolders.length) {
-      $set["data.institutionalHolders"] = data.institutionalHolders;
-      $set["data.institutionalHoldersCheckedAt"] = new Date().toISOString();
-    }
-    if (!Object.keys($set).length) return;
-    $set["data.marketActivityUpdatedAt"] = new Date().toISOString();
+    const data = await resolveWithin(fetchFmpMarketActivity(ticker), 2200, {
+      analystUpdates: [],
+      institutionalHolders: [],
+      insiderTransactions: []
+    });
+    const now = new Date().toISOString();
+    const $set = {
+      "data.analystUpdates": Array.isArray(data.analystUpdates) ? data.analystUpdates : [],
+      "data.institutionalHolders": Array.isArray(data.institutionalHolders) ? data.institutionalHolders : [],
+      "data.insiderTransactions": Array.isArray(data.insiderTransactions) ? data.insiderTransactions : [],
+      "data.analystUpdatesCheckedAt": now,
+      "data.institutionalHoldersCheckedAt": now,
+      "data.insiderTransactionsCheckedAt": now,
+      "data.marketActivityUpdatedAt": now
+    };
     await Stock.findOneAndUpdate({ ticker }, { $set });
   };
 
-  await Promise.all([
-    publishYahooRows(),
-    publishFmpRows(),
-    publishRows("analystUpdates", fetchMarketBeatAnalystUpdates(ticker), 2200),
-    publishRows("institutionalHolders", fetchMarketBeatInstitutionalHolders(ticker), 2200),
-    publishRows("insiderTransactions", fetchSecInsiderTransactions(ticker), 2600)
-  ]);
-
-  await Stock.findOneAndUpdate(
-    { ticker },
-    {
-      $set: {
-        "data.analystUpdatesCheckedAt": new Date().toISOString(),
-        "data.institutionalHoldersCheckedAt": new Date().toISOString(),
-        "data.insiderTransactionsCheckedAt": new Date().toISOString(),
-        "data.marketActivityUpdatedAt": new Date().toISOString()
-      }
-    }
-  );
+  await publishFmpRows();
 }
 
 async function buildFastStockSnapshot(ticker, previousData = {}) {
@@ -8420,17 +8534,19 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     fmpValuation,
     stockAnalysisValuation,
     stockAnalysisForecast,
-    balanceSheetMetrics
+    balanceSheetMetrics,
+    fmpFiftyTwoWeekRange
   ] = await Promise.all([
     resolveWithin(fetchFmpStableQuoteProfile(ticker), 1200, {}),
     resolveWithin(fetchYahooSparkQuote(ticker), 1200, {}),
-    resolveWithin(fetchYahooQuickQuote(ticker), 900, {}),
+    Promise.resolve({}),
     resolveWithin(fetchYahooChartQuote(ticker), 1200, {}),
     resolveWithin(fetchCalendarQuarterEstimate(ticker, { fast: true }), 1400, previousData.analystEstimates?.nextQuarter || {}),
     resolveWithin(fetchFmpStableValuationMetrics(ticker), 1400, {}),
-    resolveWithin(fetchStockAnalysisValuationMetrics(ticker), 1600, {}),
-    resolveWithin(fetchStockAnalysisForecast(ticker), 1800, {}),
-    resolveWithin(fetchStockAnalysisBalanceSheetMetrics(ticker), 1800, {})
+    Promise.resolve({}),
+    Promise.resolve({}),
+    resolveWithin(fetchLatestBalanceSheetMetrics(ticker, { fast: true }), 1800, {}),
+    resolveWithin(fetchFmpFiftyTwoWeekRange(ticker), 1800, {})
   ]);
   const definedValues = (data = {}) => Object.fromEntries(
     Object.entries(data).filter(([, value]) => value !== null && value !== undefined)
@@ -8458,29 +8574,39 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     industry: firstText(fmpProfile.industry, yahooData.industry),
     logo: firstText(fmpProfile.logo, yahooData.logo, getFinnhubLogoUrl(ticker)),
     marketCap: firstNumber(fmpProfile.marketCap, fmpValuation.marketCap, yahooData.marketCap),
-    fiftyTwoWeekHigh: firstNumber(fmpProfile.fiftyTwoWeekHigh, yahooData.fiftyTwoWeekHigh),
-    fiftyTwoWeekLow: firstNumber(fmpProfile.fiftyTwoWeekLow, yahooData.fiftyTwoWeekLow),
-    pe: firstNumber(fmpValuation.pe, yahooData.pe, stockAnalysisValuation.pe),
-    forwardPE: firstNumber(yahooData.forwardPE, stockAnalysisValuation.forwardPE),
-    pegRatio: firstNumber(fmpValuation.pegRatio, yahooData.pegRatio, stockAnalysisValuation.pegRatio),
-    forwardPS: firstNumber(fmpValuation.forwardPS, stockAnalysisValuation.forwardPS),
+    fiftyTwoWeekHigh: firstNumber(fmpProfile.fiftyTwoWeekHigh, fmpFiftyTwoWeekRange.fiftyTwoWeekHigh),
+    fiftyTwoWeekLow: firstNumber(fmpProfile.fiftyTwoWeekLow, fmpFiftyTwoWeekRange.fiftyTwoWeekLow),
+    pe: firstNumber(fmpValuation.pe),
+    forwardPE: firstNumber(fmpValuation.forwardPE),
+    pegRatio: firstNumber(fmpValuation.pegRatio),
+    forwardPS: firstNumber(fmpValuation.forwardPS),
     priceToSales: firstNumber(fmpValuation.priceToSales, yahooData.priceToSales),
-    priceToBook: firstNumber(fmpValuation.priceToBook, yahooData.priceToBook, stockAnalysisValuation.priceToBook),
-    priceToTangibleBook: firstNumber(fmpValuation.priceToTangibleBook, stockAnalysisValuation.priceToTangibleBook),
-    priceToFreeCashflow: firstNumber(fmpValuation.priceToFreeCashflow, stockAnalysisValuation.priceToFreeCashflow),
-    priceToOperatingCashflow: firstNumber(fmpValuation.priceToOperatingCashflow, stockAnalysisValuation.priceToOperatingCashflow),
-    pretaxMargin: firstNumber(fmpValuation.pretaxMargin, stockAnalysisValuation.pretaxMargin),
-    ebitdaMargin: firstNumber(fmpValuation.ebitdaMargin, stockAnalysisValuation.ebitdaMargin),
-    ebitMargin: firstNumber(fmpValuation.ebitMargin, stockAnalysisValuation.ebitMargin),
-    fcfMargin: firstNumber(fmpValuation.fcfMargin, stockAnalysisValuation.fcfMargin),
-    returnOnEquity: firstNumber(fmpValuation.returnOnEquity, stockAnalysisValuation.returnOnEquity),
-    returnOnAssets: firstNumber(fmpValuation.returnOnAssets, stockAnalysisValuation.returnOnAssets),
-    returnOnInvestedCapital: firstNumber(fmpValuation.returnOnInvestedCapital, stockAnalysisValuation.returnOnInvestedCapital),
-    returnOnCapitalEmployed: firstNumber(fmpValuation.returnOnCapitalEmployed, stockAnalysisValuation.returnOnCapitalEmployed),
-    weightedAverageCostOfCapital: firstNumber(fmpValuation.weightedAverageCostOfCapital, stockAnalysisValuation.weightedAverageCostOfCapital),
-    revenuePerEmployee: firstNumber(fmpValuation.revenuePerEmployee, stockAnalysisValuation.revenuePerEmployee),
-    profitsPerEmployee: firstNumber(fmpValuation.profitsPerEmployee, stockAnalysisValuation.profitsPerEmployee),
-    employeeCount: firstNumber(fmpValuation.employeeCount, stockAnalysisValuation.employeeCount),
+    priceToBook: firstNumber(fmpValuation.priceToBook),
+    priceToTangibleBook: firstNumber(fmpValuation.priceToTangibleBook),
+    priceToFreeCashflow: firstNumber(fmpValuation.priceToFreeCashflow),
+    priceToOperatingCashflow: firstNumber(fmpValuation.priceToOperatingCashflow),
+    pretaxMargin: firstNumber(fmpValuation.pretaxMargin),
+    ebitdaMargin: firstNumber(fmpValuation.ebitdaMargin),
+    ebitMargin: firstNumber(fmpValuation.ebitMargin),
+    fcfMargin: firstNumber(fmpValuation.fcfMargin),
+    returnOnEquity: firstNumber(fmpValuation.returnOnEquity),
+    returnOnAssets: firstNumber(fmpValuation.returnOnAssets),
+    returnOnInvestedCapital: firstNumber(fmpValuation.returnOnInvestedCapital),
+    returnOnCapitalEmployed: firstNumber(fmpValuation.returnOnCapitalEmployed),
+    weightedAverageCostOfCapital: firstNumber(fmpValuation.weightedAverageCostOfCapital),
+    revenuePerEmployee: firstNumber(
+      fmpValuation.revenuePerEmployee,
+      fmpProfile.employeeCount && fmpValuation.currentYearRevenue
+        ? fmpValuation.currentYearRevenue / fmpProfile.employeeCount
+        : null
+    ),
+    profitsPerEmployee: firstNumber(
+      fmpValuation.profitsPerEmployee,
+      fmpProfile.employeeCount && fmpValuation.currentYearNetIncome
+        ? fmpValuation.currentYearNetIncome / fmpProfile.employeeCount
+        : null
+    ),
+    employeeCount: firstNumber(fmpValuation.employeeCount, fmpProfile.employeeCount),
     totalCash: firstNumber(balanceSheetMetrics.totalCash, balanceSheetMetrics.cashAndCashEquivalents),
     totalDebt: balanceSheetMetrics.totalDebt ?? null,
     cashAndCashEquivalents: firstNumber(balanceSheetMetrics.cashAndCashEquivalents, balanceSheetMetrics.totalCash),
@@ -8497,10 +8623,10 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     STOCK_ANALYSIS_VALUATION_FIELDS.some((field) => toNumberOrNull(fastData[field]) !== null) ||
     toNumberOrNull(fastData.totalCash) !== null ||
     toNumberOrNull(fastData.totalDebt) !== null ||
-    toNumberOrNull(stockAnalysisForecast.currentYearRevenue) !== null ||
-    toNumberOrNull(stockAnalysisForecast.currentYearEps) !== null ||
-    toNumberOrNull(stockAnalysisForecast.nextYearRevenue) !== null ||
-    toNumberOrNull(stockAnalysisForecast.nextYearEps) !== null ||
+    toNumberOrNull(fmpValuation.currentYearRevenue) !== null ||
+    toNumberOrNull(fmpValuation.currentYearEps) !== null ||
+    toNumberOrNull(fmpValuation.nextYearRevenue) !== null ||
+    toNumberOrNull(fmpValuation.nextYearEps) !== null ||
     toNumberOrNull(calendarQuarterEstimate.revenue) !== null ||
     toNumberOrNull(calendarQuarterEstimate.eps) !== null;
   if (!hasFastSnapshotData) return null;
@@ -8512,33 +8638,39 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
       eps: toNumberOrNull(calendarQuarterEstimate.eps),
       date: calendarQuarterEstimate.date || null,
       fiscalQuarter: calendarQuarterEstimate.fiscalQuarter || null,
-      source: "Earnings calendar"
+      source: "FMP earnings calendar"
     },
     currentYear: {
       ...(previousData.analystEstimates?.currentYear || {}),
       revenue: firstNumber(
-        normalizeStatementDollars(stockAnalysisForecast.currentYearRevenue),
+        normalizeStatementDollars(fmpValuation.currentYearRevenue),
         previousData.analystEstimates?.currentYear?.revenue
       ),
-      earnings: previousData.analystEstimates?.currentYear?.earnings || null,
+      earnings: firstNumber(
+        fmpValuation.currentYearNetIncome,
+        previousData.analystEstimates?.currentYear?.earnings
+      ),
       eps: firstNumber(
-        toNumberOrNull(stockAnalysisForecast.currentYearEps),
+        toNumberOrNull(fmpValuation.currentYearEps),
         previousData.analystEstimates?.currentYear?.eps
       ),
-      source: "StockAnalysis"
+      source: "FMP"
     },
     nextYear: {
       ...(previousData.analystEstimates?.nextYear || {}),
       revenue: firstNumber(
-        normalizeStatementDollars(stockAnalysisForecast.nextYearRevenue),
+        normalizeStatementDollars(fmpValuation.nextYearRevenue),
         previousData.analystEstimates?.nextYear?.revenue
       ),
-      earnings: previousData.analystEstimates?.nextYear?.earnings || null,
+      earnings: firstNumber(
+        fmpValuation.nextYearNetIncome,
+        previousData.analystEstimates?.nextYear?.earnings
+      ),
       eps: firstNumber(
-        toNumberOrNull(stockAnalysisForecast.nextYearEps),
+        toNumberOrNull(fmpValuation.nextYearEps),
         previousData.analystEstimates?.nextYear?.eps
       ),
-      source: "StockAnalysis"
+      source: "FMP"
     }
   };
   const epsBeatMiss = buildEpsBeatMissSeries(previousData.epsBeatMiss || [], calendarQuarterEstimate);
@@ -8562,9 +8694,12 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     analystEstimates,
     epsBeatMiss,
     analystEstimatesSources: {
-      ...(previousData.analystEstimatesSources || {}),
-      nextQuarter: "Earnings calendar"
+      nextQuarter: "FMP earnings calendar",
+      currentYear: "FMP",
+      nextYear: "FMP",
+      followingYear: "FMP"
     },
+    analystEstimatesSource: "FMP",
     estimateDataVersion: STOCK_ESTIMATE_VERSION
   });
 }
@@ -8680,23 +8815,11 @@ async function fetchStockData(ticker) {
   const previousStock = await Stock.findOne({ ticker }).lean().catch(() => null);
   const previousData = previousStock?.data || null;
   const quotePromise = getPrimaryQuote(ticker, previousData || {});
-  const profilePromise = getFinnhub(`https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}`).catch((err) => {
-    console.log("Profile skipped:", ticker, err.message);
-    return {};
-  });
-  const metricDataPromise = getFinnhub(`https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=all`).catch((err) => {
-    console.log("Finnhub metrics skipped:", ticker, err.message);
-    return {};
-  });
-  const financialsPromise = getFinnhub(`https://finnhub.io/api/v1/stock/financials-reported?symbol=${ticker}&freq=annual`).catch((err) => {
-    console.log("Financials skipped:", ticker, err.message);
-    return {};
-  });
-  const priceTargetPromise = getFinnhub(`https://finnhub.io/api/v1/stock/price-target?symbol=${ticker}`).catch((err) => {
-    console.log("Price target skipped:", ticker, err.message);
-    return {};
-  });
-  const secAnnualMarginsPromise = resolveWithin(fetchSecAnnualMargins(ticker), STOCK_INITIAL_SEC_TIMEOUT_MS, {});
+  const profilePromise = Promise.resolve({});
+  const metricDataPromise = Promise.resolve({ metric: {} });
+  const financialsPromise = Promise.resolve({ data: [] });
+  const priceTargetPromise = Promise.resolve({});
+  const secAnnualMarginsPromise = Promise.resolve({ history: [], marginHistory: [] });
 
   const quote = await quotePromise;
   const [profile, metricData, financials, priceTarget] = await Promise.all([
@@ -8817,6 +8940,7 @@ async function fetchStockData(ticker) {
     stockAnalysisValuation,
     fmpStableValuation,
     fmpQuoteProfile,
+    fmpFiftyTwoWeekRange,
     calendarQuarterEstimate,
     finnhubAnalystUpdates,
     fmpMarketActivity,
@@ -8830,56 +8954,44 @@ async function fetchStockData(ticker) {
     epsEstimate,
     revenueEstimate
   ] = await Promise.all([
-    resolveWithin(fetchYahooFinancialHistory(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, []),
+    Promise.resolve([]),
     resolveWithin(fetchFmpFinancialHistory(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
-    resolveWithin(fetchAlphaVantageIncomeStatementHistory(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
-    resolveWithin(getYahooSupplementalData(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
-    resolveWithin(fetchYahooYearEndPrices(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
-    resolveWithin(fetchNasdaqData(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
-    resolveWithin(fetchStockAnalysisForecast(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
-    resolveWithin(fetchStockAnalysisHistoricalPe(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
+    Promise.resolve([]),
+    Promise.resolve({}),
+    Promise.resolve([]),
+    Promise.resolve({}),
+    Promise.resolve({}),
+    resolveWithin(fetchFmpHistoricalPe(ticker), 1800, []),
     earlySecAnnualMargins,
     resolveWithin(getFmpData(ticker, "cash flow", [
-      "/stable/cash-flow-statement?symbol={ticker}&period=annual&limit=6",
-      "/api/v3/cash-flow-statement/{ticker}?period=annual&limit=6"
+      "/stable/cash-flow-statement?symbol={ticker}&period=annual&limit=6"
     ]), STOCK_PROVIDER_TIMEOUT_MS, null),
     resolveWithin(getFmpData(ticker, "price target", [
-      "/stable/price-target-consensus?symbol={ticker}",
-      "/api/v4/price-target-consensus?symbol={ticker}"
+      "/stable/price-target-consensus?symbol={ticker}"
     ]), STOCK_PROVIDER_TIMEOUT_MS, null),
     resolveWithin(getFmpData(ticker, "analyst estimates", [
-      "/stable/analyst-estimates?symbol={ticker}&period=annual&limit=3",
-      "/api/v3/analyst-estimates/{ticker}?period=annual&limit=3"
+      "/stable/analyst-estimates?symbol={ticker}&period=annual&limit=8"
     ]), STOCK_PROVIDER_TIMEOUT_MS, null),
     resolveWithin(getFmpData(ticker, "rating", [
-      "/stable/ratings-snapshot?symbol={ticker}",
-      "/api/v3/rating/{ticker}"
+      "/stable/ratings-snapshot?symbol={ticker}"
     ]), STOCK_PROVIDER_TIMEOUT_MS, null),
-    resolveWithin(fetchStockAnalysisIncomeStatementHistory(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
-    resolveWithin(fetchStockAnalysisValuationMetrics(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
+    Promise.resolve([]),
+    Promise.resolve({}),
     resolveWithin(fetchFmpStableValuationMetrics(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
     resolveWithin(fetchFmpStableQuoteProfile(ticker), 1600, {}),
+    resolveWithin(fetchFmpFiftyTwoWeekRange(ticker), 1800, {}),
     resolveWithin(fetchCalendarQuarterEstimate(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, {}),
-    resolveWithin(fetchFinnhubAnalystUpdates(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
-    resolveWithin(fetchFmpMarketActivity(ticker), STOCK_PROVIDER_TIMEOUT_MS, { analystUpdates: [], institutionalHolders: [] }),
-    resolveWithin(fetchMarketBeatAnalystUpdates(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
-    resolveWithin(fetchMarketBeatInstitutionalHolders(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
-    resolveWithin(fetchSecInsiderTransactions(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
-    resolveWithin(fetchFinnhubEpsSurprises(ticker), STOCK_PROVIDER_TIMEOUT_MS, previousData?.epsBeatMiss || []),
-    resolveWithin(fetchMarketBeatEpsSurprises(ticker), STOCK_PROVIDER_TIMEOUT_MS, []),
+    Promise.resolve([]),
+    resolveWithin(fetchFmpMarketActivity(ticker), STOCK_PROVIDER_TIMEOUT_MS, { analystUpdates: [], institutionalHolders: [], insiderTransactions: [] }),
+    Promise.resolve([]),
+    Promise.resolve([]),
+    Promise.resolve([]),
+    resolveWithin(fetchFmpEpsSurprises(ticker), 5200, previousData?.epsBeatMiss || []),
+    Promise.resolve([]),
     resolveWithin(fetchLatestBalanceSheetMetrics(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
-    resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/recommendation?symbol=${ticker}`).catch((err) => {
-      console.log("Recommendation skipped:", ticker, err.message);
-      return [];
-    }), STOCK_PROVIDER_TIMEOUT_MS, []),
-    resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/eps-estimate?symbol=${ticker}&freq=annual`).catch((err) => {
-      console.log("EPS estimate skipped:", ticker, err.message);
-      return {};
-    }), STOCK_PROVIDER_TIMEOUT_MS, {}),
-    resolveWithin(getFinnhub(`https://finnhub.io/api/v1/stock/revenue-estimate?symbol=${ticker}&freq=annual`).catch((err) => {
-      console.log("Revenue estimate skipped:", ticker, err.message);
-      return {};
-    }), STOCK_PROVIDER_TIMEOUT_MS, {})
+    Promise.resolve([]),
+    Promise.resolve({ data: [] }),
+    Promise.resolve({ data: [] })
   ]);
   const fmpQuarterlyFinancialData = [];
   fmpCashFlow = Array.isArray(fmpCashFlowData)
@@ -8895,6 +9007,19 @@ async function fetchStockData(ticker) {
     : fmpAnalystEstimateData
       ? [fmpAnalystEstimateData]
       : [];
+  fmpAnalystEstimates = fmpAnalystEstimates
+    .map((row) => ({
+      ...row,
+      estimateDate: new Date(`${String(row.date || "").slice(0, 10)}T12:00:00Z`)
+    }))
+    .filter((row) => !Number.isNaN(row.estimateDate.getTime()))
+    .sort((a, b) => a.estimateDate - b.estimateDate);
+  const nearestFmpAnnualEstimateIndex = fmpAnalystEstimates.findIndex((row) =>
+    row.estimateDate.getUTCFullYear() >= new Date().getUTCFullYear()
+  );
+  if (nearestFmpAnnualEstimateIndex > 0) {
+    fmpAnalystEstimates = fmpAnalystEstimates.slice(nearestFmpAnnualEstimateIndex);
+  }
   fmpRating = Array.isArray(fmpRatingData)
     ? fmpRatingData[0] || {}
     : fmpRatingData || {};
@@ -9265,15 +9390,10 @@ async function fetchStockData(ticker) {
   );
 
   const historicalForwardEps = estimateForwardEpsFromHistory(revenueData);
-  const yahooCurrentEstimate = yahooSupplementalData.analystEstimates?.currentYear || {};
-  const yahooNextEstimate = yahooSupplementalData.analystEstimates?.nextYear || {};
+  const yahooCurrentEstimate = {};
+  const yahooNextEstimate = {};
   const currentEps =
-    yahooCurrentEstimate.eps ??
     fmpEstimateField(fmpCurrentEstimate, "epsAvg", "estimatedEpsAvg") ??
-    epsEstimates[0]?.epsAvg ??
-    metrics.epsEstimateCurrentYear ??
-    stockAnalysisForecast.currentYearEps ??
-    nasdaqData.currentYearEps ??
     estimateNextValue(currentEpsBase, conservativeProjectionRate(earningsGrowthRate, 0.15)) ??
     currentEpsBase ??
     null;
@@ -9283,67 +9403,37 @@ async function fetchStockData(ticker) {
     conservativeProjectionRate(earningsGrowthRate, 0.22)
   );
   const trustedNextEpsCandidate = firstNumber(
-    yahooNextEstimate.eps,
-    stockAnalysisForecast.nextYearEps,
-    fmpEstimateField(fmpNextEstimate, "epsAvg", "estimatedEpsAvg"),
-    epsEstimates[1]?.epsAvg,
-    metrics.epsEstimateNextYear
+    fmpEstimateField(fmpNextEstimate, "epsAvg", "estimatedEpsAvg")
   );
   const nextEpsCandidate =
     trustedNextEpsCandidate ??
-    yahooSupplementalData.forwardEps ??
-    nasdaqData.nextYearEps ??
     projectedNextEps ??
     historicalForwardEps ??
-    epsFromForwardPE(quote.c, metrics.forwardPE ?? yahooSupplementalData.forwardPE) ??
+    epsFromForwardPE(quote.c, fmpStableValuation.forwardPE) ??
     null;
   const nextEps = trustedNextEpsCandidate !== null
     ? trustedNextEpsCandidate
     : sanitizeForwardEps(nextEpsCandidate, historicalForwardEps);
 
-  const yahooCurrentRevenueRaw = normalizeStatementDollars(yahooCurrentEstimate.revenue);
-  const yahooNextRevenueRaw = normalizeStatementDollars(yahooNextEstimate.revenue);
-  const yahooCurrentEpsRaw = toNumberOrNull(yahooCurrentEstimate.eps);
-  const yahooNextEpsRaw = toNumberOrNull(yahooNextEstimate.eps);
-  const previousYahooEstimates =
-    previousData?.analystEstimatesSource === "Yahoo Finance"
-      ? previousData.analystEstimates
-      : null;
-  const stockAnalysisRevenueEstimate = sanitizeCurrentRevenueEstimate(
-    stockAnalysisForecast.currentYearRevenue
+  const fmpCurrentEpsEstimate = toNumberOrNull(
+    fmpEstimateField(fmpCurrentEstimate, "epsAvg", "estimatedEpsAvg")
+  );
+  const fmpNextEpsEstimate = toNumberOrNull(
+    fmpEstimateField(fmpNextEstimate, "epsAvg", "estimatedEpsAvg")
   );
   const fmpCurrentRevenueEstimate = sanitizeCurrentRevenueEstimate(
     fmpEstimateField(fmpCurrentEstimate, "revenueAvg", "estimatedRevenueAvg")
   );
-  const yahooCurrentRevenueEstimate = yahooCurrentRevenueRaw;
-  const finnhubCurrentRevenueEstimate = sanitizeCurrentRevenueEstimate(
-    normalizeFinnhubMoney(revenueEstimates[0]?.revenueAvg)
-  );
   const currentRevenue =
-    yahooCurrentRevenueEstimate ??
-    stockAnalysisRevenueEstimate ??
     fmpCurrentRevenueEstimate ??
-    finnhubCurrentRevenueEstimate ??
     currentRevenueEstimateFallback;
 
-  const stockAnalysisNextRevenueEstimate = sanitizeNextRevenueEstimate(
-    stockAnalysisForecast.nextYearRevenue,
-    currentRevenue
-  );
-  const yahooNextRevenueEstimate = yahooNextRevenueRaw;
   const fmpNextRevenueEstimate = sanitizeNextRevenueEstimate(
     fmpEstimateField(fmpNextEstimate, "revenueAvg", "estimatedRevenueAvg"),
     currentRevenue
   );
-  const finnhubNextRevenueEstimate = sanitizeNextRevenueEstimate(
-    normalizeFinnhubMoney(revenueEstimates[1]?.revenueAvg),
-    currentRevenue
-  );
   const nextRevenue =
-    yahooNextRevenueEstimate ??
-    stockAnalysisNextRevenueEstimate ??
     fmpNextRevenueEstimate ??
-    finnhubNextRevenueEstimate ??
     estimateNextValue(currentRevenue, firstNumber(fastGrowthRevenueRate, revenueGrowthRate));
 
   const fmpFollowingRevenueEstimate = sanitizeRevenueEstimate(
@@ -9660,14 +9750,6 @@ async function fetchStockData(ticker) {
           : null),
       nextEpsValue
     );
-  const yahooCurrentEarningsValue =
-    yahooCurrentEpsRaw !== null && modeledSharesOutstanding
-      ? yahooCurrentEpsRaw * modeledSharesOutstanding * 1000000
-      : null;
-  const yahooNextEarningsValue =
-    yahooNextEpsRaw !== null && modeledSharesOutstanding
-      ? yahooNextEpsRaw * modeledSharesOutstanding * 1000000
-      : null;
   const pe = firstNumber(
     reportedPE,
     currentEpsValue ? quote.c / currentEpsValue : null
@@ -9783,6 +9865,7 @@ async function fetchStockData(ticker) {
   );
   const fiftyTwoWeekHigh = firstNumber(
     fmpQuoteProfile.fiftyTwoWeekHigh,
+    fmpFiftyTwoWeekRange.fiftyTwoWeekHigh,
     nasdaqData.fiftyTwoWeekHigh,
     yahooSupplementalData.fiftyTwoWeekHigh,
     metrics["52WeekHigh"],
@@ -9790,6 +9873,7 @@ async function fetchStockData(ticker) {
   );
   const fiftyTwoWeekLow = firstNumber(
     fmpQuoteProfile.fiftyTwoWeekLow,
+    fmpFiftyTwoWeekRange.fiftyTwoWeekLow,
     nasdaqData.fiftyTwoWeekLow,
     yahooSupplementalData.fiftyTwoWeekLow,
     metrics["52WeekLow"],
@@ -9810,42 +9894,35 @@ async function fetchStockData(ticker) {
       }
     : null;
 
-  const consensusCurrentRevenueValue = stockAnalysisRevenueEstimate ?? nasdaqData.currentYearRevenue ?? null;
-  const consensusNextRevenueValue = stockAnalysisNextRevenueEstimate ?? nasdaqData.nextYearRevenue ?? null;
-  const consensusCurrentEpsValue =
-    yahooCurrentEpsRaw ?? stockAnalysisForecast.currentYearEps ?? nasdaqData.currentYearEps ?? null;
-  const consensusNextEpsValue =
-    yahooNextEpsRaw ?? stockAnalysisForecast.nextYearEps ?? nasdaqData.nextYearEps ?? null;
+  const consensusCurrentRevenueValue = fmpCurrentRevenueEstimate;
+  const consensusNextRevenueValue = fmpNextRevenueEstimate;
+  const consensusCurrentEpsValue = fmpCurrentEpsEstimate;
+  const consensusNextEpsValue = fmpNextEpsEstimate;
   const previousBalanceSheetAsOfMs = Date.parse(`${previousData?.balanceSheetAsOf || ""}T00:00:00Z`);
   const canReusePreviousBalanceSheetMetrics =
     previousData?.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION &&
     Number.isFinite(previousBalanceSheetAsOfMs) &&
     Date.now() - previousBalanceSheetAsOfMs <= 820 * 24 * 60 * 60 * 1000;
-  const displayedCurrentRevenueValue =
-    yahooCurrentRevenueEstimate ?? previousYahooEstimates?.currentYear?.revenue ?? consensusCurrentRevenueValue;
-  const displayedCurrentEpsValue =
-    yahooCurrentEpsRaw ?? previousYahooEstimates?.currentYear?.eps ?? consensusCurrentEpsValue;
+  const displayedCurrentRevenueValue = consensusCurrentRevenueValue;
+  const displayedCurrentEpsValue = consensusCurrentEpsValue;
   const estimateSharesOutstanding = normalizeSharesOutstandingMillions(
     modeledSharesOutstanding,
     marketCap,
     quote.c
   );
   const displayedCurrentEarningsValue =
-    yahooCurrentEarningsValue ??
-    previousYahooEstimates?.currentYear?.earnings ??
+    toNumberOrNull(fmpEstimateField(fmpCurrentEstimate, "netIncomeAvg", "estimatedNetIncomeAvg")) ??
     (displayedCurrentEpsValue !== null && estimateSharesOutstanding
       ? displayedCurrentEpsValue * estimateSharesOutstanding * 1000000
       : null);
-  const displayedNextRevenueValue =
-    yahooNextRevenueEstimate ?? previousYahooEstimates?.nextYear?.revenue ?? consensusNextRevenueValue;
-  const displayedNextEpsValue =
-    yahooNextEpsRaw ?? previousYahooEstimates?.nextYear?.eps ?? consensusNextEpsValue;
+  const displayedNextRevenueValue = consensusNextRevenueValue;
+  const displayedNextEpsValue = consensusNextEpsValue;
   const displayedNextEarningsValue =
-    yahooNextEarningsValue ??
-    previousYahooEstimates?.nextYear?.earnings ??
+    toNumberOrNull(fmpEstimateField(fmpNextEstimate, "netIncomeAvg", "estimatedNetIncomeAvg")) ??
     (displayedNextEpsValue !== null && estimateSharesOutstanding
       ? displayedNextEpsValue * estimateSharesOutstanding * 1000000
       : null);
+  const employeeCountValue = firstFiniteNumber(fmpStableValuation.employeeCount, fmpQuoteProfile.employeeCount);
 
   let data = await normalizeForeignAdrStockData(ticker, preserveBankMargins(withGuaranteedAnalystSection({
     isFinancialCompany,
@@ -9922,23 +9999,29 @@ async function fetchStockData(ticker) {
     sharesOutstanding: sharesOutstandingValue,
     pe,
     forwardPE,
-    forwardPS: firstFiniteNumber(fmpStableValuation.forwardPS, stockAnalysisForecast.forwardPS, stockAnalysisValuation.forwardPS),
-    priceToTangibleBook: firstFiniteNumber(fmpStableValuation.priceToTangibleBook, stockAnalysisValuation.priceToTangibleBook),
-    priceToFreeCashflow: firstFiniteNumber(fmpStableValuation.priceToFreeCashflow, stockAnalysisValuation.priceToFreeCashflow),
-    priceToOperatingCashflow: firstFiniteNumber(fmpStableValuation.priceToOperatingCashflow, stockAnalysisValuation.priceToOperatingCashflow),
+    forwardPS: firstFiniteNumber(fmpStableValuation.forwardPS),
+    priceToTangibleBook: firstFiniteNumber(fmpStableValuation.priceToTangibleBook),
+    priceToFreeCashflow: firstFiniteNumber(fmpStableValuation.priceToFreeCashflow),
+    priceToOperatingCashflow: firstFiniteNumber(fmpStableValuation.priceToOperatingCashflow),
     pegRatio,
-    pretaxMargin: firstFiniteNumber(fmpStableValuation.pretaxMargin, stockAnalysisValuation.pretaxMargin),
-    ebitdaMargin: firstFiniteNumber(fmpStableValuation.ebitdaMargin, stockAnalysisValuation.ebitdaMargin),
-    ebitMargin: firstFiniteNumber(fmpStableValuation.ebitMargin, stockAnalysisValuation.ebitMargin),
-    fcfMargin: firstFiniteNumber(fmpStableValuation.fcfMargin, stockAnalysisValuation.fcfMargin),
-    returnOnEquity: firstFiniteNumber(fmpStableValuation.returnOnEquity, stockAnalysisValuation.returnOnEquity),
-    returnOnAssets: firstFiniteNumber(fmpStableValuation.returnOnAssets, stockAnalysisValuation.returnOnAssets),
-    returnOnInvestedCapital: firstFiniteNumber(fmpStableValuation.returnOnInvestedCapital, stockAnalysisValuation.returnOnInvestedCapital),
-    returnOnCapitalEmployed: firstFiniteNumber(fmpStableValuation.returnOnCapitalEmployed, stockAnalysisValuation.returnOnCapitalEmployed),
-    weightedAverageCostOfCapital: firstFiniteNumber(fmpStableValuation.weightedAverageCostOfCapital, stockAnalysisValuation.weightedAverageCostOfCapital),
-    revenuePerEmployee: stockAnalysisValuation.revenuePerEmployee ?? null,
-    profitsPerEmployee: stockAnalysisValuation.profitsPerEmployee ?? null,
-    employeeCount: stockAnalysisValuation.employeeCount ?? null,
+    pretaxMargin: firstFiniteNumber(fmpStableValuation.pretaxMargin),
+    ebitdaMargin: firstFiniteNumber(fmpStableValuation.ebitdaMargin),
+    ebitMargin: firstFiniteNumber(fmpStableValuation.ebitMargin),
+    fcfMargin: firstFiniteNumber(fmpStableValuation.fcfMargin),
+    returnOnEquity: firstFiniteNumber(fmpStableValuation.returnOnEquity),
+    returnOnAssets: firstFiniteNumber(fmpStableValuation.returnOnAssets),
+    returnOnInvestedCapital: firstFiniteNumber(fmpStableValuation.returnOnInvestedCapital),
+    returnOnCapitalEmployed: firstFiniteNumber(fmpStableValuation.returnOnCapitalEmployed),
+    weightedAverageCostOfCapital: firstFiniteNumber(fmpStableValuation.weightedAverageCostOfCapital),
+    revenuePerEmployee: firstFiniteNumber(
+      fmpStableValuation.revenuePerEmployee,
+      employeeCountValue && currentRevenueValue ? currentRevenueValue / employeeCountValue : null
+    ),
+    profitsPerEmployee: firstFiniteNumber(
+      fmpStableValuation.profitsPerEmployee,
+      employeeCountValue && currentEarningsValue ? currentEarningsValue / employeeCountValue : null
+    ),
+    employeeCount: employeeCountValue,
     valuationMetricsCheckedAt: new Date().toISOString(),
     valuationMetricsVersion: VALUATION_METRICS_VERSION,
     trailingEps: trailingEpsValue,
@@ -9948,13 +10031,7 @@ async function fetchStockData(ticker) {
     consensusNextYearEps: consensusNextEpsValue,
     consensusCurrentYearRevenue: consensusCurrentRevenueValue,
     consensusNextYearRevenue: consensusNextRevenueValue,
-    analystEstimateSource: stockAnalysisForecast.currentYearEps && stockAnalysisRevenueEstimate
-      ? "S&P Global consensus via StockAnalysis"
-      : stockAnalysisForecast.currentYearEps
-        ? "EPS consensus; revenue modeled fallback"
-      : nasdaqData.currentYearEps
-        ? "Nasdaq consensus"
-        : "Modeled fallback",
+    analystEstimateSource: "FMP annual analyst estimates",
     marginSource: isFinancialCompany
       ? secAnnualMargins.isFinancialCompany === true
         ? `SEC annual filing ${secAnnualMargins.fiscalYear} (banking presentation)`
@@ -9983,42 +10060,22 @@ async function fetchStockData(ticker) {
     targetMean,
     recommendationKey,
     analystRatingText,
-    analystUpdates: yahooSupplementalData.analystUpdates?.length
-      ? yahooSupplementalData.analystUpdates
-      : fmpMarketActivity?.analystUpdates?.length
-        ? fmpMarketActivity.analystUpdates
-      : marketBeatAnalystUpdates?.length
-        ? marketBeatAnalystUpdates
-      : finnhubAnalystUpdates?.length
-        ? finnhubAnalystUpdates
-        : previousData?.analystUpdates || [],
-    institutionalHolders: yahooSupplementalData.institutionalHolders?.length
-      ? yahooSupplementalData.institutionalHolders
-      : fmpMarketActivity?.institutionalHolders?.length
-        ? fmpMarketActivity.institutionalHolders
-      : marketBeatInstitutionalHolders?.length
-        ? marketBeatInstitutionalHolders
-      : previousData?.institutionalHolders || [],
-    insiderTransactions: yahooSupplementalData.insiderTransactions?.length
-      ? yahooSupplementalData.insiderTransactions
-      : secInsiderTransactions?.length
-        ? secInsiderTransactions
-      : previousData?.insiderTransactions || [],
+    analystUpdates: fmpMarketActivity?.analystUpdates || [],
+    institutionalHolders: fmpMarketActivity?.institutionalHolders || [],
+    insiderTransactions: fmpMarketActivity?.insiderTransactions || [],
     marketActivityUpdatedAt: new Date().toISOString(),
     holderSummary: yahooSupplementalData.holderSummary || previousData?.holderSummary || {},
     analystTargets: yahooSupplementalData.analystTargets || previousData?.analystTargets || {},
     epsBeatMiss: buildEpsBeatMissSeries(
-      marketBeatEpsSurprises?.length >= 3
-        ? marketBeatEpsSurprises
-        : mergeEpsBeatMissRows(previousData?.epsBeatMiss || [], epsSurprises),
+      mergeEpsBeatMissRows(previousData?.epsBeatMiss || [], epsSurprises),
       calendarQuarterEstimate
     ),
-    analystEstimatesSource: "Yahoo Finance",
+    analystEstimatesSource: "FMP",
     analystEstimatesSources: {
-      nextQuarter: "Earnings calendar",
-      currentYear: "Yahoo Finance",
-      nextYear: "Yahoo Finance",
-      followingYear: "Yahoo Finance"
+      nextQuarter: "FMP earnings calendar",
+      currentYear: "FMP",
+      nextYear: "FMP",
+      followingYear: "FMP"
     },
     analystEstimates: {
       nextQuarter: {
@@ -10027,7 +10084,7 @@ async function fetchStockData(ticker) {
         eps: toNumberOrNull(calendarQuarterEstimate.eps),
         date: calendarQuarterEstimate.date || null,
         fiscalQuarter: calendarQuarterEstimate.fiscalQuarter || null,
-        source: "Earnings calendar"
+        source: "FMP earnings calendar"
       },
       currentYear: {
         revenue: displayedCurrentRevenueValue,
@@ -10102,15 +10159,8 @@ async function publishFastFinancialHistorySnapshot(ticker) {
     return;
   }
 
-  const [fmpRows, stockAnalysisRows] = await Promise.all([
-    resolveWithin(fetchFmpFinancialHistory(ticker), 2200, []),
-    resolveWithin(fetchStockAnalysisIncomeStatementHistory(ticker), 4200, [])
-  ]);
-  const financialRows = mergeHistoricalFinancials(
-    Array.isArray(fmpRows) ? fmpRows : [],
-    Array.isArray(stockAnalysisRows) ? stockAnalysisRows : [],
-    Infinity
-  );
+  const fmpRows = await resolveWithin(fetchFmpFinancialHistory(ticker), 2200, []);
+  const financialRows = Array.isArray(fmpRows) ? fmpRows : [];
   if (!Array.isArray(financialRows) || !financialRows.length) return;
 
   const revenueData = cleanFinancialHistoryRows(finalizeFinancialHistory(
@@ -10181,19 +10231,7 @@ async function hydrateQuarterlyHistoryForResponse(ticker, previousData = {}, tim
     timeoutMs,
     []
   );
-  let financialRows = Array.isArray(fmpRows) ? fmpRows : [];
-  if (!financialRows.some((row) => row?.isInterim)) {
-    const stockAnalysisRows = await resolveWithin(
-      fetchStockAnalysisIncomeStatementHistory(ticker),
-      timeoutMs,
-      []
-    );
-    financialRows = mergeHistoricalFinancials(
-      Array.isArray(fmpRows) ? fmpRows : [],
-      Array.isArray(stockAnalysisRows) ? stockAnalysisRows : [],
-      Infinity
-    );
-  }
+  const financialRows = Array.isArray(fmpRows) ? fmpRows : [];
   if (!financialRows.some((row) => row?.isInterim)) {
     return previousData;
   }
@@ -16632,73 +16670,22 @@ app.get("/api/earnings", async (req, res) => {
     date.setUTCDate(date.getUTCDate() + index);
     return toIsoDate(date);
   });
-  const paddedStart = new Date(weekStart);
-  paddedStart.setUTCDate(paddedStart.getUTCDate() - 45);
-  const cacheKey = `v2:${dates[0]}`;
+  const cacheKey = `fmp:v1:${dates[0]}`;
   const cached = earningsCalendarCache.get(cacheKey);
   if (cached && Date.now() - cached.cachedAt < 60 * 60 * 1000 && cached.data?.days?.some((day) => day.events?.length)) {
     return res.json(cached.data);
   }
 
   try {
-    const nasdaqHeaders = {
-      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124 Safari/537.36",
-      Accept: "application/json, text/plain, */*",
-      Origin: "https://www.nasdaq.com",
-      Referer: "https://www.nasdaq.com/"
-    };
-    const [stockAnalysisRows, finnhubResponse, ...nasdaqResponses] = await Promise.all([
-      resolveWithin(fetchStockAnalysisEarningsCalendarRows(dates), 3500, []),
-      process.env.FINNHUB_API_KEY
-        ? axios.get("https://finnhub.io/api/v1/calendar/earnings", {
-            params: {
-              from: toIsoDate(paddedStart),
-              to: dates[6],
-              token: process.env.FINNHUB_API_KEY
-            },
-            timeout: 5000
-          }).catch((err) => {
-            console.log("Finnhub earnings calendar skipped:", err.response?.status || err.message);
-            return { data: { earningsCalendar: [] } };
-          })
-        : Promise.resolve({ data: { earningsCalendar: [] } }),
-      ...dates.map((date) =>
-        axios.get("https://api.nasdaq.com/api/calendar/earnings", {
-          params: { date },
-          headers: nasdaqHeaders,
-          timeout: 5000
-        }).catch((err) => {
-          console.log("Nasdaq earnings calendar skipped:", date, err.response?.status || err.message);
-          return { data: { data: { rows: [] } } };
-        })
-      )
-    ]);
-    const finnhubRows = finnhubResponse.data?.earningsCalendar || [];
-    const finnhubByDateAndSymbol = new Map(
-      finnhubRows.map((row) => [`${row.date}:${row.symbol}`, row])
-    );
-    const finnhubBySymbol = finnhubRows.reduce((map, row) => {
-      const rows = map.get(row.symbol) || [];
-      rows.push(row);
-      map.set(row.symbol, rows);
-      return map;
-    }, new Map());
-    const parseMarketCap = (value) => {
-      const number = Number(String(value || "").replace(/[$,]/g, ""));
-      return Number.isFinite(number) ? number : null;
-    };
-    const parseEstimate = (value) => {
-      const text = String(value || "").trim();
-      if (!text || text === "N/A") return null;
-      const negative = text.startsWith("(") && text.endsWith(")");
-      const number = Number(text.replace(/[$,()]/g, ""));
-      return Number.isFinite(number) ? (negative ? -number : number) : null;
-    };
-    const parseApiNumber = (value) => {
-      if (value === null || value === undefined || value === "") return null;
-      const number = Number(value);
-      return Number.isFinite(number) ? number : null;
-    };
+    const fmpRows = process.env.FMP_API_KEY && canUseFmp()
+      ? await resolveWithin(
+          getFmpData("calendar", "earnings calendar page", [
+            `/stable/earnings-calendar?from=${dates[0]}&to=${dates[6]}`
+          ]),
+          3500,
+          []
+        )
+      : [];
     const timeLabels = {
       bmo: "Before open",
       amc: "After close",
@@ -16706,66 +16693,34 @@ app.get("/api/earnings", async (req, res) => {
       "time-pre-market": "Before open",
       "time-after-hours": "After close"
     };
-    const days = dates.map((date, index) => {
-      const nasdaqRows = nasdaqResponses[index]?.data?.data?.rows || [];
-      const stockAnalysisBySymbol = new Map(
-        stockAnalysisRows
-          .filter((row) => row.date === date)
-          .map((row) => [row.symbol, row])
-      );
-      const nasdaqEvents = nasdaqRows.map((row) => {
-        const exactFinnhub = finnhubByDateAndSymbol.get(`${date}:${row.symbol}`);
-        const nasdaqEps = parseEstimate(row.epsForecast);
-        const nearbyFinnhub = (finnhubBySymbol.get(row.symbol) || [])
-          .map((candidate) => ({
-            candidate,
-            distance: Math.abs(
-              new Date(`${candidate.date}T12:00:00Z`) - new Date(`${date}T12:00:00Z`)
-            ) / (24 * 60 * 60 * 1000)
-          }))
-          .filter(({ candidate, distance }) => {
-            if (distance > 45) return false;
-            const candidateEps = parseApiNumber(candidate.epsEstimate);
-            if (nasdaqEps === null || candidateEps === null) return true;
-            return Math.abs(nasdaqEps - candidateEps) <= Math.max(0.25, Math.abs(nasdaqEps) * 0.5);
-          })
-          .sort((a, b) => a.distance - b.distance)[0]?.candidate;
-        const finnhub = exactFinnhub || nearbyFinnhub || {};
-        return {
-          date,
-          symbol: row.symbol,
-          company: row.name || row.symbol,
-          logo: getFinnhubLogoUrl(row.symbol),
-          marketCap: parseMarketCap(row.marketCap),
-          reportTime: timeLabels[exactFinnhub?.hour || row.time] || "Time not supplied",
-          fiscalQuarter: exactFinnhub?.quarter && exactFinnhub?.year
-            ? `Q${finnhub.quarter} ${finnhub.year}`
-            : row.fiscalQuarterEnding || null,
-          epsEstimate: parseApiNumber(finnhub.epsEstimate) ?? parseEstimate(row.epsForecast),
-          revenueEstimate: parseApiNumber(finnhub.revenueEstimate),
-          epsActual: parseApiNumber(finnhub.epsActual),
-          revenueActual: parseApiNumber(finnhub.revenueActual)
-        };
-      }).filter((event) => event.symbol);
-      const nasdaqSymbols = new Set(nasdaqEvents.map((event) => event.symbol));
-      const stockAnalysisEvents = [...stockAnalysisBySymbol.values()]
-        .filter((row) => !nasdaqSymbols.has(row.symbol))
-        .map((row) => ({
-          date,
-          symbol: row.symbol,
-          company: row.company || row.symbol,
-          logo: getFinnhubLogoUrl(row.symbol),
-          marketCap: row.marketCap,
-          reportTime: timeLabels[row.reportTimeCode] || "Time not supplied",
-          fiscalQuarter: null,
-          epsEstimate: row.epsEstimate,
-          revenueEstimate: row.revenueEstimate,
-          epsActual: null,
-          revenueActual: null
-        }));
-      const events = [...nasdaqEvents, ...stockAnalysisEvents]
-        .sort((a, b) => (b.marketCap || 0) - (a.marketCap || 0))
-        .slice(0, 40);
+    const eventsByDate = new Map();
+    (Array.isArray(fmpRows) ? fmpRows : fmpRows ? [fmpRows] : []).forEach((row) => {
+      const date = String(row.date || "").slice(0, 10);
+      if (!dates.includes(date)) return;
+      const symbol = String(row.symbol || "").trim().toUpperCase();
+      if (!symbol) return;
+      const event = {
+        date,
+        symbol,
+        company: row.name || row.company || symbol,
+        logo: getFinnhubLogoUrl(symbol),
+        marketCap: toNumberOrNull(row.marketCap),
+        reportTime: timeLabels[String(row.time || row.reportTime || "").toLowerCase()] || row.time || "Time not supplied",
+        fiscalQuarter: row.fiscalDateEnding ? String(row.fiscalDateEnding).slice(0, 10) : null,
+        epsEstimate: parseApiNumber(row.epsEstimated ?? row.epsEstimate),
+        revenueEstimate: parseApiNumber(row.revenueEstimated ?? row.revenueEstimate),
+        epsActual: parseApiNumber(row.epsActual),
+        revenueActual: parseApiNumber(row.revenueActual),
+        source: "FMP earnings calendar"
+      };
+      const list = eventsByDate.get(date) || [];
+      list.push(event);
+      eventsByDate.set(date, list);
+    });
+    const days = dates.map((date) => {
+      const events = (eventsByDate.get(date) || [])
+        .sort((a, b) => (b.marketCap || 0) - (a.marketCap || 0) || a.symbol.localeCompare(b.symbol))
+        .slice(0, 80);
       return { date, events };
     });
     const responseData = {
