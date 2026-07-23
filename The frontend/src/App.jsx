@@ -1367,8 +1367,8 @@ const API_URL =
 const FINANCIAL_HISTORY_VERSION = 154;
 const STOCK_ESTIMATE_VERSION = 21;
 const INTERIM_HISTORY_VERSION = 6;
-const VALUATION_METRICS_VERSION = 15;
-const BALANCE_SHEET_METRICS_VERSION = 12;
+const VALUATION_METRICS_VERSION = 16;
+const BALANCE_SHEET_METRICS_VERSION = 13;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const MIN_DISPLAY_INTERIM_HISTORY_ROWS = 4;
 
@@ -3304,12 +3304,13 @@ const loadUserData = async () => {
 
     try {
       setIsEarningsLoading(true);
+      setSelectedEarningsDate(weekStart);
 
       const earningsRes =
         await axios.get(
 
     `${API_URL}/api/earnings`,
-          { params: { start: weekStart } }
+          { params: { start: weekStart, _: Date.now() } }
         );
 
       const calendar = earningsRes.data || { days: [] };

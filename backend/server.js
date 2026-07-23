@@ -71,10 +71,10 @@ const FINANCIAL_HISTORY_VERSION = 154;
 const STOCK_ESTIMATE_VERSION = 21;
 const INTERIM_HISTORY_VERSION = 6;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
-const BALANCE_SHEET_METRICS_VERSION = 12;
-const VALUATION_METRICS_VERSION = 15;
+const BALANCE_SHEET_METRICS_VERSION = 13;
+const VALUATION_METRICS_VERSION = 16;
 const EARNINGS_CALL_VERSION = 18;
-const STOCK_ANALYSIS_VALUATION_FIELDS = [
+const FMP_VALUATION_METRIC_FIELDS = [
   "pe",
   "forwardPE",
   "forwardPS",
@@ -105,6 +105,28 @@ const STOCK_ANALYSIS_VALUATION_FIELDS = [
   "freeCashflow",
   "operatingCashflow"
 ];
+const FMP_BALANCE_SHEET_METRIC_FIELDS = [
+  "totalCash",
+  "totalDebt",
+  "cashAndCashEquivalents",
+  "netCash",
+  "netCashPerShare",
+  "equityBookValue",
+  "bookValuePerShare",
+  "workingCapital"
+];
+const FMP_MARKET_METRIC_FIELDS = [
+  "marketCap",
+  "sharesOutstanding",
+  "fiftyTwoWeekHigh",
+  "fiftyTwoWeekLow"
+];
+const FMP_METRIC_CARD_FIELDS = [
+  ...FMP_VALUATION_METRIC_FIELDS,
+  ...FMP_BALANCE_SHEET_METRIC_FIELDS,
+  ...FMP_MARKET_METRIC_FIELDS
+];
+const STOCK_ANALYSIS_VALUATION_FIELDS = FMP_VALUATION_METRIC_FIELDS;
 const FMP_TEXT_METRIC_FIELDS = [
   "recommendationKey",
   "analystRatingText"
@@ -1151,6 +1173,294 @@ async function fetchFmpStableBalanceSheetMetrics(ticker) {
   } catch (err) {
     setFmpCooldown(err, "stable balance sheet", symbol);
     console.log("FMP stable balance sheet skipped:", symbol, err.response?.status || err.message);
+    return {};
+  }
+}
+
+const firstFmpMetricNumber = (...values) => {
+  for (const value of values) {
+    const number = toNumberOrNull(value);
+    if (number !== null && Number.isFinite(number)) return number;
+  }
+  return null;
+};
+
+const percentFromFmpRatio = (...values) => {
+  const value = firstFmpMetricNumber(...values);
+  return value === null ? null : value * 100;
+};
+
+const firstPositiveFmpMetricNumber = (...values) => {
+  for (const value of values) {
+    const number = toNumberOrNull(value);
+    if (number !== null && Number.isFinite(number) && number > 0) return number;
+  }
+  return null;
+};
+
+const emptyFmpMetricCardFields = () => ({
+  ...Object.fromEntries(FMP_METRIC_CARD_FIELDS.map((field) => [field, null])),
+  ...Object.fromEntries(FMP_TEXT_METRIC_FIELDS.map((field) => [field, null])),
+  balanceSheetAsOf: null,
+  balanceSheetSource: null,
+  valuationMetricsSource: null,
+  metricCardsSource: null
+});
+
+function hasFmpMetricCardPayload(metricCards = {}) {
+  if (!metricCards || typeof metricCards !== "object" || !Object.keys(metricCards).length) return false;
+  return (
+    FMP_METRIC_CARD_FIELDS.some((field) => toNumberOrNull(metricCards[field]) !== null) ||
+    FMP_TEXT_METRIC_FIELDS.some((field) => firstText(metricCards[field])) ||
+    firstText(metricCards.balanceSheetAsOf)
+  );
+}
+
+function buildFmpMetricCardUpdate(metricCards = {}) {
+  const clean = emptyFmpMetricCardFields();
+  FMP_VALUATION_METRIC_FIELDS.forEach((field) => {
+    clean[field] = toNumberOrNull(metricCards[field]);
+  });
+  FMP_BALANCE_SHEET_METRIC_FIELDS.forEach((field) => {
+    clean[field] = toNumberOrNull(metricCards[field]);
+  });
+  FMP_MARKET_METRIC_FIELDS.forEach((field) => {
+    clean[field] = toNumberOrNull(metricCards[field]);
+  });
+  FMP_TEXT_METRIC_FIELDS.forEach((field) => {
+    clean[field] = firstText(metricCards[field]) || null;
+  });
+
+  clean.isAdr = metricCards.isAdr === true;
+  clean.balanceSheetAsOf = firstText(metricCards.balanceSheetAsOf) || null;
+  clean.balanceSheetSource = firstText(metricCards.balanceSheetSource) || null;
+  clean.valuationMetricsSource = "FMP only";
+  clean.metricCardsSource = "FMP metric cards v16";
+  clean.valuationMetricsCheckedAt = new Date().toISOString();
+  clean.balanceSheetCheckedAt = new Date().toISOString();
+  clean.valuationMetricsVersion = VALUATION_METRICS_VERSION;
+  clean.balanceSheetMetricsVersion = BALANCE_SHEET_METRICS_VERSION;
+  return clean;
+}
+
+function applyFmpMetricCards(data = {}, metricCards = {}) {
+  if (!hasFmpMetricCardPayload(metricCards)) return data;
+  return {
+    ...data,
+    ...buildFmpMetricCardUpdate(metricCards)
+  };
+}
+
+function persistFmpMetricCards(ticker, metricCards = {}) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !hasFmpMetricCardPayload(metricCards)) return;
+  const update = buildFmpMetricCardUpdate(metricCards);
+  Stock.findOneAndUpdate(
+    { ticker: symbol },
+    {
+      $set: Object.fromEntries(
+        Object.entries(update).map(([key, value]) => [`data.${key}`, value])
+      )
+    }
+  ).catch((err) => {
+    console.log("FMP-only metric card cache skipped:", symbol, err.message);
+  });
+}
+
+async function fetchFmpMetricCards(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return {};
+
+  try {
+    const [
+      quoteData,
+      profileData,
+      ratiosData,
+      metricsData,
+      balanceData,
+      cashflowData,
+      incomeData,
+      growthData,
+      estimatesData,
+      ratingData,
+      priceTargetData
+    ] = await Promise.all([
+      getFmpData(symbol, "metric cards quote", ["/stable/quote?symbol={ticker}"]),
+      getFmpData(symbol, "metric cards profile", ["/stable/profile?symbol={ticker}"]),
+      getFmpData(symbol, "metric cards ratios ttm", ["/stable/ratios-ttm?symbol={ticker}"]),
+      getFmpData(symbol, "metric cards key metrics ttm", ["/stable/key-metrics-ttm?symbol={ticker}"]),
+      getFmpData(symbol, "metric cards balance sheet quarter", ["/stable/balance-sheet-statement?symbol={ticker}&period=quarter&limit=1"]),
+      getFmpData(symbol, "metric cards cash flow quarter", ["/stable/cash-flow-statement?symbol={ticker}&period=quarter&limit=1"]),
+      getFmpData(symbol, "metric cards income quarter", ["/stable/income-statement?symbol={ticker}&period=quarter&limit=1"]),
+      getFmpData(symbol, "metric cards annual growth", ["/stable/financial-growth?symbol={ticker}&period=annual&limit=2"]),
+      getFmpData(symbol, "metric cards analyst estimates", ["/stable/analyst-estimates?symbol={ticker}&period=annual&limit=8"]),
+      getFmpData(symbol, "metric cards rating snapshot", ["/stable/ratings-snapshot?symbol={ticker}"]),
+      getFmpData(symbol, "metric cards price target summary", ["/stable/price-target-summary?symbol={ticker}"])
+    ]);
+
+    const quote = Array.isArray(quoteData) ? quoteData[0] || {} : quoteData || {};
+    const profile = Array.isArray(profileData) ? profileData[0] || {} : profileData || {};
+    const ratios = Array.isArray(ratiosData) ? ratiosData[0] || {} : ratiosData || {};
+    const metrics = Array.isArray(metricsData) ? metricsData[0] || {} : metricsData || {};
+    const balance = Array.isArray(balanceData) ? balanceData[0] || {} : balanceData || {};
+    const cashflow = Array.isArray(cashflowData) ? cashflowData[0] || {} : cashflowData || {};
+    const income = Array.isArray(incomeData) ? incomeData[0] || {} : incomeData || {};
+    const growth = Array.isArray(growthData) ? growthData[0] || {} : growthData || {};
+    const rating = Array.isArray(ratingData) ? ratingData[0] || {} : ratingData || {};
+    const priceTarget = Array.isArray(priceTargetData) ? priceTargetData[0] || {} : priceTargetData || {};
+    const estimates = normalizeFmpAnnualEstimateRows(estimatesData, { symbol, maxFutureYears: 3 });
+    const currentYearEstimate = estimates[0] || {};
+
+    const price = firstFmpMetricNumber(quote.price, metrics.stockPrice, metrics.price);
+    const marketCap = firstFmpMetricNumber(quote.marketCap, profile.marketCap, metrics.marketCap);
+    const impliedShares = marketCap !== null && price ? marketCap / price : null;
+    const statementShares = firstFmpMetricNumber(
+      balance.commonStockSharesOutstanding,
+      balance.weightedAverageShsOut,
+      balance.weightedAverageShsOutDil
+    );
+    const rawShares = firstFmpMetricNumber(statementShares, impliedShares);
+    const sharesOutstanding = rawShares !== null ? rawShares / 1000000 : null;
+    const isAdr = profile.isAdr === true || String(profile.isAdr || "").toLowerCase() === "true";
+    const employeeCount = firstFmpMetricNumber(profile.fullTimeEmployees, profile.employeeCount);
+
+    const shortTermDebt = toNumberOrNull(balance.shortTermDebt);
+    const longTermDebt = toNumberOrNull(balance.longTermDebt);
+    const combinedDebt =
+      shortTermDebt !== null || longTermDebt !== null
+        ? (shortTermDebt || 0) + (longTermDebt || 0)
+        : null;
+    const cashAndEquivalents = firstFmpMetricNumber(
+      balance.cashAndCashEquivalents,
+      balance.cashAndShortTermInvestments,
+      balance.cash
+    );
+    const totalDebt = firstFmpMetricNumber(balance.totalDebt, combinedDebt, balance.longTermDebt);
+    const netCash =
+      cashAndEquivalents !== null || totalDebt !== null
+        ? (cashAndEquivalents || 0) - (totalDebt || 0)
+        : null;
+    const equityBookValue = firstFmpMetricNumber(balance.totalStockholdersEquity, balance.totalEquity);
+    const totalCurrentAssets = firstFmpMetricNumber(balance.totalCurrentAssets);
+    const totalCurrentLiabilities = firstFmpMetricNumber(balance.totalCurrentLiabilities);
+    const workingCapital =
+      totalCurrentAssets !== null || totalCurrentLiabilities !== null
+        ? (totalCurrentAssets || 0) - (totalCurrentLiabilities || 0)
+        : firstFmpMetricNumber(metrics.workingCapitalTTM);
+
+    const revenue = firstFmpMetricNumber(income.revenue);
+    const grossProfit = firstFmpMetricNumber(income.grossProfit);
+    const operatingIncome = firstFmpMetricNumber(income.operatingIncome);
+    const incomeBeforeTax = firstFmpMetricNumber(income.incomeBeforeTax);
+    const netIncome = firstFmpMetricNumber(income.netIncome);
+    const ebitda = firstFmpMetricNumber(income.ebitda);
+    const ebit = firstFmpMetricNumber(income.ebit);
+    const freeCashflow = firstFmpMetricNumber(cashflow.freeCashFlow, cashflow.freeCashflow);
+    const operatingCashflow = firstFmpMetricNumber(
+      cashflow.operatingCashFlow,
+      cashflow.operatingCashflow,
+      cashflow.netCashProvidedByOperatingActivities
+    );
+    const margin = (numerator) =>
+      revenue && numerator !== null ? (numerator / revenue) * 100 : null;
+    const forwardEps = toNumberOrNull(currentYearEstimate.epsAvg ?? currentYearEstimate.estimatedEpsAvg);
+    const forwardRevenue = toNumberOrNull(currentYearEstimate.revenueAvg ?? currentYearEstimate.estimatedRevenueAvg);
+
+    const nonAdrStatementMetrics = isAdr
+      ? {
+          forwardPE: null,
+          forwardPS: null,
+          totalCash: null,
+          totalDebt: null,
+          cashAndCashEquivalents: null,
+          netCash: null,
+          netCashPerShare: null,
+          equityBookValue: null,
+          bookValuePerShare: null,
+          workingCapital: null,
+          priceToTangibleBook: firstFmpMetricNumber(ratios.priceToTangibleBookRatioTTM),
+          freeCashflow: null,
+          operatingCashflow: null,
+          revenuePerEmployee: null,
+          profitsPerEmployee: null
+        }
+      : {
+          forwardPE: price && forwardEps ? price / forwardEps : null,
+          forwardPS: marketCap && forwardRevenue ? marketCap / forwardRevenue : null,
+          totalCash: cashAndEquivalents,
+          totalDebt,
+          cashAndCashEquivalents: cashAndEquivalents,
+          netCash,
+          netCashPerShare: rawShares && netCash !== null ? netCash / rawShares : null,
+          equityBookValue,
+          bookValuePerShare: firstFmpMetricNumber(
+            ratios.bookValuePerShareTTM,
+            rawShares && equityBookValue !== null ? equityBookValue / rawShares : null
+          ),
+          workingCapital,
+          priceToTangibleBook: firstFmpMetricNumber(
+            ratios.priceToTangibleBookRatioTTM,
+            price && firstFmpMetricNumber(ratios.tangibleBookValuePerShareTTM)
+              ? price / firstFmpMetricNumber(ratios.tangibleBookValuePerShareTTM)
+              : null
+          ),
+          freeCashflow,
+          operatingCashflow,
+          revenuePerEmployee:
+            employeeCount && firstFmpMetricNumber(ratios.revenuePerShareTTM) !== null && rawShares
+              ? (firstFmpMetricNumber(ratios.revenuePerShareTTM) * rawShares) / employeeCount
+              : null,
+          profitsPerEmployee:
+            employeeCount && firstFmpMetricNumber(ratios.netIncomePerShareTTM) !== null && rawShares
+              ? (firstFmpMetricNumber(ratios.netIncomePerShareTTM) * rawShares) / employeeCount
+              : null
+        };
+
+    return {
+      isAdr,
+      marketCap,
+      sharesOutstanding,
+      fiftyTwoWeekHigh: firstFmpMetricNumber(quote.yearHigh),
+      fiftyTwoWeekLow: firstFmpMetricNumber(quote.yearLow),
+      pe: firstFmpMetricNumber(ratios.priceToEarningsRatioTTM),
+      priceToSales: firstFmpMetricNumber(ratios.priceToSalesRatioTTM),
+      priceToBook: firstFmpMetricNumber(ratios.priceToBookRatioTTM),
+      priceToFreeCashflow: firstFmpMetricNumber(ratios.priceToFreeCashFlowRatioTTM),
+      priceToOperatingCashflow: firstFmpMetricNumber(ratios.priceToOperatingCashFlowRatioTTM),
+      pegRatio: firstFmpMetricNumber(
+        ratios.priceToEarningsGrowthRatioTTM,
+        ratios.priceEarningsToGrowthRatioTTM,
+        ratios.forwardPriceToEarningsGrowthRatioTTM
+      ),
+      revenueGrowth: percentFromFmpRatio(growth.revenueGrowth),
+      earningsGrowth: percentFromFmpRatio(growth.netIncomeGrowth, growth.epsgrowth),
+      grossMargins: firstFmpMetricNumber(margin(grossProfit), percentFromFmpRatio(ratios.grossProfitMarginTTM)),
+      operatingMargins: firstFmpMetricNumber(margin(operatingIncome), percentFromFmpRatio(ratios.operatingProfitMarginTTM)),
+      profitMargins: firstFmpMetricNumber(margin(netIncome), percentFromFmpRatio(ratios.netProfitMarginTTM)),
+      pretaxMargin: firstFmpMetricNumber(margin(incomeBeforeTax), percentFromFmpRatio(ratios.pretaxProfitMarginTTM)),
+      ebitdaMargin: firstFmpMetricNumber(margin(ebitda), percentFromFmpRatio(ratios.ebitdaMarginTTM)),
+      ebitMargin: firstFmpMetricNumber(margin(ebit), percentFromFmpRatio(ratios.ebitMarginTTM)),
+      fcfMargin: revenue && freeCashflow !== null ? (freeCashflow / revenue) * 100 : null,
+      returnOnEquity: percentFromFmpRatio(metrics.returnOnEquityTTM),
+      returnOnAssets: percentFromFmpRatio(metrics.returnOnAssetsTTM),
+      returnOnInvestedCapital: percentFromFmpRatio(metrics.returnOnInvestedCapitalTTM),
+      returnOnCapitalEmployed: percentFromFmpRatio(metrics.returnOnCapitalEmployedTTM),
+      employeeCount,
+      targetMean: firstPositiveFmpMetricNumber(
+        priceTarget.lastMonthAvgPriceTarget,
+        priceTarget.lastQuarterAvgPriceTarget,
+        priceTarget.lastYearAvgPriceTarget,
+        priceTarget.allTimeAvgPriceTarget
+      ),
+      recommendationKey: normalizeRating(rating.rating),
+      analystRatingText: firstText(rating.rating),
+      balanceSheetAsOf: balance.date || balance.filingDate || null,
+      balanceSheetSource: isAdr ? null : "FMP latest quarterly balance sheet",
+      ...nonAdrStatementMetrics
+    };
+  } catch (err) {
+    setFmpCooldown(err, "metric cards", symbol);
+    console.log("FMP-only metric cards skipped:", symbol, err.response?.status || err.message);
     return {};
   }
 }
@@ -5894,14 +6204,17 @@ async function prepareStockResponseData(ticker, data = {}, options = {}) {
   const repairedData = options.fast
     ? baseData
     : await repairHistoricalPeIfNeeded(ticker, baseData);
-  return normalizeForeignAdrStockData(ticker, withDerivedBalanceSheetMetrics(withDerivedQuarterlyHistoricalPe(repairedData)));
+  const fmpMetricCards = await resolveWithin(fetchFmpMetricCards(ticker), options.fast ? 1800 : 3200, {});
+  if (Object.keys(fmpMetricCards || {}).length) persistFmpMetricCards(ticker, fmpMetricCards);
+  return normalizeForeignAdrStockData(
+    ticker,
+    applyFmpMetricCards(withDerivedQuarterlyHistoricalPe(repairedData), fmpMetricCards)
+  );
 }
 
 function prepareCachedStockResponseData(ticker, data = {}) {
-  return withDerivedBalanceSheetMetrics(
-    withDerivedQuarterlyHistoricalPe(
-      withGuaranteedAnalystSection(applyStockEarningsDateOverrides(ticker, data || {}))
-    )
+  return withDerivedQuarterlyHistoricalPe(
+    withGuaranteedAnalystSection(applyStockEarningsDateOverrides(ticker, data || {}))
   );
 }
 
@@ -6118,12 +6431,31 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
       institutionalHolders: [],
       insiderTransactions: []
     });
+    const hasFetchedMarketActivity =
+      (Array.isArray(fmpMarketActivity.analystUpdates) && fmpMarketActivity.analystUpdates.length) ||
+      (Array.isArray(fmpMarketActivity.institutionalHolders) && fmpMarketActivity.institutionalHolders.length) ||
+      (Array.isArray(fmpMarketActivity.insiderTransactions) && fmpMarketActivity.insiderTransactions.length);
+    if (!hasFetchedMarketActivity) {
+      responseData = {
+        ...responseData,
+        marketActivityUpdatedAt: responseData.marketActivityUpdatedAt || new Date().toISOString()
+      };
+    } else {
     const marketActivityUpdatedAt = new Date().toISOString();
+    const nextAnalystUpdates = fmpMarketActivity.analystUpdates?.length
+      ? fmpMarketActivity.analystUpdates
+      : responseData.analystUpdates || [];
+    const nextInstitutionalHolders = fmpMarketActivity.institutionalHolders?.length
+      ? fmpMarketActivity.institutionalHolders
+      : responseData.institutionalHolders || [];
+    const nextInsiderTransactions = fmpMarketActivity.insiderTransactions?.length
+      ? fmpMarketActivity.insiderTransactions
+      : responseData.insiderTransactions || [];
     responseData = {
       ...responseData,
-      analystUpdates: fmpMarketActivity.analystUpdates || [],
-      institutionalHolders: fmpMarketActivity.institutionalHolders || [],
-      insiderTransactions: fmpMarketActivity.insiderTransactions || [],
+      analystUpdates: nextAnalystUpdates,
+      institutionalHolders: nextInstitutionalHolders,
+      insiderTransactions: nextInsiderTransactions,
       analystUpdatesCheckedAt: marketActivityUpdatedAt,
       institutionalHoldersCheckedAt: marketActivityUpdatedAt,
       insiderTransactionsCheckedAt: marketActivityUpdatedAt,
@@ -6145,7 +6477,11 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
     ).catch((err) => {
       console.log("Fast FMP market activity response cache skipped:", ticker, err.message);
     });
+    }
   }
+  const fmpMetricCards = await resolveWithin(fetchFmpMetricCards(ticker), 3200, {});
+  responseData = applyFmpMetricCards(prepareCachedStockResponseData(ticker, responseData), fmpMetricCards);
+  persistFmpMetricCards(ticker, fmpMetricCards);
   if (hasCachedHistoricalPe(responseData)) return finalizeStockMetricCardResponse(ticker, responseData);
 
   const fmpPeRows = await resolveWithin(fetchFmpHistoricalPe(ticker), 1000, []);
@@ -7499,7 +7835,7 @@ async function fetchFmpMarketActivity(ticker) {
     fmpMarketActivityCache,
     symbol,
     hasData ? result : emptyResult,
-    hasData ? 6 * 60 * 60 * 1000 : 20 * 60 * 1000
+    hasData ? 6 * 60 * 60 * 1000 : 45 * 1000
   );
 }
 
@@ -8860,24 +9196,17 @@ async function markFastOverviewReady(ticker) {
 }
 
 async function publishValuationMetricsSnapshot(ticker) {
-  const valuation = await resolveWithin(fetchFmpStableValuationMetrics(ticker), 2200, {});
-  const $set = {
-    "data.valuationMetricsCheckedAt": new Date().toISOString(),
-    "data.valuationMetricsVersion": VALUATION_METRICS_VERSION
-  };
-
-  STOCK_ANALYSIS_VALUATION_FIELDS.forEach((field) => {
-    $set[`data.${field}`] = toNumberOrNull(valuation[field]);
-  });
-  FMP_TEXT_METRIC_FIELDS.forEach((field) => {
-    $set[`data.${field}`] = firstText(valuation[field]) || null;
-  });
-
-  if (Object.keys($set).length <= 1) return;
+  const metricCards = await resolveWithin(fetchFmpMetricCards(ticker), 3200, {});
+  if (!hasFmpMetricCardPayload(metricCards)) return;
+  const update = buildFmpMetricCardUpdate(metricCards);
 
   await Stock.findOneAndUpdate(
     { ticker },
-    { $set }
+    {
+      $set: Object.fromEntries(
+        Object.entries(update).map(([key, value]) => [`data.${key}`, value])
+      )
+    }
   );
 }
 
@@ -8960,35 +9289,16 @@ async function publishHistoricalPeSnapshot(ticker) {
 async function publishBalanceSheetSnapshot(ticker) {
   const stock = await Stock.findOne({ ticker }).lean();
   if (!stock) return;
-  const balanceSheetMetrics = await resolveWithin(
-    fetchLatestBalanceSheetMetrics(ticker, { fast: true }),
-    3200,
-    {}
-  );
-  const hasBalanceSheetData =
-    toNumberOrNull(balanceSheetMetrics.totalCash) !== null ||
-    toNumberOrNull(balanceSheetMetrics.totalDebt) !== null;
-  const checkedAt = balanceSheetMetrics.balanceSheetCheckedAt || new Date().toISOString();
+  const metricCards = await resolveWithin(fetchFmpMetricCards(ticker), 3200, {});
+  if (!hasFmpMetricCardPayload(metricCards)) return;
+  const update = buildFmpMetricCardUpdate(metricCards);
 
   await Stock.findOneAndUpdate(
     { ticker },
     {
-      $set: {
-        "data.totalCash": hasBalanceSheetData ? balanceSheetMetrics.totalCash ?? null : null,
-        "data.totalDebt": hasBalanceSheetData ? balanceSheetMetrics.totalDebt ?? null : null,
-        "data.cashAndCashEquivalents": hasBalanceSheetData
-          ? balanceSheetMetrics.cashAndCashEquivalents ?? balanceSheetMetrics.totalCash ?? null
-          : null,
-        "data.netCash": hasBalanceSheetData ? balanceSheetMetrics.netCash ?? null : null,
-        "data.netCashPerShare": hasBalanceSheetData ? balanceSheetMetrics.netCashPerShare ?? null : null,
-        "data.equityBookValue": hasBalanceSheetData ? balanceSheetMetrics.equityBookValue ?? null : null,
-        "data.bookValuePerShare": hasBalanceSheetData ? balanceSheetMetrics.bookValuePerShare ?? null : null,
-        "data.workingCapital": hasBalanceSheetData ? balanceSheetMetrics.workingCapital ?? null : null,
-        "data.balanceSheetAsOf": hasBalanceSheetData ? balanceSheetMetrics.balanceSheetAsOf || null : null,
-        "data.balanceSheetSource": hasBalanceSheetData ? balanceSheetMetrics.balanceSheetSource || null : null,
-        "data.balanceSheetCheckedAt": checkedAt,
-        "data.balanceSheetMetricsVersion": BALANCE_SHEET_METRICS_VERSION
-      }
+      $set: Object.fromEntries(
+        Object.entries(update).map(([key, value]) => [`data.${key}`, value])
+      )
     }
   );
 }
@@ -9052,11 +9362,22 @@ async function publishMarketActivitySnapshot(ticker) {
       institutionalHolders: [],
       insiderTransactions: []
     });
+    const hasFetchedMarketActivity =
+      (Array.isArray(data.analystUpdates) && data.analystUpdates.length) ||
+      (Array.isArray(data.institutionalHolders) && data.institutionalHolders.length) ||
+      (Array.isArray(data.insiderTransactions) && data.insiderTransactions.length);
+    if (!hasFetchedMarketActivity) return;
     const now = new Date().toISOString();
     const $set = {
-      "data.analystUpdates": Array.isArray(data.analystUpdates) ? data.analystUpdates : [],
-      "data.institutionalHolders": Array.isArray(data.institutionalHolders) ? data.institutionalHolders : [],
-      "data.insiderTransactions": Array.isArray(data.insiderTransactions) ? data.insiderTransactions : [],
+      "data.analystUpdates": Array.isArray(data.analystUpdates) && data.analystUpdates.length
+        ? data.analystUpdates
+        : stock.data?.analystUpdates || [],
+      "data.institutionalHolders": Array.isArray(data.institutionalHolders) && data.institutionalHolders.length
+        ? data.institutionalHolders
+        : stock.data?.institutionalHolders || [],
+      "data.insiderTransactions": Array.isArray(data.insiderTransactions) && data.insiderTransactions.length
+        ? data.insiderTransactions
+        : stock.data?.insiderTransactions || [],
       "data.analystUpdatesCheckedAt": now,
       "data.institutionalHoldersCheckedAt": now,
       "data.insiderTransactionsCheckedAt": now,
@@ -9086,10 +9407,10 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     Promise.resolve({}),
     resolveWithin(fetchYahooChartQuote(ticker), 1200, {}),
     resolveWithin(fetchCalendarQuarterEstimate(ticker, { fast: true }), 1400, previousData.analystEstimates?.nextQuarter || {}),
-    resolveWithin(fetchFmpStableValuationMetrics(ticker), 1400, {}),
+    resolveWithin(fetchFmpMetricCards(ticker), 2600, {}),
     Promise.resolve({}),
     Promise.resolve({}),
-    resolveWithin(fetchLatestBalanceSheetMetrics(ticker, { fast: true }), 1800, {}),
+    Promise.resolve({}),
     resolveWithin(fetchFmpFiftyTwoWeekRange(ticker), 1800, {})
   ]);
   const definedValues = (data = {}) => Object.fromEntries(
@@ -9153,23 +9474,23 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     revenuePerEmployee: firstNumber(fmpValuation.revenuePerEmployee),
     profitsPerEmployee: firstNumber(fmpValuation.profitsPerEmployee),
     employeeCount: firstNumber(fmpValuation.employeeCount, fmpProfile.employeeCount),
-    totalCash: isFmpAdr ? null : firstNumber(balanceSheetMetrics.totalCash, balanceSheetMetrics.cashAndCashEquivalents),
-    totalDebt: isFmpAdr ? null : balanceSheetMetrics.totalDebt ?? null,
-    cashAndCashEquivalents: isFmpAdr ? null : firstNumber(balanceSheetMetrics.cashAndCashEquivalents, balanceSheetMetrics.totalCash),
-    netCash: isFmpAdr ? null : balanceSheetMetrics.netCash ?? null,
+    totalCash: isFmpAdr ? null : firstNumber(fmpValuation.totalCash, fmpValuation.cashAndCashEquivalents),
+    totalDebt: isFmpAdr ? null : fmpValuation.totalDebt ?? null,
+    cashAndCashEquivalents: isFmpAdr ? null : firstNumber(fmpValuation.cashAndCashEquivalents, fmpValuation.totalCash),
+    netCash: isFmpAdr ? null : fmpValuation.netCash ?? null,
     netCashPerShare: isFmpAdr ? null : firstNumber(
-      balanceSheetMetrics.netCashPerShare,
-      balanceSheetMetrics.netCash !== null &&
+      fmpValuation.netCashPerShare,
+      fmpValuation.netCash !== null &&
         fmpProfile.marketCap &&
         fmpProfile.price
-        ? balanceSheetMetrics.netCash / (fmpProfile.marketCap / fmpProfile.price)
+        ? fmpValuation.netCash / (fmpProfile.marketCap / fmpProfile.price)
         : null
     ),
-    equityBookValue: isFmpAdr ? null : balanceSheetMetrics.equityBookValue ?? null,
-    bookValuePerShare: isFmpAdr ? null : firstNumber(balanceSheetMetrics.bookValuePerShare, fmpValuation.bookValuePerShare),
-    workingCapital: isFmpAdr ? null : firstNumber(balanceSheetMetrics.workingCapital, fmpValuation.workingCapital),
-    balanceSheetAsOf: isFmpAdr ? null : balanceSheetMetrics.balanceSheetAsOf || null,
-    balanceSheetSource: isFmpAdr ? null : balanceSheetMetrics.balanceSheetSource || null
+    equityBookValue: isFmpAdr ? null : fmpValuation.equityBookValue ?? null,
+    bookValuePerShare: isFmpAdr ? null : fmpValuation.bookValuePerShare ?? null,
+    workingCapital: isFmpAdr ? null : fmpValuation.workingCapital ?? null,
+    balanceSheetAsOf: isFmpAdr ? null : fmpValuation.balanceSheetAsOf || null,
+    balanceSheetSource: isFmpAdr ? null : fmpValuation.balanceSheetSource || null
   };
   const hasFastSnapshotData =
     toNumberOrNull(fastData.price) !== null ||
@@ -9245,7 +9566,7 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
         )
       }
     : {};
-  const fmpBalanceCardValues = Object.keys(balanceSheetMetrics || {}).length
+  const fmpBalanceCardValues = Object.keys(fmpValuation || {}).length
     ? Object.fromEntries(
         [
           "totalCash",
@@ -9259,7 +9580,7 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
         ].map((field) => [field, toNumberOrNull(fastData[field])])
       )
     : {};
-  return withGuaranteedAnalystSection({
+  return applyFmpMetricCards(withGuaranteedAnalystSection({
     ...previousData,
     ...definedValues(fastData),
     ...fmpMetricCardValues,
@@ -9287,7 +9608,7 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     },
     analystEstimatesSource: "FMP",
     estimateDataVersion: STOCK_ESTIMATE_VERSION
-  });
+  }), fmpValuation);
 }
 
 function buildMinimalStockSnapshot(ticker, previousData = {}) {
@@ -9309,7 +9630,12 @@ const getImmediateStockSnapshot = async (ticker, previousData = {}) => {
       hasCompleteSupplementalData({ data: previousData })
     );
   if (hasRenderableSnapshot) {
-    return buildMinimalStockSnapshot(ticker, previousData);
+    const needsMetricCards =
+      previousData.valuationMetricsVersion !== VALUATION_METRICS_VERSION ||
+      previousData.balanceSheetMetricsVersion !== BALANCE_SHEET_METRICS_VERSION;
+    if (!needsMetricCards) return buildMinimalStockSnapshot(ticker, previousData);
+    const metricCards = await resolveWithin(fetchFmpMetricCards(ticker), 2600, {});
+    return applyFmpMetricCards(buildMinimalStockSnapshot(ticker, previousData), metricCards);
   }
 
   return (await resolveWithin(buildFastStockSnapshot(ticker, previousData), 2200, null)) ||
@@ -10626,9 +10952,15 @@ async function fetchStockData(ticker) {
     targetMean: toNumberOrNull(fmpStableValuation.targetMean),
     recommendationKey: firstText(fmpStableValuation.recommendationKey),
     analystRatingText: firstText(fmpStableValuation.analystRatingText),
-    analystUpdates: fmpMarketActivity?.analystUpdates || [],
-    institutionalHolders: fmpMarketActivity?.institutionalHolders || [],
-    insiderTransactions: fmpMarketActivity?.insiderTransactions || [],
+    analystUpdates: fmpMarketActivity?.analystUpdates?.length
+      ? fmpMarketActivity.analystUpdates
+      : previousData?.analystUpdates || [],
+    institutionalHolders: fmpMarketActivity?.institutionalHolders?.length
+      ? fmpMarketActivity.institutionalHolders
+      : previousData?.institutionalHolders || [],
+    insiderTransactions: fmpMarketActivity?.insiderTransactions?.length
+      ? fmpMarketActivity.insiderTransactions
+      : previousData?.insiderTransactions || [],
     marketActivityUpdatedAt: new Date().toISOString(),
     holderSummary: yahooSupplementalData.holderSummary || previousData?.holderSummary || {},
     analystTargets: yahooSupplementalData.analystTargets || previousData?.analystTargets || {},
@@ -10680,6 +11012,8 @@ async function fetchStockData(ticker) {
     revenueData
   }), previousData));
   data = await normalizeForeignFinancialCurrencyStockData(ticker, data);
+  const fmpMetricCards = await resolveWithin(fetchFmpMetricCards(ticker), STOCK_PROVIDER_TIMEOUT_MS, {});
+  data = applyFmpMetricCards(data, fmpMetricCards);
 
   await Stock.findOneAndUpdate(
     { ticker },
@@ -13192,7 +13526,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
 
     let stock = await Stock.findOne({ ticker });
     if (!stock) {
-      const initialData = buildMinimalStockSnapshot(ticker);
+      const initialData = await getImmediateStockSnapshot(ticker, buildMinimalStockSnapshot(ticker));
       stock = await Stock.findOneAndUpdate(
         { ticker },
         {
