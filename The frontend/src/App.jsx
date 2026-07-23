@@ -155,6 +155,13 @@ const HOME_FEATURES = [
     text: "Filter active stocks, ETFs, and funds by market cap, price, sector, industry, beta, dividend, volume, exchange, and country."
   },
   {
+    id: "news",
+    icon: "news",
+    label: "News",
+    title: "Follow the market feed",
+    text: "Read the latest FMP general market news and jump into the companies behind the headlines."
+  },
+  {
     id: "financial-statements",
     icon: "statements",
     label: "Financial Statements",
@@ -256,6 +263,15 @@ const renderHomeFeatureIcon = (icon) => {
           <circle className="icon-blue-fill" cx="20" cy="16" r="5" />
           <circle className="icon-green-fill" cx="39" cy="30" r="5" />
           <circle className="icon-red-fill" cx="29" cy="44" r="5" />
+        </svg>
+      );
+    case "news":
+      return (
+        <svg {...commonProps}>
+          <rect className="icon-muted" x="11" y="14" width="42" height="38" rx="6" />
+          <path className="icon-blue" d="M20 24H34M20 33H44M20 42H39" />
+          <path className="icon-green" d="M39 21H47V29H39V21Z" />
+          <path className="icon-red" d="M13 18H8V47C8 50 10 52 13 52H18" />
         </svg>
       );
     case "statements":
@@ -1472,6 +1488,18 @@ const formatCalendarPercent = (value, missingLabel = "N/A") =>
 const formatTreasuryRate = (value) =>
   isNumber(value) ? `${value.toFixed(2)}%` : "N/A";
 
+const formatNewsDate = (value) => {
+  if (!value) return "";
+  const date = new Date(String(value).replace(" ", "T"));
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+};
+
 const formatPortfolioCurrency = (value) => {
   if (!isNumber(value)) return "$0.00";
   return `${value < 0 ? "-" : ""}$${Math.abs(value).toLocaleString(undefined, {
@@ -2490,6 +2518,21 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [treasuryRatesError, setTreasuryRatesError] =
     useState("");
 
+  const [generalNews, setGeneralNews] =
+    useState({ articles: [] });
+
+  const [isGeneralNewsLoading, setIsGeneralNewsLoading] =
+    useState(false);
+
+  const [generalNewsError, setGeneralNewsError] =
+    useState("");
+
+  const [stockNews, setStockNews] =
+    useState({ articles: [] });
+
+  const [isStockNewsLoading, setIsStockNewsLoading] =
+    useState(false);
+
     const [compareTickers, setCompareTickers] =
   useState(["AAPL", "MSFT", "NVDA"]);
 
@@ -3390,6 +3433,62 @@ useEffect(() => {
     };
   }, [activePage]);
 
+  useEffect(() => {
+    if (activePage !== "news") return;
+
+    let isActive = true;
+    const loadGeneralNews = async () => {
+      try {
+        setIsGeneralNewsLoading(true);
+        setGeneralNewsError("");
+        const response = await axios.get(`${API_URL}/api/news`, {
+          params: { limit: 36, _: Date.now() }
+        });
+        if (!isActive) return;
+        setGeneralNews(response.data || { articles: [] });
+      } catch (err) {
+        if (!isActive) return;
+        console.error(err);
+        setGeneralNewsError("News is not available yet.");
+      } finally {
+        if (isActive) setIsGeneralNewsLoading(false);
+      }
+    };
+
+    loadGeneralNews();
+    return () => {
+      isActive = false;
+    };
+  }, [activePage]);
+
+  useEffect(() => {
+    if (activePage !== "overview" || !loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
+
+    let isActive = true;
+    setStockNews({ articles: [] });
+    const timer = window.setTimeout(async () => {
+      try {
+        setIsStockNewsLoading(true);
+        const response = await axios.get(`${API_URL}/api/news`, {
+          params: { symbol: ticker, limit: 12, _: Date.now() }
+        });
+        if (!isActive) return;
+        setStockNews(response.data || { articles: [] });
+      } catch (err) {
+        if (!isActive) return;
+        console.error("Stock news failed", err);
+        setStockNews({ articles: [] });
+      } finally {
+        if (isActive) setIsStockNewsLoading(false);
+      }
+    }, 800);
+
+    return () => {
+      isActive = false;
+      window.clearTimeout(timer);
+    };
+  }, [ticker, loadedStockSymbol, isStockLoading, activePage]);
+
   /*
     LOAD PORTFOLIO PRICES
   */
@@ -3502,9 +3601,8 @@ useEffect(() => {
         attempt < 20 &&
         stableResponse.estimateDataVersion !== STOCK_ESTIMATE_VERSION &&
         !hasAnnualEstimateData(stableResponse);
-      const needsQuarterEstimate =
+const needsQuarterEstimate =
         attempt < 20 &&
-        !stableResponse.quarterEstimateCheckedAt &&
         !hasNextQuarterData(stableResponse);
       const needsBalanceSheetMetrics =
         attempt < 20 &&
@@ -4472,9 +4570,9 @@ const areEstimatesRefreshing =
   );
 const isNextQuarterRefreshing =
   (isStockLoading ||
+    stockData?.refreshing ||
     stockData?.estimateDataVersion !== STOCK_ESTIMATE_VERSION ||
     !stockData?.quarterEstimateCheckedAt) &&
-  !stockData?.quarterEstimateCheckedAt &&
   (
     !isNumber(nextQuarterEstimate?.revenue) ||
     !isNumber(nextQuarterEstimate?.eps) ||
@@ -5992,6 +6090,7 @@ return (
         ["watchlists", "Watchlists"],
         ["etfs", "ETF Overview"],
         ["stock-screener", "Stock Screener"],
+        ["news", "News"],
         ["earnings-calendar", "Calendar"],
         ["treasury-rates", "Treasury Rates"],
         ["market-overview", "Market Overview"]
@@ -6459,6 +6558,53 @@ return (
             <div className="heatmap-loading">No stocks match those filters yet.</div>
           )}
         </div>
+      </section>
+    )}
+
+
+    {activePage === "news" && (
+      <section className="news-page" id="news" aria-labelledby="news-page-title">
+        <div className="financial-statement-hero">
+          <div>
+            <span className="home-feature-label">FMP General News</span>
+            <h2 id="news-page-title">News</h2>
+            <p>Follow the latest market headlines from FMP and jump into related stock research when a ticker is attached.</p>
+          </div>
+          {generalNews?.updatedAt && (
+            <span className="market-overview-updated">
+              Updated {new Date(generalNews.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+            </span>
+          )}
+        </div>
+
+        {generalNewsError ? (
+          <div className="heatmap-loading">{generalNewsError}</div>
+        ) : isGeneralNewsLoading && !generalNews?.articles?.length ? (
+          <div className="heatmap-loading">Loading latest news...</div>
+        ) : generalNews?.articles?.length ? (
+          <div className="news-card-grid">
+            {generalNews.articles.map((article) => (
+              <a
+                className="news-card"
+                key={article.id || article.url}
+                href={article.url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {article.image && <img src={article.image} alt="" loading="lazy" />}
+                <span className="news-card-source">
+                  {article.publisher || article.site || "FMP"}
+                  {article.symbol ? ` · ${article.symbol}` : ""}
+                </span>
+                <strong>{article.title}</strong>
+                {article.text && <p>{article.text}</p>}
+                <small>{formatNewsDate(article.publishedDate)}</small>
+              </a>
+            ))}
+          </div>
+        ) : (
+          <div className="heatmap-loading">No general news is available yet.</div>
+        )}
       </section>
     )}
 
@@ -8556,6 +8702,49 @@ return (
   ) : (
     <div className="similar-companies-empty">
       Similar companies are not available for this ticker yet.
+    </div>
+  )}
+</section>
+
+<section className="stock-news-section section-anchor" id="stock-news">
+  <div className="similar-companies-header">
+    <div>
+      <span className="similar-companies-kicker">FMP Stock News</span>
+      <h2 className="section-title">{ticker} News</h2>
+    </div>
+    {stockNews?.updatedAt && (
+      <span className="similar-companies-context">
+        Updated {new Date(stockNews.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+      </span>
+    )}
+  </div>
+
+  {isStockNewsLoading && !stockNews?.articles?.length ? (
+    <StockDataLoading label="Loading stock news..." />
+  ) : stockNews?.articles?.length ? (
+    <div className="news-card-grid stock-news-grid">
+      {stockNews.articles.map((article) => (
+        <a
+          className="news-card"
+          key={article.id || article.url}
+          href={article.url}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {article.image && <img src={article.image} alt="" loading="lazy" />}
+          <span className="news-card-source">
+            {article.publisher || article.site || "FMP"}
+            {article.symbol ? ` · ${article.symbol}` : ""}
+          </span>
+          <strong>{article.title}</strong>
+          {article.text && <p>{article.text}</p>}
+          <small>{formatNewsDate(article.publishedDate)}</small>
+        </a>
+      ))}
+    </div>
+  ) : (
+    <div className="similar-companies-empty">
+      No recent FMP stock news is available for this ticker yet.
     </div>
   )}
 </section>

@@ -52,6 +52,7 @@ const stockScreenerCache = new Map();
 const stockScreenerOptionsCache = new Map();
 const fmpCalendarCache = new Map();
 const treasuryRatesCache = new Map();
+const fmpNewsCache = new Map();
 const earningsCallPeriodsCache = new Map();
 const earningsCallTranscriptCache = new Map();
 const similarCompanyMetricCache = new Map();
@@ -6778,6 +6779,64 @@ function hasCachedHistoricalPe(responseData = {}) {
   return annualPeRows.length >= 3 && hasFmpHistoricalPe;
 }
 
+async function ensureCompleteNextQuarterEstimateForResponse(ticker, data = {}) {
+  if (hasCompleteNextQuarterEstimate(data.analystEstimates?.nextQuarter)) {
+    return data;
+  }
+
+  const estimate = await resolveWithin(
+    fetchCalendarQuarterEstimate(ticker, { fast: true }),
+    3200,
+    {}
+  );
+  if (!hasCompleteNextQuarterEstimate(estimate)) {
+    return data;
+  }
+
+  const nextQuarter = {
+    revenue: normalizeStatementDollars(estimate.revenue),
+    earnings: null,
+    eps: toNumberOrNull(estimate.eps),
+    date: estimate.date || null,
+    fiscalQuarter: estimate.fiscalQuarter || null,
+    source: estimate.source || "FMP earnings history"
+  };
+
+  const patchedData = {
+    ...data,
+    analystEstimates: {
+      ...(data.analystEstimates || {}),
+      nextQuarter
+    },
+    analystEstimatesSources: {
+      ...(data.analystEstimatesSources || {}),
+      nextQuarter: nextQuarter.source
+    },
+    analystEstimatesSource: "FMP",
+    quarterEstimateCheckedAt: new Date().toISOString(),
+    estimateDataVersion: STOCK_ESTIMATE_VERSION,
+    epsBeatMiss: buildEpsBeatMissSeries(data.epsBeatMiss || [], nextQuarter)
+  };
+
+  Stock.findOneAndUpdate(
+    { ticker },
+    {
+      $set: {
+        "data.analystEstimates.nextQuarter": nextQuarter,
+        "data.analystEstimatesSources.nextQuarter": nextQuarter.source,
+        "data.analystEstimatesSource": "FMP",
+        "data.quarterEstimateCheckedAt": patchedData.quarterEstimateCheckedAt,
+        "data.estimateDataVersion": STOCK_ESTIMATE_VERSION,
+        "data.epsBeatMiss": patchedData.epsBeatMiss
+      }
+    }
+  ).catch((err) => {
+    console.log("Next quarter estimate response repair cache skipped:", ticker, err.message);
+  });
+
+  return patchedData;
+}
+
 async function prepareCachedStockResponseDataFast(ticker, data = {}) {
   let responseData = prepareCachedStockResponseData(ticker, data);
   const hasBalanceSheetValues =
@@ -6802,6 +6861,7 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
     const fastPatch = await resolveWithin(buildFastStockSnapshot(ticker, responseData), 2600, null);
     if (fastPatch) responseData = prepareCachedStockResponseData(ticker, fastPatch);
   }
+  responseData = await ensureCompleteNextQuarterEstimateForResponse(ticker, responseData);
   if (responseData.valuationMetricsVersion !== VALUATION_METRICS_VERSION) {
     const valuationPatch = await resolveWithin(fetchFmpStableValuationMetrics(ticker), 2600, {});
     const valuationFields = {};
@@ -18529,6 +18589,60 @@ app.get("/api/treasury-rates", async (req, res) => {
     setFmpCooldown(err, "treasury rates", "treasury");
     console.log("FMP treasury rates skipped:", err.response?.status || err.message);
     return res.status(500).json({ rows: [], latest: null, error: "Treasury rates are not available yet." });
+  }
+});
+
+app.get("/api/news", async (req, res) => {
+  const symbol = String(req.query.symbol || "").trim().toUpperCase();
+  const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 80);
+  const page = Math.max(Number(req.query.page) || 0, 0);
+  const isStockNews = Boolean(symbol);
+  const cacheKey = `${isStockNews ? symbol : "general"}:${page}:${limit}`;
+  const cached = fmpNewsCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return res.json(cached.data);
+
+  if (isStockNews && !/^[A-Z0-9.-]{1,15}$/.test(symbol)) {
+    return res.status(400).json({ error: "Invalid ticker", articles: [] });
+  }
+
+  if (!process.env.FMP_API_KEY || !canUseFmp()) {
+    return res.status(503).json({ articles: [], source: "FMP news" });
+  }
+
+  try {
+    const endpoint = isStockNews
+      ? `/stable/news/stock?symbols=${encodeURIComponent(symbol)}&page=${page}&limit=${limit}`
+      : `/stable/news/general-latest?page=${page}&limit=${limit}`;
+    const data = await getFmpData(isStockNews ? symbol : "general", isStockNews ? "stock news" : "general news", [
+      endpoint
+    ]);
+    const articles = (Array.isArray(data) ? data : data ? [data] : [])
+      .map((item, index) => ({
+        id: `${String(item.url || item.title || index)}-${index}`,
+        symbol: firstText(item.symbol, symbol) || null,
+        publishedDate: firstText(item.publishedDate),
+        publisher: firstText(item.publisher, item.site) || "FMP",
+        title: firstText(item.title) || "Untitled",
+        image: firstText(item.image),
+        site: firstText(item.site),
+        text: firstText(item.text),
+        url: firstText(item.url),
+        source: isStockNews ? "FMP stock news" : "FMP general news"
+      }))
+      .filter((article) => article.title && article.url);
+
+    const responseData = {
+      symbol: isStockNews ? symbol : null,
+      articles,
+      updatedAt: new Date().toISOString(),
+      source: isStockNews ? "FMP stock news" : "FMP general news"
+    };
+    fmpNewsCache.set(cacheKey, { data: responseData, expiresAt: Date.now() + 10 * 60 * 1000 });
+    return res.json(responseData);
+  } catch (err) {
+    setFmpCooldown(err, isStockNews ? "stock news" : "general news", symbol || "general");
+    console.log("FMP news skipped:", symbol || "general", err.response?.status || err.message);
+    return res.status(500).json({ articles: [], error: "News is not available yet." });
   }
 });
 
