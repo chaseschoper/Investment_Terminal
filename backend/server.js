@@ -924,6 +924,12 @@ async function fetchFmpStableQuoteProfile(ticker) {
       financialCurrency: firstText(profile.currency),
       sector: firstText(profile.sector),
       industry: firstText(profile.industry),
+      ceo: firstText(profile.ceo),
+      country: firstText(profile.country),
+      exchange: firstText(profile.exchange),
+      exchangeFullName: firstText(profile.exchangeFullName),
+      description: firstText(profile.description),
+      website: firstText(profile.website),
       logo: getFinnhubLogoUrl(symbol),
       price: firstFiniteNumber(quote.price, profile.price),
       change: firstFiniteNumber(quote.change, profile.change),
@@ -947,6 +953,60 @@ async function fetchFmpStableQuoteProfile(ticker) {
     setFmpCooldown(err, "stable quote/profile", symbol);
     console.log("FMP stable quote/profile skipped:", symbol, err.response?.status || err.message);
     return {};
+  }
+}
+
+async function fetchFmpSharesFloat(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return {};
+
+  try {
+    const data = await getFmpData(symbol, "shares float", [
+      "/stable/shares-float?symbol={ticker}"
+    ]);
+    const row = Array.isArray(data) ? data[0] || {} : data || {};
+    const floatShares = firstFiniteNumber(row.floatShares);
+    const freeFloatPercent = firstFiniteNumber(row.freeFloat);
+    return {
+      floatShares,
+      freeFloatPercent,
+      freeFloatShares: floatShares !== null && freeFloatPercent !== null
+        ? floatShares * (freeFloatPercent / 100)
+        : null,
+      floatSharesUpdatedAt: firstText(row.date),
+      sharesFloatSource: firstText(row.source) || "FMP shares float"
+    };
+  } catch (err) {
+    setFmpCooldown(err, "shares float", symbol);
+    console.log("FMP shares float skipped:", symbol, err.response?.status || err.message);
+    return {};
+  }
+}
+
+async function fetchFmpKeyExecutives(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return [];
+
+  try {
+    const data = await getFmpData(symbol, "key executives", [
+      "/stable/key-executives?symbol={ticker}"
+    ]);
+    return (Array.isArray(data) ? data : [])
+      .filter((row) => row && firstText(row.name))
+      .map((row) => ({
+        name: firstText(row.name),
+        title: firstText(row.title),
+        pay: firstFiniteNumber(row.pay),
+        currencyPay: firstText(row.currencyPay),
+        yearBorn: firstFiniteNumber(row.yearBorn),
+        titleSince: firstText(row.titleSince),
+        active: row.active === true || String(row.active || "").toLowerCase() === "true"
+      }))
+      .slice(0, 10);
+  } catch (err) {
+    setFmpCooldown(err, "key executives", symbol);
+    console.log("FMP key executives skipped:", symbol, err.response?.status || err.message);
+    return [];
   }
 }
 
@@ -6490,6 +6550,14 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
     toNumberOrNull(responseData.beta) === null ||
     toNumberOrNull(responseData.volume) === null ||
     responseData.lastDividend === undefined ||
+    !responseData.ceo ||
+    !responseData.country ||
+    !responseData.exchange ||
+    !responseData.description ||
+    toNumberOrNull(responseData.floatShares) === null ||
+    toNumberOrNull(responseData.freeFloatShares) === null ||
+    !Array.isArray(responseData.executives) ||
+    responseData.executives.length === 0 ||
     responseData.estimateDataVersion !== STOCK_ESTIMATE_VERSION ||
     responseData.analystEstimatesSource !== "FMP" ||
     responseData.analystEstimates?.nextQuarter?.source !== "FMP earnings history";
@@ -9670,7 +9738,9 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     stockAnalysisValuation,
     stockAnalysisForecast,
     balanceSheetMetrics,
-    fmpFiftyTwoWeekRange
+    fmpFiftyTwoWeekRange,
+    fmpSharesFloat,
+    fmpExecutives
   ] = await Promise.all([
     resolveWithin(fetchFmpStableQuoteProfile(ticker), 1200, {}),
     resolveWithin(fetchYahooSparkQuote(ticker), 1200, {}),
@@ -9681,7 +9751,9 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     Promise.resolve({}),
     Promise.resolve({}),
     Promise.resolve({}),
-    resolveWithin(fetchFmpFiftyTwoWeekRange(ticker), 1800, {})
+    resolveWithin(fetchFmpFiftyTwoWeekRange(ticker), 1800, {}),
+    resolveWithin(fetchFmpSharesFloat(ticker), 1200, {}),
+    resolveWithin(fetchFmpKeyExecutives(ticker), 1200, [])
   ]);
   const definedValues = (data = {}) => Object.fromEntries(
     Object.entries(data).filter(([, value]) => value !== null && value !== undefined)
@@ -9709,11 +9781,23 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     financialCurrency: firstText(fmpProfile.financialCurrency, yahooData.financialCurrency),
     sector: firstText(fmpProfile.sector, yahooData.sector),
     industry: firstText(fmpProfile.industry, yahooData.industry),
+    ceo: firstText(fmpProfile.ceo, yahooData.ceo),
+    country: firstText(fmpProfile.country, yahooData.country),
+    exchange: firstText(fmpProfile.exchange, yahooData.exchange),
+    exchangeFullName: firstText(fmpProfile.exchangeFullName, yahooData.exchangeFullName),
+    description: firstText(fmpProfile.description, yahooData.description),
+    website: firstText(fmpProfile.website, yahooData.website),
+    executives: Array.isArray(fmpExecutives) ? fmpExecutives : [],
     logo: getFinnhubLogoUrl(ticker),
     marketCap: firstNumber(fmpProfile.marketCap, fmpValuation.marketCap, yahooData.marketCap),
     beta: firstNumber(fmpProfile.beta),
     volume: firstNumber(fmpProfile.volume),
     lastDividend: firstNumber(fmpProfile.lastDividend),
+    floatShares: firstNumber(fmpSharesFloat.floatShares),
+    freeFloatShares: firstNumber(fmpSharesFloat.freeFloatShares),
+    freeFloatPercent: firstNumber(fmpSharesFloat.freeFloatPercent),
+    floatSharesUpdatedAt: firstText(fmpSharesFloat.floatSharesUpdatedAt),
+    sharesFloatSource: firstText(fmpSharesFloat.sharesFloatSource),
     fiftyTwoWeekHigh: firstNumber(fmpProfile.fiftyTwoWeekHigh, fmpFiftyTwoWeekRange.fiftyTwoWeekHigh),
     fiftyTwoWeekLow: firstNumber(fmpProfile.fiftyTwoWeekLow, fmpFiftyTwoWeekRange.fiftyTwoWeekLow),
     pe: firstNumber(fmpValuation.pe),
@@ -10126,6 +10210,8 @@ async function fetchStockData(ticker) {
     fmpStableValuation,
     fmpQuoteProfile,
     fmpFiftyTwoWeekRange,
+    fmpSharesFloat,
+    fmpExecutives,
     calendarQuarterEstimate,
     finnhubAnalystUpdates,
     fmpMarketActivity,
@@ -10165,6 +10251,8 @@ async function fetchStockData(ticker) {
     resolveWithin(fetchFmpStableValuationMetrics(ticker), STOCK_PROVIDER_TIMEOUT_MS, {}),
     resolveWithin(fetchFmpStableQuoteProfile(ticker), 1600, {}),
     resolveWithin(fetchFmpFiftyTwoWeekRange(ticker), 1800, {}),
+    resolveWithin(fetchFmpSharesFloat(ticker), 1600, {}),
+    resolveWithin(fetchFmpKeyExecutives(ticker), 1600, []),
     resolveWithin(fetchCalendarQuarterEstimate(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, {}),
     Promise.resolve([]),
     resolveWithin(fetchFmpMarketActivity(ticker), STOCK_PROVIDER_TIMEOUT_MS, { analystUpdates: [], institutionalHolders: [], insiderTransactions: [] }),
@@ -11115,6 +11203,17 @@ async function fetchStockData(ticker) {
     sourceFinancialCurrency: stockAnalysisFinancialCurrency || previousData?.sourceFinancialCurrency || null,
     sector: firstText(fmpQuoteProfile.sector, profile.gicsSector, profile.sector, yahooSupplementalData.sector, previousData?.sector),
     industry: firstText(fmpQuoteProfile.industry, profile.finnhubIndustry, profile.gicsSubIndustry, profile.industry, yahooSupplementalData.industry, previousData?.industry),
+    ceo: firstText(fmpQuoteProfile.ceo, previousData?.ceo),
+    country: firstText(fmpQuoteProfile.country, previousData?.country),
+    exchange: firstText(fmpQuoteProfile.exchange, previousData?.exchange),
+    exchangeFullName: firstText(fmpQuoteProfile.exchangeFullName, previousData?.exchangeFullName),
+    description: firstText(fmpQuoteProfile.description, previousData?.description),
+    website: firstText(fmpQuoteProfile.website, previousData?.website),
+    executives: Array.isArray(fmpExecutives) && fmpExecutives.length
+      ? fmpExecutives
+      : Array.isArray(previousData?.executives)
+        ? previousData.executives
+        : [],
     logo: getFinnhubLogoUrl(ticker),
     price: quote.c,
     change: quote.d,
@@ -11127,6 +11226,11 @@ async function fetchStockData(ticker) {
     beta: firstFiniteNumber(fmpQuoteProfile.beta),
     volume: firstFiniteNumber(fmpQuoteProfile.volume),
     lastDividend: firstFiniteNumber(fmpQuoteProfile.lastDividend),
+    floatShares: firstFiniteNumber(fmpSharesFloat.floatShares, previousData?.floatShares),
+    freeFloatShares: firstFiniteNumber(fmpSharesFloat.freeFloatShares, previousData?.freeFloatShares),
+    freeFloatPercent: firstFiniteNumber(fmpSharesFloat.freeFloatPercent, previousData?.freeFloatPercent),
+    floatSharesUpdatedAt: firstText(fmpSharesFloat.floatSharesUpdatedAt, previousData?.floatSharesUpdatedAt),
+    sharesFloatSource: firstText(fmpSharesFloat.sharesFloatSource, previousData?.sharesFloatSource),
     dividendYield,
     fiftyTwoWeekHigh,
     fiftyTwoWeekLow,

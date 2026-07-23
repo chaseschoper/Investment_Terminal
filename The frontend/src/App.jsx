@@ -4477,8 +4477,18 @@ const metricCardItems = [
         <span>{formatPrice(stockData.fiftyTwoWeekHigh)}</span>
       </>
     ) : metricValue("N/A")
-  }
+  },
+  { label: "Float Shares", raw: stockData.floatShares, value: metricValue(formatSharesCount(stockData.floatShares)) },
+  { label: "Free Float Shares", raw: stockData.freeFloatShares, value: metricValue(formatSharesCount(stockData.freeFloatShares)) },
+  { label: "Industry", raw: stockData.industry, className: "metric-text-card", value: metricValue(stockData.industry || "N/A") },
+  { label: "CEO", raw: stockData.ceo, className: "metric-text-card", value: metricValue(stockData.ceo || "N/A") },
+  { label: "Country", raw: stockData.country, className: "metric-text-card", value: metricValue(stockData.country || "N/A") },
+  { label: "Exchange", raw: stockData.exchange, className: "metric-text-card", value: metricValue(stockData.exchange || "N/A") }
 ].filter(Boolean);
+const companyExecutives = Array.isArray(stockData.executives)
+  ? stockData.executives.filter((executive) => executive?.name).slice(0, 10)
+  : [];
+const hasCompanyProfileSection = Boolean(stockData.description) || companyExecutives.length > 0;
 const estimateValue = (value) =>
   (isInitialStockLoad || areEstimatesRefreshing) && (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
@@ -6854,8 +6864,62 @@ return (
             {item.value}
           </div>
         </div>
-      ))}
+    ))}
   </div>
+
+  {hasCompanyProfileSection && (
+    <section className="company-profile-panel">
+      {stockData.description && (
+        <div className="company-description-block">
+          <div className="section-heading-row company-profile-heading">
+            <div>
+              <span className="home-feature-label">Company Profile</span>
+              <h2>Company Description</h2>
+            </div>
+            {stockData.website && (
+              <a href={stockData.website} target="_blank" rel="noreferrer">
+                Website
+              </a>
+            )}
+          </div>
+          <p>{stockData.description}</p>
+        </div>
+      )}
+
+      {companyExecutives.length > 0 && (
+        <div className="company-executives-block">
+          <div className="section-heading-row company-profile-heading">
+            <div>
+              <span className="home-feature-label">Leadership</span>
+              <h2>Company Executives</h2>
+            </div>
+          </div>
+          <div className="company-executives-table-wrap">
+            <table className="company-executives-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Title</th>
+                  <th>Pay</th>
+                  <th>Year Born</th>
+                </tr>
+              </thead>
+              <tbody>
+                {companyExecutives.map((executive, index) => (
+                  <tr key={`${executive.name}-${index}`}>
+                    <td>{executive.name}</td>
+                    <td>{executive.title || "N/A"}</td>
+                    <td>{isNumber(executive.pay) ? formatLargeDollars(executive.pay) : "N/A"}</td>
+                    <td>{executive.yearBorn || "N/A"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </section>
+  )}
 
   <div className="grid" style={{ display: "none" }} aria-hidden="true">
 
