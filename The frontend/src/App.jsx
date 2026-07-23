@@ -1367,8 +1367,8 @@ const API_URL =
 const FINANCIAL_HISTORY_VERSION = 154;
 const STOCK_ESTIMATE_VERSION = 21;
 const INTERIM_HISTORY_VERSION = 6;
-const VALUATION_METRICS_VERSION = 7;
-const BALANCE_SHEET_METRICS_VERSION = 11;
+const VALUATION_METRICS_VERSION = 8;
+const BALANCE_SHEET_METRICS_VERSION = 12;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const MIN_DISPLAY_INTERIM_HISTORY_ROWS = 4;
 
@@ -3608,10 +3608,37 @@ const latestOperatingCashflowFromChart = latestChartMetricDollars(
   operatingCashflowHistory,
   "operatingCashflow"
 );
+const latestQuarterlyMetricValue = (rows, key) => {
+  const latest = [...(rows || [])]
+    .filter((row) => row?.isInterim && isNumber(row?.[key]))
+    .sort((a, b) => {
+      const yearDiff = Number(a.year || 0) - Number(b.year || 0);
+      if (yearDiff !== 0) return yearDiff;
+      return String(a.period || "").localeCompare(String(b.period || ""));
+    })
+    .at(-1);
+  return latest ? latest[key] : null;
+};
+const latestQuarterlyFreeCashflowFromChart = latestQuarterlyMetricValue(
+  freeCashflowHistory,
+  "freeCashflow"
+);
+const latestQuarterlyOperatingCashflowFromChart = latestQuarterlyMetricValue(
+  operatingCashflowHistory,
+  "operatingCashflow"
+);
 const latestFreeCashflowMetricValue =
-  isNumber(stockData?.freeCashflow) ? stockData.freeCashflow / 1e9 : latestFreeCashflowFromChart;
+  isNumber(latestQuarterlyFreeCashflowFromChart)
+    ? latestQuarterlyFreeCashflowFromChart * 1e9
+    : isNumber(stockData?.freeCashflow)
+      ? stockData.freeCashflow
+      : latestFreeCashflowFromChart;
 const latestOperatingCashflowMetricValue =
-  isNumber(stockData?.operatingCashflow) ? stockData.operatingCashflow / 1e9 : latestOperatingCashflowFromChart;
+  isNumber(latestQuarterlyOperatingCashflowFromChart)
+    ? latestQuarterlyOperatingCashflowFromChart * 1e9
+    : isNumber(stockData?.operatingCashflow)
+      ? stockData.operatingCashflow
+      : latestOperatingCashflowFromChart;
 const sharesOutstandingHistory =
   chartRowsWithCurrentFallbackForMode(
     filterChartRowsByMode(buildChartRows(financialHistory, "sharesOutstanding"), financialChartMode),
@@ -3664,6 +3691,27 @@ const mergedMarginHistory = mergeMultiMetricRows(
   ],
   ["grossMargin", "operatingMargin", "profitMargin"]
 );
+const latestQuarterlyGrossMarginFromChart = latestQuarterlyMetricValue(
+  mergedMarginHistory,
+  "grossMargin"
+);
+const latestQuarterlyOperatingMarginFromChart = latestQuarterlyMetricValue(
+  mergedMarginHistory,
+  "operatingMargin"
+);
+const latestQuarterlyProfitMarginFromChart = latestQuarterlyMetricValue(
+  mergedMarginHistory,
+  "profitMargin"
+);
+const latestGrossMarginMetricValue = isNumber(latestQuarterlyGrossMarginFromChart)
+  ? latestQuarterlyGrossMarginFromChart
+  : stockData.grossMargins;
+const latestOperatingMarginMetricValue = isNumber(latestQuarterlyOperatingMarginFromChart)
+  ? latestQuarterlyOperatingMarginFromChart
+  : stockData.operatingMargins;
+const latestProfitMarginMetricValue = isNumber(latestQuarterlyProfitMarginFromChart)
+  ? latestQuarterlyProfitMarginFromChart
+  : stockData.profitMargins;
 const visibleMarginHistory = filterChartRowsByMode(mergedMarginHistory, financialChartMode);
 const marginChartRowsWithFallback = (rows, key, value) =>
   financialChartMode === "quarterly"
@@ -4073,15 +4121,15 @@ const metricCardItems = [
   { label: "Profit / Employee", raw: stockData.profitsPerEmployee, value: metricValue(formatLargeDollars(stockData.profitsPerEmployee)) },
   {
     label: stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin",
-    raw: stockData.isFinancialCompany ? stockData.bankMetrics?.netInterestRevenueMix : stockData.grossMargins,
-    value: metricValue(formatPercent(stockData.isFinancialCompany ? stockData.bankMetrics?.netInterestRevenueMix : stockData.grossMargins))
+    raw: stockData.isFinancialCompany ? stockData.bankMetrics?.netInterestRevenueMix : latestGrossMarginMetricValue,
+    value: metricValue(formatPercent(stockData.isFinancialCompany ? stockData.bankMetrics?.netInterestRevenueMix : latestGrossMarginMetricValue))
   },
   {
     label: stockData.isFinancialCompany ? "Pre-Tax Margin" : "Operating Margin",
-    raw: stockData.isFinancialCompany ? stockData.bankMetrics?.preTaxMargin : stockData.operatingMargins,
-    value: metricValue(formatPercent(stockData.isFinancialCompany ? stockData.bankMetrics?.preTaxMargin : stockData.operatingMargins))
+    raw: stockData.isFinancialCompany ? stockData.bankMetrics?.preTaxMargin : latestOperatingMarginMetricValue,
+    value: metricValue(formatPercent(stockData.isFinancialCompany ? stockData.bankMetrics?.preTaxMargin : latestOperatingMarginMetricValue))
   },
-  { label: "Profit Margin", raw: stockData.profitMargins, value: metricValue(formatPercent(stockData.profitMargins)) },
+  { label: "Profit Margin", raw: latestProfitMarginMetricValue, value: metricValue(formatPercent(latestProfitMarginMetricValue)) },
   { label: "Pretax Margin", raw: stockData.pretaxMargin, value: metricValue(formatPercent(stockData.pretaxMargin)) },
   { label: "EBITDA Margin", raw: stockData.ebitdaMargin, value: metricValue(formatPercent(stockData.ebitdaMargin)) },
   { label: "EBIT Margin", raw: stockData.ebitMargin, value: metricValue(formatPercent(stockData.ebitMargin)) },

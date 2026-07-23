@@ -71,8 +71,8 @@ const FINANCIAL_HISTORY_VERSION = 154;
 const STOCK_ESTIMATE_VERSION = 21;
 const INTERIM_HISTORY_VERSION = 6;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
-const BALANCE_SHEET_METRICS_VERSION = 11;
-const VALUATION_METRICS_VERSION = 7;
+const BALANCE_SHEET_METRICS_VERSION = 12;
+const VALUATION_METRICS_VERSION = 8;
 const EARNINGS_CALL_VERSION = 18;
 const STOCK_ANALYSIS_VALUATION_FIELDS = [
   "pe",
@@ -885,7 +885,19 @@ async function fetchFmpStableValuationMetrics(ticker) {
   if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return {};
 
   try {
-    const [metricsData, ratiosData, estimatesData, growthData, cashflowGrowthData, cashflowData, ratingData, priceTargetData] = await Promise.all([
+    const [
+      metricsData,
+      ratiosData,
+      estimatesData,
+      growthData,
+      cashflowGrowthData,
+      cashflowData,
+      incomeQuarterData,
+      quoteData,
+      profileData,
+      ratingData,
+      priceTargetData
+    ] = await Promise.all([
       getFmpData(symbol, "stable key metrics", [
         "/stable/key-metrics-ttm?symbol={ticker}"
       ]),
@@ -904,6 +916,15 @@ async function fetchFmpStableValuationMetrics(ticker) {
       getFmpData(symbol, "stable cash flow statement for metrics", [
         "/stable/cash-flow-statement?symbol={ticker}&period=quarter&limit=1"
       ]),
+      getFmpData(symbol, "stable income statement for metrics", [
+        "/stable/income-statement?symbol={ticker}&period=quarter&limit=1"
+      ]),
+      getFmpData(symbol, "stable quote for valuation metrics", [
+        "/stable/quote?symbol={ticker}"
+      ]),
+      getFmpData(symbol, "stable profile for valuation metrics", [
+        "/stable/profile?symbol={ticker}"
+      ]),
       getFmpData(symbol, "stable rating snapshot", [
         "/stable/ratings-snapshot?symbol={ticker}"
       ]),
@@ -916,6 +937,9 @@ async function fetchFmpStableValuationMetrics(ticker) {
     const growth = Array.isArray(growthData) ? growthData[0] || {} : growthData || {};
     const cashflowGrowth = Array.isArray(cashflowGrowthData) ? cashflowGrowthData[0] || {} : cashflowGrowthData || {};
     const cashflow = Array.isArray(cashflowData) ? cashflowData[0] || {} : cashflowData || {};
+    const incomeQuarter = Array.isArray(incomeQuarterData) ? incomeQuarterData[0] || {} : incomeQuarterData || {};
+    const quote = Array.isArray(quoteData) ? quoteData[0] || {} : quoteData || {};
+    const profile = Array.isArray(profileData) ? profileData[0] || {} : profileData || {};
     const rating = Array.isArray(ratingData) ? ratingData[0] || {} : ratingData || {};
     const priceTarget = Array.isArray(priceTargetData) ? priceTargetData[0] || {} : priceTargetData || {};
     const estimates = normalizeFmpAnnualEstimateRows(estimatesData, { symbol, maxFutureYears: 3 });
@@ -930,6 +954,7 @@ async function fetchFmpStableValuationMetrics(ticker) {
     const currentPrice = firstFiniteNumber(
       metrics.stockPrice,
       metrics.price,
+      quote.price,
       marketCap && metrics.weightedAverageShsOut
         ? marketCap / metrics.weightedAverageShsOut
         : null
@@ -941,12 +966,27 @@ async function fetchFmpStableValuationMetrics(ticker) {
     const tangibleBookValuePerShare = firstFiniteNumber(ratios.tangibleBookValuePerShareTTM);
     const freeCashFlowPerShare = firstFiniteNumber(ratios.freeCashFlowPerShareTTM);
     const revenuePerShare = firstFiniteNumber(ratios.revenuePerShareTTM);
+    const netIncomePerShare = firstFiniteNumber(ratios.netIncomePerShareTTM);
+    const employeeCount = firstFiniteNumber(profile.fullTimeEmployees, profile.employeeCount, quote.fullTimeEmployees, metrics.fullTimeEmployees);
+    const impliedShares =
+      marketCap && currentPrice ? marketCap / currentPrice : null;
+    const ttmRevenue = revenuePerShare !== null && impliedShares ? revenuePerShare * impliedShares : null;
+    const ttmNetIncome = netIncomePerShare !== null && impliedShares ? netIncomePerShare * impliedShares : null;
+    const quarterRevenue = firstFiniteNumber(incomeQuarter.revenue);
+    const quarterEbitda = firstFiniteNumber(incomeQuarter.ebitda);
+    const quarterEbit = firstFiniteNumber(incomeQuarter.ebit);
 
     return {
       pe: firstFiniteNumber(ratios.priceToEarningsRatioTTM),
-      forwardPE: firstFiniteNumber(currentPrice && nextYearEps ? currentPrice / nextYearEps : null),
+      forwardPE: firstFiniteNumber(
+        currentPrice && toNumberOrNull(currentYearEstimate.epsAvg ?? currentYearEstimate.estimatedEpsAvg)
+          ? currentPrice / toNumberOrNull(currentYearEstimate.epsAvg ?? currentYearEstimate.estimatedEpsAvg)
+          : null
+      ),
       forwardPS: firstFiniteNumber(
-        marketCap && nextRevenue ? marketCap / nextRevenue : null,
+        marketCap && toNumberOrNull(currentYearEstimate.revenueAvg ?? currentYearEstimate.estimatedRevenueAvg)
+          ? marketCap / toNumberOrNull(currentYearEstimate.revenueAvg ?? currentYearEstimate.estimatedRevenueAvg)
+          : null,
         ratios.priceToSalesRatioTTM
       ),
       priceToSales: firstFiniteNumber(ratios.priceToSalesRatioTTM),
@@ -963,8 +1003,14 @@ async function fetchFmpStableValuationMetrics(ticker) {
         ratios.forwardPriceToEarningsGrowthRatioTTM
       ),
       pretaxMargin: percent(ratios.pretaxProfitMarginTTM),
-      ebitdaMargin: percent(ratios.ebitdaMarginTTM),
-      ebitMargin: percent(ratios.ebitMarginTTM),
+      ebitdaMargin: firstFiniteNumber(
+        quarterRevenue && quarterEbitda !== null ? (quarterEbitda / quarterRevenue) * 100 : null,
+        percent(ratios.ebitdaMarginTTM)
+      ),
+      ebitMargin: firstFiniteNumber(
+        quarterRevenue && quarterEbit !== null ? (quarterEbit / quarterRevenue) * 100 : null,
+        percent(ratios.ebitMarginTTM)
+      ),
       fcfMargin: percent(
         freeCashFlowPerShare !== null && revenuePerShare
           ? freeCashFlowPerShare / revenuePerShare
@@ -989,6 +1035,13 @@ async function fetchFmpStableValuationMetrics(ticker) {
         cashflow.operatingCashflow,
         cashflow.netCashProvidedByOperatingActivities
       ),
+      revenuePerEmployee: firstFiniteNumber(
+        employeeCount && ttmRevenue !== null ? ttmRevenue / employeeCount : null
+      ),
+      profitsPerEmployee: firstFiniteNumber(
+        employeeCount && ttmNetIncome !== null ? ttmNetIncome / employeeCount : null
+      ),
+      employeeCount,
       bookValuePerShare: firstFiniteNumber(ratios.bookValuePerShareTTM),
       workingCapital: firstFiniteNumber(metrics.workingCapitalTTM),
       marketCap,
@@ -1060,8 +1113,8 @@ async function fetchFmpStableBalanceSheetMetrics(ticker) {
         ? (shortTermDebt || 0) + (longTermDebt || 0)
         : null;
     const totalCash = firstFiniteNumber(
-      row.cashAndCashEquivalents,
       row.cashAndShortTermInvestments,
+      row.cashAndCashEquivalents,
       row.cash
     );
     const totalDebt = firstFiniteNumber(
@@ -10099,14 +10152,14 @@ async function fetchStockData(ticker) {
   );
   const grossMargins = isFinancialCompany
     ? firstNumber(
-        fmpStableValuation.grossMargins,
         latestVisibleMarginRow.grossMargin,
+        fmpStableValuation.grossMargins,
         secAnnualMargins.grossMargins,
         yahooSupplementalData.grossMargins
       )
     : firstNumber(
-        fmpStableValuation.grossMargins,
         latestVisibleMarginRow.grossMargin,
+        fmpStableValuation.grossMargins,
         secAnnualMargins.grossMargins,
         metrics.grossMarginTTM,
         yahooSupplementalData.grossMargins,
@@ -10114,22 +10167,22 @@ async function fetchStockData(ticker) {
       );
   const operatingMargins = isFinancialCompany
     ? firstNumber(
-        fmpStableValuation.operatingMargins,
         latestVisibleMarginRow.operatingMargin,
+        fmpStableValuation.operatingMargins,
         secAnnualMargins.operatingMargins,
         yahooSupplementalData.operatingMargins
       )
     : firstNumber(
-        fmpStableValuation.operatingMargins,
         latestVisibleMarginRow.operatingMargin,
+        fmpStableValuation.operatingMargins,
         secAnnualMargins.operatingMargins,
         metrics.operatingMarginTTM,
         yahooSupplementalData.operatingMargins,
         annualMargin(latestAnnual.operatingIncome, latestAnnual.revenue)
       );
   const profitMargins = firstNumber(
-    fmpStableValuation.profitMargins,
     latestVisibleMarginRow.profitMargin,
+    fmpStableValuation.profitMargins,
     secAnnualMargins.profitMargins,
     metrics.netProfitMarginTTM,
     yahooSupplementalData.profitMargins,
