@@ -1367,8 +1367,8 @@ const API_URL =
 const FINANCIAL_HISTORY_VERSION = 154;
 const STOCK_ESTIMATE_VERSION = 21;
 const INTERIM_HISTORY_VERSION = 6;
-const VALUATION_METRICS_VERSION = 5;
-const BALANCE_SHEET_METRICS_VERSION = 10;
+const VALUATION_METRICS_VERSION = 7;
+const BALANCE_SHEET_METRICS_VERSION = 11;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const MIN_DISPLAY_INTERIM_HISTORY_ROWS = 4;
 
@@ -1383,15 +1383,21 @@ const handleCompanyLogoError = (event, symbol) => {
   const image = event.currentTarget;
   const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
   const fallbackUrls = [
+    `https://images.financialmodelingprep.com/symbol/${safeSymbol}.png`,
     `https://financialmodelingprep.com/image-stock/${safeSymbol}.png`,
+    `https://eodhd.com/img/logos/US/${safeSymbol}.png`,
+    getDefaultCompanyLogoUrl(symbol),
     `https://assets.parqet.com/logos/symbol/${safeSymbol}?format=png`
-  ];
+  ].filter(Boolean);
   const stage = Number(image.dataset.logoFallbackStage || 0);
 
-  if (fallbackUrls[stage]) {
-    image.dataset.logoFallbackStage = String(stage + 1);
-    image.src = fallbackUrls[stage];
-    return;
+  for (let index = stage; index < fallbackUrls.length; index += 1) {
+    const nextUrl = fallbackUrls[index];
+    if (nextUrl && nextUrl !== image.src) {
+      image.dataset.logoFallbackStage = String(index + 1);
+      image.src = nextUrl;
+      return;
+    }
   }
 
   image.style.display = "none";
@@ -3602,6 +3608,10 @@ const latestOperatingCashflowFromChart = latestChartMetricDollars(
   operatingCashflowHistory,
   "operatingCashflow"
 );
+const latestFreeCashflowMetricValue =
+  isNumber(stockData?.freeCashflow) ? stockData.freeCashflow / 1e9 : latestFreeCashflowFromChart;
+const latestOperatingCashflowMetricValue =
+  isNumber(stockData?.operatingCashflow) ? stockData.operatingCashflow / 1e9 : latestOperatingCashflowFromChart;
 const sharesOutstandingHistory =
   chartRowsWithCurrentFallbackForMode(
     filterChartRowsByMode(buildChartRows(financialHistory, "sharesOutstanding"), financialChartMode),
@@ -4029,6 +4039,88 @@ const balanceSheetValue = (value) =>
   (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
     : stockValue(value);
+const hasMetricCardValue = (value) =>
+  isNumber(value) || (typeof value === "string" && value.trim() && value !== "N/A");
+const shouldRenderMetricCard = (value) =>
+  hasMetricCardValue(value) || areMetricsRefreshing || isBalanceSheetMetricsRefreshing;
+const metricCardItems = [
+  { label: "Market Cap", raw: stockData.marketCap, value: metricValue(formatBillions(stockData.marketCap)) },
+  { label: "Cash & Equivalents", raw: stockData.cashAndCashEquivalents ?? stockData.totalCash, value: balanceSheetValue(formatBillions(stockData.cashAndCashEquivalents ?? stockData.totalCash)) },
+  { label: "Total Debt", raw: stockData.totalDebt, value: balanceSheetValue(formatBillions(stockData.totalDebt)) },
+  { label: "Net Cash", raw: stockData.netCash, value: balanceSheetValue(formatBillions(stockData.netCash)) },
+  { label: "Net Cash / Share", raw: stockData.netCashPerShare, value: balanceSheetValue(formatPrice(stockData.netCashPerShare)) },
+  { label: "Equity Book Value", raw: stockData.equityBookValue, value: balanceSheetValue(formatBillions(stockData.equityBookValue)) },
+  { label: "Book Value / Share", raw: stockData.bookValuePerShare, value: balanceSheetValue(formatPrice(stockData.bookValuePerShare)) },
+  { label: "Working Capital", raw: stockData.workingCapital, value: balanceSheetValue(formatBillions(stockData.workingCapital)) },
+  { label: "Current P/E", raw: stockData.pe, value: metricValue(formatPlain(stockData.pe)) },
+  { label: "Forward P/E", raw: stockData.forwardPE, value: metricValue(formatPlain(stockData.forwardPE)) },
+  { label: "Forward P/S", raw: stockData.forwardPS, value: metricValue(formatPlain(stockData.forwardPS)) },
+  { label: "PEG Ratio", raw: stockData.pegRatio, value: metricValue(formatPlain(stockData.pegRatio)) },
+  { label: "Price-to-Sales", raw: stockData.priceToSales, value: metricValue(formatPlain(stockData.priceToSales)) },
+  { label: "Price-to-Book", raw: stockData.priceToBook, value: metricValue(formatPlain(stockData.priceToBook)) },
+  { label: "P/TBV Ratio", raw: stockData.priceToTangibleBook, value: metricValue(formatPlain(stockData.priceToTangibleBook)) },
+  { label: "P/FCF Ratio", raw: stockData.priceToFreeCashflow, value: metricValue(formatPlain(stockData.priceToFreeCashflow)) },
+  { label: "P/OCF Ratio", raw: stockData.priceToOperatingCashflow, value: metricValue(formatPlain(stockData.priceToOperatingCashflow)) },
+  { label: "Revenue Growth", raw: stockData.revenueGrowth, value: metricValue(formatPercent(stockData.revenueGrowth)) },
+  { label: "Earnings Growth", raw: stockData.earningsGrowth, value: metricValue(formatPercent(stockData.earningsGrowth)) },
+  {
+    label: "Shares Outstanding",
+    raw: stockData.sharesOutstanding,
+    value: metricValue(stockData.sharesOutstanding ? `${(stockData.sharesOutstanding / 1000).toFixed(2)}B` : "N/A")
+  },
+  { label: "Employee Count", raw: stockData.employeeCount, value: metricValue(formatSharesCount(stockData.employeeCount)) },
+  { label: "Revenue / Employee", raw: stockData.revenuePerEmployee, value: metricValue(formatLargeDollars(stockData.revenuePerEmployee)) },
+  { label: "Profit / Employee", raw: stockData.profitsPerEmployee, value: metricValue(formatLargeDollars(stockData.profitsPerEmployee)) },
+  {
+    label: stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin",
+    raw: stockData.isFinancialCompany ? stockData.bankMetrics?.netInterestRevenueMix : stockData.grossMargins,
+    value: metricValue(formatPercent(stockData.isFinancialCompany ? stockData.bankMetrics?.netInterestRevenueMix : stockData.grossMargins))
+  },
+  {
+    label: stockData.isFinancialCompany ? "Pre-Tax Margin" : "Operating Margin",
+    raw: stockData.isFinancialCompany ? stockData.bankMetrics?.preTaxMargin : stockData.operatingMargins,
+    value: metricValue(formatPercent(stockData.isFinancialCompany ? stockData.bankMetrics?.preTaxMargin : stockData.operatingMargins))
+  },
+  { label: "Profit Margin", raw: stockData.profitMargins, value: metricValue(formatPercent(stockData.profitMargins)) },
+  { label: "Pretax Margin", raw: stockData.pretaxMargin, value: metricValue(formatPercent(stockData.pretaxMargin)) },
+  { label: "EBITDA Margin", raw: stockData.ebitdaMargin, value: metricValue(formatPercent(stockData.ebitdaMargin)) },
+  { label: "EBIT Margin", raw: stockData.ebitMargin, value: metricValue(formatPercent(stockData.ebitMargin)) },
+  { label: "FCF Margin", raw: stockData.fcfMargin, value: metricValue(formatPercent(stockData.fcfMargin)) },
+  { label: "ROE", raw: stockData.returnOnEquity, value: metricValue(formatPercent(stockData.returnOnEquity)) },
+  { label: "ROA", raw: stockData.returnOnAssets, value: metricValue(formatPercent(stockData.returnOnAssets)) },
+  { label: "ROIC", raw: stockData.returnOnInvestedCapital, value: metricValue(formatPercent(stockData.returnOnInvestedCapital)) },
+  { label: "ROCE", raw: stockData.returnOnCapitalEmployed, value: metricValue(formatPercent(stockData.returnOnCapitalEmployed)) },
+  { label: "WACC", raw: stockData.weightedAverageCostOfCapital, value: metricValue(formatPercent(stockData.weightedAverageCostOfCapital)) },
+  {
+    label: stockData.isFinancialCompany ? "Annual Cash Change" : "Free Cash Flow",
+    raw: stockData.isFinancialCompany ? stockData.bankMetrics?.annualCashChange : latestFreeCashflowMetricValue,
+    value: metricValue(formatBillions(stockData.isFinancialCompany ? stockData.bankMetrics?.annualCashChange : latestFreeCashflowMetricValue))
+  },
+  !stockData.isFinancialCompany && {
+    label: "Operating Cash Flow",
+    raw: latestOperatingCashflowMetricValue,
+    value: metricValue(formatBillions(latestOperatingCashflowMetricValue))
+  },
+  { label: "Price Target", raw: stockData.targetMean, value: metricValue(formatPrice(stockData.targetMean)) },
+  {
+    label: "Analyst Rating",
+    raw: stockData.analystRatingText || stockData.recommendationKey,
+    value: metricValue(stockData.analystRatingText || stockData.recommendationKey || "N/A")
+  },
+  {
+    label: "52-Week Range",
+    raw: isNumber(stockData.fiftyTwoWeekLow) && isNumber(stockData.fiftyTwoWeekHigh) ? `${stockData.fiftyTwoWeekLow}-${stockData.fiftyTwoWeekHigh}` : null,
+    className: "metric-range-card",
+    valueClassName: "card-range-value",
+    value: isNumber(stockData.fiftyTwoWeekLow) && isNumber(stockData.fiftyTwoWeekHigh) ? (
+      <>
+        <span>{formatPrice(stockData.fiftyTwoWeekLow)}</span>
+        <span className="card-range-divider">to</span>
+        <span>{formatPrice(stockData.fiftyTwoWeekHigh)}</span>
+      </>
+    ) : metricValue("N/A")
+  }
+].filter(Boolean);
 const estimateValue = (value) =>
   (isInitialStockLoad || areEstimatesRefreshing) && (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
@@ -5193,11 +5285,11 @@ return (
 
         <div className="stock-header">
 
-          {(stockData.logo || savedSymbolDetails[ticker]?.logo) && (
+          {(ticker || stockData.symbol) && (
             <img
               key={ticker}
               className="stock-company-logo"
-              src={stockData.logo || savedSymbolDetails[ticker]?.logo}
+              src={stockData.logo || savedSymbolDetails[ticker]?.logo || getDefaultCompanyLogoUrl(stockData.symbol || ticker)}
               alt={`${stockData.name} logo`}
               onError={(event) => handleCompanyLogoError(event, ticker)}
             />
@@ -5973,7 +6065,7 @@ return (
 <div className="historical-chart-grid">
   <HistoricalLineChart
     title="Historical Year-End P/E"
-    data={readyHistoryRows(historicalPeHistory)}
+    data={historicalPeHistory}
     dataKey="pe"
     color="#60a5fa"
     formatter={(value) => `${Number(value).toFixed(1)}x`}
@@ -6046,6 +6138,21 @@ return (
         {/* METRICS */}
 
    <div className="grid section-anchor" id="metrics">
+    {metricCardItems
+      .filter((item) => shouldRenderMetricCard(item.raw))
+      .map((item) => (
+        <div key={item.label} className={`card ${item.className || ""}`.trim()}>
+          <div className="card-title">
+            {item.label}
+          </div>
+          <div className={`card-value ${item.valueClassName || ""}`.trim()}>
+            {item.value}
+          </div>
+        </div>
+      ))}
+  </div>
+
+  <div className="grid" style={{ display: "none" }} aria-hidden="true">
 
   <div className="card">
     <div className="card-title">
@@ -6416,7 +6523,7 @@ return (
 {metricValue(formatBillions(
   stockData.isFinancialCompany
     ? stockData.bankMetrics?.annualCashChange
-    : latestFreeCashflowFromChart
+    : latestFreeCashflowMetricValue
 ))}
     </div>
   </div>
@@ -6428,7 +6535,7 @@ return (
     </div>
 
     <div className="card-value">
-{metricValue(formatBillions(latestOperatingCashflowFromChart))}
+{metricValue(formatBillions(latestOperatingCashflowMetricValue))}
     </div>
   </div>
   )}
@@ -6984,9 +7091,9 @@ return (
       <h2 className="section-title">Stock Projections</h2>
     </div>
     <div className="projections-company">
-      {stockData.logo && (
+      {(stockData.logo || stockData.symbol || ticker) && (
         <img
-          src={stockData.logo}
+          src={stockData.logo || getDefaultCompanyLogoUrl(stockData.symbol || ticker)}
           alt={`${stockData.symbol || ticker} logo`}
           onError={(event) => handleCompanyLogoError(event, stockData.symbol || ticker)}
         />
