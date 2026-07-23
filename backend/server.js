@@ -49,6 +49,7 @@ const companyDocumentsCache = new Map();
 const companyDocumentsInFlight = new Map();
 const stockSearchCache = new Map();
 const stockScreenerCache = new Map();
+const stockScreenerOptionsCache = new Map();
 const earningsCallPeriodsCache = new Map();
 const earningsCallTranscriptCache = new Map();
 const similarCompanyMetricCache = new Map();
@@ -18410,6 +18411,66 @@ res.json(responseData);
 setFmpCooldown(err, "stock screener", "screener");
 console.log("FMP stock screener skipped:", err.response?.status || err.message);
 res.status(500).json({ results: [], error: "Stock screener data is not available yet." });
+}
+});
+
+app.get("/api/stock-screener/options", async (req, res) => {
+try {
+if (!process.env.FMP_API_KEY || !canUseFmp()) {
+  return res.json({ sectors: [], industries: [], exchanges: [], countries: [], updatedAt: new Date().toISOString() });
+}
+
+const cacheKey = "stock-screener-options";
+const cached = stockScreenerOptionsCache.get(cacheKey);
+if (cached && cached.expiresAt > Date.now()) return res.json(cached.data);
+
+const fetchOptionList = async (path, key, mapper = null) => {
+  try {
+    const { data } = await axios.get(`https://financialmodelingprep.com/stable/${path}`, {
+      params: { apikey: process.env.FMP_API_KEY },
+      timeout: 6000
+    });
+
+    return [...new Set((Array.isArray(data) ? data : [])
+      .map((row) => {
+        if (mapper) return mapper(row);
+        return firstText(row?.[key], row);
+      })
+      .map((value) => String(value || "").trim())
+      .filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b));
+  } catch (err) {
+    console.log(`FMP ${path} options skipped:`, err.response?.status || err.message);
+    return [];
+  }
+};
+
+const [sectors, industries, exchanges, countries] = await Promise.all([
+  fetchOptionList("available-sectors", "sector"),
+  fetchOptionList("available-industries", "industry"),
+  fetchOptionList("available-exchanges", "exchange", (row) => firstText(row?.exchange, row?.name)),
+  fetchOptionList("available-countries", "country")
+]);
+
+const responseData = {
+  sectors,
+  industries,
+  exchanges,
+  countries,
+  updatedAt: new Date().toISOString(),
+  source: "FMP screener options"
+};
+
+stockScreenerOptionsCache.set(cacheKey, {
+  data: responseData,
+  expiresAt: Date.now() + 24 * 60 * 60 * 1000
+});
+
+res.json(responseData);
+} catch (err) {
+setFmpCooldown(err, "stock screener options", "screener-options");
+console.log("FMP stock screener options skipped:", err.response?.status || err.message);
+res.status(500).json({ sectors: [], industries: [], exchanges: [], countries: [], error: "Stock screener options are not available yet." });
 }
 });
 

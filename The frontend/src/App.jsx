@@ -2332,6 +2332,9 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [screenerUpdatedAt, setScreenerUpdatedAt] =
     useState(null);
 
+  const [screenerOptions, setScreenerOptions] =
+    useState({ sectors: [], industries: [], exchanges: [], countries: [] });
+
   const [marketClockNow, setMarketClockNow] =
     useState(() => new Date());
 
@@ -2616,6 +2619,41 @@ useEffect(() => {
     isActive = false;
   };
 }, [activePage, appliedScreenerFilters]);
+
+useEffect(() => {
+  if (activePage !== "stock-screener") return;
+  if (
+    screenerOptions.sectors.length ||
+    screenerOptions.industries.length ||
+    screenerOptions.exchanges.length ||
+    screenerOptions.countries.length
+  ) return;
+
+  let isActive = true;
+
+  const loadScreenerOptions = async () => {
+    try {
+      const response = await axios.get(`${API_URL}/api/stock-screener/options`, {
+        timeout: 8000
+      });
+      if (!isActive) return;
+      setScreenerOptions({
+        sectors: Array.isArray(response.data?.sectors) ? response.data.sectors : [],
+        industries: Array.isArray(response.data?.industries) ? response.data.industries : [],
+        exchanges: Array.isArray(response.data?.exchanges) ? response.data.exchanges : [],
+        countries: Array.isArray(response.data?.countries) ? response.data.countries : []
+      });
+    } catch (error) {
+      console.error("Stock screener options failed", error);
+    }
+  };
+
+  loadScreenerOptions();
+
+  return () => {
+    isActive = false;
+  };
+}, [activePage, screenerOptions]);
 
 useEffect(() => {
   if (activePage !== "market-overview") return;
@@ -5183,14 +5221,20 @@ const screenerNumberInput = (key, label, placeholder = "Any") => (
   </label>
 );
 
-const screenerTextInput = (key, label, placeholder = "Any") => (
+const screenerSelectInput = (key, label, options) => (
   <label className="screener-filter" key={key}>
     <span>{label}</span>
-    <input
+    <select
       value={screenerFilters[key]}
       onChange={(event) => updateScreenerFilter(key, event.target.value)}
-      placeholder={placeholder}
-    />
+    >
+      <option value="">Any</option>
+      {[...new Set([screenerFilters[key], ...options].filter(Boolean))].map((option) => (
+        <option key={`${key}-${option}`} value={option}>
+          {option}
+        </option>
+      ))}
+    </select>
   </label>
 );
 
@@ -5760,10 +5804,10 @@ return (
             {screenerNumberInput("dividendLowerThan", "Dividend Lower Than")}
             {screenerNumberInput("volumeMoreThan", "Volume More Than")}
             {screenerNumberInput("volumeLowerThan", "Volume Lower Than")}
-            {screenerTextInput("sector", "Sector", "Technology")}
-            {screenerTextInput("industry", "Industry", "Semiconductors")}
-            {screenerTextInput("exchange", "Exchange", "NASDAQ")}
-            {screenerTextInput("country", "Country", "US")}
+            {screenerSelectInput("sector", "Sector", screenerOptions.sectors)}
+            {screenerSelectInput("industry", "Industry", screenerOptions.industries)}
+            {screenerSelectInput("exchange", "Exchange", screenerOptions.exchanges)}
+            {screenerSelectInput("country", "Country", screenerOptions.countries)}
             <label className="screener-filter">
               <span>Asset Type</span>
               <select
