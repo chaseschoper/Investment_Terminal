@@ -93,6 +93,17 @@ const DEFAULT_SCREENER_FILTERS = {
   limit: "50"
 };
 
+const FINANCIAL_STATEMENT_TYPES = [
+  { id: "income", label: "Income Statement" },
+  { id: "balance", label: "Balance Sheet" },
+  { id: "cashflow", label: "Cash Flow" }
+];
+
+const FINANCIAL_STATEMENT_PERIODS = [
+  { id: "annual", label: "Annual" },
+  { id: "quarter", label: "Quarterly" }
+];
+
 const HOME_FEATURES = [
   {
     id: "market-overview",
@@ -317,6 +328,23 @@ const formatPlain = (value) =>
 
 const formatPrice = (value) =>
   isNumber(value) ? `$${value.toFixed(2)}` : "N/A";
+
+const formatStatementValue = (value, row = {}) => {
+  if (!isNumber(value)) return "-";
+  const key = String(row.key || "").toLowerCase();
+  const label = String(row.label || "").toLowerCase();
+  if (key.includes("ratio") || label.includes("margin")) {
+    const percentValue = Math.abs(value) <= 1 ? value * 100 : value;
+    return `${percentValue.toFixed(2)}%`;
+  }
+  if (key === "eps" || key === "epsdiluted" || label.includes("eps")) {
+    return value.toFixed(2);
+  }
+  if (label.includes("shares")) {
+    return formatSharesCount(value);
+  }
+  return formatLargeDollars(value);
+};
 
 const formatShortDate = (value) => {
   if (!value) return "N/A";
@@ -2345,6 +2373,27 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [screenerOptions, setScreenerOptions] =
     useState({ sectors: [], industries: [], exchanges: [], countries: [] });
 
+  const [financialStatementInput, setFinancialStatementInput] =
+    useState("NVDA");
+
+  const [financialStatementTicker, setFinancialStatementTicker] =
+    useState("NVDA");
+
+  const [financialStatementType, setFinancialStatementType] =
+    useState("income");
+
+  const [financialStatementPeriod, setFinancialStatementPeriod] =
+    useState("annual");
+
+  const [financialStatementData, setFinancialStatementData] =
+    useState(null);
+
+  const [isFinancialStatementLoading, setIsFinancialStatementLoading] =
+    useState(false);
+
+  const [financialStatementError, setFinancialStatementError] =
+    useState("");
+
   const [marketClockNow, setMarketClockNow] =
     useState(() => new Date());
 
@@ -2664,6 +2713,42 @@ useEffect(() => {
     isActive = false;
   };
 }, [activePage, screenerOptions]);
+
+useEffect(() => {
+  if (activePage !== "financial-statements" || !financialStatementTicker) return;
+
+  let isActive = true;
+
+  const loadFinancialStatements = async () => {
+    setIsFinancialStatementLoading(true);
+    setFinancialStatementError("");
+
+    try {
+      const response = await axios.get(`${API_URL}/api/financial-statements/${financialStatementTicker}`, {
+        params: {
+          statement: financialStatementType,
+          period: financialStatementPeriod
+        },
+        timeout: 9000
+      });
+      if (!isActive) return;
+      setFinancialStatementData(response.data);
+    } catch (error) {
+      console.error("Financial statements failed", error);
+      if (!isActive) return;
+      setFinancialStatementError("Financial statements are not available yet for that ticker.");
+      setFinancialStatementData(null);
+    } finally {
+      if (isActive) setIsFinancialStatementLoading(false);
+    }
+  };
+
+  loadFinancialStatements();
+
+  return () => {
+    isActive = false;
+  };
+}, [activePage, financialStatementTicker, financialStatementType, financialStatementPeriod]);
 
 useEffect(() => {
   if (activePage !== "market-overview") return;
@@ -5433,6 +5518,28 @@ const resetStockScreener = () => {
   setAppliedScreenerFilters(DEFAULT_SCREENER_FILTERS);
 };
 
+const handleFinancialStatementSearch = async (event) => {
+  event.preventDefault();
+  const value = financialStatementInput.trim();
+  if (!value) return;
+  let symbol = value.toUpperCase();
+  if (!/^[A-Z0-9.-]{1,12}$/.test(symbol) || /\s/.test(value)) {
+    try {
+      const { data } = await axios.get(`${API_URL}/api/search-stocks`, {
+        params: { q: value },
+        timeout: 4500
+      });
+      const firstMatch = Array.isArray(data?.results) ? data.results[0] : null;
+      if (firstMatch?.symbol) symbol = String(firstMatch.symbol).toUpperCase();
+    } catch (error) {
+      console.error("Financial statement search lookup failed", error);
+    }
+  }
+  if (!symbol) return;
+  setFinancialStatementInput(symbol);
+  setFinancialStatementTicker(symbol);
+};
+
 const handleStockSearchSubmit = async (event, destinationPage = "overview") => {
   event.preventDefault();
   const symbol = await resolveSearchInputToSymbol(searchInput);
@@ -5634,6 +5741,7 @@ return (
       {[
         ["home", "Home"],
         ["overview", "Stock Overview"],
+        ["financial-statements", "Financial Statements"],
         ["projections", "Projections"],
         ["comparison", "Compare"],
         ["portfolio", "Portfolio"],
@@ -6104,6 +6212,112 @@ return (
             </div>
           ) : (
             <div className="heatmap-loading">No stocks match those filters yet.</div>
+          )}
+        </div>
+      </section>
+    )}
+
+
+    {activePage === "financial-statements" && (
+      <section className="financial-statements-page" id="financial-statements" aria-labelledby="financial-statements-title">
+        <div className="section-heading-row screener-heading">
+          <div>
+            <span className="home-feature-label">FMP Financial Statements</span>
+            <h2 id="financial-statements-title">Financial Statements</h2>
+            <p>Search a company and review income statement, balance sheet, and cash flow lines across the latest annual or quarterly periods.</p>
+          </div>
+          {financialStatementData?.updatedAt && (
+            <span className="market-overview-updated">
+              Updated {new Date(financialStatementData.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+            </span>
+          )}
+        </div>
+
+        <form className="financial-statement-toolbar" onSubmit={handleFinancialStatementSearch}>
+          <label className="financial-statement-search">
+            <span>Ticker or company</span>
+            <input
+              value={financialStatementInput}
+              onChange={(event) => setFinancialStatementInput(event.target.value)}
+              placeholder="Search NVDA, Apple, Nike..."
+            />
+          </label>
+          <button type="submit" className="stock-search-button">
+            {isFinancialStatementLoading ? "Loading..." : "Search"}
+          </button>
+        </form>
+
+        <div className="financial-statement-controls">
+          <div className="company-document-tabs" role="tablist" aria-label="Statement type">
+            {FINANCIAL_STATEMENT_TYPES.map((statement) => (
+              <button
+                key={statement.id}
+                type="button"
+                className={financialStatementType === statement.id ? "active" : ""}
+                onClick={() => setFinancialStatementType(statement.id)}
+              >
+                {statement.label}
+              </button>
+            ))}
+          </div>
+          <div className="financial-statement-period-toggle" role="tablist" aria-label="Statement period">
+            {FINANCIAL_STATEMENT_PERIODS.map((period) => (
+              <button
+                key={period.id}
+                type="button"
+                className={financialStatementPeriod === period.id ? "active" : ""}
+                onClick={() => setFinancialStatementPeriod(period.id)}
+              >
+                {period.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="financial-statement-table-panel">
+          <div className="screener-results-heading">
+            <span>
+              {isFinancialStatementLoading
+                ? "Loading statement..."
+                : `${financialStatementTicker} ${financialStatementData?.statementLabel || "Financial Statement"}`}
+            </span>
+            <strong>{financialStatementPeriod === "annual" ? "Last 5 years" : "Last 5 quarters"}</strong>
+          </div>
+
+          {financialStatementError ? (
+            <div className="heatmap-loading">{financialStatementError}</div>
+          ) : isFinancialStatementLoading && !financialStatementData ? (
+            <div className="heatmap-loading">Loading financial statements...</div>
+          ) : financialStatementData?.rows?.length ? (
+            <div className="financial-statement-table-wrap">
+              <table className="financial-statement-table">
+                <thead>
+                  <tr>
+                    <th>Breakdown</th>
+                    {financialStatementData.periods.map((period) => (
+                      <th key={period.key}>
+                        <span>{period.label}</span>
+                        {period.date && <small>{formatShortDate(period.date)}</small>}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {financialStatementData.rows.map((row) => (
+                    <tr key={row.key}>
+                      <th>{row.label}</th>
+                      {row.values.map((value, index) => (
+                        <td key={`${row.key}-${financialStatementData.periods[index]?.key || index}`}>
+                          {formatStatementValue(value, row)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="heatmap-loading">No financial statement data is available for this ticker yet.</div>
           )}
         </div>
       </section>

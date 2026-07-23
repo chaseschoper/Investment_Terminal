@@ -179,6 +179,134 @@ const FMP_TEXT_METRIC_FIELDS = [
   "recommendationKey",
   "analystRatingText"
 ];
+const FINANCIAL_STATEMENT_ENDPOINTS = {
+  income: {
+    label: "Income Statement",
+    path: "income-statement",
+    fields: [
+      "revenue",
+      "costOfRevenue",
+      "grossProfit",
+      "grossProfitRatio",
+      "researchAndDevelopmentExpenses",
+      "generalAndAdministrativeExpenses",
+      "sellingAndMarketingExpenses",
+      "sellingGeneralAndAdministrativeExpenses",
+      "operatingExpenses",
+      "operatingIncome",
+      "operatingIncomeRatio",
+      "interestIncome",
+      "interestExpense",
+      "incomeBeforeTax",
+      "incomeBeforeTaxRatio",
+      "incomeTaxExpense",
+      "netIncome",
+      "netIncomeRatio",
+      "eps",
+      "epsDiluted",
+      "weightedAverageShsOut",
+      "weightedAverageShsOutDil",
+      "ebitda",
+      "ebitdaratio"
+    ]
+  },
+  balance: {
+    label: "Balance Sheet",
+    path: "balance-sheet-statement",
+    fields: [
+      "cashAndCashEquivalents",
+      "shortTermInvestments",
+      "cashAndShortTermInvestments",
+      "netReceivables",
+      "inventory",
+      "otherCurrentAssets",
+      "totalCurrentAssets",
+      "propertyPlantEquipmentNet",
+      "goodwill",
+      "intangibleAssets",
+      "longTermInvestments",
+      "taxAssets",
+      "otherNonCurrentAssets",
+      "totalNonCurrentAssets",
+      "totalAssets",
+      "accountPayables",
+      "shortTermDebt",
+      "taxPayables",
+      "deferredRevenue",
+      "otherCurrentLiabilities",
+      "totalCurrentLiabilities",
+      "longTermDebt",
+      "deferredRevenueNonCurrent",
+      "deferredTaxLiabilitiesNonCurrent",
+      "otherNonCurrentLiabilities",
+      "totalNonCurrentLiabilities",
+      "totalLiabilities",
+      "preferredStock",
+      "commonStock",
+      "retainedEarnings",
+      "accumulatedOtherComprehensiveIncomeLoss",
+      "othertotalStockholdersEquity",
+      "totalStockholdersEquity",
+      "totalEquity",
+      "totalLiabilitiesAndStockholdersEquity",
+      "minorityInterest",
+      "totalLiabilitiesAndTotalEquity",
+      "totalInvestments",
+      "totalDebt",
+      "netDebt"
+    ]
+  },
+  cashflow: {
+    label: "Cash Flow Statement",
+    path: "cash-flow-statement",
+    fields: [
+      "netIncome",
+      "depreciationAndAmortization",
+      "deferredIncomeTax",
+      "stockBasedCompensation",
+      "changeInWorkingCapital",
+      "accountsReceivables",
+      "inventory",
+      "accountsPayables",
+      "otherWorkingCapital",
+      "otherNonCashItems",
+      "netCashProvidedByOperatingActivities",
+      "operatingCashFlow",
+      "investmentsInPropertyPlantAndEquipment",
+      "acquisitionsNet",
+      "purchasesOfInvestments",
+      "salesMaturitiesOfInvestments",
+      "otherInvestingActivites",
+      "netCashUsedForInvestingActivites",
+      "debtRepayment",
+      "commonStockIssued",
+      "commonStockRepurchased",
+      "dividendsPaid",
+      "otherFinancingActivites",
+      "netCashUsedProvidedByFinancingActivities",
+      "effectOfForexChangesOnCash",
+      "netChangeInCash",
+      "cashAtEndOfPeriod",
+      "cashAtBeginningOfPeriod",
+      "capitalExpenditure",
+      "freeCashFlow"
+    ]
+  }
+};
+const FINANCIAL_STATEMENT_META_FIELDS = new Set([
+  "date",
+  "symbol",
+  "reportedCurrency",
+  "cik",
+  "fillingDate",
+  "filingDate",
+  "acceptedDate",
+  "calendarYear",
+  "fiscalYear",
+  "period",
+  "link",
+  "finalLink"
+]);
 const STOCK_FULL_REFRESH_MS = 30 * 60 * 1000;
 const STOCK_FAILED_RETRY_MS = 30 * 1000;
 const MR_RALLY_AI_TIMEOUT_MS = 12000;
@@ -18554,6 +18682,116 @@ setFmpCooldown(err, "stock screener", "screener");
 console.log("FMP stock screener skipped:", err.response?.status || err.message);
 res.status(500).json({ results: [], error: "Stock screener data is not available yet." });
 }
+});
+
+const financialStatementLabel = (field) => {
+  const overrides = {
+    eps: "EPS",
+    epsDiluted: "Diluted EPS",
+    ebitda: "EBITDA",
+    ebitdaratio: "EBITDA Margin",
+    grossProfitRatio: "Gross Margin",
+    operatingIncomeRatio: "Operating Margin",
+    incomeBeforeTaxRatio: "Pretax Margin",
+    netIncomeRatio: "Profit Margin",
+    weightedAverageShsOut: "Weighted Avg Shares",
+    weightedAverageShsOutDil: "Diluted Weighted Avg Shares",
+    cashAndCashEquivalents: "Cash & Cash Equivalents",
+    cashAndShortTermInvestments: "Cash & Short Term Investments",
+    propertyPlantEquipmentNet: "Property, Plant & Equipment",
+    accountPayables: "Accounts Payable",
+    othertotalStockholdersEquity: "Other Stockholders' Equity",
+    netCashProvidedByOperatingActivities: "Operating Cash Flow",
+    operatingCashFlow: "Operating Cash Flow",
+    netCashUsedForInvestingActivites: "Net Cash Used For Investing",
+    netCashUsedProvidedByFinancingActivities: "Net Cash From Financing",
+    freeCashFlow: "Free Cash Flow"
+  };
+  if (overrides[field]) return overrides[field];
+  return String(field || "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/\bAnd\b/g, "&")
+    .replace(/\bOf\b/g, "of")
+    .replace(/\bIn\b/g, "in")
+    .replace(/\bFor\b/g, "for")
+    .replace(/^./, (letter) => letter.toUpperCase());
+};
+
+const financialStatementPeriodLabel = (row, period) => {
+  const year = firstText(row?.calendarYear, row?.fiscalYear, String(row?.date || "").slice(0, 4));
+  if (period === "quarter") {
+    const quarter = firstText(row?.period);
+    return quarter && year ? `${quarter} ${year}` : firstText(row?.date, year);
+  }
+  return year ? String(year) : firstText(row?.date);
+};
+
+const normalizeFinancialStatementRows = (rows, statementType, period) => {
+  const config = FINANCIAL_STATEMENT_ENDPOINTS[statementType] || FINANCIAL_STATEMENT_ENDPOINTS.income;
+  const statementRows = Array.isArray(rows) ? rows.filter(Boolean).slice(0, 5) : [];
+  const availableFieldSet = new Set(config.fields);
+  statementRows.forEach((row) => {
+    Object.keys(row || {}).forEach((field) => {
+      if (!FINANCIAL_STATEMENT_META_FIELDS.has(field) && toNumberOrNull(row[field]) !== null) {
+        availableFieldSet.add(field);
+      }
+    });
+  });
+
+  const fields = [...availableFieldSet].filter((field) =>
+    statementRows.some((row) => toNumberOrNull(row?.[field]) !== null)
+  );
+  const periods = statementRows.map((row, index) => ({
+    key: `${row.date || index}-${row.period || period}`,
+    label: financialStatementPeriodLabel(row, period),
+    date: row.date || null,
+    filingDate: row.fillingDate || row.filingDate || null,
+    currency: firstText(row.reportedCurrency)
+  }));
+
+  return {
+    periods,
+    rows: fields.map((field) => ({
+      key: field,
+      label: financialStatementLabel(field),
+      values: statementRows.map((row) => toNumberOrNull(row?.[field]))
+    }))
+  };
+};
+
+app.get("/api/financial-statements/:ticker", async (req, res) => {
+  try {
+    const symbol = String(req.params.ticker || "").trim().toUpperCase();
+    if (!symbol || !/^[A-Z0-9.-]{1,15}$/.test(symbol)) {
+      return res.status(400).json({ error: "Invalid ticker" });
+    }
+    if (!process.env.FMP_API_KEY || !canUseFmp()) {
+      return res.status(503).json({ error: "Financial statements are not available yet." });
+    }
+
+    const statementType = FINANCIAL_STATEMENT_ENDPOINTS[req.query.statement] ? req.query.statement : "income";
+    const period = String(req.query.period || "annual").toLowerCase() === "quarter" ? "quarter" : "annual";
+    const config = FINANCIAL_STATEMENT_ENDPOINTS[statementType];
+    const data = await getFmpData(symbol, `financial statements ${statementType} ${period}`, [
+      `/stable/${config.path}?symbol={ticker}&period=${period}&limit=5`
+    ]);
+    const statementRows = Array.isArray(data) ? data : data ? [data] : [];
+    const normalized = normalizeFinancialStatementRows(statementRows, statementType, period);
+
+    res.json({
+      symbol,
+      statement: statementType,
+      statementLabel: config.label,
+      period,
+      source: "FMP financial statements",
+      updatedAt: new Date().toISOString(),
+      ...normalized
+    });
+  } catch (err) {
+    setFmpCooldown(err, "financial statements", req.params.ticker);
+    console.log("FMP financial statements skipped:", req.params.ticker, err.response?.status || err.message);
+    res.status(500).json({ error: "Financial statements are not available yet." });
+  }
 });
 
 app.get("/api/stock-screener/options", async (req, res) => {

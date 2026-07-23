@@ -5709,6 +5709,172 @@ body {
   font-size: 15px;
 }
 
+.financial-statements-page {
+  display: grid;
+  gap: 22px;
+  padding: 32px 0 72px;
+}
+
+.financial-statement-toolbar,
+.financial-statement-controls,
+.financial-statement-table-panel {
+  border: 1px solid rgba(37, 99, 235, 0.36);
+  border-radius: 10px;
+  background:
+    radial-gradient(circle at top left, rgba(20, 184, 166, 0.12), transparent 34%),
+    rgba(8, 13, 24, 0.92);
+  box-shadow: 0 18px 55px rgba(0, 0, 0, 0.24);
+}
+
+.financial-statement-toolbar {
+  display: flex;
+  align-items: end;
+  gap: 14px;
+  padding: 18px;
+}
+
+.financial-statement-search {
+  display: grid;
+  flex: 1;
+  gap: 7px;
+}
+
+.financial-statement-search span {
+  color: #67e8f9;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.financial-statement-search input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.88);
+  color: #f8fafc;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.financial-statement-search input:focus {
+  border-color: rgba(45, 212, 191, 0.64);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.12);
+}
+
+.financial-statement-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+}
+
+.financial-statement-period-toggle {
+  display: inline-flex;
+  gap: 8px;
+  padding: 4px;
+  border: 1px solid rgba(96, 165, 250, 0.26);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.76);
+}
+
+.financial-statement-period-toggle button {
+  min-height: 38px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #a7b0c0;
+  font-size: 13px;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.financial-statement-period-toggle button.active {
+  background: linear-gradient(135deg, rgba(20, 184, 166, 0.88), rgba(37, 99, 235, 0.74));
+  color: #ffffff;
+  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.22);
+}
+
+.financial-statement-table-panel {
+  overflow: hidden;
+}
+
+.financial-statement-table-wrap {
+  overflow-x: auto;
+}
+
+.financial-statement-table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+}
+
+.financial-statement-table th,
+.financial-statement-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  color: #dbeafe;
+  font-size: 14px;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.financial-statement-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: rgba(10, 17, 30, 0.98);
+  color: #93c5fd;
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.financial-statement-table thead th span,
+.financial-statement-table thead th small {
+  display: block;
+}
+
+.financial-statement-table thead th small {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.financial-statement-table th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  min-width: 280px;
+  background: rgba(10, 17, 30, 0.98);
+  color: #f8fafc;
+  text-align: left;
+}
+
+.financial-statement-table tbody th {
+  color: #e5e7eb;
+  font-weight: 900;
+}
+
+.financial-statement-table tbody tr:nth-child(even) td,
+.financial-statement-table tbody tr:nth-child(even) th {
+  background-color: rgba(15, 23, 42, 0.42);
+}
+
+.financial-statement-table tbody tr:hover td,
+.financial-statement-table tbody tr:hover th {
+  background-color: rgba(20, 184, 166, 0.08);
+}
+
 @media (max-width: 1100px) {
   .screener-filter-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -5733,13 +5899,37 @@ body {
   }
 
   .screener-actions,
-  .screener-results-heading {
+  .screener-results-heading,
+  .financial-statement-toolbar,
+  .financial-statement-controls {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .screener-actions button {
+  .screener-actions button,
+  .financial-statement-toolbar button {
     width: 100%;
+  }
+
+  .financial-statement-period-toggle {
+    width: 100%;
+  }
+
+  .financial-statement-period-toggle button {
+    flex: 1;
+  }
+
+  .financial-statement-table {
+    min-width: 760px;
+  }
+
+  .financial-statement-table th,
+  .financial-statement-table td {
+    padding: 12px;
+  }
+
+  .financial-statement-table th:first-child {
+    min-width: 210px;
   }
 
   .company-documents-heading {
