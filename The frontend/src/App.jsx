@@ -4098,7 +4098,7 @@ const fmpMetricValue = (value) => hasCurrentFmpValuationMetrics ? value : null;
 const fmpBalanceValue = (value) => hasCurrentFmpBalanceMetrics ? value : null;
 const metricCardItems = [
   { label: "Market Cap", raw: stockData.marketCap, value: metricValue(formatBillions(stockData.marketCap)) },
-  { label: "Cash & Equivalents", raw: fmpBalanceValue(stockData.cashAndCashEquivalents ?? stockData.totalCash), value: balanceSheetValue(formatBillions(fmpBalanceValue(stockData.cashAndCashEquivalents ?? stockData.totalCash))) },
+  { label: "Cash & ST Investments", raw: fmpBalanceValue(stockData.cashAndCashEquivalents ?? stockData.totalCash), value: balanceSheetValue(formatBillions(fmpBalanceValue(stockData.cashAndCashEquivalents ?? stockData.totalCash))) },
   { label: "Total Debt", raw: fmpBalanceValue(stockData.totalDebt), value: balanceSheetValue(formatBillions(fmpBalanceValue(stockData.totalDebt))) },
   { label: "Net Cash", raw: fmpBalanceValue(stockData.netCash), value: balanceSheetValue(formatBillions(fmpBalanceValue(stockData.netCash))) },
   { label: "Net Cash / Share", raw: fmpBalanceValue(stockData.netCashPerShare), value: balanceSheetValue(formatPrice(fmpBalanceValue(stockData.netCashPerShare))) },
@@ -8017,7 +8017,7 @@ return (
     {isEarningsLoading ? (
       <div className="calendar-empty">Loading earnings calendar...</div>
     ) : selectedEarningsDay.events?.length ? (
-      <div className="calendar-company-list">
+      <div className="calendar-company-list" key={selectedEarningsDate}>
         <div className="calendar-company-header">
           <span>Company</span>
           <span>Report time</span>
@@ -8025,10 +8025,10 @@ return (
           <span>EPS estimate</span>
           <span>Market cap</span>
         </div>
-        {selectedEarningsDay.events.map((event) => (
+        {selectedEarningsDay.events.map((event, eventIndex) => (
           <button
             className="calendar-company-row"
-            key={`${event.date}-${event.symbol}`}
+            key={`${selectedEarningsDate}-${event.symbol}-${eventIndex}`}
             type="button"
             onClick={() => {
               setSearchInput(event.symbol);

@@ -1331,11 +1331,11 @@ async function fetchFmpMetricCards(ticker) {
         ? (shortTermDebt || 0) + (longTermDebt || 0)
         : null;
     const cashAndEquivalents = firstFmpMetricNumber(
-      balance.cashAndCashEquivalents,
       balance.cashAndShortTermInvestments,
+      balance.cashAndCashEquivalents,
       balance.cash
     );
-    const totalDebt = firstFmpMetricNumber(balance.totalDebt, combinedDebt, balance.longTermDebt);
+    const totalDebt = firstFmpMetricNumber(combinedDebt, balance.totalDebt, balance.longTermDebt);
     const netCash =
       cashAndEquivalents !== null || totalDebt !== null
         ? (cashAndEquivalents || 0) - (totalDebt || 0)
