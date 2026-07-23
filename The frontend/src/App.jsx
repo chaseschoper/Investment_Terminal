@@ -4105,7 +4105,7 @@ const metricCardItems = [
   { label: "Equity Book Value", raw: fmpBalanceValue(stockData.equityBookValue), value: balanceSheetValue(formatBillions(fmpBalanceValue(stockData.equityBookValue))) },
   { label: "Book Value / Share", raw: fmpMetricValue(stockData.bookValuePerShare), value: metricValue(formatPrice(fmpMetricValue(stockData.bookValuePerShare))) },
   { label: "Working Capital", raw: fmpBalanceValue(stockData.workingCapital), value: balanceSheetValue(formatBillions(fmpBalanceValue(stockData.workingCapital))) },
-  { label: "Current P/E", raw: fmpMetricValue(stockData.pe), value: metricValue(formatPlain(fmpMetricValue(stockData.pe))) },
+  { label: "TTM P/E", raw: fmpMetricValue(stockData.pe), value: metricValue(formatPlain(fmpMetricValue(stockData.pe))) },
   { label: "Forward P/E", raw: fmpMetricValue(stockData.forwardPE), value: metricValue(formatPlain(fmpMetricValue(stockData.forwardPE))) },
   { label: "Forward P/S", raw: fmpMetricValue(stockData.forwardPS), value: metricValue(formatPlain(fmpMetricValue(stockData.forwardPS))) },
   { label: "PEG Ratio TTM", raw: fmpMetricValue(stockData.pegRatio), value: metricValue(formatPlain(fmpMetricValue(stockData.pegRatio))) },
@@ -4647,7 +4647,7 @@ const comparisonMetricsForStock = (stock = {}) => [
   { label: "Equity Book Value", value: formatBillions(stock.equityBookValue) },
   { label: "Book Value / Share", value: formatPrice(stock.bookValuePerShare) },
   { label: "Working Capital", value: formatBillions(stock.workingCapital) },
-  { label: "Current P/E", value: formatPlain(stock.pe) },
+  { label: "TTM P/E", value: formatPlain(stock.pe) },
   { label: "Forward P/E", value: formatPlain(stock.forwardPE) },
   { label: "Forward P/S", value: formatPlain(stock.forwardPS) },
   { label: "PEG Ratio TTM", value: formatPlain(stock.pegRatio) },
@@ -6288,7 +6288,7 @@ return (
 
   <div className="card">
     <div className="card-title">
-      Current P/E
+      TTM P/E
     </div>
 
     <div className="card-value">
