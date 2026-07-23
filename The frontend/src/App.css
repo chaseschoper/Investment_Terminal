@@ -5443,6 +5443,23 @@ body {
   font-weight: 750;
 }
 
+.screener-filter select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 38px;
+  background:
+    linear-gradient(45deg, transparent 50%, #67e8f9 50%) right 18px center / 7px 7px no-repeat,
+    linear-gradient(135deg, #67e8f9 50%, transparent 50%) right 12px center / 7px 7px no-repeat,
+    linear-gradient(135deg, rgba(45, 212, 191, 0.12), rgba(37, 99, 235, 0.08)),
+    rgba(15, 23, 42, 0.92);
+  cursor: pointer;
+}
+
+.screener-filter select option {
+  background: #0f172a;
+  color: #f8fafc;
+}
+
 .screener-filter input:focus,
 .screener-filter select:focus {
   border-color: rgba(45, 212, 191, 0.64);
