@@ -18705,6 +18705,8 @@ const financialStatementLabel = (field) => {
     operatingCashFlow: "Operating Cash Flow",
     netCashUsedForInvestingActivites: "Net Cash Used For Investing",
     netCashUsedProvidedByFinancingActivities: "Net Cash From Financing",
+    netIncomeFromContinuingOperations: "Net Income From Continuing Operations",
+    netIncomeFromDiscontinuedOperations: "Net Income From Discontinued Operations",
     freeCashFlow: "Free Cash Flow"
   };
   if (overrides[field]) return overrides[field];
@@ -18715,6 +18717,14 @@ const financialStatementLabel = (field) => {
     .replace(/\bIn\b/g, "in")
     .replace(/\bFor\b/g, "for")
     .replace(/^./, (letter) => letter.toUpperCase());
+};
+
+const financialStatementValueFormat = (field) => {
+  const key = String(field || "").toLowerCase();
+  if (key === "eps" || key === "epsdiluted" || key.includes("pershare")) return "perShare";
+  if (key.endsWith("ratio") || key.includes("margin")) return "percent";
+  if (key.includes("weightedaverageshsout") || key.includes("shares")) return "shares";
+  return "currency";
 };
 
 const financialStatementPeriodLabel = (row, period) => {
@@ -18754,6 +18764,7 @@ const normalizeFinancialStatementRows = (rows, statementType, period) => {
     rows: fields.map((field) => ({
       key: field,
       label: financialStatementLabel(field),
+      format: financialStatementValueFormat(field),
       values: statementRows.map((row) => toNumberOrNull(row?.[field]))
     }))
   };

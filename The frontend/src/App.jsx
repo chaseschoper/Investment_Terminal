@@ -331,16 +331,17 @@ const formatPrice = (value) =>
 
 const formatStatementValue = (value, row = {}) => {
   if (!isNumber(value)) return "N/A";
+  const format = String(row.format || "").toLowerCase();
   const key = String(row.key || "").toLowerCase();
   const label = String(row.label || "").toLowerCase();
-  if (key.includes("ratio") || label.includes("margin")) {
+  if (format === "percent" || (!format && (key.endsWith("ratio") || label.includes("margin")))) {
     const percentValue = Math.abs(value) <= 1 ? value * 100 : value;
     return `${percentValue.toFixed(2)}%`;
   }
-  if (key === "eps" || key === "epsdiluted" || label.includes("eps")) {
+  if (format === "perShare" || key === "eps" || key === "epsdiluted" || label.includes("eps")) {
     return value.toFixed(2);
   }
-  if (label.includes("shares")) {
+  if (format === "shares" || label.includes("shares")) {
     return formatSharesCount(value);
   }
   return formatLargeDollars(value);
