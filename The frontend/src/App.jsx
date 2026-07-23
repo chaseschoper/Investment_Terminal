@@ -1365,9 +1365,9 @@ const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
 const FINANCIAL_HISTORY_VERSION = 154;
-const STOCK_ESTIMATE_VERSION = 20;
+const STOCK_ESTIMATE_VERSION = 21;
 const INTERIM_HISTORY_VERSION = 6;
-const VALUATION_METRICS_VERSION = 3;
+const VALUATION_METRICS_VERSION = 5;
 const BALANCE_SHEET_METRICS_VERSION = 10;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const MIN_DISPLAY_INTERIM_HISTORY_ROWS = 4;
@@ -3616,8 +3616,11 @@ const historicalPeHistoryBase = (stockData?.historicalPe || [])
     isNumber(row.pe)
   );
 const annualHistoricalPeHistoryBase = filterChartRowsByMode(historicalPeHistoryBase, "annual");
+const quarterlyHistoricalPeHistoryBase = filterChartRowsByMode(historicalPeHistoryBase, "quarterly");
 const historicalPeHistory =
-  chartRowsWithCurrentFallback(annualHistoricalPeHistoryBase, "pe", stockData?.pe);
+  financialChartMode === "quarterly"
+    ? quarterlyHistoricalPeHistoryBase
+    : chartRowsWithCurrentFallback(annualHistoricalPeHistoryBase, "pe", stockData?.pe);
 const allMarginHistory = (stockData?.marginHistory || [])
   .map((row) => ({ ...row, period: row.period || String(row.year) }))
   .filter((row) =>
@@ -5976,7 +5979,7 @@ return (
     formatter={(value) => `${Number(value).toFixed(1)}x`}
     valueLabel="P/E"
     loading={shouldShowHistoricalPeLoading(historicalPeHistory)}
-    mode="annual"
+    mode={financialChartMode}
   />
   <HistoricalLineChart
     title={stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin History"}
