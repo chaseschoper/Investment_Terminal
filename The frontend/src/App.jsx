@@ -137,13 +137,6 @@ const HOME_FEATURES = [
     label: "Documents",
     title: "Read the actual company releases",
     text: "Open the latest 10-K, 10-Q, earnings release, income statement, balance sheet, and cash flow documents from the stock page."
-  },
-  {
-    id: "mr-rally",
-    icon: "mr-rally",
-    label: "Mr. Rally",
-    title: "Ask questions while you research",
-    text: "Use the built-in stock chat to ask about companies, filings, earnings, metrics, risks, and the data behind the business."
   }
 ];
 
@@ -1782,6 +1775,7 @@ function App() {
   const stockRetryTimerRef = useRef(null);
   const stockMemoryCacheRef = useRef(new Map());
   const stockChartMemoryCacheRef = useRef(new Map());
+  const stockSearchBlurTimerRef = useRef(null);
   const latestComparisonRequest = useRef(0);
   const latestAiRequest = useRef(0);
   const latestEarningsCallRequest = useRef(0);
@@ -2078,6 +2072,12 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
 
   const [searchInput, setSearchInput] =
     useState("NVDA");
+  const [stockSearchSuggestions, setStockSearchSuggestions] =
+    useState([]);
+  const [isStockSearchSuggesting, setIsStockSearchSuggesting] =
+    useState(false);
+  const [showStockSearchSuggestions, setShowStockSearchSuggestions] =
+    useState(false);
   const [activePage, setActivePage] =
     useState("home");
   const [savedProjections, setSavedProjections] =
@@ -2306,6 +2306,41 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
 
   const [isSimilarCompaniesLoading, setIsSimilarCompaniesLoading] =
     useState(false);
+
+useEffect(() => {
+  const query = searchInput.trim();
+  const canSuggest =
+    ["overview", "projections"].includes(activePage) &&
+    query.length >= 2;
+
+  if (!canSuggest) {
+    setStockSearchSuggestions([]);
+    setIsStockSearchSuggesting(false);
+    return undefined;
+  }
+
+  let isActive = true;
+  const timer = window.setTimeout(async () => {
+    try {
+      setIsStockSearchSuggesting(true);
+      const { data } = await axios.get(`${API_URL}/api/search-stocks`, {
+        params: { q: query },
+        timeout: 4500
+      });
+      if (!isActive) return;
+      setStockSearchSuggestions(Array.isArray(data?.results) ? data.results : []);
+    } catch (error) {
+      if (isActive) setStockSearchSuggestions([]);
+    } finally {
+      if (isActive) setIsStockSearchSuggesting(false);
+    }
+  }, 180);
+
+  return () => {
+    isActive = false;
+    window.clearTimeout(timer);
+  };
+}, [searchInput, activePage]);
 
 
   
@@ -4942,12 +4977,98 @@ const comparisonSection = (
   </div>
 );
 
-const handleStockSearchSubmit = (event, destinationPage = "overview") => {
+const selectStockSearchSuggestion = (item, destinationPage = "overview") => {
+  const symbol = String(item?.symbol || "").trim().toUpperCase();
+  if (!symbol) return;
+
+  setSearchInput(symbol);
+  setStockSearchSuggestions([]);
+  setShowStockSearchSuggestions(false);
+  setActivePage(destinationPage);
+
+  if (symbol !== ticker) {
+    setTicker(symbol);
+    return;
+  }
+
+  if (stockRetryTimerRef.current) {
+    window.clearTimeout(stockRetryTimerRef.current);
+    stockRetryTimerRef.current = null;
+  }
+  const requestId = ++latestStockRequest.current;
+  const cachedStock = stockMemoryCacheRef.current.get(symbol) || null;
+  setStockData(cachedStock);
+  setIsStockLoading(!cachedStock);
+  loadStock(symbol, 0, requestId);
+};
+
+const resolveSearchInputToSymbol = async (rawInput) => {
+  const value = String(rawInput || "").trim();
+  if (!value) return "";
+  const normalizedValue = value.toUpperCase();
+  const exactSuggestion = stockSearchSuggestions.find(
+    (item) => String(item.symbol || "").toUpperCase() === normalizedValue
+  );
+  if (exactSuggestion?.symbol) return exactSuggestion.symbol.toUpperCase();
+  if (stockSearchSuggestions[0]?.symbol) return stockSearchSuggestions[0].symbol.toUpperCase();
+  if (/^[A-Z0-9.-]{1,12}$/.test(normalizedValue) && !/\s/.test(value)) return normalizedValue;
+
+  try {
+    const { data } = await axios.get(`${API_URL}/api/search-stocks`, {
+      params: { q: value },
+      timeout: 4500
+    });
+    const firstMatch = Array.isArray(data?.results) ? data.results[0] : null;
+    if (firstMatch?.symbol) return String(firstMatch.symbol).toUpperCase();
+  } catch (error) {
+    console.error("Stock search lookup failed", error);
+  }
+
+  return normalizedValue;
+};
+
+const renderStockSearchSuggestions = (destinationPage = "overview") => {
+  const shouldShow =
+    showStockSearchSuggestions &&
+    searchInput.trim().length >= 2 &&
+    (stockSearchSuggestions.length || isStockSearchSuggesting);
+
+  if (!shouldShow) return null;
+
+  return (
+    <div className="stock-search-suggestions" role="listbox">
+      {isStockSearchSuggesting && !stockSearchSuggestions.length ? (
+        <div className="stock-search-suggestion muted">Searching...</div>
+      ) : (
+        stockSearchSuggestions.map((item) => (
+          <button
+            type="button"
+            className="stock-search-suggestion"
+            key={`${item.symbol}-${item.exchange || ""}`}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => selectStockSearchSuggestion(item, destinationPage)}
+          >
+            <span>
+              <strong>{item.symbol}</strong>
+              <em>{item.name}</em>
+            </span>
+            {item.exchange && <small>{item.exchange}</small>}
+          </button>
+        ))
+      )}
+    </div>
+  );
+};
+
+const handleStockSearchSubmit = async (event, destinationPage = "overview") => {
   event.preventDefault();
-  const symbol = searchInput.trim().toUpperCase();
+  const symbol = await resolveSearchInputToSymbol(searchInput);
   if (!symbol) return;
 
   setActivePage(destinationPage);
+  setSearchInput(symbol);
+  setShowStockSearchSuggestions(false);
+  setStockSearchSuggestions([]);
 
   if (symbol !== ticker) {
     setTicker(symbol);
@@ -5146,8 +5267,7 @@ return (
         ["watchlists", "Watchlists"],
         ["etfs", "ETF Overview"],
         ["earnings-calendar", "Calendar"],
-        ["market-overview", "Market Overview"],
-        ["mr-rally", "Mr. Rally"]
+        ["market-overview", "Market Overview"]
       ].map(([page, label]) => (
         <button
           key={page}
@@ -5478,16 +5598,31 @@ return (
   onSubmit={handleStockSearchSubmit}
 >
 
+<div className="stock-search-field">
   <input
     className="search"
     value={searchInput}
-    onChange={(e) =>
-      setSearchInput(
-        e.target.value.toUpperCase()
-      )
-    }
-    placeholder="Search ticker..."
+    onChange={(e) => {
+      setSearchInput(e.target.value);
+      setShowStockSearchSuggestions(true);
+    }}
+    onFocus={() => {
+      if (stockSearchBlurTimerRef.current) {
+        window.clearTimeout(stockSearchBlurTimerRef.current);
+        stockSearchBlurTimerRef.current = null;
+      }
+      setShowStockSearchSuggestions(true);
+    }}
+    onBlur={() => {
+      stockSearchBlurTimerRef.current = window.setTimeout(() => {
+        setShowStockSearchSuggestions(false);
+      }, 140);
+    }}
+    placeholder="Search ticker or company..."
+    autoComplete="off"
   />
+  {renderStockSearchSuggestions("overview")}
+</div>
 
   <button className="stock-search-button" type="submit">
     Search
@@ -7294,12 +7429,31 @@ return (
 {activePage === "projections" && (
 <>
 <form className="topbar page-searchbar" onSubmit={(event) => handleStockSearchSubmit(event, "projections")}>
+  <div className="stock-search-field">
   <input
     className="search"
     value={searchInput}
-    onChange={(event) => setSearchInput(event.target.value.toUpperCase())}
-    placeholder="Search ticker for projections..."
+    onChange={(event) => {
+      setSearchInput(event.target.value);
+      setShowStockSearchSuggestions(true);
+    }}
+    onFocus={() => {
+      if (stockSearchBlurTimerRef.current) {
+        window.clearTimeout(stockSearchBlurTimerRef.current);
+        stockSearchBlurTimerRef.current = null;
+      }
+      setShowStockSearchSuggestions(true);
+    }}
+    onBlur={() => {
+      stockSearchBlurTimerRef.current = window.setTimeout(() => {
+        setShowStockSearchSuggestions(false);
+      }, 140);
+    }}
+    placeholder="Search ticker or company for projections..."
+    autoComplete="off"
   />
+  {renderStockSearchSuggestions("projections")}
+  </div>
   <button className="stock-search-button" type="submit">
     Search
   </button>
@@ -8254,7 +8408,7 @@ return (
 
 {/* MR. RALLY CHAT */}
 
-{activePage === "mr-rally" && mrRallySection}
+{false && activePage === "mr-rally" && mrRallySection}
 
 
 {/* AUTH POPUP */}

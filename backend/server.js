@@ -47,6 +47,7 @@ const broadMarketMoversCache = new Map();
 const priceHistoryCache = new Map();
 const companyDocumentsCache = new Map();
 const companyDocumentsInFlight = new Map();
+const stockSearchCache = new Map();
 const earningsCallPeriodsCache = new Map();
 const earningsCallTranscriptCache = new Map();
 const similarCompanyMetricCache = new Map();
@@ -18070,6 +18071,111 @@ res.json(createAuthResponse(user));
 } catch (err) {
 console.error(err);
 res.status(500).json({ error: "Password reset failed" });
+}
+});
+
+app.get("/api/search-stocks", async (req, res) => {
+try {
+const query = String(req.query.q || "").trim();
+if (query.length < 2) return res.json({ results: [] });
+
+const cleanQuery = query.replace(/[^a-zA-Z0-9 .&'-]/g, "").slice(0, 60);
+if (cleanQuery.length < 2) return res.json({ results: [] });
+
+const cacheKey = cleanQuery.toLowerCase();
+const cached = stockSearchCache.get(cacheKey);
+if (cached && cached.expiresAt > Date.now()) return res.json({ results: cached.results });
+
+let rows = [];
+if (process.env.FMP_API_KEY && canUseFmp()) {
+  const endpoints = [
+    `https://financialmodelingprep.com/stable/search-symbol?query=${encodeURIComponent(cleanQuery)}&limit=12&apikey=${process.env.FMP_API_KEY}`,
+    `https://financialmodelingprep.com/stable/search-name?query=${encodeURIComponent(cleanQuery)}&limit=12&apikey=${process.env.FMP_API_KEY}`
+  ];
+
+  for (const endpoint of endpoints) {
+    try {
+      const response = await axios.get(endpoint, { timeout: 3500 });
+      if (Array.isArray(response.data) && response.data.length) {
+        rows.push(...response.data);
+      }
+    } catch (err) {
+      setFmpCooldown(err, "stock search", cleanQuery);
+      console.log("FMP stock search skipped:", cleanQuery, err.response?.status || err.message);
+      if (!canUseFmp()) break;
+    }
+  }
+}
+
+if (!rows.length) {
+  const exact = await Stock.findOne({
+    ticker: cleanQuery.toUpperCase()
+  }).select("ticker data.symbol data.name data.longName data.shortName data.exchange data.sector").lean();
+  if (exact) rows = [exact];
+}
+
+const seen = new Set();
+const primaryExchangeRank = (exchange) => {
+  const value = String(exchange || "").trim().toUpperCase();
+  if (value === "NASDAQ") return 0;
+  if (value === "NYSE") return 1;
+  if (value === "AMEX" || value === "NYSEAMERICAN") return 2;
+  if (value === "OTC") return 8;
+  return 5;
+};
+const results = rows
+  .map((row) => {
+    const symbol = String(row.symbol || row.ticker || row?.data?.symbol || "").trim().toUpperCase();
+    if (!symbol || !/^[A-Z0-9.-]{1,12}$/.test(symbol)) return null;
+    const name = firstText(
+      row.name,
+      row.companyName,
+      row.shortName,
+      row.longName,
+      row?.data?.name,
+      row?.data?.longName,
+      row?.data?.shortName,
+      FALLBACK_COMPANY_NAMES[symbol],
+      symbol
+    );
+    const exchange = firstText(row.exchange, row.stockExchange, row.exchangeShortName, row?.data?.exchange);
+    const type = firstText(row.type, row.securityType);
+    return {
+      symbol,
+      name,
+      exchange,
+      type
+    };
+  })
+  .filter(Boolean)
+  .sort((a, b) => {
+    const exactA = a.symbol === cleanQuery.toUpperCase() ? -1 : 0;
+    const exactB = b.symbol === cleanQuery.toUpperCase() ? -1 : 0;
+    if (exactA !== exactB) return exactA - exactB;
+    const rankA = primaryExchangeRank(a.exchange);
+    const rankB = primaryExchangeRank(b.exchange);
+    if (rankA !== rankB) return rankA - rankB;
+    const suffixA = /[.-]/.test(a.symbol) ? 1 : 0;
+    const suffixB = /[.-]/.test(b.symbol) ? 1 : 0;
+    if (suffixA !== suffixB) return suffixA - suffixB;
+    return a.symbol.localeCompare(b.symbol);
+  })
+  .filter((item) => {
+    if (seen.has(item.symbol)) return false;
+    seen.add(item.symbol);
+    return true;
+  })
+  .slice(0, 8);
+
+stockSearchCache.set(cacheKey, {
+  results,
+  expiresAt: Date.now() + 10 * 60 * 1000
+});
+
+res.json({ results });
+} catch (err) {
+console.error("Stock search failed:", err.response?.status || err.message);
+res.status(500).json({ results: [] });
 }
 });
 

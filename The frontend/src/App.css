@@ -494,6 +494,12 @@ body {
   border-image: linear-gradient(90deg, #14b8a6, #38bdf8, #2563eb) 1;
 }
 
+.stock-search-field {
+  position: relative;
+  width: 320px;
+  max-width: 100%;
+}
+
 .search {
   width: 320px;
   padding: 14px 18px;
@@ -504,9 +510,84 @@ body {
   font-size: 15px;
 }
 
+.stock-search-field .search {
+  width: 100%;
+}
+
 .search:focus {
   outline: none;
   border: 1px solid #2563eb;
+}
+
+.stock-search-suggestions {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid rgba(56, 189, 248, 0.34);
+  border-radius: 12px;
+  background: rgba(5, 12, 24, 0.98);
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.45), 0 0 24px rgba(37, 99, 235, 0.16);
+}
+
+.stock-search-suggestion {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: #e5e7eb;
+  text-align: left;
+  cursor: pointer;
+}
+
+.stock-search-suggestion:hover,
+.stock-search-suggestion:focus-visible {
+  border-color: rgba(45, 212, 191, 0.5);
+  background: rgba(20, 184, 166, 0.12);
+  outline: none;
+}
+
+.stock-search-suggestion span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.stock-search-suggestion strong {
+  color: #67e8f9;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+
+.stock-search-suggestion em {
+  overflow: hidden;
+  color: #cbd5e1;
+  font-size: 13px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-search-suggestion small {
+  flex: 0 0 auto;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.stock-search-suggestion.muted {
+  color: #94a3b8;
+  cursor: default;
 }
 
 .stock-search-button {
@@ -3749,6 +3830,12 @@ body {
 
   .topbar {
     margin-inline: auto;
+  }
+
+  .stock-search-field {
+    flex: 1 1 220px;
+    width: auto;
+    min-width: 0;
   }
 
   .search {
