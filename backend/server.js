@@ -165,7 +165,9 @@ const FMP_MARKET_METRIC_FIELDS = [
   "marketCap",
   "sharesOutstanding",
   "fiftyTwoWeekHigh",
-  "fiftyTwoWeekLow"
+  "fiftyTwoWeekLow",
+  "priceAvg50",
+  "priceAvg200"
 ];
 const FMP_METRIC_CARD_FIELDS = [
   ...FMP_VALUATION_METRIC_FIELDS,
@@ -942,6 +944,8 @@ async function fetchFmpStableQuoteProfile(ticker) {
       marketCap: firstFiniteNumber(quote.marketCap, profile.marketCap),
       fiftyTwoWeekHigh: firstFiniteNumber(quote.yearHigh, rangeMatch ? parseApiNumber(rangeMatch[2]) : null),
       fiftyTwoWeekLow: firstFiniteNumber(quote.yearLow, rangeMatch ? parseApiNumber(rangeMatch[1]) : null),
+      priceAvg50: firstFiniteNumber(quote.priceAvg50, profile.priceAvg50),
+      priceAvg200: firstFiniteNumber(quote.priceAvg200, profile.priceAvg200),
       beta: firstFiniteNumber(profile.beta),
       lastDividend: firstFiniteNumber(profile.lastDividend),
       employeeCount: firstFiniteNumber(profile.fullTimeEmployees),
@@ -1590,6 +1594,8 @@ async function fetchFmpMetricCards(ticker) {
       sharesOutstanding,
       fiftyTwoWeekHigh: firstFmpMetricNumber(quote.yearHigh),
       fiftyTwoWeekLow: firstFmpMetricNumber(quote.yearLow),
+      priceAvg50: firstFmpMetricNumber(quote.priceAvg50, profile.priceAvg50),
+      priceAvg200: firstFmpMetricNumber(quote.priceAvg200, profile.priceAvg200),
       pe: firstFmpMetricNumber(ratios.priceToEarningsRatioTTM),
       priceToSales: firstFmpMetricNumber(ratios.priceToSalesRatioTTM),
       priceToBook: firstFmpMetricNumber(ratios.priceToBookRatioTTM),
@@ -6526,6 +6532,8 @@ function hasCompleteCompanyProfileSnapshot(data = {}) {
     data.country &&
     data.exchange &&
     data.description &&
+    toNumberOrNull(data.priceAvg50) !== null &&
+    toNumberOrNull(data.priceAvg200) !== null &&
     toNumberOrNull(data.floatShares) !== null &&
     toNumberOrNull(data.freeFloatShares) !== null &&
     Array.isArray(data.executives) &&
@@ -9806,6 +9814,8 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     sharesFloatSource: firstText(fmpSharesFloat.sharesFloatSource),
     fiftyTwoWeekHigh: firstNumber(fmpProfile.fiftyTwoWeekHigh, fmpFiftyTwoWeekRange.fiftyTwoWeekHigh),
     fiftyTwoWeekLow: firstNumber(fmpProfile.fiftyTwoWeekLow, fmpFiftyTwoWeekRange.fiftyTwoWeekLow),
+    priceAvg50: firstNumber(fmpProfile.priceAvg50, fmpValuation.priceAvg50),
+    priceAvg200: firstNumber(fmpProfile.priceAvg200, fmpValuation.priceAvg200),
     pe: firstNumber(fmpValuation.pe),
     forwardPE: firstNumber(fmpValuation.forwardPE),
     pegRatio: firstNumber(fmpValuation.pegRatio),
@@ -11245,6 +11255,8 @@ async function fetchStockData(ticker) {
     dividendYield,
     fiftyTwoWeekHigh,
     fiftyTwoWeekLow,
+    priceAvg50: firstFiniteNumber(fmpQuoteProfile.priceAvg50, fmpStableValuation.priceAvg50, previousData?.priceAvg50),
+    priceAvg200: firstFiniteNumber(fmpQuoteProfile.priceAvg200, fmpStableValuation.priceAvg200, previousData?.priceAvg200),
     marketCap,
     totalCash: isFmpAdr ? null : toNumberOrNull(balanceSheetMetrics.totalCash),
     totalDebt: isFmpAdr ? null : toNumberOrNull(balanceSheetMetrics.totalDebt),

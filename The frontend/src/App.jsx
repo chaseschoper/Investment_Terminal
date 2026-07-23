@@ -1120,6 +1120,8 @@ const hasAnyOverviewMetricData = (stock = {}) =>
   isNumber(stock.beta) ||
   isNumber(stock.volume) ||
   isNumber(stock.lastDividend) ||
+  isNumber(stock.priceAvg50) ||
+  isNumber(stock.priceAvg200) ||
   isNumber(stock.pe) ||
   isNumber(stock.forwardPE) ||
   isNumber(stock.priceToSales) ||
@@ -1138,6 +1140,8 @@ const overviewMetricCount = (stock = {}) =>
     "beta",
     "volume",
     "lastDividend",
+    "priceAvg50",
+    "priceAvg200",
     "pe",
     "forwardPE",
     "pegRatio",
@@ -4361,6 +4365,8 @@ const metricCardItems = [
   { label: "Beta", raw: stockData.beta, value: metricValue(formatPlain(stockData.beta)) },
   { label: "Volume", raw: stockData.volume, value: metricValue(formatLargeNumber(stockData.volume)) },
   { label: "Last Dividend", raw: stockData.lastDividend, value: metricValue(formatPrice(stockData.lastDividend)) },
+  { label: "50-Day Avg", raw: stockData.priceAvg50, value: metricValue(formatPrice(stockData.priceAvg50)) },
+  { label: "200-Day Avg", raw: stockData.priceAvg200, value: metricValue(formatPrice(stockData.priceAvg200)) },
   { label: "Cash & ST Investments", raw: fmpBalanceValue(stockData.cashAndCashEquivalents ?? stockData.totalCash), value: balanceSheetValue(formatBillions(fmpBalanceValue(stockData.cashAndCashEquivalents ?? stockData.totalCash))) },
   { label: "Total Debt", raw: fmpBalanceValue(stockData.totalDebt), value: balanceSheetValue(formatBillions(fmpBalanceValue(stockData.totalDebt))) },
   { label: "Net Cash", raw: fmpBalanceValue(stockData.netCash), value: balanceSheetValue(formatBillions(fmpBalanceValue(stockData.netCash))) },
@@ -4498,6 +4504,8 @@ const metricGroupConfig = [
       "Beta",
       "Volume",
       "Last Dividend",
+      "50-Day Avg",
+      "200-Day Avg",
       "Shares Outstanding",
       "Float Shares",
       "Free Float Shares",
@@ -5106,6 +5114,8 @@ const comparisonMetricsForStock = (stock = {}) => [
   { label: "Beta", value: formatPlain(stock.beta) },
   { label: "Volume", value: formatLargeNumber(stock.volume) },
   { label: "Last Dividend", value: formatPrice(stock.lastDividend) },
+  { label: "50-Day Avg", value: formatPrice(stock.priceAvg50) },
+  { label: "200-Day Avg", value: formatPrice(stock.priceAvg200) },
   { label: "Cash & Equivalents", value: formatBillions(stock.cashAndCashEquivalents ?? stock.totalCash) },
   { label: "Total Debt", value: formatBillions(stock.totalDebt) },
   { label: "Net Cash", value: formatBillions(stock.netCash) },
