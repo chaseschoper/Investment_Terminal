@@ -1367,7 +1367,7 @@ const API_URL =
 const FINANCIAL_HISTORY_VERSION = 154;
 const STOCK_ESTIMATE_VERSION = 21;
 const INTERIM_HISTORY_VERSION = 6;
-const VALUATION_METRICS_VERSION = 8;
+const VALUATION_METRICS_VERSION = 15;
 const BALANCE_SHEET_METRICS_VERSION = 12;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const MIN_DISPLAY_INTERIM_HISTORY_ROWS = 4;
@@ -1383,10 +1383,10 @@ const handleCompanyLogoError = (event, symbol) => {
   const image = event.currentTarget;
   const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
   const fallbackUrls = [
+    getDefaultCompanyLogoUrl(symbol),
     `https://images.financialmodelingprep.com/symbol/${safeSymbol}.png`,
     `https://financialmodelingprep.com/image-stock/${safeSymbol}.png`,
     `https://eodhd.com/img/logos/US/${safeSymbol}.png`,
-    getDefaultCompanyLogoUrl(symbol),
     `https://assets.parqet.com/logos/symbol/${safeSymbol}?format=png`
   ].filter(Boolean);
   const stage = Number(image.dataset.logoFallbackStage || 0);
@@ -3705,13 +3705,13 @@ const latestQuarterlyProfitMarginFromChart = latestQuarterlyMetricValue(
 );
 const latestGrossMarginMetricValue = isNumber(latestQuarterlyGrossMarginFromChart)
   ? latestQuarterlyGrossMarginFromChart
-  : stockData.grossMargins;
+  : null;
 const latestOperatingMarginMetricValue = isNumber(latestQuarterlyOperatingMarginFromChart)
   ? latestQuarterlyOperatingMarginFromChart
-  : stockData.operatingMargins;
+  : null;
 const latestProfitMarginMetricValue = isNumber(latestQuarterlyProfitMarginFromChart)
   ? latestQuarterlyProfitMarginFromChart
-  : stockData.profitMargins;
+  : null;
 const visibleMarginHistory = filterChartRowsByMode(mergedMarginHistory, financialChartMode);
 const marginChartRowsWithFallback = (rows, key, value) =>
   financialChartMode === "quarterly"
@@ -4091,34 +4091,38 @@ const hasMetricCardValue = (value) =>
   isNumber(value) || (typeof value === "string" && value.trim() && value !== "N/A");
 const shouldRenderMetricCard = (value) =>
   hasMetricCardValue(value) || areMetricsRefreshing || isBalanceSheetMetricsRefreshing;
+const hasCurrentFmpValuationMetrics = stockData?.valuationMetricsVersion === VALUATION_METRICS_VERSION;
+const hasCurrentFmpBalanceMetrics = stockData?.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION;
+const fmpMetricValue = (value) => hasCurrentFmpValuationMetrics ? value : null;
+const fmpBalanceValue = (value) => hasCurrentFmpBalanceMetrics ? value : null;
 const metricCardItems = [
   { label: "Market Cap", raw: stockData.marketCap, value: metricValue(formatBillions(stockData.marketCap)) },
-  { label: "Cash & Equivalents", raw: stockData.cashAndCashEquivalents ?? stockData.totalCash, value: balanceSheetValue(formatBillions(stockData.cashAndCashEquivalents ?? stockData.totalCash)) },
-  { label: "Total Debt", raw: stockData.totalDebt, value: balanceSheetValue(formatBillions(stockData.totalDebt)) },
-  { label: "Net Cash", raw: stockData.netCash, value: balanceSheetValue(formatBillions(stockData.netCash)) },
-  { label: "Net Cash / Share", raw: stockData.netCashPerShare, value: balanceSheetValue(formatPrice(stockData.netCashPerShare)) },
-  { label: "Equity Book Value", raw: stockData.equityBookValue, value: balanceSheetValue(formatBillions(stockData.equityBookValue)) },
-  { label: "Book Value / Share", raw: stockData.bookValuePerShare, value: balanceSheetValue(formatPrice(stockData.bookValuePerShare)) },
-  { label: "Working Capital", raw: stockData.workingCapital, value: balanceSheetValue(formatBillions(stockData.workingCapital)) },
-  { label: "Current P/E", raw: stockData.pe, value: metricValue(formatPlain(stockData.pe)) },
-  { label: "Forward P/E", raw: stockData.forwardPE, value: metricValue(formatPlain(stockData.forwardPE)) },
-  { label: "Forward P/S", raw: stockData.forwardPS, value: metricValue(formatPlain(stockData.forwardPS)) },
-  { label: "PEG Ratio", raw: stockData.pegRatio, value: metricValue(formatPlain(stockData.pegRatio)) },
-  { label: "Price-to-Sales", raw: stockData.priceToSales, value: metricValue(formatPlain(stockData.priceToSales)) },
-  { label: "Price-to-Book", raw: stockData.priceToBook, value: metricValue(formatPlain(stockData.priceToBook)) },
-  { label: "P/TBV Ratio", raw: stockData.priceToTangibleBook, value: metricValue(formatPlain(stockData.priceToTangibleBook)) },
-  { label: "P/FCF Ratio", raw: stockData.priceToFreeCashflow, value: metricValue(formatPlain(stockData.priceToFreeCashflow)) },
-  { label: "P/OCF Ratio", raw: stockData.priceToOperatingCashflow, value: metricValue(formatPlain(stockData.priceToOperatingCashflow)) },
-  { label: "Revenue Growth", raw: stockData.revenueGrowth, value: metricValue(formatPercent(stockData.revenueGrowth)) },
-  { label: "Earnings Growth", raw: stockData.earningsGrowth, value: metricValue(formatPercent(stockData.earningsGrowth)) },
+  { label: "Cash & Equivalents", raw: fmpBalanceValue(stockData.cashAndCashEquivalents ?? stockData.totalCash), value: balanceSheetValue(formatBillions(fmpBalanceValue(stockData.cashAndCashEquivalents ?? stockData.totalCash))) },
+  { label: "Total Debt", raw: fmpBalanceValue(stockData.totalDebt), value: balanceSheetValue(formatBillions(fmpBalanceValue(stockData.totalDebt))) },
+  { label: "Net Cash", raw: fmpBalanceValue(stockData.netCash), value: balanceSheetValue(formatBillions(fmpBalanceValue(stockData.netCash))) },
+  { label: "Net Cash / Share", raw: fmpBalanceValue(stockData.netCashPerShare), value: balanceSheetValue(formatPrice(fmpBalanceValue(stockData.netCashPerShare))) },
+  { label: "Equity Book Value", raw: fmpBalanceValue(stockData.equityBookValue), value: balanceSheetValue(formatBillions(fmpBalanceValue(stockData.equityBookValue))) },
+  { label: "Book Value / Share", raw: fmpMetricValue(stockData.bookValuePerShare), value: metricValue(formatPrice(fmpMetricValue(stockData.bookValuePerShare))) },
+  { label: "Working Capital", raw: fmpBalanceValue(stockData.workingCapital), value: balanceSheetValue(formatBillions(fmpBalanceValue(stockData.workingCapital))) },
+  { label: "Current P/E", raw: fmpMetricValue(stockData.pe), value: metricValue(formatPlain(fmpMetricValue(stockData.pe))) },
+  { label: "Forward P/E", raw: fmpMetricValue(stockData.forwardPE), value: metricValue(formatPlain(fmpMetricValue(stockData.forwardPE))) },
+  { label: "Forward P/S", raw: fmpMetricValue(stockData.forwardPS), value: metricValue(formatPlain(fmpMetricValue(stockData.forwardPS))) },
+  { label: "PEG Ratio", raw: fmpMetricValue(stockData.pegRatio), value: metricValue(formatPlain(fmpMetricValue(stockData.pegRatio))) },
+  { label: "Price-to-Sales", raw: fmpMetricValue(stockData.priceToSales), value: metricValue(formatPlain(fmpMetricValue(stockData.priceToSales))) },
+  { label: "Price-to-Book", raw: fmpMetricValue(stockData.priceToBook), value: metricValue(formatPlain(fmpMetricValue(stockData.priceToBook))) },
+  { label: "P/TBV Ratio", raw: fmpMetricValue(stockData.priceToTangibleBook), value: metricValue(formatPlain(fmpMetricValue(stockData.priceToTangibleBook))) },
+  { label: "P/FCF Ratio", raw: fmpMetricValue(stockData.priceToFreeCashflow), value: metricValue(formatPlain(fmpMetricValue(stockData.priceToFreeCashflow))) },
+  { label: "P/OCF Ratio", raw: fmpMetricValue(stockData.priceToOperatingCashflow), value: metricValue(formatPlain(fmpMetricValue(stockData.priceToOperatingCashflow))) },
+  { label: "Revenue Growth", raw: fmpMetricValue(stockData.revenueGrowth), value: metricValue(formatPercent(fmpMetricValue(stockData.revenueGrowth))) },
+  { label: "Earnings Growth", raw: fmpMetricValue(stockData.earningsGrowth), value: metricValue(formatPercent(fmpMetricValue(stockData.earningsGrowth))) },
   {
     label: "Shares Outstanding",
     raw: stockData.sharesOutstanding,
     value: metricValue(stockData.sharesOutstanding ? `${(stockData.sharesOutstanding / 1000).toFixed(2)}B` : "N/A")
   },
-  { label: "Employee Count", raw: stockData.employeeCount, value: metricValue(formatSharesCount(stockData.employeeCount)) },
-  { label: "Revenue / Employee", raw: stockData.revenuePerEmployee, value: metricValue(formatLargeDollars(stockData.revenuePerEmployee)) },
-  { label: "Profit / Employee", raw: stockData.profitsPerEmployee, value: metricValue(formatLargeDollars(stockData.profitsPerEmployee)) },
+  { label: "Employee Count", raw: fmpMetricValue(stockData.employeeCount), value: metricValue(formatSharesCount(fmpMetricValue(stockData.employeeCount))) },
+  { label: "Revenue / Employee", raw: fmpMetricValue(stockData.revenuePerEmployee), value: metricValue(formatLargeDollars(fmpMetricValue(stockData.revenuePerEmployee))) },
+  { label: "Profit / Employee", raw: fmpMetricValue(stockData.profitsPerEmployee), value: metricValue(formatLargeDollars(fmpMetricValue(stockData.profitsPerEmployee))) },
   {
     label: stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin",
     raw: stockData.isFinancialCompany ? stockData.bankMetrics?.netInterestRevenueMix : latestGrossMarginMetricValue,
@@ -4130,30 +4134,29 @@ const metricCardItems = [
     value: metricValue(formatPercent(stockData.isFinancialCompany ? stockData.bankMetrics?.preTaxMargin : latestOperatingMarginMetricValue))
   },
   { label: "Profit Margin", raw: latestProfitMarginMetricValue, value: metricValue(formatPercent(latestProfitMarginMetricValue)) },
-  { label: "Pretax Margin", raw: stockData.pretaxMargin, value: metricValue(formatPercent(stockData.pretaxMargin)) },
-  { label: "EBITDA Margin", raw: stockData.ebitdaMargin, value: metricValue(formatPercent(stockData.ebitdaMargin)) },
-  { label: "EBIT Margin", raw: stockData.ebitMargin, value: metricValue(formatPercent(stockData.ebitMargin)) },
-  { label: "FCF Margin", raw: stockData.fcfMargin, value: metricValue(formatPercent(stockData.fcfMargin)) },
-  { label: "ROE", raw: stockData.returnOnEquity, value: metricValue(formatPercent(stockData.returnOnEquity)) },
-  { label: "ROA", raw: stockData.returnOnAssets, value: metricValue(formatPercent(stockData.returnOnAssets)) },
-  { label: "ROIC", raw: stockData.returnOnInvestedCapital, value: metricValue(formatPercent(stockData.returnOnInvestedCapital)) },
-  { label: "ROCE", raw: stockData.returnOnCapitalEmployed, value: metricValue(formatPercent(stockData.returnOnCapitalEmployed)) },
-  { label: "WACC", raw: stockData.weightedAverageCostOfCapital, value: metricValue(formatPercent(stockData.weightedAverageCostOfCapital)) },
+  { label: "Pretax Margin", raw: fmpMetricValue(stockData.pretaxMargin), value: metricValue(formatPercent(fmpMetricValue(stockData.pretaxMargin))) },
+  { label: "EBITDA Margin", raw: fmpMetricValue(stockData.ebitdaMargin), value: metricValue(formatPercent(fmpMetricValue(stockData.ebitdaMargin))) },
+  { label: "EBIT Margin", raw: fmpMetricValue(stockData.ebitMargin), value: metricValue(formatPercent(fmpMetricValue(stockData.ebitMargin))) },
+  { label: "FCF Margin", raw: fmpMetricValue(stockData.fcfMargin), value: metricValue(formatPercent(fmpMetricValue(stockData.fcfMargin))) },
+  { label: "ROE", raw: fmpMetricValue(stockData.returnOnEquity), value: metricValue(formatPercent(fmpMetricValue(stockData.returnOnEquity))) },
+  { label: "ROA", raw: fmpMetricValue(stockData.returnOnAssets), value: metricValue(formatPercent(fmpMetricValue(stockData.returnOnAssets))) },
+  { label: "ROIC", raw: fmpMetricValue(stockData.returnOnInvestedCapital), value: metricValue(formatPercent(fmpMetricValue(stockData.returnOnInvestedCapital))) },
+  { label: "ROCE", raw: fmpMetricValue(stockData.returnOnCapitalEmployed), value: metricValue(formatPercent(fmpMetricValue(stockData.returnOnCapitalEmployed))) },
   {
     label: stockData.isFinancialCompany ? "Annual Cash Change" : "Free Cash Flow",
-    raw: stockData.isFinancialCompany ? stockData.bankMetrics?.annualCashChange : latestFreeCashflowMetricValue,
-    value: metricValue(formatBillions(stockData.isFinancialCompany ? stockData.bankMetrics?.annualCashChange : latestFreeCashflowMetricValue))
+    raw: stockData.isFinancialCompany ? stockData.bankMetrics?.annualCashChange : fmpMetricValue(latestFreeCashflowMetricValue),
+    value: metricValue(formatBillions(stockData.isFinancialCompany ? stockData.bankMetrics?.annualCashChange : fmpMetricValue(latestFreeCashflowMetricValue)))
   },
   !stockData.isFinancialCompany && {
     label: "Operating Cash Flow",
-    raw: latestOperatingCashflowMetricValue,
-    value: metricValue(formatBillions(latestOperatingCashflowMetricValue))
+    raw: fmpMetricValue(latestOperatingCashflowMetricValue),
+    value: metricValue(formatBillions(fmpMetricValue(latestOperatingCashflowMetricValue)))
   },
-  { label: "Price Target", raw: stockData.targetMean, value: metricValue(formatPrice(stockData.targetMean)) },
+  { label: "Price Target", raw: fmpMetricValue(stockData.targetMean), value: metricValue(formatPrice(fmpMetricValue(stockData.targetMean))) },
   {
     label: "Analyst Rating",
-    raw: stockData.analystRatingText || stockData.recommendationKey,
-    value: metricValue(stockData.analystRatingText || stockData.recommendationKey || "N/A")
+    raw: fmpMetricValue(stockData.analystRatingText || stockData.recommendationKey),
+    value: metricValue(fmpMetricValue(stockData.analystRatingText || stockData.recommendationKey) || "N/A")
   },
   {
     label: "52-Week Range",
@@ -5337,7 +5340,7 @@ return (
             <img
               key={ticker}
               className="stock-company-logo"
-              src={stockData.logo || savedSymbolDetails[ticker]?.logo || getDefaultCompanyLogoUrl(stockData.symbol || ticker)}
+              src={getDefaultCompanyLogoUrl(stockData.symbol || ticker) || stockData.logo || savedSymbolDetails[ticker]?.logo}
               alt={`${stockData.name} logo`}
               onError={(event) => handleCompanyLogoError(event, ticker)}
             />
@@ -7141,7 +7144,7 @@ return (
     <div className="projections-company">
       {(stockData.logo || stockData.symbol || ticker) && (
         <img
-          src={stockData.logo || getDefaultCompanyLogoUrl(stockData.symbol || ticker)}
+          src={getDefaultCompanyLogoUrl(stockData.symbol || ticker) || stockData.logo}
           alt={`${stockData.symbol || ticker} logo`}
           onError={(event) => handleCompanyLogoError(event, stockData.symbol || ticker)}
         />

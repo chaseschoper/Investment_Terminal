@@ -72,7 +72,7 @@ const STOCK_ESTIMATE_VERSION = 21;
 const INTERIM_HISTORY_VERSION = 6;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const BALANCE_SHEET_METRICS_VERSION = 12;
-const VALUATION_METRICS_VERSION = 8;
+const VALUATION_METRICS_VERSION = 15;
 const EARNINGS_CALL_VERSION = 18;
 const STOCK_ANALYSIS_VALUATION_FIELDS = [
   "pe",
@@ -98,7 +98,6 @@ const STOCK_ANALYSIS_VALUATION_FIELDS = [
   "returnOnAssets",
   "returnOnInvestedCapital",
   "returnOnCapitalEmployed",
-  "weightedAverageCostOfCapital",
   "revenuePerEmployee",
   "profitsPerEmployee",
   "employeeCount",
@@ -857,7 +856,7 @@ async function fetchFmpStableQuoteProfile(ticker) {
       financialCurrency: firstText(profile.currency),
       sector: firstText(profile.sector),
       industry: firstText(profile.industry),
-      logo: firstText(profile.image, getFinnhubLogoUrl(symbol)),
+      logo: getFinnhubLogoUrl(symbol),
       price: firstFiniteNumber(quote.price, profile.price),
       change: firstFiniteNumber(quote.change, profile.change),
       percentChange: firstFiniteNumber(quote.changePercentage, profile.changePercentage),
@@ -870,6 +869,7 @@ async function fetchFmpStableQuoteProfile(ticker) {
       fiftyTwoWeekLow: firstFiniteNumber(quote.yearLow, rangeMatch ? parseApiNumber(rangeMatch[1]) : null),
       beta: firstFiniteNumber(profile.beta),
       employeeCount: firstFiniteNumber(profile.fullTimeEmployees),
+      isAdr: profile.isAdr === true || String(profile.isAdr || "").toLowerCase() === "true",
       dividendYield: normalizeDividendYield(profile.lastDividend && quote.price ? profile.lastDividend / quote.price : null),
       fmpProfileSource: "FMP stable quote/profile"
     };
@@ -975,27 +975,33 @@ async function fetchFmpStableValuationMetrics(ticker) {
     const quarterRevenue = firstFiniteNumber(incomeQuarter.revenue);
     const quarterEbitda = firstFiniteNumber(incomeQuarter.ebitda);
     const quarterEbit = firstFiniteNumber(incomeQuarter.ebit);
+    const isAdr = profile.isAdr === true || String(profile.isAdr || "").toLowerCase() === "true";
 
     return {
+      isAdr,
       pe: firstFiniteNumber(ratios.priceToEarningsRatioTTM),
-      forwardPE: firstFiniteNumber(
-        currentPrice && toNumberOrNull(currentYearEstimate.epsAvg ?? currentYearEstimate.estimatedEpsAvg)
+      forwardPE: isAdr
+        ? null
+        : firstFiniteNumber(
+          currentPrice && toNumberOrNull(currentYearEstimate.epsAvg ?? currentYearEstimate.estimatedEpsAvg)
           ? currentPrice / toNumberOrNull(currentYearEstimate.epsAvg ?? currentYearEstimate.estimatedEpsAvg)
           : null
-      ),
-      forwardPS: firstFiniteNumber(
-        marketCap && toNumberOrNull(currentYearEstimate.revenueAvg ?? currentYearEstimate.estimatedRevenueAvg)
+        ),
+      forwardPS: isAdr
+        ? null
+        : firstFiniteNumber(
+          marketCap && toNumberOrNull(currentYearEstimate.revenueAvg ?? currentYearEstimate.estimatedRevenueAvg)
           ? marketCap / toNumberOrNull(currentYearEstimate.revenueAvg ?? currentYearEstimate.estimatedRevenueAvg)
-          : null,
-        ratios.priceToSalesRatioTTM
-      ),
+          : null
+        ),
       priceToSales: firstFiniteNumber(ratios.priceToSalesRatioTTM),
       priceToBook: firstFiniteNumber(ratios.priceToBookRatioTTM),
-      priceToTangibleBook: firstFiniteNumber(
-        currentPrice && tangibleBookValuePerShare ? currentPrice / tangibleBookValuePerShare : null,
-        ratios.priceToTangibleBookRatioTTM,
-        ratios.priceToFairValueTTM
-      ),
+      priceToTangibleBook: isAdr
+        ? firstFiniteNumber(ratios.priceToTangibleBookRatioTTM)
+        : firstFiniteNumber(
+          currentPrice && tangibleBookValuePerShare ? currentPrice / tangibleBookValuePerShare : null,
+          ratios.priceToTangibleBookRatioTTM
+        ),
       priceToFreeCashflow: firstFiniteNumber(ratios.priceToFreeCashFlowRatioTTM),
       priceToOperatingCashflow: firstFiniteNumber(ratios.priceToOperatingCashFlowRatioTTM),
       pegRatio: firstFiniteNumber(
@@ -1029,21 +1035,21 @@ async function fetchFmpStableValuationMetrics(ticker) {
       ),
       freeCashflowGrowth: percent(firstFiniteNumber(growth.freeCashFlowGrowth, cashflowGrowth.growthFreeCashFlow)),
       operatingCashflowGrowth: percent(firstFiniteNumber(growth.operatingCashFlowGrowth, cashflowGrowth.growthOperatingCashFlow)),
-      freeCashflow: firstFiniteNumber(cashflow.freeCashFlow, cashflow.freeCashflow),
-      operatingCashflow: firstFiniteNumber(
+      freeCashflow: isAdr ? null : firstFiniteNumber(cashflow.freeCashFlow, cashflow.freeCashflow),
+      operatingCashflow: isAdr ? null : firstFiniteNumber(
         cashflow.operatingCashFlow,
         cashflow.operatingCashflow,
         cashflow.netCashProvidedByOperatingActivities
       ),
-      revenuePerEmployee: firstFiniteNumber(
+      revenuePerEmployee: isAdr ? null : firstFiniteNumber(
         employeeCount && ttmRevenue !== null ? ttmRevenue / employeeCount : null
       ),
-      profitsPerEmployee: firstFiniteNumber(
+      profitsPerEmployee: isAdr ? null : firstFiniteNumber(
         employeeCount && ttmNetIncome !== null ? ttmNetIncome / employeeCount : null
       ),
       employeeCount,
-      bookValuePerShare: firstFiniteNumber(ratios.bookValuePerShareTTM),
-      workingCapital: firstFiniteNumber(metrics.workingCapitalTTM),
+      bookValuePerShare: isAdr ? null : firstFiniteNumber(ratios.bookValuePerShareTTM),
+      workingCapital: isAdr ? null : firstFiniteNumber(metrics.workingCapitalTTM),
       marketCap,
       targetMean: firstFiniteNumber(
         priceTarget.lastMonthAvgPriceTarget,
@@ -3333,10 +3339,42 @@ async function fetchStockAnalysisHistoricalPe(ticker) {
   }
 }
 
+const sanitizeFmpAdrMetricCards = (data = {}) => ({
+  ...data,
+  forwardPE: null,
+  forwardPS: null,
+  cashAndCashEquivalents: null,
+  totalCash: null,
+  totalDebt: null,
+  netCash: null,
+  netCashPerShare: null,
+  equityBookValue: null,
+  bookValuePerShare: null,
+  workingCapital: null,
+  freeCashflow: null,
+  operatingCashflow: null,
+  revenuePerEmployee: null,
+  profitsPerEmployee: null,
+  balanceSheetAsOf: null,
+  balanceSheetSource: null
+});
+
+const finalizeStockMetricCardResponse = (ticker, data = {}) =>
+  FOREIGN_ADR_CONFIG[ticker] &&
+  data.isAdr === true &&
+  data.valuationMetricsVersion === VALUATION_METRICS_VERSION
+    ? sanitizeFmpAdrMetricCards(data)
+    : data;
+
 async function normalizeForeignAdrStockData(ticker, data = {}) {
   const config = FOREIGN_ADR_CONFIG[ticker];
-  if (!config || data.currencyAdjustedFor === `${ticker}_${config.displayCurrency}_ADR`) {
+  if (!config) {
     return data;
+  }
+  if (data.currencyAdjustedFor === `${ticker}_${config.displayCurrency}_ADR`) {
+    return data.isAdr === true && data.valuationMetricsVersion === VALUATION_METRICS_VERSION
+      ? sanitizeFmpAdrMetricCards(data)
+      : data;
   }
 
   const usdRate = await fetchUsdRate(config.sourceCurrency, config.fallbackUsdRate);
@@ -3432,7 +3470,7 @@ async function normalizeForeignAdrStockData(ticker, data = {}) {
         ? price / convertedBookValuePerShare
         : data.priceToBook;
 
-  return {
+  const normalized = {
     ...topLevelMoney,
     revenueData,
     revenueHistory,
@@ -3455,6 +3493,21 @@ async function normalizeForeignAdrStockData(ticker, data = {}) {
     adrRatio: config.adrRatio,
     currencyAdjustedFor: `${ticker}_${config.displayCurrency}_ADR`
   };
+
+  if (data.isAdr === true && data.valuationMetricsVersion === VALUATION_METRICS_VERSION) {
+    return sanitizeFmpAdrMetricCards({
+      ...normalized,
+      pe: data.pe,
+      priceToSales: data.priceToSales,
+      priceToBook: data.priceToBook,
+      priceToTangibleBook: data.priceToTangibleBook,
+      priceToFreeCashflow: data.priceToFreeCashflow,
+      priceToOperatingCashflow: data.priceToOperatingCashflow,
+      pegRatio: data.pegRatio
+    });
+  }
+
+  return normalized;
 }
 
 function convertGenericForeignRowToUsd(row, usdRate) {
@@ -3922,7 +3975,9 @@ const fmpEstimateField = (row, ...keys) =>
 
 const normalizeFmpAnnualEstimateRows = (rows = [], options = {}) => {
   const symbol = String(options.symbol || "").trim().toUpperCase();
-  const currentYear = new Date().getUTCFullYear();
+  const now = new Date();
+  const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const currentYear = now.getUTCFullYear();
   const maxFutureYear = currentYear + (options.maxFutureYears ?? 3);
 
   return (Array.isArray(rows) ? rows : rows ? [rows] : [])
@@ -3934,7 +3989,7 @@ const normalizeFmpAnnualEstimateRows = (rows = [], options = {}) => {
     .filter((row) => {
       if (Number.isNaN(row.estimateDate.getTime())) return false;
       const year = row.estimateDate.getUTCFullYear();
-      return year >= currentYear && year <= maxFutureYear;
+      return row.estimateDate >= todayUtc && year >= currentYear && year <= maxFutureYear;
     })
     .sort((a, b) => a.estimateDate - b.estimateDate);
 };
@@ -4920,6 +4975,7 @@ function preserveBankMargins(data, previousData) {
 }
 
 function withGuaranteedAnalystSection(data = {}) {
+  const useFmpOnlyMetricCards = data.valuationMetricsVersion === VALUATION_METRICS_VERSION;
   const hasSuppliedAnalystEstimates =
     toNumberOrNull(data.analystEstimates?.currentYear?.revenue) !== null &&
     toNumberOrNull(data.analystEstimates?.currentYear?.eps) !== null &&
@@ -5552,23 +5608,23 @@ function withGuaranteedAnalystSection(data = {}) {
     ...data,
     marketCap,
     sharesOutstanding,
-    pe,
-    priceToSales,
-    priceToBook,
-    bookValuePerShare,
-    forwardPE,
-    pegRatio,
-    revenueGrowth,
-    earningsGrowth,
-    grossMargins,
-    operatingMargins,
-    profitMargins,
+    pe: useFmpOnlyMetricCards ? data.pe : pe,
+    priceToSales: useFmpOnlyMetricCards ? data.priceToSales : priceToSales,
+    priceToBook: useFmpOnlyMetricCards ? data.priceToBook : priceToBook,
+    bookValuePerShare: useFmpOnlyMetricCards ? data.bookValuePerShare : bookValuePerShare,
+    forwardPE: useFmpOnlyMetricCards ? data.forwardPE : forwardPE,
+    pegRatio: useFmpOnlyMetricCards ? data.pegRatio : pegRatio,
+    revenueGrowth: useFmpOnlyMetricCards ? data.revenueGrowth : revenueGrowth,
+    earningsGrowth: useFmpOnlyMetricCards ? data.earningsGrowth : earningsGrowth,
+    grossMargins: useFmpOnlyMetricCards ? data.grossMargins : grossMargins,
+    operatingMargins: useFmpOnlyMetricCards ? data.operatingMargins : operatingMargins,
+    profitMargins: useFmpOnlyMetricCards ? data.profitMargins : profitMargins,
     fiftyTwoWeekHigh,
     fiftyTwoWeekLow,
-    freeCashflow,
-    targetMean,
-    recommendationKey,
-    analystRatingText,
+    freeCashflow: useFmpOnlyMetricCards ? data.freeCashflow : freeCashflow,
+    targetMean: useFmpOnlyMetricCards ? data.targetMean : targetMean,
+    recommendationKey: useFmpOnlyMetricCards ? data.recommendationKey : recommendationKey,
+    analystRatingText: useFmpOnlyMetricCards ? data.analystRatingText : analystRatingText,
     historicalPe: guaranteedHistoricalPe,
     analystEstimates: yahooLockedEstimates || hasSuppliedAnalystEstimates
       ? suppliedAnalystEstimates
@@ -5893,6 +5949,23 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
       FMP_TEXT_METRIC_FIELDS.forEach((field) => {
         valuationFields[field] = firstText(valuationPatch[field]) || null;
       });
+      if (valuationPatch.isAdr === true) {
+        Object.assign(valuationFields, {
+          isAdr: true,
+          totalCash: null,
+          totalDebt: null,
+          cashAndCashEquivalents: null,
+          netCash: null,
+          netCashPerShare: null,
+          equityBookValue: null,
+          bookValuePerShare: null,
+          workingCapital: null,
+          balanceSheetAsOf: null,
+          balanceSheetSource: null,
+          balanceSheetCheckedAt: new Date().toISOString(),
+          balanceSheetMetricsVersion: BALANCE_SHEET_METRICS_VERSION
+        });
+      }
       responseData = prepareCachedStockResponseData(ticker, {
         ...responseData,
         ...valuationFields,
@@ -5922,7 +5995,23 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
     toNumberOrNull(responseData.netCash) !== null ||
     toNumberOrNull(responseData.equityBookValue) !== null ||
     toNumberOrNull(responseData.workingCapital) !== null;
-  if (responseData.balanceSheetMetricsVersion !== BALANCE_SHEET_METRICS_VERSION || !repairedHasBalanceSheetValues) {
+  if (responseData.isAdr === true) {
+    responseData = prepareCachedStockResponseData(ticker, {
+      ...responseData,
+      totalCash: null,
+      totalDebt: null,
+      cashAndCashEquivalents: null,
+      netCash: null,
+      netCashPerShare: null,
+      equityBookValue: null,
+      bookValuePerShare: null,
+      workingCapital: null,
+      balanceSheetAsOf: null,
+      balanceSheetSource: null,
+      balanceSheetCheckedAt: responseData.balanceSheetCheckedAt || new Date().toISOString(),
+      balanceSheetMetricsVersion: BALANCE_SHEET_METRICS_VERSION
+    });
+  } else if (responseData.balanceSheetMetricsVersion !== BALANCE_SHEET_METRICS_VERSION || !repairedHasBalanceSheetValues) {
     const balanceSheetPatch = await resolveWithin(fetchLatestBalanceSheetMetrics(ticker, { fast: true }), 2600, {});
     const balanceFields = [
       "totalCash",
@@ -6057,11 +6146,11 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
       console.log("Fast FMP market activity response cache skipped:", ticker, err.message);
     });
   }
-  if (hasCachedHistoricalPe(responseData)) return responseData;
+  if (hasCachedHistoricalPe(responseData)) return finalizeStockMetricCardResponse(ticker, responseData);
 
   const fmpPeRows = await resolveWithin(fetchFmpHistoricalPe(ticker), 1000, []);
   if (!Array.isArray(fmpPeRows) || !fmpPeRows.length) {
-    return responseData;
+    return finalizeStockMetricCardResponse(ticker, responseData);
   }
 
   const currentRows = Array.isArray(responseData.historicalPe)
@@ -6089,7 +6178,7 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
     console.log("Fast historical PE response cache skipped:", ticker, err.message);
   });
 
-  return responseData;
+  return finalizeStockMetricCardResponse(ticker, responseData);
 }
 
 async function fetchYahooTimeSeriesFinancials(ticker) {
@@ -9018,16 +9107,18 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
         open: firstNumber(fmpProfile.open, chartQuote.o)
       }
     : definedValues(fmpProfile);
+  const isFmpAdr = fmpProfile.isAdr === true;
   const fastData = {
     ...chartData,
     ...yahooData,
     name: firstText(fmpProfile.name, yahooData.name),
     symbol: ticker,
+    isAdr: isFmpAdr,
     currency: firstText(fmpProfile.currency, yahooData.currency),
     financialCurrency: firstText(fmpProfile.financialCurrency, yahooData.financialCurrency),
     sector: firstText(fmpProfile.sector, yahooData.sector),
     industry: firstText(fmpProfile.industry, yahooData.industry),
-    logo: firstText(fmpProfile.logo, yahooData.logo, getFinnhubLogoUrl(ticker)),
+    logo: getFinnhubLogoUrl(ticker),
     marketCap: firstNumber(fmpProfile.marketCap, fmpValuation.marketCap, yahooData.marketCap),
     fiftyTwoWeekHigh: firstNumber(fmpProfile.fiftyTwoWeekHigh, fmpFiftyTwoWeekRange.fiftyTwoWeekHigh),
     fiftyTwoWeekLow: firstNumber(fmpProfile.fiftyTwoWeekLow, fmpFiftyTwoWeekRange.fiftyTwoWeekLow),
@@ -9059,24 +9150,14 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     analystRatingText: firstText(fmpValuation.analystRatingText),
     freeCashflow: firstNumber(fmpValuation.freeCashflow),
     operatingCashflow: firstNumber(fmpValuation.operatingCashflow),
-    revenuePerEmployee: firstNumber(
-      fmpValuation.revenuePerEmployee,
-      fmpProfile.employeeCount && fmpValuation.currentYearRevenue
-        ? fmpValuation.currentYearRevenue / fmpProfile.employeeCount
-        : null
-    ),
-    profitsPerEmployee: firstNumber(
-      fmpValuation.profitsPerEmployee,
-      fmpProfile.employeeCount && fmpValuation.currentYearNetIncome
-        ? fmpValuation.currentYearNetIncome / fmpProfile.employeeCount
-        : null
-    ),
+    revenuePerEmployee: firstNumber(fmpValuation.revenuePerEmployee),
+    profitsPerEmployee: firstNumber(fmpValuation.profitsPerEmployee),
     employeeCount: firstNumber(fmpValuation.employeeCount, fmpProfile.employeeCount),
-    totalCash: firstNumber(balanceSheetMetrics.totalCash, balanceSheetMetrics.cashAndCashEquivalents),
-    totalDebt: balanceSheetMetrics.totalDebt ?? null,
-    cashAndCashEquivalents: firstNumber(balanceSheetMetrics.cashAndCashEquivalents, balanceSheetMetrics.totalCash),
-    netCash: balanceSheetMetrics.netCash ?? null,
-    netCashPerShare: firstNumber(
+    totalCash: isFmpAdr ? null : firstNumber(balanceSheetMetrics.totalCash, balanceSheetMetrics.cashAndCashEquivalents),
+    totalDebt: isFmpAdr ? null : balanceSheetMetrics.totalDebt ?? null,
+    cashAndCashEquivalents: isFmpAdr ? null : firstNumber(balanceSheetMetrics.cashAndCashEquivalents, balanceSheetMetrics.totalCash),
+    netCash: isFmpAdr ? null : balanceSheetMetrics.netCash ?? null,
+    netCashPerShare: isFmpAdr ? null : firstNumber(
       balanceSheetMetrics.netCashPerShare,
       balanceSheetMetrics.netCash !== null &&
         fmpProfile.marketCap &&
@@ -9084,11 +9165,11 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
         ? balanceSheetMetrics.netCash / (fmpProfile.marketCap / fmpProfile.price)
         : null
     ),
-    equityBookValue: balanceSheetMetrics.equityBookValue ?? null,
-    bookValuePerShare: firstNumber(balanceSheetMetrics.bookValuePerShare, fmpValuation.bookValuePerShare),
-    workingCapital: firstNumber(balanceSheetMetrics.workingCapital, fmpValuation.workingCapital),
-    balanceSheetAsOf: balanceSheetMetrics.balanceSheetAsOf || null,
-    balanceSheetSource: balanceSheetMetrics.balanceSheetSource || null
+    equityBookValue: isFmpAdr ? null : balanceSheetMetrics.equityBookValue ?? null,
+    bookValuePerShare: isFmpAdr ? null : firstNumber(balanceSheetMetrics.bookValuePerShare, fmpValuation.bookValuePerShare),
+    workingCapital: isFmpAdr ? null : firstNumber(balanceSheetMetrics.workingCapital, fmpValuation.workingCapital),
+    balanceSheetAsOf: isFmpAdr ? null : balanceSheetMetrics.balanceSheetAsOf || null,
+    balanceSheetSource: isFmpAdr ? null : balanceSheetMetrics.balanceSheetSource || null
   };
   const hasFastSnapshotData =
     toNumberOrNull(fastData.price) !== null ||
@@ -10439,6 +10520,7 @@ async function fetchStockData(ticker) {
       ? displayedNextEpsValue * estimateSharesOutstanding * 1000000
       : null);
   const employeeCountValue = firstFiniteNumber(fmpStableValuation.employeeCount, fmpQuoteProfile.employeeCount);
+  const isFmpAdr = fmpQuoteProfile.isAdr === true;
 
   let data = await normalizeForeignAdrStockData(ticker, preserveBankMargins(withGuaranteedAnalystSection({
     isFinancialCompany,
@@ -10447,12 +10529,13 @@ async function fetchStockData(ticker) {
     historicalPe,
     name: firstText(fmpQuoteProfile.name, profile.name, ticker),
     symbol: ticker,
+    isAdr: isFmpAdr,
     currency: firstText(fmpQuoteProfile.currency, yahooSupplementalData.currency, quote.currency, previousData?.currency),
     financialCurrency: firstText(fmpQuoteProfile.financialCurrency, yahooSupplementalData.financialCurrency, yahooSupplementalData.currency, quote.currency, previousData?.financialCurrency),
     sourceFinancialCurrency: stockAnalysisFinancialCurrency || previousData?.sourceFinancialCurrency || null,
     sector: firstText(fmpQuoteProfile.sector, profile.gicsSector, profile.sector, yahooSupplementalData.sector, previousData?.sector),
     industry: firstText(fmpQuoteProfile.industry, profile.finnhubIndustry, profile.gicsSubIndustry, profile.industry, yahooSupplementalData.industry, previousData?.industry),
-    logo: firstText(fmpQuoteProfile.logo, profile.logo, getFinnhubLogoUrl(ticker)),
+    logo: getFinnhubLogoUrl(ticker),
     price: quote.c,
     change: quote.d,
     percentChange: quote.dp,
@@ -10465,91 +10548,51 @@ async function fetchStockData(ticker) {
     fiftyTwoWeekHigh,
     fiftyTwoWeekLow,
     marketCap,
-    totalCash: firstFiniteNumber(
-      balanceSheetMetrics.totalCash,
-      fmpStableValuation.cashAndCashEquivalents,
-      canReusePreviousBalanceSheetMetrics ? previousData?.totalCash : null
-    ),
-    totalDebt: firstFiniteNumber(
-      balanceSheetMetrics.totalDebt,
-      canReusePreviousBalanceSheetMetrics ? previousData?.totalDebt : null
-    ),
-    cashAndCashEquivalents: firstFiniteNumber(
-      balanceSheetMetrics.cashAndCashEquivalents,
-      balanceSheetMetrics.totalCash,
-      fmpStableValuation.cashAndCashEquivalents,
-      canReusePreviousBalanceSheetMetrics ? previousData?.cashAndCashEquivalents : null
-    ),
-    netCash: firstFiniteNumber(
-      balanceSheetMetrics.netCash,
-      canReusePreviousBalanceSheetMetrics ? previousData?.netCash : null
-    ),
-    netCashPerShare: firstFiniteNumber(
-      balanceSheetMetrics.netCashPerShare,
-      balanceSheetMetrics.netCash !== null && marketCap && quote.c
-        ? balanceSheetMetrics.netCash / (marketCap / quote.c)
-        : null,
-      balanceSheetMetrics.netCash !== null && sharesOutstandingValue && sharesOutstandingValue > 100000
-        ? balanceSheetMetrics.netCash / sharesOutstandingValue
-        : null,
-      canReusePreviousBalanceSheetMetrics ? previousData?.netCashPerShare : null
-    ),
-    equityBookValue: firstFiniteNumber(
-      balanceSheetMetrics.equityBookValue,
-      fmpStableValuation.equityBookValue,
-      canReusePreviousBalanceSheetMetrics ? previousData?.equityBookValue : null
-    ),
-    bookValuePerShare: firstFiniteNumber(
+    totalCash: isFmpAdr ? null : toNumberOrNull(balanceSheetMetrics.totalCash),
+    totalDebt: isFmpAdr ? null : toNumberOrNull(balanceSheetMetrics.totalDebt),
+    cashAndCashEquivalents: isFmpAdr ? null : toNumberOrNull(balanceSheetMetrics.cashAndCashEquivalents ?? balanceSheetMetrics.totalCash),
+    netCash: isFmpAdr ? null : toNumberOrNull(balanceSheetMetrics.netCash),
+    netCashPerShare: isFmpAdr ? null : toNumberOrNull(balanceSheetMetrics.netCashPerShare),
+    equityBookValue: isFmpAdr ? null : toNumberOrNull(balanceSheetMetrics.equityBookValue),
+    bookValuePerShare: isFmpAdr ? null : firstFiniteNumber(
       fmpStableValuation.bookValuePerShare,
-      balanceSheetMetrics.bookValuePerShare,
-      bookValuePerShare,
-      canReusePreviousBalanceSheetMetrics ? previousData?.bookValuePerShare : null
+      balanceSheetMetrics.bookValuePerShare
     ),
-    workingCapital: firstFiniteNumber(
+    workingCapital: isFmpAdr ? null : firstFiniteNumber(
       balanceSheetMetrics.workingCapital,
-      fmpStableValuation.workingCapital,
-      canReusePreviousBalanceSheetMetrics ? previousData?.workingCapital : null
+      fmpStableValuation.workingCapital
     ),
-    balanceSheetAsOf:
-      balanceSheetMetrics.balanceSheetAsOf || (canReusePreviousBalanceSheetMetrics ? previousData?.balanceSheetAsOf : null) || null,
-    balanceSheetSource:
-      balanceSheetMetrics.balanceSheetSource || (canReusePreviousBalanceSheetMetrics ? previousData?.balanceSheetSource : null) || null,
-    balanceSheetCheckedAt:
-      balanceSheetMetrics.balanceSheetCheckedAt || (canReusePreviousBalanceSheetMetrics ? previousData?.balanceSheetCheckedAt : null) || null,
+    balanceSheetAsOf: isFmpAdr ? null : balanceSheetMetrics.balanceSheetAsOf || null,
+    balanceSheetSource: isFmpAdr ? null : balanceSheetMetrics.balanceSheetSource || null,
+    balanceSheetCheckedAt: isFmpAdr ? new Date().toISOString() : balanceSheetMetrics.balanceSheetCheckedAt || null,
     balanceSheetMetricsVersion: BALANCE_SHEET_METRICS_VERSION,
-    priceToSales: firstFiniteNumber(fmpStableValuation.priceToSales, priceToSales),
-    priceToBook: firstFiniteNumber(fmpStableValuation.priceToBook, priceToBook),
+    priceToSales: toNumberOrNull(fmpStableValuation.priceToSales),
+    priceToBook: toNumberOrNull(fmpStableValuation.priceToBook),
     sharesOutstanding: sharesOutstandingValue,
-    pe: firstFiniteNumber(fmpStableValuation.pe, pe),
-    forwardPE: firstFiniteNumber(fmpStableValuation.forwardPE, forwardPE),
-    forwardPS: firstFiniteNumber(fmpStableValuation.forwardPS),
-    priceToTangibleBook: firstFiniteNumber(fmpStableValuation.priceToTangibleBook),
-    priceToFreeCashflow: firstFiniteNumber(fmpStableValuation.priceToFreeCashflow),
-    priceToOperatingCashflow: firstFiniteNumber(fmpStableValuation.priceToOperatingCashflow),
-    pegRatio,
-    pretaxMargin: firstFiniteNumber(fmpStableValuation.pretaxMargin),
-    ebitdaMargin: firstFiniteNumber(fmpStableValuation.ebitdaMargin),
-    ebitMargin: firstFiniteNumber(fmpStableValuation.ebitMargin),
-    fcfMargin: firstFiniteNumber(fmpStableValuation.fcfMargin),
-    returnOnEquity: firstFiniteNumber(fmpStableValuation.returnOnEquity),
-    returnOnAssets: firstFiniteNumber(fmpStableValuation.returnOnAssets),
-    returnOnInvestedCapital: firstFiniteNumber(fmpStableValuation.returnOnInvestedCapital),
-    returnOnCapitalEmployed: firstFiniteNumber(fmpStableValuation.returnOnCapitalEmployed),
-    weightedAverageCostOfCapital: firstFiniteNumber(fmpStableValuation.weightedAverageCostOfCapital),
-    revenuePerEmployee: firstFiniteNumber(
-      fmpStableValuation.revenuePerEmployee,
-      employeeCountValue && currentRevenueValue ? currentRevenueValue / employeeCountValue : null
-    ),
-    profitsPerEmployee: firstFiniteNumber(
-      fmpStableValuation.profitsPerEmployee,
-      employeeCountValue && currentEarningsValue ? currentEarningsValue / employeeCountValue : null
-    ),
+    pe: toNumberOrNull(fmpStableValuation.pe),
+    forwardPE: toNumberOrNull(fmpStableValuation.forwardPE),
+    forwardPS: toNumberOrNull(fmpStableValuation.forwardPS),
+    priceToTangibleBook: toNumberOrNull(fmpStableValuation.priceToTangibleBook),
+    priceToFreeCashflow: toNumberOrNull(fmpStableValuation.priceToFreeCashflow),
+    priceToOperatingCashflow: toNumberOrNull(fmpStableValuation.priceToOperatingCashflow),
+    pegRatio: toNumberOrNull(fmpStableValuation.pegRatio),
+    pretaxMargin: toNumberOrNull(fmpStableValuation.pretaxMargin),
+    ebitdaMargin: toNumberOrNull(fmpStableValuation.ebitdaMargin),
+    ebitMargin: toNumberOrNull(fmpStableValuation.ebitMargin),
+    fcfMargin: toNumberOrNull(fmpStableValuation.fcfMargin),
+    returnOnEquity: toNumberOrNull(fmpStableValuation.returnOnEquity),
+    returnOnAssets: toNumberOrNull(fmpStableValuation.returnOnAssets),
+    returnOnInvestedCapital: toNumberOrNull(fmpStableValuation.returnOnInvestedCapital),
+    returnOnCapitalEmployed: toNumberOrNull(fmpStableValuation.returnOnCapitalEmployed),
+    weightedAverageCostOfCapital: toNumberOrNull(fmpStableValuation.weightedAverageCostOfCapital),
+    revenuePerEmployee: toNumberOrNull(fmpStableValuation.revenuePerEmployee),
+    profitsPerEmployee: toNumberOrNull(fmpStableValuation.profitsPerEmployee),
     employeeCount: employeeCountValue,
     valuationMetricsCheckedAt: new Date().toISOString(),
     valuationMetricsVersion: VALUATION_METRICS_VERSION,
     trailingEps: trailingEpsValue,
     forwardEps: forwardEpsValue,
-    operatingCashflow,
+    operatingCashflow: toNumberOrNull(fmpStableValuation.operatingCashflow),
     consensusCurrentYearEps: consensusCurrentEpsValue,
     consensusNextYearEps: consensusNextEpsValue,
     consensusCurrentYearRevenue: consensusCurrentRevenueValue,
@@ -10574,15 +10617,15 @@ async function fetchStockData(ticker) {
       : isFinancialCompany
         ? `SEC annual filings ${secAnnualMargins.fiscalYear}`
         : "Annual financial statements",
-    revenueGrowth,
-    earningsGrowth,
+    revenueGrowth: toNumberOrNull(fmpStableValuation.revenueGrowth),
+    earningsGrowth: toNumberOrNull(fmpStableValuation.earningsGrowth),
     grossMargins,
     operatingMargins,
     profitMargins,
-    freeCashflow,
-    targetMean,
-    recommendationKey,
-    analystRatingText,
+    freeCashflow: toNumberOrNull(fmpStableValuation.freeCashflow),
+    targetMean: toNumberOrNull(fmpStableValuation.targetMean),
+    recommendationKey: firstText(fmpStableValuation.recommendationKey),
+    analystRatingText: firstText(fmpStableValuation.analystRatingText),
     analystUpdates: fmpMarketActivity?.analystUpdates || [],
     institutionalHolders: fmpMarketActivity?.institutionalHolders || [],
     insiderTransactions: fmpMarketActivity?.insiderTransactions || [],
@@ -10654,7 +10697,7 @@ async function fetchStockData(ticker) {
     { upsert: true }
   );
 
-  return data;
+  return finalizeStockMetricCardResponse(ticker, data);
 }
 
 async function markStockFetchFailed(ticker, error) {
