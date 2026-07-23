@@ -57,7 +57,6 @@ const fmpMarketActivityCache = new Map();
 const marketBeatAnalystCache = new Map();
 const secInsiderTransactionCache = new Map();
 const epsSurpriseCache = new Map();
-const yahooExpectedPegCache = new Map();
 const stockAnalysisValuationCache = new Map();
 const stockAnalysisHistoricalPeCache = new Map();
 let stockAnalysisEarningsCalendarPageCache = null;
@@ -73,7 +72,7 @@ const STOCK_ESTIMATE_VERSION = 21;
 const INTERIM_HISTORY_VERSION = 6;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const BALANCE_SHEET_METRICS_VERSION = 14;
-const VALUATION_METRICS_VERSION = 19;
+const VALUATION_METRICS_VERSION = 20;
 const EARNINGS_CALL_VERSION = 18;
 const FMP_VALUATION_METRIC_FIELDS = [
   "pe",
@@ -86,7 +85,6 @@ const FMP_VALUATION_METRIC_FIELDS = [
   "priceToFreeCashflow",
   "priceToOperatingCashflow",
   "pegRatio",
-  "forwardPegRatio",
   "revenueGrowth",
   "earningsGrowth",
   "grossMargins",
@@ -1031,7 +1029,6 @@ async function fetchFmpStableValuationMetrics(ticker) {
       pegRatio: firstFiniteNumber(
         ratios.priceToEarningsGrowthRatioTTM
       ),
-      forwardPegRatio: firstFiniteNumber(ratios.forwardPriceToEarningsGrowthRatioTTM),
       pretaxMargin: percent(ratios.pretaxProfitMarginTTM),
       ebitdaMargin: firstFiniteNumber(
         quarterRevenue && quarterEbitda !== null ? (quarterEbitda / quarterRevenue) * 100 : null,
@@ -1179,101 +1176,6 @@ async function fetchFmpStableBalanceSheetMetrics(ticker) {
   }
 }
 
-async function fetchYahooExpectedPegRatio(ticker) {
-  const symbol = String(ticker || "").trim().toUpperCase();
-  if (!symbol) return {};
-  const cached = yahooExpectedPegCache.get(symbol);
-  if (cached && Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1000) {
-    return cached.data;
-  }
-
-  const cacheResult = (forwardPegRatio, source) => {
-    const value = toNumberOrNull(forwardPegRatio);
-    if (value === null) return {};
-    const data = {
-      forwardPegRatio: value,
-      forwardPegRatioSource: source
-    };
-    yahooExpectedPegCache.set(symbol, { data, fetchedAt: Date.now() });
-    return data;
-  };
-
-  try {
-    const html = await new Promise((resolve, reject) => {
-      const url = new URL(`https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}/key-statistics/`);
-      url.searchParams.set("guccounter", "1");
-      const req = https.get(url, {
-        maxHeaderSize: 512 * 1024,
-        timeout: 9000,
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-          "Accept-Encoding": "gzip, deflate, br",
-          "Accept-Language": "en-US,en;q=0.9",
-          "Cache-Control": "no-cache",
-          "Pragma": "no-cache",
-          "Sec-Fetch-Dest": "document",
-          "Sec-Fetch-Mode": "navigate",
-          "Sec-Fetch-Site": "none",
-          "Sec-Fetch-User": "?1",
-          "Upgrade-Insecure-Requests": "1"
-        }
-      }, (res) => {
-        const chunks = [];
-        res.on("data", (chunk) => chunks.push(chunk));
-        res.on("end", () => {
-          const body = Buffer.concat(chunks);
-          const finish = (err, output) => {
-            if (err) return reject(err);
-            if (res.statusCode < 200 || res.statusCode >= 300) {
-              const error = new Error(`Yahoo key statistics HTTP ${res.statusCode}`);
-              error.response = { status: res.statusCode, data: output.toString("utf8").slice(0, 500) };
-              return reject(error);
-            }
-            resolve(output.toString("utf8"));
-          };
-
-          const encoding = String(res.headers["content-encoding"] || "").toLowerCase();
-          if (encoding.includes("br")) return zlib.brotliDecompress(body, finish);
-          if (encoding.includes("gzip")) return zlib.gunzip(body, finish);
-          if (encoding.includes("deflate")) return zlib.inflate(body, finish);
-          finish(null, body);
-        });
-      });
-      req.on("error", reject);
-      req.on("timeout", () => req.destroy(new Error("Yahoo key statistics timeout")));
-    });
-
-    const rawPeg = toNumberOrNull(html.match(/"pegRatio"\s*:\s*\{\s*"raw"\s*:\s*(-?\d+(?:\.\d+)?)/)?.[1]);
-    if (rawPeg !== null) return cacheResult(rawPeg, "Yahoo Finance key statistics");
-
-    const $ = cheerio.load(html);
-    const rowPegText = $("tr").filter((_, element) =>
-      /PEG Ratio\s*\(5yr expected\)/i.test($(element).text())
-    ).first().find("td").eq(1).text();
-    const rowPeg = toNumberOrNull(rowPegText);
-    if (rowPeg !== null) return cacheResult(rowPeg, "Yahoo Finance key statistics");
-  } catch (err) {
-    console.log("Yahoo expected PEG page skipped:", symbol, err.response?.status || err.message);
-  }
-
-  if (!canUseYahooQuoteSummary()) return {};
-  try {
-    const summary = await yahooFinance.quoteSummary(symbol, {
-      modules: ["defaultKeyStatistics"]
-    });
-    const keyStats = summary?.defaultKeyStatistics || {};
-    return cacheResult(
-      firstYahooNumber(keyStats.pegRatio, keyStats.trailingPegRatio),
-      "Yahoo Finance key statistics"
-    );
-  } catch (err) {
-    setYahooQuoteSummaryCooldown(err, "expected PEG ratio", symbol);
-    console.log("Yahoo expected PEG skipped:", symbol, err.message);
-    return {};
-  }
-}
-
 const firstFmpMetricNumber = (...values) => {
   for (const value of values) {
     const number = toNumberOrNull(value);
@@ -1331,8 +1233,9 @@ function buildFmpMetricCardUpdate(metricCards = {}) {
   clean.isAdr = metricCards.isAdr === true;
   clean.balanceSheetAsOf = firstText(metricCards.balanceSheetAsOf) || null;
   clean.balanceSheetSource = firstText(metricCards.balanceSheetSource) || null;
-  clean.valuationMetricsSource = "FMP metrics with StockAnalysis/Yahoo PEG";
-  clean.metricCardsSource = "FMP metric cards v19";
+  clean.forwardPegRatio = null;
+  clean.valuationMetricsSource = "FMP metrics with StockAnalysis PEG";
+  clean.metricCardsSource = "FMP metric cards v20";
   clean.valuationMetricsCheckedAt = new Date().toISOString();
   clean.balanceSheetCheckedAt = new Date().toISOString();
   clean.valuationMetricsVersion = VALUATION_METRICS_VERSION;
@@ -1381,8 +1284,7 @@ async function fetchFmpMetricCards(ticker) {
       estimatesData,
       ratingData,
       priceTargetData,
-      stockAnalysisValuationData,
-      yahooExpectedPegData
+      stockAnalysisValuationData
     ] = await Promise.all([
       getFmpData(symbol, "metric cards quote", ["/stable/quote?symbol={ticker}"]),
       getFmpData(symbol, "metric cards profile", ["/stable/profile?symbol={ticker}"]),
@@ -1395,8 +1297,7 @@ async function fetchFmpMetricCards(ticker) {
       getFmpData(symbol, "metric cards analyst estimates", ["/stable/analyst-estimates?symbol={ticker}&period=annual&limit=8"]),
       getFmpData(symbol, "metric cards rating snapshot", ["/stable/ratings-snapshot?symbol={ticker}"]),
       getFmpData(symbol, "metric cards price target summary", ["/stable/price-target-summary?symbol={ticker}"]),
-      resolveWithin(fetchStockAnalysisValuationMetrics(symbol), 2200, {}),
-      resolveWithin(fetchYahooExpectedPegRatio(symbol), 1800, {})
+      resolveWithin(fetchStockAnalysisValuationMetrics(symbol), 2200, {})
     ]);
 
     const quote = Array.isArray(quoteData) ? quoteData[0] || {} : quoteData || {};
@@ -1410,7 +1311,6 @@ async function fetchFmpMetricCards(ticker) {
     const rating = Array.isArray(ratingData) ? ratingData[0] || {} : ratingData || {};
     const priceTarget = Array.isArray(priceTargetData) ? priceTargetData[0] || {} : priceTargetData || {};
     const stockAnalysisValuation = stockAnalysisValuationData || {};
-    const yahooExpectedPeg = yahooExpectedPegData || {};
     const estimates = normalizeFmpAnnualEstimateRows(estimatesData, { symbol, maxFutureYears: 3 });
     const currentYearEstimate = estimates[0] || {};
 
@@ -1535,7 +1435,6 @@ async function fetchFmpMetricCards(ticker) {
         ratios.priceToEarningsGrowthRatioTTM,
         ratios.priceEarningsToGrowthRatioTTM
       ),
-      forwardPegRatio: firstFmpMetricNumber(yahooExpectedPeg.forwardPegRatio),
       revenueGrowth: percentFromFmpRatio(growth.revenueGrowth),
       earningsGrowth: percentFromFmpRatio(growth.netIncomeGrowth, growth.epsgrowth),
       grossMargins: firstFmpMetricNumber(margin(grossProfit), percentFromFmpRatio(ratios.grossProfitMarginTTM)),
