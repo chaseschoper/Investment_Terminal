@@ -4114,8 +4114,8 @@ const metricCardItems = [
   { label: "P/TBV Ratio", raw: fmpMetricValue(stockData.priceToTangibleBook), value: metricValue(formatPlain(fmpMetricValue(stockData.priceToTangibleBook))) },
   { label: "P/FCF Ratio", raw: fmpMetricValue(stockData.priceToFreeCashflow), value: metricValue(formatPlain(fmpMetricValue(stockData.priceToFreeCashflow))) },
   { label: "P/OCF Ratio", raw: fmpMetricValue(stockData.priceToOperatingCashflow), value: metricValue(formatPlain(fmpMetricValue(stockData.priceToOperatingCashflow))) },
-  { label: "Revenue Growth", raw: fmpMetricValue(stockData.revenueGrowth), value: metricValue(formatPercent(fmpMetricValue(stockData.revenueGrowth))) },
-  { label: "Earnings Growth", raw: fmpMetricValue(stockData.earningsGrowth), value: metricValue(formatPercent(fmpMetricValue(stockData.earningsGrowth))) },
+  { label: "Previous Year Revenue Growth", raw: fmpMetricValue(stockData.revenueGrowth), value: metricValue(formatPercent(fmpMetricValue(stockData.revenueGrowth))) },
+  { label: "Previous Year Earnings Growth", raw: fmpMetricValue(stockData.earningsGrowth), value: metricValue(formatPercent(fmpMetricValue(stockData.earningsGrowth))) },
   {
     label: "Shares Outstanding",
     raw: stockData.sharesOutstanding,
@@ -4656,8 +4656,8 @@ const comparisonMetricsForStock = (stock = {}) => [
   { label: "P/TBV Ratio", value: formatPlain(stock.priceToTangibleBook) },
   { label: "P/FCF Ratio", value: formatPlain(stock.priceToFreeCashflow) },
   { label: "P/OCF Ratio", value: formatPlain(stock.priceToOperatingCashflow) },
-  { label: "Revenue Growth", value: formatPercent(stock.revenueGrowth) },
-  { label: "Earnings Growth", value: formatPercent(stock.earningsGrowth) },
+  { label: "Previous Year Revenue Growth", value: formatPercent(stock.revenueGrowth) },
+  { label: "Previous Year Earnings Growth", value: formatPercent(stock.earningsGrowth) },
   {
     label: "Shares Outstanding",
     value: isNumber(stock.sharesOutstanding) ? `${(stock.sharesOutstanding / 1000).toFixed(2)}B` : "N/A"
@@ -6378,7 +6378,7 @@ return (
 
   <div className="card">
     <div className="card-title">
-      Revenue Growth
+      Previous Year Revenue Growth
     </div>
 
     <div className="card-value">
@@ -6388,7 +6388,7 @@ return (
 
   <div className="card">
     <div className="card-title">
-      Earnings Growth
+      Previous Year Earnings Growth
     </div>
 
     <div className="card-value">
