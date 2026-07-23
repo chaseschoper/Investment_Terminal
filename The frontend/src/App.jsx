@@ -1367,7 +1367,7 @@ const API_URL =
 const FINANCIAL_HISTORY_VERSION = 154;
 const STOCK_ESTIMATE_VERSION = 21;
 const INTERIM_HISTORY_VERSION = 6;
-const VALUATION_METRICS_VERSION = 17;
+const VALUATION_METRICS_VERSION = 18;
 const BALANCE_SHEET_METRICS_VERSION = 14;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const MIN_DISPLAY_INTERIM_HISTORY_ROWS = 4;
@@ -4109,7 +4109,7 @@ const metricCardItems = [
   { label: "Forward P/E", raw: fmpMetricValue(stockData.forwardPE), value: metricValue(formatPlain(fmpMetricValue(stockData.forwardPE))) },
   { label: "Forward P/S", raw: fmpMetricValue(stockData.forwardPS), value: metricValue(formatPlain(fmpMetricValue(stockData.forwardPS))) },
   { label: "PEG Ratio TTM", raw: fmpMetricValue(stockData.pegRatio), value: metricValue(formatPlain(fmpMetricValue(stockData.pegRatio))) },
-  { label: "Forward PEG", raw: fmpMetricValue(stockData.forwardPegRatio), value: metricValue(formatPlain(fmpMetricValue(stockData.forwardPegRatio))) },
+  { label: "PEG 5Y Expected", raw: fmpMetricValue(stockData.forwardPegRatio), value: metricValue(formatPlain(fmpMetricValue(stockData.forwardPegRatio))) },
   { label: "Price-to-Sales", raw: fmpMetricValue(stockData.priceToSales), value: metricValue(formatPlain(fmpMetricValue(stockData.priceToSales))) },
   { label: "Price-to-Book", raw: fmpMetricValue(stockData.priceToBook), value: metricValue(formatPlain(fmpMetricValue(stockData.priceToBook))) },
   { label: "P/TBV Ratio", raw: fmpMetricValue(stockData.priceToTangibleBook), value: metricValue(formatPlain(fmpMetricValue(stockData.priceToTangibleBook))) },
@@ -4651,7 +4651,8 @@ const comparisonMetricsForStock = (stock = {}) => [
   { label: "Current P/E", value: formatPlain(stock.pe) },
   { label: "Forward P/E", value: formatPlain(stock.forwardPE) },
   { label: "Forward P/S", value: formatPlain(stock.forwardPS) },
-  { label: "PEG Ratio", value: formatPlain(stock.pegRatio) },
+  { label: "PEG Ratio TTM", value: formatPlain(stock.pegRatio) },
+  { label: "PEG 5Y Expected", value: formatPlain(stock.forwardPegRatio) },
   { label: "Price-to-Sales", value: formatPlain(stock.priceToSales) },
   { label: "Price-to-Book", value: formatPlain(stock.priceToBook) },
   { label: "P/TBV Ratio", value: formatPlain(stock.priceToTangibleBook) },
@@ -6319,7 +6320,7 @@ return (
 
   <div className="card">
     <div className="card-title">
-      PEG Ratio
+      PEG Ratio TTM
     </div>
 
     <div className="card-value">
