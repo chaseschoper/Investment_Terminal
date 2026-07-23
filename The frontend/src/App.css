@@ -5711,11 +5711,12 @@ body {
 
 .financial-statements-page {
   display: grid;
-  gap: 22px;
-  padding: 32px 0 72px;
+  gap: 20px;
+  padding: 34px 0 72px;
 }
 
 .financial-statement-toolbar,
+.financial-statement-hero,
 .financial-statement-controls,
 .financial-statement-table-panel {
   border: 1px solid rgba(37, 99, 235, 0.36);
@@ -5729,8 +5730,10 @@ body {
 .financial-statement-toolbar {
   display: flex;
   align-items: end;
-  gap: 14px;
+  gap: 16px;
   padding: 18px;
+  border-top: 2px solid transparent;
+  border-image: linear-gradient(90deg, #14b8a6, #38bdf8, #2563eb) 1;
 }
 
 .financial-statement-search {
@@ -5739,23 +5742,15 @@ body {
   gap: 7px;
 }
 
-.financial-statement-search span {
-  color: #67e8f9;
-  font-size: 12px;
-  font-weight: 900;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
 .financial-statement-search input {
   width: 100%;
-  min-height: 48px;
-  padding: 0 14px;
+  min-height: 58px;
+  padding: 0 18px;
   border: 1px solid rgba(148, 163, 184, 0.24);
   border-radius: 8px;
   background: rgba(15, 23, 42, 0.88);
   color: #f8fafc;
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 800;
 }
 
@@ -5763,6 +5758,30 @@ body {
   border-color: rgba(45, 212, 191, 0.64);
   outline: none;
   box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.12);
+}
+
+.financial-statement-hero {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 26px 28px;
+}
+
+.financial-statement-hero h2 {
+  margin: 8px 0 0;
+  color: #ffffff;
+  font-size: clamp(34px, 4vw, 58px);
+  line-height: 0.95;
+  letter-spacing: 0;
+}
+
+.financial-statement-hero p {
+  max-width: 780px;
+  margin: 14px 0 0;
+  color: #a7b0c0;
+  font-size: 17px;
+  line-height: 1.55;
 }
 
 .financial-statement-controls {
@@ -5901,9 +5920,22 @@ body {
   .screener-actions,
   .screener-results-heading,
   .financial-statement-toolbar,
+  .financial-statement-hero,
   .financial-statement-controls {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .financial-statement-hero {
+    padding: 22px 18px;
+  }
+
+  .financial-statement-hero h2 {
+    font-size: 34px;
+  }
+
+  .financial-statement-hero p {
+    font-size: 15px;
   }
 
   .screener-actions button,

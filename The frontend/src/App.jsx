@@ -330,7 +330,7 @@ const formatPrice = (value) =>
   isNumber(value) ? `$${value.toFixed(2)}` : "N/A";
 
 const formatStatementValue = (value, row = {}) => {
-  if (!isNumber(value)) return "-";
+  if (!isNumber(value)) return "N/A";
   const key = String(row.key || "").toLowerCase();
   const label = String(row.label || "").toLowerCase();
   if (key.includes("ratio") || label.includes("margin")) {
@@ -6220,7 +6220,20 @@ return (
 
     {activePage === "financial-statements" && (
       <section className="financial-statements-page" id="financial-statements" aria-labelledby="financial-statements-title">
-        <div className="section-heading-row screener-heading">
+        <form className="financial-statement-toolbar" onSubmit={handleFinancialStatementSearch}>
+          <label className="financial-statement-search">
+            <input
+              value={financialStatementInput}
+              onChange={(event) => setFinancialStatementInput(event.target.value)}
+              placeholder="Search NVDA, Apple, Nike..."
+            />
+          </label>
+          <button type="submit" className="stock-search-button">
+            {isFinancialStatementLoading ? "Loading..." : "Search"}
+          </button>
+        </form>
+
+        <div className="financial-statement-hero">
           <div>
             <span className="home-feature-label">FMP Financial Statements</span>
             <h2 id="financial-statements-title">Financial Statements</h2>
@@ -6232,20 +6245,6 @@ return (
             </span>
           )}
         </div>
-
-        <form className="financial-statement-toolbar" onSubmit={handleFinancialStatementSearch}>
-          <label className="financial-statement-search">
-            <span>Ticker or company</span>
-            <input
-              value={financialStatementInput}
-              onChange={(event) => setFinancialStatementInput(event.target.value)}
-              placeholder="Search NVDA, Apple, Nike..."
-            />
-          </label>
-          <button type="submit" className="stock-search-button">
-            {isFinancialStatementLoading ? "Loading..." : "Search"}
-          </button>
-        </form>
 
         <div className="financial-statement-controls">
           <div className="company-document-tabs" role="tablist" aria-label="Statement type">
