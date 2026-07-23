@@ -4489,6 +4489,153 @@ const companyExecutives = Array.isArray(stockData.executives)
   ? stockData.executives.filter((executive) => executive?.name).slice(0, 10)
   : [];
 const hasCompanyProfileSection = Boolean(stockData.description) || companyExecutives.length > 0;
+const metricGroupConfig = [
+  {
+    key: "profile",
+    title: "Company Profile",
+    labels: new Set([
+      "Market Cap",
+      "Beta",
+      "Volume",
+      "Last Dividend",
+      "Shares Outstanding",
+      "Float Shares",
+      "Free Float Shares",
+      "Employee Count",
+      "Industry",
+      "CEO",
+      "Country",
+      "Exchange",
+      "52-Week Range"
+    ])
+  },
+  {
+    key: "valuation",
+    title: "Valuation",
+    labels: new Set([
+      "TTM P/E",
+      "Forward P/E",
+      "Forward P/S",
+      "PEG Ratio TTM",
+      "Price-to-Sales",
+      "Price-to-Book",
+      "P/TBV Ratio",
+      "P/FCF Ratio",
+      "P/OCF Ratio",
+      "Enterprise Value",
+      "EV / Sales",
+      "EV / EBITDA",
+      "EV / OCF",
+      "EV / FCF",
+      "Net Debt / EBITDA",
+      "FCF Yield",
+      "Earnings Yield"
+    ])
+  },
+  {
+    key: "balance",
+    title: "Balance Sheet",
+    labels: new Set([
+      "Cash & ST Investments",
+      "Total Debt",
+      "Net Cash",
+      "Net Cash / Share",
+      "Equity Book Value",
+      "Book Value / Share",
+      "Working Capital",
+      "Current Ratio",
+      "Quick Ratio",
+      "Cash Ratio",
+      "Debt / Equity",
+      "Debt / Assets",
+      "Debt / Capital",
+      "Financial Leverage",
+      "Interest Coverage"
+    ])
+  },
+  {
+    key: "profitability",
+    title: "Profitability",
+    labels: new Set([
+      "Gross Margin",
+      "Operating Margin",
+      "Net Interest Revenue Mix",
+      "Pre-Tax Margin",
+      "Profit Margin",
+      "Pretax Margin",
+      "EBITDA Margin",
+      "EBIT Margin",
+      "FCF Margin",
+      "ROE",
+      "ROA",
+      "ROIC",
+      "ROCE",
+      "Dividend Yield TTM",
+      "Dividend Payout Ratio",
+      "Income Quality"
+    ])
+  },
+  {
+    key: "growth",
+    title: "Growth",
+    labels: new Set([
+      "Previous Year Revenue Growth",
+      "Previous Year Earnings Growth",
+      "Previous Year FCF Growth",
+      "Previous Year OCF Growth",
+      "Previous Year EBITDA Growth",
+      "Previous Year Debt Growth",
+      "3Y Revenue / Share Growth",
+      "5Y Revenue / Share Growth",
+      "3Y Net Income / Share Growth",
+      "5Y Net Income / Share Growth",
+      "Revenue / Employee",
+      "Profit / Employee"
+    ])
+  },
+  {
+    key: "efficiency",
+    title: "Efficiency",
+    labels: new Set([
+      "Asset Turnover",
+      "Inventory Turnover",
+      "Receivables Turnover",
+      "Payables Turnover",
+      "Cash Conversion Cycle",
+      "Days Sales Outstanding",
+      "Days Payables Outstanding",
+      "Days Inventory Outstanding",
+      "Operating Cycle",
+      "R&D / Revenue",
+      "SG&A / Revenue",
+      "Stock Comp / Revenue",
+      "Capex / Revenue",
+      "Capex / OCF",
+      "Capex / Depreciation",
+      "Effective Tax Rate"
+    ])
+  },
+  {
+    key: "cashflow",
+    title: "Cash Flow & Analyst",
+    labels: new Set([
+      "Free Cash Flow",
+      "Operating Cash Flow",
+      "Annual Cash Change",
+      "Price Target",
+      "Analyst Rating"
+    ])
+  }
+];
+const renderedMetricCards = metricCardItems.filter((item) => shouldRenderMetricCard(item.raw));
+const groupedMetricCards = metricGroupConfig
+  .map((group) => ({
+    ...group,
+    items: renderedMetricCards.filter((item) => group.labels.has(item.label))
+  }))
+  .filter((group) => group.items.length);
+const groupedMetricLabels = new Set(groupedMetricCards.flatMap((group) => group.items.map((item) => item.label)));
+const ungroupedMetricCards = renderedMetricCards.filter((item) => !groupedMetricLabels.has(item.label));
 const estimateValue = (value) =>
   (isInitialStockLoad || areEstimatesRefreshing) && (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
@@ -4956,6 +5103,9 @@ const mrRallySection = (
 
 const comparisonMetricsForStock = (stock = {}) => [
   { label: "Market Cap", value: formatBillions(stock.marketCap) },
+  { label: "Beta", value: formatPlain(stock.beta) },
+  { label: "Volume", value: formatLargeNumber(stock.volume) },
+  { label: "Last Dividend", value: formatPrice(stock.lastDividend) },
   { label: "Cash & Equivalents", value: formatBillions(stock.cashAndCashEquivalents ?? stock.totalCash) },
   { label: "Total Debt", value: formatBillions(stock.totalDebt) },
   { label: "Net Cash", value: formatBillions(stock.netCash) },
@@ -4994,6 +5144,8 @@ const comparisonMetricsForStock = (stock = {}) => [
     label: "Shares Outstanding",
     value: isNumber(stock.sharesOutstanding) ? `${(stock.sharesOutstanding / 1000).toFixed(2)}B` : "N/A"
   },
+  { label: "Float Shares", value: formatSharesCount(stock.floatShares) },
+  { label: "Free Float Shares", value: formatSharesCount(stock.freeFloatShares) },
   { label: "Employee Count", value: formatSharesCount(stock.employeeCount) },
   { label: "Revenue / Employee", value: formatLargeDollars(stock.revenuePerEmployee) },
   { label: "Profit / Employee", value: formatLargeDollars(stock.profitsPerEmployee) },
@@ -5057,7 +5209,11 @@ const comparisonMetricsForStock = (stock = {}) => [
     value: isNumber(stock.fiftyTwoWeekLow) && isNumber(stock.fiftyTwoWeekHigh)
       ? `${formatPrice(stock.fiftyTwoWeekLow)} to ${formatPrice(stock.fiftyTwoWeekHigh)}`
       : "N/A"
-  }
+  },
+  { label: "Industry", value: stock.industry || "N/A" },
+  { label: "CEO", value: stock.ceo || "N/A" },
+  { label: "Country", value: stock.country || "N/A" },
+  { label: "Exchange", value: stock.exchange || "N/A" }
 ];
 
 const comparisonSection = (
@@ -6852,19 +7008,47 @@ return (
 
         {/* METRICS */}
 
-   <div className="grid section-anchor" id="metrics">
-    {metricCardItems
-      .filter((item) => shouldRenderMetricCard(item.raw))
-      .map((item) => (
-        <div key={item.label} className={`card ${item.className || ""}`.trim()}>
-          <div className="card-title">
-            {item.label}
-          </div>
-          <div className={`card-value ${item.valueClassName || ""}`.trim()}>
-            {item.value}
-          </div>
+   <div className="metrics-groups section-anchor" id="metrics">
+    {groupedMetricCards.map((group) => (
+      <section className="metric-group" key={group.key}>
+        <div className="metric-group-heading">
+          <h3>{group.title}</h3>
+          <span>{group.items.length} metrics</span>
         </div>
+        <div className="grid metric-group-grid">
+          {group.items.map((item) => (
+            <div key={item.label} className={`card ${item.className || ""}`.trim()}>
+              <div className="card-title">
+                {item.label}
+              </div>
+              <div className={`card-value ${item.valueClassName || ""}`.trim()}>
+                {item.value}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
     ))}
+    {ungroupedMetricCards.length > 0 && (
+      <section className="metric-group">
+        <div className="metric-group-heading">
+          <h3>Other Metrics</h3>
+          <span>{ungroupedMetricCards.length} metrics</span>
+        </div>
+        <div className="grid metric-group-grid">
+          {ungroupedMetricCards.map((item) => (
+            <div key={item.label} className={`card ${item.className || ""}`.trim()}>
+              <div className="card-title">
+                {item.label}
+              </div>
+              <div className={`card-value ${item.valueClassName || ""}`.trim()}>
+                {item.value}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    )}
   </div>
 
   {hasCompanyProfileSection && (

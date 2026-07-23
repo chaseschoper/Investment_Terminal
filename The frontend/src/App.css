@@ -1816,6 +1816,47 @@ body {
   margin-bottom: 40px;
 }
 
+.metrics-groups {
+  display: grid;
+  gap: 24px;
+  margin-bottom: 42px;
+}
+
+.metric-group {
+  border: 1px solid rgba(37, 99, 235, 0.22);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at top left, rgba(20, 184, 166, 0.08), transparent 30%),
+    rgba(8, 13, 24, 0.56);
+  padding: 18px;
+}
+
+.metric-group-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.metric-group-heading h3 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: clamp(20px, 2vw, 28px);
+}
+
+.metric-group-heading span {
+  color: #67e8f9;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.metric-group-grid {
+  margin-bottom: 0;
+}
+
 /* CARDS */
 
 .card {

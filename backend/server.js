@@ -6520,6 +6520,19 @@ function prepareCachedStockResponseData(ticker, data = {}) {
   );
 }
 
+function hasCompleteCompanyProfileSnapshot(data = {}) {
+  return Boolean(
+    data.ceo &&
+    data.country &&
+    data.exchange &&
+    data.description &&
+    toNumberOrNull(data.floatShares) !== null &&
+    toNumberOrNull(data.freeFloatShares) !== null &&
+    Array.isArray(data.executives) &&
+    data.executives.length > 0
+  );
+}
+
 function hasCachedHistoricalPe(responseData = {}) {
   const annualPeRows = Array.isArray(responseData.historicalPe)
     ? responseData.historicalPe.filter((row) =>
@@ -6550,14 +6563,7 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
     toNumberOrNull(responseData.beta) === null ||
     toNumberOrNull(responseData.volume) === null ||
     responseData.lastDividend === undefined ||
-    !responseData.ceo ||
-    !responseData.country ||
-    !responseData.exchange ||
-    !responseData.description ||
-    toNumberOrNull(responseData.floatShares) === null ||
-    toNumberOrNull(responseData.freeFloatShares) === null ||
-    !Array.isArray(responseData.executives) ||
-    responseData.executives.length === 0 ||
+    !hasCompleteCompanyProfileSnapshot(responseData) ||
     responseData.estimateDataVersion !== STOCK_ESTIMATE_VERSION ||
     responseData.analystEstimatesSource !== "FMP" ||
     responseData.analystEstimates?.nextQuarter?.source !== "FMP earnings history";
@@ -9752,8 +9758,8 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     Promise.resolve({}),
     Promise.resolve({}),
     resolveWithin(fetchFmpFiftyTwoWeekRange(ticker), 1800, {}),
-    resolveWithin(fetchFmpSharesFloat(ticker), 1200, {}),
-    resolveWithin(fetchFmpKeyExecutives(ticker), 1200, [])
+    resolveWithin(fetchFmpSharesFloat(ticker), 2200, {}),
+    resolveWithin(fetchFmpKeyExecutives(ticker), 2200, [])
   ]);
   const definedValues = (data = {}) => Object.fromEntries(
     Object.entries(data).filter(([, value]) => value !== null && value !== undefined)
@@ -9990,12 +9996,17 @@ const getImmediateStockSnapshot = async (ticker, previousData = {}) => {
     const needsMetricCards =
       previousData.valuationMetricsVersion !== VALUATION_METRICS_VERSION ||
       previousData.balanceSheetMetricsVersion !== BALANCE_SHEET_METRICS_VERSION;
-    if (!needsMetricCards) return buildMinimalStockSnapshot(ticker, previousData);
-    const metricCards = await resolveWithin(fetchFmpMetricCards(ticker), 2600, {});
+    const needsCompanyProfile = !hasCompleteCompanyProfileSnapshot(previousData);
+    if (!needsMetricCards && !needsCompanyProfile) return buildMinimalStockSnapshot(ticker, previousData);
+    const fastPatch = needsCompanyProfile
+      ? await resolveWithin(buildFastStockSnapshot(ticker, previousData), 3200, null)
+      : null;
+    if (fastPatch) return buildMinimalStockSnapshot(ticker, fastPatch);
+    const metricCards = needsMetricCards ? await resolveWithin(fetchFmpMetricCards(ticker), 2600, {}) : {};
     return applyFmpMetricCards(buildMinimalStockSnapshot(ticker, previousData), metricCards);
   }
 
-  return (await resolveWithin(buildFastStockSnapshot(ticker, previousData), 2200, null)) ||
+  return (await resolveWithin(buildFastStockSnapshot(ticker, previousData), 3200, null)) ||
     buildMinimalStockSnapshot(ticker, previousData);
 };
 
