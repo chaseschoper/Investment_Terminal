@@ -1117,6 +1117,9 @@ const hasMarketActivityLoaded = (stock = {}) =>
 
 const hasAnyOverviewMetricData = (stock = {}) =>
   isNumber(stock.marketCap) ||
+  isNumber(stock.beta) ||
+  isNumber(stock.volume) ||
+  isNumber(stock.lastDividend) ||
   isNumber(stock.pe) ||
   isNumber(stock.forwardPE) ||
   isNumber(stock.priceToSales) ||
@@ -1132,6 +1135,9 @@ const hasAnyOverviewMetricData = (stock = {}) =>
 const overviewMetricCount = (stock = {}) =>
   [
     "marketCap",
+    "beta",
+    "volume",
+    "lastDividend",
     "pe",
     "forwardPE",
     "pegRatio",
@@ -4352,6 +4358,9 @@ const fmpMetricValue = (value) => hasCurrentFmpValuationMetrics ? value : null;
 const fmpBalanceValue = (value) => hasCurrentFmpBalanceMetrics ? value : null;
 const metricCardItems = [
   { label: "Market Cap", raw: stockData.marketCap, value: metricValue(formatBillions(stockData.marketCap)) },
+  { label: "Beta", raw: stockData.beta, value: metricValue(formatPlain(stockData.beta)) },
+  { label: "Volume", raw: stockData.volume, value: metricValue(formatLargeNumber(stockData.volume)) },
+  { label: "Last Dividend", raw: stockData.lastDividend, value: metricValue(formatPrice(stockData.lastDividend)) },
   { label: "Cash & ST Investments", raw: fmpBalanceValue(stockData.cashAndCashEquivalents ?? stockData.totalCash), value: balanceSheetValue(formatBillions(fmpBalanceValue(stockData.cashAndCashEquivalents ?? stockData.totalCash))) },
   { label: "Total Debt", raw: fmpBalanceValue(stockData.totalDebt), value: balanceSheetValue(formatBillions(fmpBalanceValue(stockData.totalDebt))) },
   { label: "Net Cash", raw: fmpBalanceValue(stockData.netCash), value: balanceSheetValue(formatBillions(fmpBalanceValue(stockData.netCash))) },
@@ -5800,8 +5809,8 @@ return (
             {screenerNumberInput("priceLowerThan", "Price Lower Than")}
             {screenerNumberInput("betaMoreThan", "Beta More Than")}
             {screenerNumberInput("betaLowerThan", "Beta Lower Than")}
-            {screenerNumberInput("dividendMoreThan", "Last Dividend More Than")}
-            {screenerNumberInput("dividendLowerThan", "Last Dividend Lower Than")}
+            {screenerNumberInput("dividendMoreThan", "Current Dividend More Than")}
+            {screenerNumberInput("dividendLowerThan", "Current Dividend Lower Than")}
             {screenerNumberInput("volumeMoreThan", "Volume More Than")}
             {screenerNumberInput("volumeLowerThan", "Volume Lower Than")}
             {screenerSelectInput("sector", "Sector", screenerOptions.sectors)}
@@ -5867,7 +5876,7 @@ return (
                     <th>Sector</th>
                     <th>Industry</th>
                     <th>Beta</th>
-                    <th>Last Dividend</th>
+                    <th>Current Dividend</th>
                     <th>Volume</th>
                     <th>Exchange</th>
                   </tr>
@@ -5909,7 +5918,7 @@ return (
                       <td>{row.sector || "N/A"}</td>
                       <td>{row.industry || "N/A"}</td>
                       <td>{formatPlain(row.beta)}</td>
-                      <td>{formatPrice(row.lastDividend ?? row.dividend)}</td>
+                      <td>{formatPrice(row.currentDividend ?? row.lastDividend ?? row.dividend)}</td>
                       <td>{formatLargeNumber(row.volume)}</td>
                       <td>{row.exchange || "N/A"}</td>
                     </tr>

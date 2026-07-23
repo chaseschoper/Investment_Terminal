@@ -932,10 +932,12 @@ async function fetchFmpStableQuoteProfile(ticker) {
       high: firstFiniteNumber(quote.dayHigh),
       low: firstFiniteNumber(quote.dayLow),
       open: firstFiniteNumber(quote.open),
+      volume: firstFiniteNumber(quote.volume, profile.volume),
       marketCap: firstFiniteNumber(quote.marketCap, profile.marketCap),
       fiftyTwoWeekHigh: firstFiniteNumber(quote.yearHigh, rangeMatch ? parseApiNumber(rangeMatch[2]) : null),
       fiftyTwoWeekLow: firstFiniteNumber(quote.yearLow, rangeMatch ? parseApiNumber(rangeMatch[1]) : null),
       beta: firstFiniteNumber(profile.beta),
+      lastDividend: firstFiniteNumber(profile.lastDividend),
       employeeCount: firstFiniteNumber(profile.fullTimeEmployees),
       isAdr: profile.isAdr === true || String(profile.isAdr || "").toLowerCase() === "true",
       dividendYield: normalizeDividendYield(profile.lastDividend && quote.price ? profile.lastDividend / quote.price : null),
@@ -6485,6 +6487,9 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
     responseData.valuationMetricsVersion !== VALUATION_METRICS_VERSION ||
     responseData.balanceSheetMetricsVersion !== BALANCE_SHEET_METRICS_VERSION ||
     !hasBalanceSheetValues ||
+    toNumberOrNull(responseData.beta) === null ||
+    toNumberOrNull(responseData.volume) === null ||
+    responseData.lastDividend === undefined ||
     responseData.estimateDataVersion !== STOCK_ESTIMATE_VERSION ||
     responseData.analystEstimatesSource !== "FMP" ||
     responseData.analystEstimates?.nextQuarter?.source !== "FMP earnings history";
@@ -9706,6 +9711,9 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     industry: firstText(fmpProfile.industry, yahooData.industry),
     logo: getFinnhubLogoUrl(ticker),
     marketCap: firstNumber(fmpProfile.marketCap, fmpValuation.marketCap, yahooData.marketCap),
+    beta: firstNumber(fmpProfile.beta),
+    volume: firstNumber(fmpProfile.volume),
+    lastDividend: firstNumber(fmpProfile.lastDividend),
     fiftyTwoWeekHigh: firstNumber(fmpProfile.fiftyTwoWeekHigh, fmpFiftyTwoWeekRange.fiftyTwoWeekHigh),
     fiftyTwoWeekLow: firstNumber(fmpProfile.fiftyTwoWeekLow, fmpFiftyTwoWeekRange.fiftyTwoWeekLow),
     pe: firstNumber(fmpValuation.pe),
@@ -11116,6 +11124,9 @@ async function fetchStockData(ticker) {
     high: firstFiniteNumber(fmpQuoteProfile.high, quote.h),
     low: firstFiniteNumber(fmpQuoteProfile.low, quote.l),
     open: firstFiniteNumber(fmpQuoteProfile.open, quote.o),
+    beta: firstFiniteNumber(fmpQuoteProfile.beta),
+    volume: firstFiniteNumber(fmpQuoteProfile.volume),
+    lastDividend: firstFiniteNumber(fmpQuoteProfile.lastDividend),
     dividendYield,
     fiftyTwoWeekHigh,
     fiftyTwoWeekLow,
@@ -18373,6 +18384,8 @@ const results = (Array.isArray(data) ? data : [])
     const symbol = String(row.symbol || "").trim().toUpperCase();
     const isEtf = row.isEtf === true || String(row.isEtf || "").toLowerCase() === "true";
     const isFund = row.isFund === true || String(row.isFund || "").toLowerCase() === "true";
+    const dividendValue = firstFiniteNumber(row.lastAnnualDividend, row.lastDividend, row.dividend);
+    const currentDividend = dividendValue !== null && dividendValue >= 0.01 ? dividendValue : null;
     return {
       symbol,
       companyName: firstText(row.companyName, row.name, symbol),
@@ -18381,8 +18394,9 @@ const results = (Array.isArray(data) ? data : [])
       industry: firstText(row.industry),
       beta: toNumberOrNull(row.beta),
       price: toNumberOrNull(row.price),
-      lastDividend: firstFiniteNumber(row.lastAnnualDividend, row.lastDividend, row.dividend),
-      dividend: firstFiniteNumber(row.lastAnnualDividend, row.lastDividend, row.dividend),
+      currentDividend,
+      lastDividend: currentDividend,
+      dividend: currentDividend,
       volume: toNumberOrNull(row.volume),
       exchange: firstText(row.exchangeShortName, row.exchange),
       country: firstText(row.country),
