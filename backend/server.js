@@ -72,7 +72,7 @@ const STOCK_ESTIMATE_VERSION = 21;
 const INTERIM_HISTORY_VERSION = 6;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const BALANCE_SHEET_METRICS_VERSION = 13;
-const VALUATION_METRICS_VERSION = 16;
+const VALUATION_METRICS_VERSION = 17;
 const EARNINGS_CALL_VERSION = 18;
 const FMP_VALUATION_METRIC_FIELDS = [
   "pe",
@@ -85,6 +85,7 @@ const FMP_VALUATION_METRIC_FIELDS = [
   "priceToFreeCashflow",
   "priceToOperatingCashflow",
   "pegRatio",
+  "forwardPegRatio",
   "revenueGrowth",
   "earningsGrowth",
   "grossMargins",
@@ -1027,9 +1028,9 @@ async function fetchFmpStableValuationMetrics(ticker) {
       priceToFreeCashflow: firstFiniteNumber(ratios.priceToFreeCashFlowRatioTTM),
       priceToOperatingCashflow: firstFiniteNumber(ratios.priceToOperatingCashFlowRatioTTM),
       pegRatio: firstFiniteNumber(
-        ratios.priceToEarningsGrowthRatioTTM,
-        ratios.forwardPriceToEarningsGrowthRatioTTM
+        ratios.priceToEarningsGrowthRatioTTM
       ),
+      forwardPegRatio: firstFiniteNumber(ratios.forwardPriceToEarningsGrowthRatioTTM),
       pretaxMargin: percent(ratios.pretaxProfitMarginTTM),
       ebitdaMargin: firstFiniteNumber(
         quarterRevenue && quarterEbitda !== null ? (quarterEbitda / quarterRevenue) * 100 : null,
@@ -1235,7 +1236,7 @@ function buildFmpMetricCardUpdate(metricCards = {}) {
   clean.balanceSheetAsOf = firstText(metricCards.balanceSheetAsOf) || null;
   clean.balanceSheetSource = firstText(metricCards.balanceSheetSource) || null;
   clean.valuationMetricsSource = "FMP only";
-  clean.metricCardsSource = "FMP metric cards v16";
+  clean.metricCardsSource = "FMP metric cards v17";
   clean.valuationMetricsCheckedAt = new Date().toISOString();
   clean.balanceSheetCheckedAt = new Date().toISOString();
   clean.valuationMetricsVersion = VALUATION_METRICS_VERSION;
@@ -1429,9 +1430,9 @@ async function fetchFmpMetricCards(ticker) {
       priceToOperatingCashflow: firstFmpMetricNumber(ratios.priceToOperatingCashFlowRatioTTM),
       pegRatio: firstFmpMetricNumber(
         ratios.priceToEarningsGrowthRatioTTM,
-        ratios.priceEarningsToGrowthRatioTTM,
-        ratios.forwardPriceToEarningsGrowthRatioTTM
+        ratios.priceEarningsToGrowthRatioTTM
       ),
+      forwardPegRatio: firstFmpMetricNumber(ratios.forwardPriceToEarningsGrowthRatioTTM),
       revenueGrowth: percentFromFmpRatio(growth.revenueGrowth),
       earningsGrowth: percentFromFmpRatio(growth.netIncomeGrowth, growth.epsgrowth),
       grossMargins: firstFmpMetricNumber(margin(grossProfit), percentFromFmpRatio(ratios.grossProfitMarginTTM)),
@@ -1469,14 +1470,33 @@ async function fetchFmpBatchQuotes(symbols = []) {
   if (!process.env.FMP_API_KEY || !canUseFmp() || !symbols.length) return [];
 
   try {
-    const response = await axios.get(
+    const stableResponse = await axios.get(
+      "https://financialmodelingprep.com/stable/batch-quote",
+      {
+        params: {
+          symbols: symbols.join(","),
+          apikey: process.env.FMP_API_KEY
+        },
+        timeout: 5500
+      }
+    );
+    if (Array.isArray(stableResponse.data) && stableResponse.data.length) return stableResponse.data;
+  } catch (err) {
+    if (![402, 403, 404].includes(Number(err.response?.status))) {
+      setFmpCooldown(err, "stable batch quote", symbols.slice(0, 3).join(","));
+      console.log("FMP stable batch quote skipped:", err.response?.status || err.message);
+    }
+  }
+
+  try {
+    const legacyResponse = await axios.get(
       `https://financialmodelingprep.com/api/v3/quote/${symbols.map(encodeURIComponent).join(",")}`,
       {
         params: { apikey: process.env.FMP_API_KEY },
         timeout: 5500
       }
     );
-    return Array.isArray(response.data) ? response.data : [];
+    return Array.isArray(legacyResponse.data) ? legacyResponse.data : [];
   } catch (err) {
     setFmpCooldown(err, "batch quote", symbols.slice(0, 3).join(","));
     console.log("FMP batch quote skipped:", err.response?.status || err.message);
@@ -17581,7 +17601,7 @@ app.get("/api/earnings", async (req, res) => {
     date.setUTCDate(date.getUTCDate() + index);
     return toIsoDate(date);
   });
-  const cacheKey = `fmp:v2:${dates[0]}`;
+  const cacheKey = `fmp:v9:${dates[0]}`;
   const cached = earningsCalendarCache.get(cacheKey);
   if (cached && Date.now() - cached.cachedAt < 60 * 60 * 1000 && cached.data?.days?.some((day) => day.events?.length)) {
     return res.json(cached.data);
@@ -17617,19 +17637,38 @@ app.get("/api/earnings", async (req, res) => {
     const calendarSymbols = [...new Set(fmpList
       .map((row) => String(row.symbol || "").trim().toUpperCase())
       .filter(Boolean))];
-    const savedStocks = calendarSymbols.length
-      ? await resolveWithin(
-          Stock.find({ ticker: { $in: calendarSymbols } })
-            .select("ticker data.marketCap data.price")
-            .lean(),
-          1800,
-          []
-        )
-      : [];
-    const savedMarketCapBySymbol = new Map(
-      (Array.isArray(savedStocks) ? savedStocks : [])
-        .map((stock) => [String(stock.ticker || "").toUpperCase(), toNumberOrNull(stock.data?.marketCap)])
-        .filter(([, marketCap]) => marketCap !== null)
+    const topRevenueSymbols = [...fmpList]
+      .map((row) => ({
+        symbol: String(row.symbol || "").trim().toUpperCase(),
+        revenue: firstFiniteNumber(row.revenueActual, row.revenueEstimated) || 0
+      }))
+      .filter((row) => row.symbol)
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 80)
+      .map((row) => row.symbol);
+    const symbolsForQuoteMarketCap = [...new Set([
+      ...topRevenueSymbols
+    ])];
+    const quoteMarketCapRows = [];
+    if (process.env.FMP_API_KEY && canUseFmp() && symbolsForQuoteMarketCap.length) {
+      for (let index = 0; index < symbolsForQuoteMarketCap.length; index += 20) {
+        const rows = await Promise.all(
+          symbolsForQuoteMarketCap.slice(index, index + 20).map((symbol) =>
+            resolveWithin(getFmpData(symbol, "calendar quote market cap", [
+              "/stable/quote?symbol={ticker}"
+            ]), 3000, null)
+          )
+        );
+        quoteMarketCapRows.push(...rows);
+      }
+    }
+    const fmpMarketCapBySymbol = new Map(
+      quoteMarketCapRows
+        .map((quoteData) => {
+          const quote = Array.isArray(quoteData) ? quoteData[0] || {} : quoteData || {};
+          return [String(quote.symbol || "").trim().toUpperCase(), toNumberOrNull(quote.marketCap)];
+        })
+        .filter(([symbol, marketCap]) => symbol && marketCap !== null)
     );
     const eventsByDate = new Map();
     fmpList.forEach((row) => {
@@ -17645,9 +17684,8 @@ app.get("/api/earnings", async (req, res) => {
         company: row.name || row.company || stockAnalysisRow.company || symbol,
         logo: getFinnhubLogoUrl(symbol),
         marketCap: firstFiniteNumber(
-          row.marketCap,
-          savedMarketCapBySymbol.get(symbol),
-          stockAnalysisRow.marketCap
+          fmpMarketCapBySymbol.get(symbol),
+          row.marketCap
         ),
         reportTime: timeLabels[reportTimeCode] || row.time || stockAnalysisRow.reportTimeCode || "Time not supplied",
         fiscalQuarter: row.fiscalDateEnding ? String(row.fiscalDateEnding).slice(0, 10) : null,
@@ -17662,7 +17700,14 @@ app.get("/api/earnings", async (req, res) => {
       eventsByDate.set(date, list);
     });
     const days = dates.map((date) => {
-      const events = (eventsByDate.get(date) || [])
+      const uniqueEvents = new Map();
+      (eventsByDate.get(date) || []).forEach((event) => {
+        const existing = uniqueEvents.get(event.symbol);
+        if (!existing || (event.marketCap || 0) > (existing.marketCap || 0)) {
+          uniqueEvents.set(event.symbol, event);
+        }
+      });
+      const events = [...uniqueEvents.values()]
         .sort((a, b) => (b.marketCap || 0) - (a.marketCap || 0) || a.symbol.localeCompare(b.symbol))
         .slice(0, 80);
       return { date, events };

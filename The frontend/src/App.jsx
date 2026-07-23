@@ -1367,7 +1367,7 @@ const API_URL =
 const FINANCIAL_HISTORY_VERSION = 154;
 const STOCK_ESTIMATE_VERSION = 21;
 const INTERIM_HISTORY_VERSION = 6;
-const VALUATION_METRICS_VERSION = 16;
+const VALUATION_METRICS_VERSION = 17;
 const BALANCE_SHEET_METRICS_VERSION = 13;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const MIN_DISPLAY_INTERIM_HISTORY_ROWS = 4;
@@ -4108,7 +4108,8 @@ const metricCardItems = [
   { label: "Current P/E", raw: fmpMetricValue(stockData.pe), value: metricValue(formatPlain(fmpMetricValue(stockData.pe))) },
   { label: "Forward P/E", raw: fmpMetricValue(stockData.forwardPE), value: metricValue(formatPlain(fmpMetricValue(stockData.forwardPE))) },
   { label: "Forward P/S", raw: fmpMetricValue(stockData.forwardPS), value: metricValue(formatPlain(fmpMetricValue(stockData.forwardPS))) },
-  { label: "PEG Ratio", raw: fmpMetricValue(stockData.pegRatio), value: metricValue(formatPlain(fmpMetricValue(stockData.pegRatio))) },
+  { label: "PEG Ratio TTM", raw: fmpMetricValue(stockData.pegRatio), value: metricValue(formatPlain(fmpMetricValue(stockData.pegRatio))) },
+  { label: "Forward PEG", raw: fmpMetricValue(stockData.forwardPegRatio), value: metricValue(formatPlain(fmpMetricValue(stockData.forwardPegRatio))) },
   { label: "Price-to-Sales", raw: fmpMetricValue(stockData.priceToSales), value: metricValue(formatPlain(fmpMetricValue(stockData.priceToSales))) },
   { label: "Price-to-Book", raw: fmpMetricValue(stockData.priceToBook), value: metricValue(formatPlain(fmpMetricValue(stockData.priceToBook))) },
   { label: "P/TBV Ratio", raw: fmpMetricValue(stockData.priceToTangibleBook), value: metricValue(formatPlain(fmpMetricValue(stockData.priceToTangibleBook))) },
