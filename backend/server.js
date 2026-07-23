@@ -71,7 +71,7 @@ const FINANCIAL_HISTORY_VERSION = 154;
 const STOCK_ESTIMATE_VERSION = 21;
 const INTERIM_HISTORY_VERSION = 6;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
-const BALANCE_SHEET_METRICS_VERSION = 13;
+const BALANCE_SHEET_METRICS_VERSION = 14;
 const VALUATION_METRICS_VERSION = 17;
 const EARNINGS_CALL_VERSION = 18;
 const FMP_VALUATION_METRIC_FIELDS = [
@@ -1336,7 +1336,7 @@ async function fetchFmpMetricCards(ticker) {
       balance.cashAndCashEquivalents,
       balance.cash
     );
-    const totalDebt = firstFmpMetricNumber(combinedDebt, balance.totalDebt, balance.longTermDebt);
+    const totalDebt = firstFmpMetricNumber(balance.totalDebt, combinedDebt, balance.longTermDebt);
     const netCash =
       cashAndEquivalents !== null || totalDebt !== null
         ? (cashAndEquivalents || 0) - (totalDebt || 0)
