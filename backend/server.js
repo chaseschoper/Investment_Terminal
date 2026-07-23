@@ -50,6 +50,8 @@ const companyDocumentsInFlight = new Map();
 const stockSearchCache = new Map();
 const stockScreenerCache = new Map();
 const stockScreenerOptionsCache = new Map();
+const fmpCalendarCache = new Map();
+const treasuryRatesCache = new Map();
 const earningsCallPeriodsCache = new Map();
 const earningsCallTranscriptCache = new Map();
 const similarCompanyMetricCache = new Map();
@@ -18189,7 +18191,7 @@ app.get("/api/earnings", async (req, res) => {
     date.setUTCDate(date.getUTCDate() + index);
     return toIsoDate(date);
   });
-  const cacheKey = `fmp:v9:${dates[0]}`;
+  const cacheKey = `fmp:v10:${dates[0]}`;
   const cached = earningsCalendarCache.get(cacheKey);
   if (cached && Date.now() - cached.cachedAt < 60 * 60 * 1000 && cached.data?.days?.some((day) => day.events?.length)) {
     return res.json(cached.data);
@@ -18215,40 +18217,71 @@ app.get("/api/earnings", async (req, res) => {
       "time-pre-market": "Before open",
       "time-after-hours": "After close"
     };
+    const normalizeReportTime = (...values) => {
+      for (const value of values) {
+        const raw = String(value || "").trim();
+        if (!raw) continue;
+        const text = raw.toLowerCase();
+        if (timeLabels[text]) return timeLabels[text];
+        if (/\b(before|pre[-\s]?market|premarket|open)\b/.test(text)) return "Before open";
+        if (/\b(after|post[-\s]?market|after[-\s]?hours|close)\b/.test(text)) return "After close";
+        if (/\b(during|market hours)\b/.test(text)) return "During market";
+        if (!/not supplied|unknown|n\/a/.test(text)) return raw;
+      }
+      return "Time not supplied";
+    };
     const stockAnalysisByDateSymbol = new Map(
       (Array.isArray(stockAnalysisRows) ? stockAnalysisRows : [])
         .map((row) => [`${row.date}:${String(row.symbol || "").trim().toUpperCase()}`, row])
     );
+    const stockAnalysisBySymbol = new Map();
+    (Array.isArray(stockAnalysisRows) ? stockAnalysisRows : []).forEach((row) => {
+      const symbol = String(row.symbol || "").trim().toUpperCase();
+      if (symbol && !stockAnalysisBySymbol.has(symbol)) stockAnalysisBySymbol.set(symbol, row);
+    });
     const rawFmpList = Array.isArray(fmpRows) ? fmpRows : fmpRows ? [fmpRows] : [];
     const fallbackStockAnalysisList = Array.isArray(stockAnalysisRows) ? stockAnalysisRows : [];
     const fmpList = rawFmpList.length ? rawFmpList : fallbackStockAnalysisList;
     const calendarSymbols = [...new Set(fmpList
       .map((row) => String(row.symbol || "").trim().toUpperCase())
       .filter(Boolean))];
-    const topRevenueSymbols = [...fmpList]
-      .map((row) => ({
-        symbol: String(row.symbol || "").trim().toUpperCase(),
-        revenue: firstFiniteNumber(row.revenueActual, row.revenueEstimated) || 0
-      }))
-      .filter((row) => row.symbol)
-      .sort((a, b) => b.revenue - a.revenue)
-      .slice(0, 80)
-      .map((row) => row.symbol);
-    const symbolsForQuoteMarketCap = [...new Set([
-      ...topRevenueSymbols
-    ])];
+    const quoteCandidateSymbols = [...new Set(dates.flatMap((date) =>
+      fmpList
+        .filter((row) => String(row.date || "").slice(0, 10) === date)
+        .map((row) => ({
+          symbol: String(row.symbol || "").trim().toUpperCase(),
+          rankValue: firstFiniteNumber(row.marketCap, row.revenueActual, row.revenueEstimated) || 0
+        }))
+        .filter((row) => row.symbol)
+        .sort((a, b) => b.rankValue - a.rankValue)
+        .slice(0, 100)
+        .map((row) => row.symbol)
+    ))].slice(0, 500);
+    const savedMarketCapBySymbol = new Map();
+    if (quoteCandidateSymbols.length) {
+      const savedStocks = await Stock.find(
+        { ticker: { $in: quoteCandidateSymbols } },
+        { ticker: 1, "data.marketCap": 1 }
+      ).lean().catch(() => []);
+      (savedStocks || []).forEach((stock) => {
+        const symbol = String(stock.ticker || "").trim().toUpperCase();
+        const marketCap = toNumberOrNull(stock.data?.marketCap);
+        if (symbol && marketCap !== null) savedMarketCapBySymbol.set(symbol, marketCap);
+      });
+    }
+    const missingQuoteSymbols = quoteCandidateSymbols
+      .filter((symbol) => !savedMarketCapBySymbol.has(symbol))
+      .slice(0, 220);
     const quoteMarketCapRows = [];
-    if (process.env.FMP_API_KEY && canUseFmp() && symbolsForQuoteMarketCap.length) {
-      for (let index = 0; index < symbolsForQuoteMarketCap.length; index += 20) {
-        const rows = await Promise.all(
-          symbolsForQuoteMarketCap.slice(index, index + 20).map((symbol) =>
-            resolveWithin(getFmpData(symbol, "calendar quote market cap", [
-              "/stable/quote?symbol={ticker}"
-            ]), 3000, null)
-          )
-        );
-        quoteMarketCapRows.push(...rows);
-      }
+    if (process.env.FMP_API_KEY && canUseFmp() && missingQuoteSymbols.length) {
+      const quoteRows = await Promise.all(
+        missingQuoteSymbols.map((symbol) =>
+          resolveWithin(getFmpData(symbol, "calendar quote market cap", [
+            "/stable/quote?symbol={ticker}"
+          ]), 2200, null)
+        )
+      );
+      quoteMarketCapRows.push(...quoteRows);
     }
     const fmpMarketCapBySymbol = new Map(
       quoteMarketCapRows
@@ -18258,14 +18291,16 @@ app.get("/api/earnings", async (req, res) => {
         })
         .filter(([symbol, marketCap]) => symbol && marketCap !== null)
     );
+    savedMarketCapBySymbol.forEach((marketCap, symbol) => {
+      if (!fmpMarketCapBySymbol.has(symbol)) fmpMarketCapBySymbol.set(symbol, marketCap);
+    });
     const eventsByDate = new Map();
     fmpList.forEach((row) => {
       const date = String(row.date || "").slice(0, 10);
       if (!dates.includes(date)) return;
       const symbol = String(row.symbol || "").trim().toUpperCase();
       if (!symbol) return;
-      const stockAnalysisRow = stockAnalysisByDateSymbol.get(`${date}:${symbol}`) || {};
-      const reportTimeCode = String(row.time || row.reportTime || stockAnalysisRow.reportTimeCode || "").toLowerCase();
+      const stockAnalysisRow = stockAnalysisByDateSymbol.get(`${date}:${symbol}`) || stockAnalysisBySymbol.get(symbol) || {};
       const event = {
         date,
         symbol,
@@ -18275,7 +18310,7 @@ app.get("/api/earnings", async (req, res) => {
           fmpMarketCapBySymbol.get(symbol),
           row.marketCap
         ),
-        reportTime: timeLabels[reportTimeCode] || row.time || stockAnalysisRow.reportTimeCode || "Time not supplied",
+        reportTime: normalizeReportTime(row.time, row.reportTime, row.reportTimeCode, stockAnalysisRow.reportTime, stockAnalysisRow.reportTimeCode),
         fiscalQuarter: row.fiscalDateEnding ? String(row.fiscalDateEnding).slice(0, 10) : null,
         epsEstimate: firstFiniteNumber(row.epsEstimated, row.epsEstimate, stockAnalysisRow.epsEstimate),
         revenueEstimate: firstFiniteNumber(row.revenueEstimated, row.revenueEstimate, stockAnalysisRow.revenueEstimate),
@@ -18296,7 +18331,11 @@ app.get("/api/earnings", async (req, res) => {
         }
       });
       const events = [...uniqueEvents.values()]
-        .sort((a, b) => (b.marketCap || 0) - (a.marketCap || 0) || a.symbol.localeCompare(b.symbol))
+        .sort((a, b) =>
+          (b.marketCap || 0) - (a.marketCap || 0) ||
+          (b.revenueEstimate || b.revenueActual || 0) - (a.revenueEstimate || a.revenueActual || 0) ||
+          a.symbol.localeCompare(b.symbol)
+        )
         .slice(0, 80);
       return { date, events };
     });
@@ -18312,6 +18351,184 @@ app.get("/api/earnings", async (req, res) => {
   } catch (err) {
     console.error("Earnings calendar error:", err.message);
     return res.status(500).json({ weekStart: dates[0], weekEnd: dates[6], days: [] });
+  }
+});
+
+const parseCalendarIsoDate = (value) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))) return null;
+  const date = new Date(`${value}T12:00:00Z`);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const calendarIsoDate = (date) => date.toISOString().slice(0, 10);
+
+const buildCalendarDates = (startValue) => {
+  const requestedStart = parseCalendarIsoDate(startValue);
+  const weekStart = requestedStart || (() => {
+    const date = new Date();
+    date.setUTCHours(12, 0, 0, 0);
+    const daysFromMonday = (date.getUTCDay() + 6) % 7;
+    date.setUTCDate(date.getUTCDate() - daysFromMonday);
+    return date;
+  })();
+
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(weekStart);
+    date.setUTCDate(date.getUTCDate() + index);
+    return calendarIsoDate(date);
+  });
+};
+
+app.get("/api/calendar-events", async (req, res) => {
+  const type = ["earnings", "dividends", "ipos"].includes(String(req.query.type || "").toLowerCase())
+    ? String(req.query.type).toLowerCase()
+    : "earnings";
+  const dates = buildCalendarDates(req.query.start);
+  const cacheKey = `${type}:${dates[0]}:${dates[6]}`;
+  const cached = fmpCalendarCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return res.json(cached.data);
+
+  if (!process.env.FMP_API_KEY || !canUseFmp()) {
+    return res.status(503).json({ weekStart: dates[0], weekEnd: dates[6], type, days: [] });
+  }
+
+  try {
+    if (type === "earnings") {
+      const response = await axios.get(`http://127.0.0.1:${PORT}/api/earnings`, {
+        params: { start: dates[0] },
+        timeout: 9000
+      });
+      const responseData = { ...(response.data || {}), type: "earnings" };
+      fmpCalendarCache.set(cacheKey, { data: responseData, expiresAt: Date.now() + 15 * 60 * 1000 });
+      return res.json(responseData);
+    }
+
+    const endpoint = type === "dividends" ? "dividends-calendar" : "ipos-calendar";
+    const rows = await getFmpData("calendar", `${type} calendar page`, [
+      `/stable/${endpoint}?from=${dates[0]}&to=${dates[6]}`
+    ]);
+    const rawRows = Array.isArray(rows) ? rows : rows ? [rows] : [];
+    const eventsByDate = new Map();
+
+    rawRows.forEach((row) => {
+      const date = String(row.date || row.exDividendDate || row.daa || "").slice(0, 10);
+      if (!dates.includes(date)) return;
+      const symbol = String(row.symbol || "").trim().toUpperCase();
+      if (!symbol) return;
+      const event = type === "dividends"
+        ? {
+            date,
+            symbol,
+            company: row.name || row.companyName || symbol,
+            logo: getFinnhubLogoUrl(symbol),
+            dividend: firstFiniteNumber(row.adjDividend, row.dividend),
+            yield: firstFiniteNumber(row.yield),
+            frequency: firstText(row.frequency) || "N/A",
+            recordDate: firstText(row.recordDate),
+            paymentDate: firstText(row.paymentDate),
+            declarationDate: firstText(row.declarationDate),
+            source: "FMP dividends calendar"
+          }
+        : {
+            date,
+            symbol,
+            company: row.company || row.name || symbol,
+            logo: getFinnhubLogoUrl(symbol),
+            exchange: firstText(row.exchange) || "N/A",
+            status: firstText(row.actions) || "Expected",
+            shares: firstFiniteNumber(row.shares),
+            priceRange: firstText(row.priceRange),
+            marketCap: firstFiniteNumber(row.marketCap),
+            source: "FMP IPO calendar"
+          };
+
+      const list = eventsByDate.get(date) || [];
+      list.push(event);
+      eventsByDate.set(date, list);
+    });
+
+    const days = dates.map((date) => {
+      const events = (eventsByDate.get(date) || [])
+        .sort((a, b) => {
+          if (type === "dividends") return (b.yield || 0) - (a.yield || 0) || a.symbol.localeCompare(b.symbol);
+          return (b.marketCap || 0) - (a.marketCap || 0) || a.symbol.localeCompare(b.symbol);
+        })
+        .slice(0, 150);
+      return { date, events };
+    });
+
+    const responseData = {
+      type,
+      weekStart: dates[0],
+      weekEnd: dates[6],
+      days,
+      updatedAt: new Date().toISOString(),
+      source: type === "dividends" ? "FMP dividends calendar" : "FMP IPO calendar"
+    };
+    fmpCalendarCache.set(cacheKey, { data: responseData, expiresAt: Date.now() + 15 * 60 * 1000 });
+    return res.json(responseData);
+  } catch (err) {
+    setFmpCooldown(err, `${type} calendar`, "calendar");
+    console.log(`FMP ${type} calendar skipped:`, err.response?.status || err.message);
+    return res.status(500).json({ weekStart: dates[0], weekEnd: dates[6], type, days: [] });
+  }
+});
+
+app.get("/api/treasury-rates", async (req, res) => {
+  const end = parseCalendarIsoDate(req.query.to) || new Date();
+  end.setUTCHours(12, 0, 0, 0);
+  const from = parseCalendarIsoDate(req.query.from) || (() => {
+    const date = new Date(end);
+    date.setUTCDate(date.getUTCDate() - 90);
+    return date;
+  })();
+  const fromIso = calendarIsoDate(from);
+  const toIso = calendarIsoDate(end);
+  const cacheKey = `${fromIso}:${toIso}`;
+  const cached = treasuryRatesCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return res.json(cached.data);
+
+  if (!process.env.FMP_API_KEY || !canUseFmp()) {
+    return res.status(503).json({ rows: [], latest: null, source: "FMP treasury rates" });
+  }
+
+  try {
+    const data = await getFmpData("treasury", "treasury rates", [
+      `/stable/treasury-rates?from=${fromIso}&to=${toIso}`
+    ]);
+    const rows = (Array.isArray(data) ? data : data ? [data] : [])
+      .map((row) => ({
+        date: String(row.date || "").slice(0, 10),
+        month1: toNumberOrNull(row.month1),
+        month2: toNumberOrNull(row.month2),
+        month3: toNumberOrNull(row.month3),
+        month6: toNumberOrNull(row.month6),
+        year1: toNumberOrNull(row.year1),
+        year2: toNumberOrNull(row.year2),
+        year3: toNumberOrNull(row.year3),
+        year5: toNumberOrNull(row.year5),
+        year7: toNumberOrNull(row.year7),
+        year10: toNumberOrNull(row.year10),
+        year20: toNumberOrNull(row.year20),
+        year30: toNumberOrNull(row.year30)
+      }))
+      .filter((row) => row.date)
+      .sort((a, b) => b.date.localeCompare(a.date));
+
+    const responseData = {
+      from: fromIso,
+      to: toIso,
+      latest: rows[0] || null,
+      rows,
+      updatedAt: new Date().toISOString(),
+      source: "FMP treasury rates"
+    };
+    treasuryRatesCache.set(cacheKey, { data: responseData, expiresAt: Date.now() + 30 * 60 * 1000 });
+    return res.json(responseData);
+  } catch (err) {
+    setFmpCooldown(err, "treasury rates", "treasury");
+    console.log("FMP treasury rates skipped:", err.response?.status || err.message);
+    return res.status(500).json({ rows: [], latest: null, error: "Treasury rates are not available yet." });
   }
 });
 

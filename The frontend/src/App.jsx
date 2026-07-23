@@ -104,6 +104,27 @@ const FINANCIAL_STATEMENT_PERIODS = [
   { id: "quarter", label: "Quarterly" }
 ];
 
+const CALENDAR_MODES = [
+  { id: "earnings", label: "Earnings" },
+  { id: "dividends", label: "Dividends" },
+  { id: "ipos", label: "IPOs" }
+];
+
+const TREASURY_RATE_TERMS = [
+  { key: "month1", label: "1M" },
+  { key: "month2", label: "2M" },
+  { key: "month3", label: "3M" },
+  { key: "month6", label: "6M" },
+  { key: "year1", label: "1Y" },
+  { key: "year2", label: "2Y" },
+  { key: "year3", label: "3Y" },
+  { key: "year5", label: "5Y" },
+  { key: "year7", label: "7Y" },
+  { key: "year10", label: "10Y" },
+  { key: "year20", label: "20Y" },
+  { key: "year30", label: "30Y" }
+];
+
 const HOME_FEATURES = [
   {
     id: "market-overview",
@@ -173,7 +194,14 @@ const HOME_FEATURES = [
     icon: "calendar",
     label: "Calendar",
     title: "Know what reports next",
-    text: "Use the earnings calendar to see upcoming reports, expected EPS, expected revenue, and recent market events."
+    text: "Use the calendar to see upcoming earnings, dividends, IPOs, expected EPS, expected revenue, and recent market events."
+  },
+  {
+    id: "treasury-rates",
+    icon: "treasury",
+    label: "Treasury Rates",
+    title: "Watch the yield curve",
+    text: "Track the latest U.S. Treasury rates from 1 month through 30 years with recent history from FMP."
   },
   {
     id: "overview",
@@ -278,6 +306,15 @@ const renderHomeFeatureIcon = (icon) => {
           <rect className="icon-muted" x="13" y="16" width="38" height="36" rx="5" />
           <path className="icon-blue" d="M13 26H51M23 11V20M41 11V20" />
           <path className="icon-green" d="M22 34H26M31 34H35M40 34H44M22 42H26M31 42H35M40 42H44" />
+        </svg>
+      );
+    case "treasury":
+      return (
+        <svg {...commonProps}>
+          <path className="icon-muted" d="M12 25L32 13L52 25V30H12V25Z" />
+          <path className="icon-blue" d="M17 50H47M20 30V46M29 30V46M38 30V46M47 30V46" />
+          <path className="icon-green" d="M19 22H45" />
+          <path className="icon-red" d="M24 39L30 35L36 37L43 32" />
         </svg>
       );
     case "documents":
@@ -1429,6 +1466,12 @@ const formatCalendarMoney = (value, missingLabel = "N/A") => {
 const formatCalendarEps = (value, missingLabel = "N/A") =>
   isNumber(value) ? `${value < 0 ? "-" : ""}$${Math.abs(value).toFixed(2)}` : missingLabel;
 
+const formatCalendarPercent = (value, missingLabel = "N/A") =>
+  isNumber(value) ? `${value.toFixed(2)}%` : missingLabel;
+
+const formatTreasuryRate = (value) =>
+  isNumber(value) ? `${value.toFixed(2)}%` : "N/A";
+
 const formatPortfolioCurrency = (value) => {
   if (!isNumber(value)) return "$0.00";
   return `${value < 0 ? "-" : ""}$${Math.abs(value).toLocaleString(undefined, {
@@ -2429,11 +2472,23 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [isEarningsLoading, setIsEarningsLoading] =
   useState(false);
 
+  const [calendarMode, setCalendarMode] =
+    useState("earnings");
+
   const [earningsWeekStart, setEarningsWeekStart] =
   useState(() => getWeekStartIso());
 
   const [selectedEarningsDate, setSelectedEarningsDate] =
   useState(() => toLocalIsoDate(new Date()));
+
+  const [treasuryRates, setTreasuryRates] =
+    useState({ rows: [], latest: null });
+
+  const [isTreasuryRatesLoading, setIsTreasuryRatesLoading] =
+    useState(false);
+
+  const [treasuryRatesError, setTreasuryRatesError] =
+    useState("");
 
     const [compareTickers, setCompareTickers] =
   useState(["AAPL", "MSFT", "NVDA"]);
@@ -3299,13 +3354,41 @@ useEffect(() => {
     if (activePage !== "earnings-calendar") return;
 
     const timer = window.setTimeout(
-      () => loadEarnings(earningsWeekStart),
+      () => loadEarnings(earningsWeekStart, calendarMode),
       0
     );
 
     return () => window.clearTimeout(timer);
 
-  }, [activePage, earningsWeekStart]);
+  }, [activePage, earningsWeekStart, calendarMode]);
+
+  useEffect(() => {
+    if (activePage !== "treasury-rates") return;
+
+    let isActive = true;
+    const loadTreasuryRates = async () => {
+      try {
+        setIsTreasuryRatesLoading(true);
+        setTreasuryRatesError("");
+        const response = await axios.get(`${API_URL}/api/treasury-rates`, {
+          params: { _: Date.now() }
+        });
+        if (!isActive) return;
+        setTreasuryRates(response.data || { rows: [], latest: null });
+      } catch (err) {
+        if (!isActive) return;
+        console.error(err);
+        setTreasuryRatesError("Treasury rates are not available yet.");
+      } finally {
+        if (isActive) setIsTreasuryRatesLoading(false);
+      }
+    };
+
+    loadTreasuryRates();
+    return () => {
+      isActive = false;
+    };
+  }, [activePage]);
 
   /*
     LOAD PORTFOLIO PRICES
@@ -3666,7 +3749,7 @@ const loadUserData = async () => {
     LOAD EARNINGS
   */
 
-  const loadEarnings = async (weekStart) => {
+  const loadEarnings = async (weekStart, mode = calendarMode) => {
 
     try {
       setIsEarningsLoading(true);
@@ -3675,8 +3758,8 @@ const loadUserData = async () => {
       const earningsRes =
         await axios.get(
 
-    `${API_URL}/api/earnings`,
-          { params: { start: weekStart, _: Date.now() } }
+    `${API_URL}/api/calendar-events`,
+          { params: { type: mode, start: weekStart, _: Date.now() } }
         );
 
       const calendar = earningsRes.data || { days: [] };
@@ -4870,6 +4953,7 @@ const isInsiderMovesLoading =
 const selectedEarningsDay = (earnings?.days || []).find(
   (day) => day.date === selectedEarningsDate
 ) || { date: selectedEarningsDate, events: [] };
+const activeCalendarConfig = CALENDAR_MODES.find((mode) => mode.id === calendarMode) || CALENDAR_MODES[0];
 const earningsWeekLabel = earnings?.weekStart && earnings?.weekEnd
   ? `${new Date(`${earnings.weekStart}T12:00:00`).toLocaleDateString(undefined, {
       month: "short",
@@ -4880,6 +4964,8 @@ const earningsWeekLabel = earnings?.weekStart && earnings?.weekEnd
       year: "numeric"
     })}`
   : "This week";
+const latestTreasuryRates = treasuryRates?.latest || treasuryRates?.rows?.[0] || null;
+const previousTreasuryRates = treasuryRates?.rows?.[1] || null;
 const portfolioAllocationData = portfolio.map((position, index) => {
   const currentPrice = portfolioPrices[position.symbol];
   const allocationPrice = isNumber(currentPrice) && currentPrice > 0
@@ -5907,6 +5993,7 @@ return (
         ["etfs", "ETF Overview"],
         ["stock-screener", "Stock Screener"],
         ["earnings-calendar", "Calendar"],
+        ["treasury-rates", "Treasury Rates"],
         ["market-overview", "Market Overview"]
       ].map(([page, label]) => (
         <button
@@ -6477,6 +6564,82 @@ return (
             <div className="heatmap-loading">No financial statement data is available for this ticker yet.</div>
           )}
         </div>
+      </section>
+    )}
+
+
+    {activePage === "treasury-rates" && (
+      <section className="treasury-rates-page" id="treasury-rates" aria-labelledby="treasury-rates-title">
+        <div className="financial-statement-hero">
+          <div>
+            <span className="home-feature-label">FMP Treasury Rates</span>
+            <h2 id="treasury-rates-title">Treasury Rates</h2>
+            <p>Review the latest U.S. Treasury yield curve from 1 month through 30 years, plus recent daily history.</p>
+          </div>
+          {treasuryRates?.updatedAt && (
+            <span className="market-overview-updated">
+              Updated {new Date(treasuryRates.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+            </span>
+          )}
+        </div>
+
+        {treasuryRatesError ? (
+          <div className="heatmap-loading">{treasuryRatesError}</div>
+        ) : isTreasuryRatesLoading && !latestTreasuryRates ? (
+          <div className="heatmap-loading">Loading treasury rates...</div>
+        ) : latestTreasuryRates ? (
+          <>
+            <div className="treasury-rate-grid">
+              {TREASURY_RATE_TERMS.map((term) => {
+                const currentRate = latestTreasuryRates?.[term.key];
+                const previousRate = previousTreasuryRates?.[term.key];
+                const change = isNumber(currentRate) && isNumber(previousRate)
+                  ? currentRate - previousRate
+                  : null;
+                return (
+                  <div className="treasury-rate-card" key={term.key}>
+                    <span>{term.label}</span>
+                    <strong>{formatTreasuryRate(currentRate)}</strong>
+                    <small className={isNumber(change) ? (change >= 0 ? "green" : "red") : ""}>
+                      {isNumber(change) ? `${change >= 0 ? "+" : ""}${(change * 100).toFixed(0)} bps vs prior` : "No prior move"}
+                    </small>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="financial-statement-table-panel">
+              <div className="screener-results-heading">
+                <span>Recent Treasury Rate History</span>
+                <strong>{latestTreasuryRates.date ? `Latest ${formatShortDate(latestTreasuryRates.date)}` : "FMP"}</strong>
+              </div>
+              <div className="financial-statement-table-wrap">
+                <table className="financial-statement-table treasury-rates-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      {TREASURY_RATE_TERMS.map((term) => (
+                        <th key={term.key}>{term.label}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(treasuryRates.rows || []).map((row) => (
+                      <tr key={row.date}>
+                        <th>{formatShortDate(row.date)}</th>
+                        {TREASURY_RATE_TERMS.map((term) => (
+                          <td key={`${row.date}-${term.key}`}>{formatTreasuryRate(row[term.key])}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="heatmap-loading">No treasury rate data is available yet.</div>
+        )}
       </section>
     )}
 
@@ -9264,7 +9427,7 @@ return (
 
   <div className="calendar-heading-row">
     <h2 className="section-title">
-      Earnings Calendar
+      Market Calendar
     </h2>
     <div className="calendar-week-controls">
       <button
@@ -9294,6 +9457,18 @@ return (
   </div>
 
   <div className="earnings-calendar">
+    <div className="calendar-mode-toggle" role="tablist" aria-label="Calendar type">
+      {CALENDAR_MODES.map((mode) => (
+        <button
+          key={mode.id}
+          type="button"
+          className={calendarMode === mode.id ? "active" : ""}
+          onClick={() => setCalendarMode(mode.id)}
+        >
+          {mode.label}
+        </button>
+      ))}
+    </div>
     <div className="calendar-week-label">{earningsWeekLabel}</div>
 
     <div className="calendar-date-strip">
@@ -9309,26 +9484,46 @@ return (
           >
             <span>{date.toLocaleDateString(undefined, { weekday: "short" })}</span>
             <strong>{date.getDate()}</strong>
-            <small>{day.events?.length || 0} reports</small>
+            <small>{day.events?.length || 0} {calendarMode === "earnings" ? "reports" : calendarMode}</small>
           </button>
         );
       })}
     </div>
 
     {isEarningsLoading ? (
-      <div className="calendar-empty">Loading earnings calendar...</div>
+      <div className="calendar-empty">Loading {activeCalendarConfig.label.toLowerCase()} calendar...</div>
     ) : selectedEarningsDay.events?.length ? (
       <div className="calendar-company-list" key={selectedEarningsDate}>
-        <div className="calendar-company-header">
-          <span>Company</span>
-          <span>Report time</span>
-          <span>Revenue estimate</span>
-          <span>EPS estimate</span>
-          <span>Market cap</span>
+        <div className={`calendar-company-header calendar-company-header-${calendarMode}`}>
+          {calendarMode === "earnings" ? (
+            <>
+              <span>Company</span>
+              <span>Report time</span>
+              <span>Revenue estimate</span>
+              <span>EPS estimate</span>
+              <span>Market cap</span>
+            </>
+          ) : calendarMode === "dividends" ? (
+            <>
+              <span>Company</span>
+              <span>Dividend</span>
+              <span>Yield</span>
+              <span>Frequency</span>
+              <span>Payment date</span>
+            </>
+          ) : (
+            <>
+              <span>Company</span>
+              <span>Exchange</span>
+              <span>Status</span>
+              <span>Price range</span>
+              <span>Market cap</span>
+            </>
+          )}
         </div>
         {selectedEarningsDay.events.map((event, eventIndex) => (
           <button
-            className="calendar-company-row"
+            className={`calendar-company-row calendar-company-row-${calendarMode}`}
             key={`${selectedEarningsDate}-${event.symbol}-${eventIndex}`}
             type="button"
             onClick={() => {
@@ -9361,18 +9556,36 @@ return (
                 </span>
               </span>
             </span>
-            <span className="calendar-report-time">
-              {event.reportTime}
-              {event.fiscalQuarter && <small>{event.fiscalQuarter}</small>}
-            </span>
-            <strong data-label="Revenue est.">{formatCalendarMoney(event.revenueEstimate, "No estimate")}</strong>
-            <strong data-label="EPS est.">{formatCalendarEps(event.epsEstimate, "No estimate")}</strong>
-            <span data-label="Market cap">{formatCalendarMoney(event.marketCap)}</span>
+            {calendarMode === "earnings" ? (
+              <>
+                <span className="calendar-report-time">
+                  {event.reportTime}
+                  {event.fiscalQuarter && <small>{event.fiscalQuarter}</small>}
+                </span>
+                <strong data-label="Revenue est.">{formatCalendarMoney(event.revenueEstimate, "No estimate")}</strong>
+                <strong data-label="EPS est.">{formatCalendarEps(event.epsEstimate, "No estimate")}</strong>
+                <span data-label="Market cap">{formatCalendarMoney(event.marketCap)}</span>
+              </>
+            ) : calendarMode === "dividends" ? (
+              <>
+                <strong data-label="Dividend">{formatCalendarEps(event.dividend)}</strong>
+                <strong data-label="Yield">{formatCalendarPercent(event.yield)}</strong>
+                <span data-label="Frequency">{event.frequency || "N/A"}</span>
+                <span data-label="Payment date">{formatShortDate(event.paymentDate)}</span>
+              </>
+            ) : (
+              <>
+                <span data-label="Exchange">{event.exchange || "N/A"}</span>
+                <strong data-label="Status">{event.status || "Expected"}</strong>
+                <span data-label="Price range">{event.priceRange || "N/A"}</span>
+                <span data-label="Market cap">{formatCalendarMoney(event.marketCap)}</span>
+              </>
+            )}
           </button>
         ))}
       </div>
     ) : (
-      <div className="calendar-empty">No major companies are scheduled for this date.</div>
+      <div className="calendar-empty">No {activeCalendarConfig.label.toLowerCase()} events are scheduled for this date.</div>
     )}
   </div>
 
