@@ -5800,8 +5800,8 @@ return (
             {screenerNumberInput("priceLowerThan", "Price Lower Than")}
             {screenerNumberInput("betaMoreThan", "Beta More Than")}
             {screenerNumberInput("betaLowerThan", "Beta Lower Than")}
-            {screenerNumberInput("dividendMoreThan", "Dividend More Than")}
-            {screenerNumberInput("dividendLowerThan", "Dividend Lower Than")}
+            {screenerNumberInput("dividendMoreThan", "Last Dividend More Than")}
+            {screenerNumberInput("dividendLowerThan", "Last Dividend Lower Than")}
             {screenerNumberInput("volumeMoreThan", "Volume More Than")}
             {screenerNumberInput("volumeLowerThan", "Volume Lower Than")}
             {screenerSelectInput("sector", "Sector", screenerOptions.sectors)}
@@ -5867,7 +5867,7 @@ return (
                     <th>Sector</th>
                     <th>Industry</th>
                     <th>Beta</th>
-                    <th>Dividend</th>
+                    <th>Last Dividend</th>
                     <th>Volume</th>
                     <th>Exchange</th>
                   </tr>
@@ -5909,7 +5909,7 @@ return (
                       <td>{row.sector || "N/A"}</td>
                       <td>{row.industry || "N/A"}</td>
                       <td>{formatPlain(row.beta)}</td>
-                      <td>{formatPrice(row.dividend)}</td>
+                      <td>{formatPrice(row.lastDividend ?? row.dividend)}</td>
                       <td>{formatLargeNumber(row.volume)}</td>
                       <td>{row.exchange || "N/A"}</td>
                     </tr>
