@@ -134,6 +134,13 @@ const HOME_FEATURES = [
     text: "Filter active stocks, ETFs, and funds by market cap, price, sector, industry, beta, dividend, volume, exchange, and country."
   },
   {
+    id: "financial-statements",
+    icon: "statements",
+    label: "Financial Statements",
+    title: "Read the statements directly",
+    text: "Open income statement, balance sheet, and cash flow lines across annual or quarterly periods from FMP."
+  },
+  {
     id: "projections",
     icon: "projections",
     label: "Projections",
@@ -221,6 +228,15 @@ const renderHomeFeatureIcon = (icon) => {
           <circle className="icon-blue-fill" cx="20" cy="16" r="5" />
           <circle className="icon-green-fill" cx="39" cy="30" r="5" />
           <circle className="icon-red-fill" cx="29" cy="44" r="5" />
+        </svg>
+      );
+    case "statements":
+      return (
+        <svg {...commonProps}>
+          <rect className="icon-muted" x="12" y="13" width="40" height="38" rx="6" />
+          <path className="icon-blue" d="M20 24H44M20 32H44M20 40H44" />
+          <path className="icon-green" d="M28 18V48M38 18V48" />
+          <path className="icon-red" d="M19 48H45" />
         </svg>
       );
     case "projections":
@@ -1526,7 +1542,7 @@ const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
 const FINANCIAL_HISTORY_VERSION = 154;
-const STOCK_ESTIMATE_VERSION = 21;
+const STOCK_ESTIMATE_VERSION = 22;
 const INTERIM_HISTORY_VERSION = 6;
 const VALUATION_METRICS_VERSION = 23;
 const BALANCE_SHEET_METRICS_VERSION = 14;

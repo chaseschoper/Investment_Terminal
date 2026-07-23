@@ -71,7 +71,7 @@ const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const alphaVantageFundamentalCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 154;
-const STOCK_ESTIMATE_VERSION = 21;
+const STOCK_ESTIMATE_VERSION = 22;
 const INTERIM_HISTORY_VERSION = 6;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const BALANCE_SHEET_METRICS_VERSION = 14;
@@ -2321,6 +2321,14 @@ function applyEarningsDateOverride(ticker, estimate = {}) {
   return overrideDate ? { ...estimate, date: overrideDate } : estimate;
 }
 
+function hasCompleteNextQuarterEstimate(estimate = {}) {
+  return (
+    toNumberOrNull(estimate?.revenue) !== null &&
+    toNumberOrNull(estimate?.eps) !== null &&
+    Boolean(firstText(estimate?.date, estimate?.fiscalQuarter))
+  );
+}
+
 function applyStockEarningsDateOverrides(ticker, data = {}) {
   const nextQuarter = data.analystEstimates?.nextQuarter;
   const correctedNextQuarter = applyEarningsDateOverride(ticker, nextQuarter);
@@ -4098,7 +4106,7 @@ async function calculateFmpQuarterlyHistoricalPe(ticker, revenueRows = []) {
     (row.date || row.reportDate || row.fillingDate || row.acceptedDate)
   );
   if (!hasDatedQuarterlyRows) {
-    const freshRows = await resolveWithin(fetchFmpQuarterlyFinancialHistory(ticker), 1400, []);
+    const freshRows = await resolveWithin(fetchFmpQuarterlyFinancialHistory(ticker), 2600, []);
     if (Array.isArray(freshRows) && freshRows.some((row) => row.date)) {
       sourceRows = freshRows;
     }
@@ -6787,7 +6795,7 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
     !hasCompleteCompanyProfileSnapshot(responseData) ||
     responseData.estimateDataVersion !== STOCK_ESTIMATE_VERSION ||
     responseData.analystEstimatesSource !== "FMP" ||
-    responseData.analystEstimates?.nextQuarter?.source !== "FMP earnings history";
+    !hasCompleteNextQuarterEstimate(responseData.analystEstimates?.nextQuarter);
   if (needsFmpFastPatch) {
     const fastPatch = await resolveWithin(buildFastStockSnapshot(ticker, responseData), 2600, null);
     if (fastPatch) responseData = prepareCachedStockResponseData(ticker, fastPatch);
@@ -7026,10 +7034,10 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
     const existingQuarterlyPeRows = Array.isArray(responseData.historicalPe)
       ? responseData.historicalPe.filter((row) => row?.isInterim && toNumberOrNull(row?.pe) !== null)
       : [];
-    if (existingQuarterlyPeRows.length < 4 && Array.isArray(responseData.revenueData)) {
+    if (existingQuarterlyPeRows.length < 8 && Array.isArray(responseData.revenueData)) {
       const quarterlyPeRows = await resolveWithin(
         calculateFmpQuarterlyHistoricalPe(ticker, responseData.revenueData),
-        1400,
+        3200,
         []
       );
       if (quarterlyPeRows.length) {
@@ -7051,7 +7059,7 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
 
   const quarterlyPeRows = await resolveWithin(
     calculateFmpQuarterlyHistoricalPe(ticker, responseData.revenueData),
-    1400,
+    3200,
     []
   );
   const historicalPe = mergeHistoricalPeRows(fmpPeRows, quarterlyPeRows);
