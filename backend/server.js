@@ -18093,18 +18093,20 @@ if (process.env.FMP_API_KEY && canUseFmp()) {
     `https://financialmodelingprep.com/stable/search-name?query=${encodeURIComponent(cleanQuery)}&limit=12&apikey=${process.env.FMP_API_KEY}`
   ];
 
-  for (const endpoint of endpoints) {
-    try {
-      const response = await axios.get(endpoint, { timeout: 3500 });
-      if (Array.isArray(response.data) && response.data.length) {
-        rows.push(...response.data);
-      }
-    } catch (err) {
+  const responses = await Promise.allSettled(
+    endpoints.map((endpoint) => axios.get(endpoint, { timeout: 1800 }))
+  );
+  responses.forEach((result) => {
+    if (result.status === "fulfilled" && Array.isArray(result.value.data)) {
+      rows.push(...result.value.data);
+      return;
+    }
+    const err = result.reason;
+    if (err) {
       setFmpCooldown(err, "stock search", cleanQuery);
       console.log("FMP stock search skipped:", cleanQuery, err.response?.status || err.message);
-      if (!canUseFmp()) break;
     }
-  }
+  });
 }
 
 if (!rows.length) {
@@ -18122,6 +18124,36 @@ const primaryExchangeRank = (exchange) => {
   if (value === "AMEX" || value === "NYSEAMERICAN") return 2;
   if (value === "OTC") return 8;
   return 5;
+};
+const isStockSearchEquity = (item) => {
+  const symbol = String(item?.symbol || "").trim().toUpperCase();
+  const name = String(item?.name || "").trim();
+  const type = String(item?.type || "").trim().toLowerCase();
+  const exchange = String(item?.exchange || "").trim().toUpperCase();
+  const exchangeName = String(item?.exchangeFullName || "").trim().toLowerCase();
+  if (!symbol || ["CRYPTO", "CCC", "FOREX", "FX"].includes(exchange)) return false;
+  if (type && !/(stock|equity|common)/i.test(type)) return false;
+  if (/\b(etf|etn|fund|income strategy|daily bear|daily bull|weeklypay|2x|3x|leveraged|inverse|forex)\b/i.test(name)) return false;
+  if (/\b(crypto|cryptocurrency|foreign exchange|forex)\b/i.test(exchangeName)) return false;
+  if (/^[A-Z]{2,6}(USD|EUR|GBP|JPY|CAD|AUD|CHF)$/.test(symbol)) return false;
+  return true;
+};
+const matchesStockSearchQuery = (item) => {
+  const queryText = cleanQuery.toLowerCase();
+  const tokens = queryText
+    .split(/[^a-z0-9]+/i)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 1);
+  if (!tokens.length) return true;
+  const symbol = String(item.symbol || "").toLowerCase();
+  const words = String(item.name || "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/i)
+    .filter(Boolean);
+  return tokens.every((token) =>
+    symbol.startsWith(token) ||
+    words.some((word) => word.startsWith(token))
+  );
 };
 const results = rows
   .map((row) => {
@@ -18144,10 +18176,14 @@ const results = rows
       symbol,
       name,
       exchange,
-      type
+      exchangeFullName: firstText(row.exchangeFullName, row.stockExchange),
+      type,
+      logo: getFinnhubLogoUrl(symbol)
     };
   })
   .filter(Boolean)
+  .filter(isStockSearchEquity)
+  .filter(matchesStockSearchQuery)
   .sort((a, b) => {
     const exactA = a.symbol === cleanQuery.toUpperCase() ? -1 : 0;
     const exactB = b.symbol === cleanQuery.toUpperCase() ? -1 : 0;

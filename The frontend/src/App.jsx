@@ -5048,7 +5048,19 @@ const renderStockSearchSuggestions = (destinationPage = "overview") => {
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => selectStockSearchSuggestion(item, destinationPage)}
           >
-            <span>
+            <span className="stock-search-logo-shell" aria-hidden="true">
+              <span>{String(item.symbol || "?").slice(0, 1)}</span>
+              {item.logo && (
+                <img
+                  src={item.logo}
+                  alt=""
+                  onError={(event) => {
+                    event.currentTarget.style.display = "none";
+                  }}
+                />
+              )}
+            </span>
+            <span className="stock-search-suggestion-copy">
               <strong>{item.symbol}</strong>
               <em>{item.name}</em>
             </span>
