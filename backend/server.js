@@ -74,7 +74,7 @@ const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const alphaVantageFundamentalCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 154;
-const STOCK_ESTIMATE_VERSION = 22;
+const STOCK_ESTIMATE_VERSION = 23;
 const INTERIM_HISTORY_VERSION = 6;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const BALANCE_SHEET_METRICS_VERSION = 14;
@@ -2424,7 +2424,12 @@ async function fetchCalendarQuarterEstimate(ticker, options = {}) {
   ].map((value) => String(value || "").trim().toUpperCase()).filter(Boolean));
 
   const cached = earningsEstimateCalendarCache.get(symbol);
-  if (cached && Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1000) {
+  const cachedHasEstimate =
+    toNumberOrNull(cached?.data?.revenue) !== null ||
+    toNumberOrNull(cached?.data?.eps) !== null ||
+    Boolean(cached?.data?.date);
+  const cachedTtlMs = cachedHasEstimate ? 6 * 60 * 60 * 1000 : 30 * 1000;
+  if (cached && Date.now() - cached.fetchedAt < cachedTtlMs && (cachedHasEstimate || !options.fast)) {
     return cached.data;
   }
 
@@ -9857,6 +9862,7 @@ async function publishQuarterEstimateSnapshot(ticker) {
     toNumberOrNull(estimate?.revenue) !== null ||
     toNumberOrNull(estimate?.eps) !== null ||
     Boolean(estimate?.date);
+  if (!hasEstimate) return;
 
   const nextQuarter = {
     revenue: normalizeStatementDollars(estimate.revenue),
@@ -10164,14 +10170,30 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     toNumberOrNull(calendarQuarterEstimate.eps) !== null;
   if (!hasFastSnapshotData) return null;
 
+  const hasCalendarQuarterEstimate =
+    toNumberOrNull(calendarQuarterEstimate.revenue) !== null ||
+    toNumberOrNull(calendarQuarterEstimate.eps) !== null ||
+    Boolean(calendarQuarterEstimate.date);
+  const previousNextQuarterEstimate = previousData.analystEstimates?.nextQuarter || {};
+  const nextQuarterEstimate = hasCalendarQuarterEstimate
+    ? {
+        revenue: normalizeStatementDollars(calendarQuarterEstimate.revenue),
+        earnings: null,
+        eps: toNumberOrNull(calendarQuarterEstimate.eps),
+        date: calendarQuarterEstimate.date || null,
+        fiscalQuarter: calendarQuarterEstimate.fiscalQuarter || null,
+        source: calendarQuarterEstimate.source || "FMP earnings history"
+      }
+    : previousNextQuarterEstimate;
+
   const analystEstimates = {
     nextQuarter: {
-      revenue: normalizeStatementDollars(calendarQuarterEstimate.revenue),
+      revenue: normalizeStatementDollars(nextQuarterEstimate.revenue),
       earnings: null,
-      eps: toNumberOrNull(calendarQuarterEstimate.eps),
-      date: calendarQuarterEstimate.date || null,
-      fiscalQuarter: calendarQuarterEstimate.fiscalQuarter || null,
-      source: calendarQuarterEstimate.source || "FMP earnings history"
+      eps: toNumberOrNull(nextQuarterEstimate.eps),
+      date: nextQuarterEstimate.date || null,
+      fiscalQuarter: nextQuarterEstimate.fiscalQuarter || null,
+      source: nextQuarterEstimate.source || "FMP earnings history"
     },
     currentYear: {
       ...(previousData.analystEstimates?.currentYear || {}),
@@ -10206,7 +10228,7 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
       source: "FMP"
     }
   };
-  const epsBeatMiss = buildEpsBeatMissSeries(previousData.epsBeatMiss || [], calendarQuarterEstimate);
+  const epsBeatMiss = buildEpsBeatMissSeries(previousData.epsBeatMiss || [], analystEstimates.nextQuarter);
   const nextEps = toNumberOrNull(analystEstimates.nextYear.eps);
   const hasBalanceSnapshotValue =
     toNumberOrNull(fastData.totalCash) !== null ||
@@ -10260,7 +10282,7 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     analystEstimates,
     epsBeatMiss,
     analystEstimatesSources: {
-      nextQuarter: calendarQuarterEstimate.source || "FMP earnings history",
+      nextQuarter: analystEstimates.nextQuarter.source,
       currentYear: "FMP",
       nextYear: "FMP",
       followingYear: "FMP"

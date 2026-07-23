@@ -1613,7 +1613,7 @@ const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
 const FINANCIAL_HISTORY_VERSION = 154;
-const STOCK_ESTIMATE_VERSION = 22;
+const STOCK_ESTIMATE_VERSION = 23;
 const INTERIM_HISTORY_VERSION = 6;
 const VALUATION_METRICS_VERSION = 23;
 const BALANCE_SHEET_METRICS_VERSION = 14;
@@ -7259,127 +7259,6 @@ return (
   </div>
 
 </div>
-{/* COMPANY DOCUMENTS */}
-
-<section className="chart-section company-documents-section" id="company-documents">
-
-  <div className="company-documents-heading">
-    <div>
-      <h2 className="section-title">
-        Company Documents
-      </h2>
-    </div>
-    {companyDocuments?.updatedAt && (
-      <span className="company-documents-updated">
-        Updated {new Date(companyDocuments.updatedAt).toLocaleString()}
-      </span>
-    )}
-  </div>
-
-  <div className="company-documents-panel">
-    <div className="company-document-tabs" role="tablist" aria-label="Company documents">
-      {COMPANY_DOCUMENT_TABS.map((tab) => (
-        <button
-          key={tab.id}
-          type="button"
-          className={activeCompanyDocumentTab === tab.id ? "active" : ""}
-          onClick={() => setActiveCompanyDocumentTab(tab.id)}
-        >
-          {tab.label}
-          {companyDocuments?.filingCounts?.[tab.id] ? (
-            <span>{companyDocuments.filingCounts[tab.id]}</span>
-          ) : null}
-        </button>
-      ))}
-    </div>
-
-    {companyDocuments?.allSecFilings?.length ? (
-      <div className="company-documents-summary">
-        <strong>{companyDocuments.allSecFilings.length}</strong>
-        <span>recent SEC filings organized from EDGAR for {companyDocuments.companyName || ticker}</span>
-      </div>
-    ) : null}
-
-    {isCompanyDocumentsLoading && !companyDocuments || (!companyDocuments && stockData?.refreshing) ? (
-      <StockDataLoading label="Loading company documents..." />
-    ) : !companyDocuments?.available ? (
-      <div className="company-documents-empty">
-        Company documents are not available for this ticker yet.
-      </div>
-    ) : activeCompanyDocumentCards.length ? (
-      <div className="company-document-grid">
-        {activeCompanyDocumentCards.map((document) => (
-          <a
-            className={`company-document-card ${
-              activeCompanyDocumentTab === "results" || activeCompanyDocumentTab === "exhibits"
-                ? "earnings-release-card"
-                : ""
-            }`}
-            key={`${document.form || document.type || "document"}-${document.url}`}
-            href={document.url || document.indexUrl}
-            target="_blank"
-            rel="noreferrer"
-          >
-            <span>{document.form || document.type || document.source || "Document"}</span>
-            <strong>{document.title}</strong>
-            <small>
-              {[document.categoryLabel, document.reportDate ? `Report ${document.reportDate}` : null, document.filingDate ? `Filed ${document.filingDate}` : null, document.items ? `Items ${document.items}` : null, document.source]
-                .filter(Boolean)
-                .join(" • ")}
-            </small>
-          </a>
-        ))}
-      </div>
-    ) : (
-      <div className="company-documents-empty">
-        No matching company documents are available for this ticker yet.
-      </div>
-    )}
-  </div>
-
-</section>
-<section className="stock-news-section section-anchor" id="stock-news">
-  <div className="similar-companies-header">
-    <div>
-      <span className="similar-companies-kicker">Stock News</span>
-      <h2 className="section-title">{ticker} News</h2>
-    </div>
-    {stockNews?.updatedAt && (
-      <span className="similar-companies-context">
-        Updated {new Date(stockNews.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
-      </span>
-    )}
-  </div>
-
-  {isStockNewsLoading && !stockNews?.articles?.length ? (
-    <StockDataLoading label="Loading stock news..." />
-  ) : stockNews?.articles?.length ? (
-    <div className="news-card-grid stock-news-grid">
-      {stockNews.articles.map((article) => (
-        <a
-          className="news-card"
-          key={article.id || article.url}
-          href={article.url}
-          target="_blank"
-          rel="noreferrer"
-        >
-          {article.image && <img src={article.image} alt="" loading="lazy" />}
-          <span className="news-card-source">
-            {article.publisher || article.site || "News Source"}
-            {article.symbol ? ` · ${article.symbol}` : ""}
-          </span>
-          <strong>{article.title}</strong>
-          {article.text && <p>{article.text}</p>}
-          <small>{formatNewsDate(article.publishedDate)}</small>
-        </a>
-      ))}
-    </div>
-  ) : (
-    <div className="similar-companies-empty">
-      No recent stock news is available for this ticker yet.
-    </div>
-  )}
-</section>
 {/* REVENUE CHART */}
 
 <div className="chart-section" id="financials">
@@ -8744,6 +8623,129 @@ return (
   ) : (
     <div className="similar-companies-empty">
       Similar companies are not available for this ticker yet.
+    </div>
+  )}
+</section>
+
+{/* COMPANY DOCUMENTS */}
+
+<section className="chart-section company-documents-section" id="company-documents">
+
+  <div className="company-documents-heading">
+    <div>
+      <h2 className="section-title">
+        Company Documents
+      </h2>
+    </div>
+    {companyDocuments?.updatedAt && (
+      <span className="company-documents-updated">
+        Updated {new Date(companyDocuments.updatedAt).toLocaleString()}
+      </span>
+    )}
+  </div>
+
+  <div className="company-documents-panel">
+    <div className="company-document-tabs" role="tablist" aria-label="Company documents">
+      {COMPANY_DOCUMENT_TABS.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          className={activeCompanyDocumentTab === tab.id ? "active" : ""}
+          onClick={() => setActiveCompanyDocumentTab(tab.id)}
+        >
+          {tab.label}
+          {companyDocuments?.filingCounts?.[tab.id] ? (
+            <span>{companyDocuments.filingCounts[tab.id]}</span>
+          ) : null}
+        </button>
+      ))}
+    </div>
+
+    {companyDocuments?.allSecFilings?.length ? (
+      <div className="company-documents-summary">
+        <strong>{companyDocuments.allSecFilings.length}</strong>
+        <span>recent SEC filings organized from EDGAR for {companyDocuments.companyName || ticker}</span>
+      </div>
+    ) : null}
+
+    {isCompanyDocumentsLoading && !companyDocuments || (!companyDocuments && stockData?.refreshing) ? (
+      <StockDataLoading label="Loading company documents..." />
+    ) : !companyDocuments?.available ? (
+      <div className="company-documents-empty">
+        Company documents are not available for this ticker yet.
+      </div>
+    ) : activeCompanyDocumentCards.length ? (
+      <div className="company-document-grid">
+        {activeCompanyDocumentCards.map((document) => (
+          <a
+            className={`company-document-card ${
+              activeCompanyDocumentTab === "results" || activeCompanyDocumentTab === "exhibits"
+                ? "earnings-release-card"
+                : ""
+            }`}
+            key={`${document.form || document.type || "document"}-${document.url}`}
+            href={document.url || document.indexUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <span>{document.form || document.type || document.source || "Document"}</span>
+            <strong>{document.title}</strong>
+            <small>
+              {[document.categoryLabel, document.reportDate ? `Report ${document.reportDate}` : null, document.filingDate ? `Filed ${document.filingDate}` : null, document.items ? `Items ${document.items}` : null, document.source]
+                .filter(Boolean)
+                .join(" • ")}
+            </small>
+          </a>
+        ))}
+      </div>
+    ) : (
+      <div className="company-documents-empty">
+        No matching company documents are available for this ticker yet.
+      </div>
+    )}
+  </div>
+
+</section>
+
+<section className="stock-news-section section-anchor" id="stock-news">
+  <div className="similar-companies-header">
+    <div>
+      <span className="similar-companies-kicker">Stock News</span>
+      <h2 className="section-title">{ticker} News</h2>
+    </div>
+    {stockNews?.updatedAt && (
+      <span className="similar-companies-context">
+        Updated {new Date(stockNews.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+      </span>
+    )}
+  </div>
+
+  {isStockNewsLoading && !stockNews?.articles?.length ? (
+    <StockDataLoading label="Loading stock news..." />
+  ) : stockNews?.articles?.length ? (
+    <div className="news-card-grid stock-news-grid">
+      {stockNews.articles.map((article) => (
+        <a
+          className="news-card"
+          key={article.id || article.url}
+          href={article.url}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {article.image && <img src={article.image} alt="" loading="lazy" />}
+          <span className="news-card-source">
+            {article.publisher || article.site || "News Source"}
+            {article.symbol ? ` · ${article.symbol}` : ""}
+          </span>
+          <strong>{article.title}</strong>
+          {article.text && <p>{article.text}</p>}
+          <small>{formatNewsDate(article.publishedDate)}</small>
+        </a>
+      ))}
+    </div>
+  ) : (
+    <div className="similar-companies-empty">
+      No recent stock news is available for this ticker yet.
     </div>
   )}
 </section>

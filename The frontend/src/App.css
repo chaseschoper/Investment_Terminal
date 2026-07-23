@@ -421,6 +421,10 @@ body {
   order: 12;
 }
 
+.stock-news-section {
+  order: 13;
+}
+
 .calendar-bottom-section {
   order: 20;
 }
