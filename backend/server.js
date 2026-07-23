@@ -18314,13 +18314,21 @@ const textParam = (name, maxLength = 50) => {
 
 const limit = Math.min(Math.max(Number(req.query.limit) || 50, 10), 100);
 const page = Math.min(Math.max(Number(req.query.page) || 0, 0), 50);
+const assetType = String(req.query.assetType || "all").trim().toLowerCase();
 const params = {
-  isEtf: false,
-  isFund: false,
   isActivelyTrading: true,
   limit,
   page
 };
+if (assetType === "stocks") {
+  params.isEtf = false;
+  params.isFund = false;
+} else if (assetType === "etfs") {
+  params.isEtf = true;
+  params.isFund = false;
+} else if (assetType === "funds") {
+  params.isFund = true;
+}
 
 [
   ["marketCapMoreThan", numericParam("marketCapMoreThan", 0)],
@@ -18359,9 +18367,11 @@ const { data } = await axios.get("https://financialmodelingprep.com/stable/compa
 });
 
 const results = (Array.isArray(data) ? data : [])
-  .filter((row) => row && row.isEtf !== true && row.isFund !== true)
+  .filter(Boolean)
   .map((row) => {
     const symbol = String(row.symbol || "").trim().toUpperCase();
+    const isEtf = row.isEtf === true || String(row.isEtf || "").toLowerCase() === "true";
+    const isFund = row.isFund === true || String(row.isFund || "").toLowerCase() === "true";
     return {
       symbol,
       companyName: firstText(row.companyName, row.name, symbol),
@@ -18374,6 +18384,9 @@ const results = (Array.isArray(data) ? data : [])
       volume: toNumberOrNull(row.volume),
       exchange: firstText(row.exchangeShortName, row.exchange),
       country: firstText(row.country),
+      assetType: isEtf ? "ETF" : isFund ? "Fund" : "Stock",
+      isEtf,
+      isFund,
       logo: getFinnhubLogoUrl(symbol)
     };
   })

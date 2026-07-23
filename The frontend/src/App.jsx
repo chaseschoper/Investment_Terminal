@@ -89,6 +89,7 @@ const DEFAULT_SCREENER_FILTERS = {
   industry: "",
   exchange: "",
   country: "US",
+  assetType: "all",
   limit: "50"
 };
 
@@ -119,7 +120,7 @@ const HOME_FEATURES = [
     icon: "screener",
     label: "Stock Screener",
     title: "Find stocks by the numbers",
-    text: "Filter active stocks by market cap, price, sector, industry, beta, dividend, volume, exchange, and country."
+    text: "Filter active stocks, ETFs, and funds by market cap, price, sector, industry, beta, dividend, volume, exchange, and country."
   },
   {
     id: "projections",
@@ -5738,7 +5739,7 @@ return (
           <div>
             <span className="home-feature-label">FMP Stock Screener</span>
             <h2 id="stock-screener-title">Stock Screener</h2>
-            <p>Filter active stocks by size, price, sector, industry, dividend, volume, exchange, and country.</p>
+            <p>Filter active stocks, ETFs, and funds by size, price, sector, industry, dividend, volume, exchange, and country.</p>
           </div>
           {screenerUpdatedAt && (
             <span className="market-overview-updated">
@@ -5763,6 +5764,18 @@ return (
             {screenerTextInput("industry", "Industry", "Semiconductors")}
             {screenerTextInput("exchange", "Exchange", "NASDAQ")}
             {screenerTextInput("country", "Country", "US")}
+            <label className="screener-filter">
+              <span>Asset Type</span>
+              <select
+                value={screenerFilters.assetType}
+                onChange={(event) => updateScreenerFilter("assetType", event.target.value)}
+              >
+                <option value="all">All</option>
+                <option value="stocks">Stocks Only</option>
+                <option value="etfs">ETFs Only</option>
+                <option value="funds">Funds Only</option>
+              </select>
+            </label>
             <label className="screener-filter">
               <span>Limit</span>
               <select
@@ -5789,8 +5802,8 @@ return (
 
         <div className="screener-results-panel">
           <div className="screener-results-heading">
-            <span>{isScreenerLoading ? "Loading stocks..." : `${screenerResults.length} stocks found`}</span>
-            <strong>Stocks only</strong>
+            <span>{isScreenerLoading ? "Loading screener..." : `${screenerResults.length} results found`}</span>
+            <strong>{screenerFilters.assetType === "all" ? "Stocks, ETFs & Funds" : screenerFilters.assetType}</strong>
           </div>
 
           {screenerError ? (
@@ -5803,6 +5816,7 @@ return (
                 <thead>
                   <tr>
                     <th>Symbol</th>
+                    <th>Type</th>
                     <th>Company</th>
                     <th>Market Cap</th>
                     <th>Price</th>
@@ -5819,6 +5833,13 @@ return (
                     <tr
                       key={`${row.symbol}-${row.exchange}`}
                       onClick={() => {
+                        const type = String(row.assetType || "").toLowerCase();
+                        if (row.isEtf || row.isFund || type === "etf" || type === "fund") {
+                          setEtfSearchInput(row.symbol);
+                          setEtfTicker(row.symbol);
+                          setActivePage("etfs");
+                          return;
+                        }
                         setSearchInput(row.symbol);
                         setTicker(row.symbol);
                         setActivePage("overview");
@@ -5837,6 +5858,7 @@ return (
                           <strong>{row.symbol}</strong>
                         </span>
                       </td>
+                      <td>{row.assetType || "Stock"}</td>
                       <td>{row.companyName}</td>
                       <td>{formatLargeDollars(row.marketCap)}</td>
                       <td>{formatPrice(row.price)}</td>
