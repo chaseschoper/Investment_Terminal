@@ -6220,19 +6220,6 @@ return (
 
     {activePage === "financial-statements" && (
       <section className="financial-statements-page" id="financial-statements" aria-labelledby="financial-statements-title">
-        <form className="financial-statement-toolbar" onSubmit={handleFinancialStatementSearch}>
-          <label className="financial-statement-search">
-            <input
-              value={financialStatementInput}
-              onChange={(event) => setFinancialStatementInput(event.target.value)}
-              placeholder="Search NVDA, Apple, Nike..."
-            />
-          </label>
-          <button type="submit" className="stock-search-button">
-            {isFinancialStatementLoading ? "Loading..." : "Search"}
-          </button>
-        </form>
-
         <div className="financial-statement-hero">
           <div>
             <span className="home-feature-label">FMP Financial Statements</span>
@@ -6245,6 +6232,19 @@ return (
             </span>
           )}
         </div>
+
+        <form className="financial-statement-toolbar" onSubmit={handleFinancialStatementSearch}>
+          <label className="financial-statement-search">
+            <input
+              value={financialStatementInput}
+              onChange={(event) => setFinancialStatementInput(event.target.value)}
+              placeholder="Search NVDA, Apple, Nike..."
+            />
+          </label>
+          <button type="submit" className="stock-search-button">
+            {isFinancialStatementLoading ? "Loading..." : "Search"}
+          </button>
+        </form>
 
         <div className="financial-statement-controls">
           <div className="company-document-tabs" role="tablist" aria-label="Statement type">
