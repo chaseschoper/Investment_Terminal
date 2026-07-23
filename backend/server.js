@@ -3763,6 +3763,107 @@ function recalculatedHistoricalPe(rows = [], yearEndPrices = []) {
     .slice(-6);
 }
 
+const isoDateOnly = (date) =>
+  Number.isNaN(date?.getTime?.()) ? "" : date.toISOString().slice(0, 10);
+
+async function fetchFmpDailyPricesForDates(ticker, dates = []) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  const cleanDates = (dates || [])
+    .map((date) => new Date(`${String(date || "").slice(0, 10)}T00:00:00Z`))
+    .filter((date) => !Number.isNaN(date.getTime()));
+  if (!symbol || !cleanDates.length || !process.env.FMP_API_KEY || !canUseFmp()) return new Map();
+
+  const minDate = new Date(Math.min(...cleanDates.map((date) => date.getTime())));
+  const maxDate = new Date(Math.max(...cleanDates.map((date) => date.getTime())));
+  minDate.setUTCDate(minDate.getUTCDate() - 8);
+  maxDate.setUTCDate(maxDate.getUTCDate() + 2);
+  const cacheLabel = `historical PE prices:${isoDateOnly(minDate)}:${isoDateOnly(maxDate)}`;
+
+  try {
+    const rows = await getFmpData(symbol, cacheLabel, [
+      `/stable/historical-price-eod/light?symbol={ticker}&from=${isoDateOnly(minDate)}&to=${isoDateOnly(maxDate)}`
+    ]);
+    const prices = (Array.isArray(rows) ? rows : [])
+      .map((row) => ({
+        date: String(row.date || "").slice(0, 10),
+        time: new Date(`${String(row.date || "").slice(0, 10)}T00:00:00Z`).getTime(),
+        price: firstFiniteNumber(row.price, row.close, row.adjClose)
+      }))
+      .filter((row) => row.date && !Number.isNaN(row.time) && row.price !== null)
+      .sort((a, b) => a.time - b.time);
+
+    const priceByTarget = new Map();
+    cleanDates.forEach((targetDate) => {
+      const targetTime = targetDate.getTime();
+      const closest = [...prices]
+        .filter((row) => row.time <= targetTime)
+        .at(-1) || prices.find((row) => row.time > targetTime);
+      if (closest) priceByTarget.set(isoDateOnly(targetDate), closest);
+    });
+    return priceByTarget;
+  } catch (err) {
+    setFmpCooldown(err, "historical PE prices", symbol);
+    console.log("FMP historical PE prices skipped:", symbol, err.response?.status || err.message);
+    return new Map();
+  }
+}
+
+async function calculateFmpQuarterlyHistoricalPe(ticker, revenueRows = []) {
+  let sourceRows = Array.isArray(revenueRows) ? revenueRows : [];
+  const hasDatedQuarterlyRows = sourceRows.some((row) =>
+    row?.isInterim &&
+    (row.date || row.reportDate || row.fillingDate || row.acceptedDate)
+  );
+  if (!hasDatedQuarterlyRows) {
+    const freshRows = await resolveWithin(fetchFmpQuarterlyFinancialHistory(ticker), 1400, []);
+    if (Array.isArray(freshRows) && freshRows.some((row) => row.date)) {
+      sourceRows = freshRows;
+    }
+  }
+
+  const quarterlyRows = sourceRows
+    .filter((row) =>
+      row?.isInterim &&
+      !row?.isCurrent &&
+      toNumberOrNull(row.eps) !== null &&
+      String(row.period || "").match(/Q[1-4]/i)
+    )
+    .sort((a, b) => {
+      const yearDiff = Number(a.year) - Number(b.year);
+      if (yearDiff !== 0) return yearDiff;
+      return String(a.period || "").localeCompare(String(b.period || ""));
+    });
+  if (quarterlyRows.length < 4) return [];
+
+  const dates = quarterlyRows
+    .map((row) => row.date || row.reportDate || row.fillingDate || row.acceptedDate)
+    .filter(Boolean);
+  const pricesByDate = await fetchFmpDailyPricesForDates(ticker, dates);
+
+  return quarterlyRows
+    .map((row, index) => {
+      if (index < 3) return null;
+      const trailingRows = quarterlyRows.slice(index - 3, index + 1);
+      const trailingEps = trailingRows.reduce((sum, item) => sum + (toNumberOrNull(item.eps) || 0), 0);
+      const targetDate = isoDateOnly(new Date(`${String(row.date || row.reportDate || row.fillingDate || row.acceptedDate || "").slice(0, 10)}T00:00:00Z`));
+      const priceRow = pricesByDate.get(targetDate);
+      const price = priceRow?.price ?? null;
+      const pe = price !== null && trailingEps > 0 ? price / trailingEps : null;
+      return {
+        year: row.year,
+        period: row.period || String(row.year),
+        date: row.date || null,
+        isInterim: true,
+        pe,
+        price,
+        eps: trailingEps,
+        source: "FMP quarter-end price / trailing four-quarter EPS"
+      };
+    })
+    .filter((row) => row && toNumberOrNull(row.pe) !== null && Number.isFinite(row.pe) && Math.abs(row.pe) < 1000)
+    .slice(-24);
+}
+
 async function fetchStockAnalysisHistoricalPe(ticker) {
   const symbol = getStockAnalysisPath(ticker);
   const cached = stockAnalysisHistoricalPeCache.get(symbol);
@@ -5974,17 +6075,13 @@ function withGuaranteedAnalystSection(data = {}) {
     Number.isFinite(currentMetricPe) &&
     Math.abs(currentMetricPe) < 1000
       ? {
-          year: latestInterimPePeriodRow?.year || new Date().getFullYear(),
-          period:
-            latestInterimPePeriodRow?.period ||
-            (latestInterimPePeriodRow
-              ? String(latestInterimPePeriodRow.year)
-              : "Current"),
-          isInterim: Boolean(latestInterimPePeriodRow),
-          isCurrent: !latestInterimPePeriodRow,
+          year: new Date().getFullYear(),
+          period: "Current",
+          isInterim: false,
+          isCurrent: true,
           pe: currentMetricPe,
           price,
-          eps: firstNumber(trailingEps, latestInterimPePeriodRow?.eps),
+          eps: trailingEps,
           source: "Current metric P/E"
         }
       : null;
@@ -6173,48 +6270,18 @@ async function repairHistoricalPeIfNeeded(ticker, data = {}) {
 }
 
 function withDerivedQuarterlyHistoricalPe(data = {}) {
-  const price = toNumberOrNull(data.price);
-  if (!price) return data;
-
   const currentRows = Array.isArray(data.historicalPe) ? data.historicalPe : [];
-  const existingQuarterlyRows = currentRows.filter((row) => row?.isInterim && toNumberOrNull(row.pe) !== null);
-  if (existingQuarterlyRows.length >= 16) return data;
-
-  const annualRows = currentRows.filter((row) => !row?.isInterim && !row?.isCurrent);
-  const quarterlyRows = (Array.isArray(data.revenueData) ? data.revenueData : [])
-    .filter((row) =>
-      row?.isInterim &&
-      !row?.isCurrent &&
-      toNumberOrNull(row.eps) !== null &&
-      toNumberOrNull(row.eps) !== 0
-    )
-    .map((row) => {
-      const eps = toNumberOrNull(row.eps);
-      const annualizedEps = eps !== null ? eps * 4 : null;
-      return {
-        year: row.year,
-        period: row.period || String(row.year),
-        isInterim: true,
-        pe: annualizedEps ? price / annualizedEps : null,
-        price,
-        eps,
-        source: "Quarterly EPS annualized with current price"
-      };
-    })
-    .filter((row) => toNumberOrNull(row.pe) !== null && Number.isFinite(row.pe) && Math.abs(row.pe) < 1000)
-    .sort((a, b) => {
-      const yearDiff = Number(a.year) - Number(b.year);
-      if (yearDiff !== 0) return yearDiff;
-      return String(a.period || "").localeCompare(String(b.period || ""));
-    })
-    .slice(-20);
-
-  if (quarterlyRows.length < 2) return data;
+  if (!currentRows.length) return data;
+  const cleanRows = currentRows.filter((row) =>
+    !row?.isInterim ||
+    /FMP quarter-end price/i.test(String(row?.source || ""))
+  );
+  if (cleanRows.length === currentRows.length) return data;
 
   return {
     ...data,
-    historicalPe: [...annualRows.slice(-7), ...quarterlyRows],
-    historicalPeSource: data.historicalPeSource || "FMP annual ratios / derived quarterly EPS"
+    historicalPe: cleanRows,
+    historicalPeSource: "FMP annual ratios"
   };
 }
 
@@ -6653,22 +6720,46 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
   const fmpMetricCards = await resolveWithin(fetchFmpMetricCards(ticker), 3200, {});
   responseData = applyFmpMetricCards(prepareCachedStockResponseData(ticker, responseData), fmpMetricCards);
   persistFmpMetricCards(ticker, fmpMetricCards);
-  if (hasCachedHistoricalPe(responseData)) return finalizeStockMetricCardResponse(ticker, responseData);
+  if (hasCachedHistoricalPe(responseData)) {
+    const existingQuarterlyPeRows = Array.isArray(responseData.historicalPe)
+      ? responseData.historicalPe.filter((row) => row?.isInterim && toNumberOrNull(row?.pe) !== null)
+      : [];
+    if (existingQuarterlyPeRows.length < 4 && Array.isArray(responseData.revenueData)) {
+      const quarterlyPeRows = await resolveWithin(
+        calculateFmpQuarterlyHistoricalPe(ticker, responseData.revenueData),
+        1400,
+        []
+      );
+      if (quarterlyPeRows.length) {
+        const annualRows = responseData.historicalPe.filter((row) => !row?.isInterim && !row?.isCurrent);
+        responseData = {
+          ...responseData,
+          historicalPe: mergeHistoricalPeRows(annualRows, quarterlyPeRows),
+          historicalPeSource: "FMP annual ratios / FMP quarter-end price"
+        };
+      }
+    }
+    return finalizeStockMetricCardResponse(ticker, responseData);
+  }
 
   const fmpPeRows = await resolveWithin(fetchFmpHistoricalPe(ticker), 1000, []);
   if (!Array.isArray(fmpPeRows) || !fmpPeRows.length) {
     return finalizeStockMetricCardResponse(ticker, responseData);
   }
 
-  const currentRows = Array.isArray(responseData.historicalPe)
-    ? responseData.historicalPe.filter((row) => row?.isInterim || row?.isCurrent)
-    : [];
-  const historicalPe = mergeHistoricalPeRows(fmpPeRows, currentRows);
+  const quarterlyPeRows = await resolveWithin(
+    calculateFmpQuarterlyHistoricalPe(ticker, responseData.revenueData),
+    1400,
+    []
+  );
+  const historicalPe = mergeHistoricalPeRows(fmpPeRows, quarterlyPeRows);
   const historicalPeCheckedAt = new Date().toISOString();
   responseData = {
     ...responseData,
     historicalPe,
-    historicalPeSource: "FMP annual ratios",
+    historicalPeSource: quarterlyPeRows.length
+      ? "FMP annual ratios / FMP quarter-end price"
+      : "FMP annual ratios",
     historicalPeCheckedAt
   };
 
@@ -6677,7 +6768,7 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
     {
       $set: {
         "data.historicalPe": historicalPe,
-        "data.historicalPeSource": "FMP annual ratios",
+        "data.historicalPeSource": responseData.historicalPeSource,
         "data.historicalPeCheckedAt": historicalPeCheckedAt
       }
     }
@@ -7020,6 +7111,7 @@ async function fetchFmpQuarterlyFinancialHistory(ticker) {
         return {
           year: row.fiscalYear,
           period: `${row.fiscalYear} Q${row.fiscalQuarter}`,
+          date: row.date || null,
           isInterim: true,
           revenue: toBillions(row.revenue),
           earnings: toBillions(row.netIncome),
@@ -10316,36 +10408,16 @@ async function fetchStockData(ticker) {
       })
       .filter((row) => row.pe !== null && Math.abs(row.pe) < 1000)
       .slice(-6);
-  const interimPeRows = [...revenueData]
-    .filter((row) =>
-      row?.isInterim &&
-      toNumberOrNull(row.eps) !== null &&
-      toNumberOrNull(row.eps) !== 0
-    )
-    .sort((a, b) => {
-      const yearDiff = Number(a.year) - Number(b.year);
-      if (yearDiff !== 0) return yearDiff;
-      return String(a.period || "").localeCompare(String(b.period || ""));
-    });
-  const latestInterimPeRow = interimPeRows.at(-1) || null;
-
-  if (interimPeRows.length && quote?.c) {
+  const quarterlyHistoricalPe = await resolveWithin(
+    calculateFmpQuarterlyHistoricalPe(ticker, revenueData),
+    1800,
+    []
+  );
+  if (quarterlyHistoricalPe.length) {
     const annualPeRows = historicalPe.filter((row) => !row?.isInterim && !row?.isCurrent);
-    const quarterlyPeRows = interimPeRows.map((row) => {
-        const interimEps = toNumberOrNull(row.eps);
-        const annualizedEps = interimEps !== null ? interimEps * 4 : null;
-        return {
-          year: row.year,
-          period: row.period || String(row.year),
-          isInterim: true,
-          pe: annualizedEps ? quote.c / annualizedEps : null,
-          price: quote.c,
-          eps: interimEps,
-          source: "Quarterly EPS annualized with current price"
-        };
-      });
-    historicalPe = mergeHistoricalPeRows(annualPeRows, quarterlyPeRows);
+    historicalPe = mergeHistoricalPeRows(annualPeRows, quarterlyHistoricalPe);
   }
+  const latestInterimPeRow = null;
 
   if (!quote || !quote.c || quote.c === 0) {
     throw new Error("No price returned");
@@ -18178,7 +18250,14 @@ const results = rows
       exchange,
       exchangeFullName: firstText(row.exchangeFullName, row.stockExchange),
       type,
-      logo: getFinnhubLogoUrl(symbol)
+      logo: getFinnhubLogoUrl(symbol),
+      logoFallbacks: [
+        getFinnhubLogoUrl(symbol),
+        `https://images.financialmodelingprep.com/symbol/${encodeURIComponent(symbol)}.png`,
+        `https://financialmodelingprep.com/image-stock/${encodeURIComponent(symbol)}.png`,
+        `https://eodhd.com/img/logos/US/${encodeURIComponent(symbol)}.png`,
+        `https://assets.parqet.com/logos/symbol/${encodeURIComponent(symbol)}?format=png`
+      ].filter(Boolean)
     };
   })
   .filter(Boolean)

@@ -5050,15 +5050,11 @@ const renderStockSearchSuggestions = (destinationPage = "overview") => {
           >
             <span className="stock-search-logo-shell" aria-hidden="true">
               <span>{String(item.symbol || "?").slice(0, 1)}</span>
-              {item.logo && (
-                <img
-                  src={item.logo}
-                  alt=""
-                  onError={(event) => {
-                    event.currentTarget.style.display = "none";
-                  }}
-                />
-              )}
+              <img
+                src={item.logo || getDefaultCompanyLogoUrl(item.symbol)}
+                alt=""
+                onError={(event) => handleCompanyLogoError(event, item.symbol)}
+              />
             </span>
             <span className="stock-search-suggestion-copy">
               <strong>{item.symbol}</strong>
