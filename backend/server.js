@@ -72,7 +72,7 @@ const STOCK_ESTIMATE_VERSION = 21;
 const INTERIM_HISTORY_VERSION = 6;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const BALANCE_SHEET_METRICS_VERSION = 14;
-const VALUATION_METRICS_VERSION = 20;
+const VALUATION_METRICS_VERSION = 21;
 const EARNINGS_CALL_VERSION = 18;
 const FMP_VALUATION_METRIC_FIELDS = [
   "pe",
@@ -936,10 +936,10 @@ async function fetchFmpStableValuationMetrics(ticker) {
         "/stable/cash-flow-statement-growth?symbol={ticker}&period=annual&limit=2"
       ]),
       getFmpData(symbol, "stable cash flow statement for metrics", [
-        "/stable/cash-flow-statement?symbol={ticker}&period=quarter&limit=1"
+        "/stable/cash-flow-statement?symbol={ticker}&period=quarter&limit=4"
       ]),
       getFmpData(symbol, "stable income statement for metrics", [
-        "/stable/income-statement?symbol={ticker}&period=quarter&limit=1"
+        "/stable/income-statement?symbol={ticker}&period=quarter&limit=4"
       ]),
       getFmpData(symbol, "stable quote for valuation metrics", [
         "/stable/quote?symbol={ticker}"
@@ -958,8 +958,10 @@ async function fetchFmpStableValuationMetrics(ticker) {
     const ratios = Array.isArray(ratiosData) ? ratiosData[0] || {} : ratiosData || {};
     const growth = Array.isArray(growthData) ? growthData[0] || {} : growthData || {};
     const cashflowGrowth = Array.isArray(cashflowGrowthData) ? cashflowGrowthData[0] || {} : cashflowGrowthData || {};
-    const cashflow = Array.isArray(cashflowData) ? cashflowData[0] || {} : cashflowData || {};
-    const incomeQuarter = Array.isArray(incomeQuarterData) ? incomeQuarterData[0] || {} : incomeQuarterData || {};
+    const cashflowRows = Array.isArray(cashflowData) ? cashflowData : cashflowData ? [cashflowData] : [];
+    const incomeQuarterRows = Array.isArray(incomeQuarterData) ? incomeQuarterData : incomeQuarterData ? [incomeQuarterData] : [];
+    const cashflow = cashflowRows[0] || {};
+    const incomeQuarter = incomeQuarterRows[0] || {};
     const quote = Array.isArray(quoteData) ? quoteData[0] || {} : quoteData || {};
     const profile = Array.isArray(profileData) ? profileData[0] || {} : profileData || {};
     const rating = Array.isArray(ratingData) ? ratingData[0] || {} : ratingData || {};
@@ -994,9 +996,17 @@ async function fetchFmpStableValuationMetrics(ticker) {
       marketCap && currentPrice ? marketCap / currentPrice : null;
     const ttmRevenue = revenuePerShare !== null && impliedShares ? revenuePerShare * impliedShares : null;
     const ttmNetIncome = netIncomePerShare !== null && impliedShares ? netIncomePerShare * impliedShares : null;
-    const quarterRevenue = firstFiniteNumber(incomeQuarter.revenue);
-    const quarterEbitda = firstFiniteNumber(incomeQuarter.ebitda);
-    const quarterEbit = firstFiniteNumber(incomeQuarter.ebit);
+    const sumFmpRows = (rows, ...fields) =>
+      rows.reduce((total, row) => {
+        const value = firstFiniteNumber(...fields.map((field) => row?.[field]));
+        return value === null ? total : total + value;
+      }, 0);
+    const ttmStatementRevenue = incomeQuarterRows.length
+      ? sumFmpRows(incomeQuarterRows, "revenue")
+      : null;
+    const ttmStatementFreeCashFlow = cashflowRows.length
+      ? sumFmpRows(cashflowRows, "freeCashFlow", "freeCashflow")
+      : null;
     const isAdr = profile.isAdr === true || String(profile.isAdr || "").toLowerCase() === "true";
 
     return {
@@ -1030,18 +1040,13 @@ async function fetchFmpStableValuationMetrics(ticker) {
         ratios.priceToEarningsGrowthRatioTTM
       ),
       pretaxMargin: percent(ratios.pretaxProfitMarginTTM),
-      ebitdaMargin: firstFiniteNumber(
-        quarterRevenue && quarterEbitda !== null ? (quarterEbitda / quarterRevenue) * 100 : null,
-        percent(ratios.ebitdaMarginTTM)
-      ),
-      ebitMargin: firstFiniteNumber(
-        quarterRevenue && quarterEbit !== null ? (quarterEbit / quarterRevenue) * 100 : null,
-        percent(ratios.ebitMarginTTM)
-      ),
-      fcfMargin: percent(
+      ebitdaMargin: percent(ratios.ebitdaMarginTTM),
+      ebitMargin: percent(ratios.ebitMarginTTM),
+      fcfMargin: firstFiniteNumber(
         freeCashFlowPerShare !== null && revenuePerShare
-          ? freeCashFlowPerShare / revenuePerShare
-          : ratios.freeCashFlowRevenueRatioTTM
+          ? (freeCashFlowPerShare / revenuePerShare) * 100
+          : null,
+        ttmStatementRevenue ? (ttmStatementFreeCashFlow / ttmStatementRevenue) * 100 : null
       ),
       returnOnEquity: percent(metrics.returnOnEquityTTM),
       returnOnAssets: percent(metrics.returnOnAssetsTTM),
@@ -1235,7 +1240,7 @@ function buildFmpMetricCardUpdate(metricCards = {}) {
   clean.balanceSheetSource = firstText(metricCards.balanceSheetSource) || null;
   clean.forwardPegRatio = null;
   clean.valuationMetricsSource = "FMP metrics with StockAnalysis PEG";
-  clean.metricCardsSource = "FMP metric cards v20";
+  clean.metricCardsSource = "FMP metric cards v21";
   clean.valuationMetricsCheckedAt = new Date().toISOString();
   clean.balanceSheetCheckedAt = new Date().toISOString();
   clean.valuationMetricsVersion = VALUATION_METRICS_VERSION;
@@ -1291,8 +1296,8 @@ async function fetchFmpMetricCards(ticker) {
       getFmpData(symbol, "metric cards ratios ttm", ["/stable/ratios-ttm?symbol={ticker}"]),
       getFmpData(symbol, "metric cards key metrics ttm", ["/stable/key-metrics-ttm?symbol={ticker}"]),
       getFmpData(symbol, "metric cards balance sheet quarter", ["/stable/balance-sheet-statement?symbol={ticker}&period=quarter&limit=1"]),
-      getFmpData(symbol, "metric cards cash flow quarter", ["/stable/cash-flow-statement?symbol={ticker}&period=quarter&limit=1"]),
-      getFmpData(symbol, "metric cards income quarter", ["/stable/income-statement?symbol={ticker}&period=quarter&limit=1"]),
+      getFmpData(symbol, "metric cards cash flow quarter", ["/stable/cash-flow-statement?symbol={ticker}&period=quarter&limit=4"]),
+      getFmpData(symbol, "metric cards income quarter", ["/stable/income-statement?symbol={ticker}&period=quarter&limit=4"]),
       getFmpData(symbol, "metric cards annual growth", ["/stable/financial-growth?symbol={ticker}&period=annual&limit=2"]),
       getFmpData(symbol, "metric cards analyst estimates", ["/stable/analyst-estimates?symbol={ticker}&period=annual&limit=8"]),
       getFmpData(symbol, "metric cards rating snapshot", ["/stable/ratings-snapshot?symbol={ticker}"]),
@@ -1305,8 +1310,10 @@ async function fetchFmpMetricCards(ticker) {
     const ratios = Array.isArray(ratiosData) ? ratiosData[0] || {} : ratiosData || {};
     const metrics = Array.isArray(metricsData) ? metricsData[0] || {} : metricsData || {};
     const balance = Array.isArray(balanceData) ? balanceData[0] || {} : balanceData || {};
-    const cashflow = Array.isArray(cashflowData) ? cashflowData[0] || {} : cashflowData || {};
-    const income = Array.isArray(incomeData) ? incomeData[0] || {} : incomeData || {};
+    const cashflowRows = Array.isArray(cashflowData) ? cashflowData : cashflowData ? [cashflowData] : [];
+    const incomeRows = Array.isArray(incomeData) ? incomeData : incomeData ? [incomeData] : [];
+    const cashflow = cashflowRows[0] || {};
+    const income = incomeRows[0] || {};
     const growth = Array.isArray(growthData) ? growthData[0] || {} : growthData || {};
     const rating = Array.isArray(ratingData) ? ratingData[0] || {} : ratingData || {};
     const priceTarget = Array.isArray(priceTargetData) ? priceTargetData[0] || {} : priceTargetData || {};
@@ -1351,7 +1358,16 @@ async function fetchFmpMetricCards(ticker) {
         ? (totalCurrentAssets || 0) - (totalCurrentLiabilities || 0)
         : firstFmpMetricNumber(metrics.workingCapitalTTM);
 
+    const sumFmpRows = (rows, ...fields) =>
+      rows.reduce((total, row) => {
+        const value = firstFmpMetricNumber(...fields.map((field) => row?.[field]));
+        return value === null ? total : total + value;
+      }, 0);
     const revenue = firstFmpMetricNumber(income.revenue);
+    const ttmStatementRevenue = incomeRows.length ? sumFmpRows(incomeRows, "revenue") : null;
+    const ttmStatementFreeCashflow = cashflowRows.length
+      ? sumFmpRows(cashflowRows, "freeCashFlow", "freeCashflow")
+      : null;
     const grossProfit = firstFmpMetricNumber(income.grossProfit);
     const operatingIncome = firstFmpMetricNumber(income.operatingIncome);
     const incomeBeforeTax = firstFmpMetricNumber(income.incomeBeforeTax);
@@ -1440,10 +1456,15 @@ async function fetchFmpMetricCards(ticker) {
       grossMargins: firstFmpMetricNumber(margin(grossProfit), percentFromFmpRatio(ratios.grossProfitMarginTTM)),
       operatingMargins: firstFmpMetricNumber(margin(operatingIncome), percentFromFmpRatio(ratios.operatingProfitMarginTTM)),
       profitMargins: firstFmpMetricNumber(margin(netIncome), percentFromFmpRatio(ratios.netProfitMarginTTM)),
-      pretaxMargin: firstFmpMetricNumber(margin(incomeBeforeTax), percentFromFmpRatio(ratios.pretaxProfitMarginTTM)),
-      ebitdaMargin: firstFmpMetricNumber(margin(ebitda), percentFromFmpRatio(ratios.ebitdaMarginTTM)),
-      ebitMargin: firstFmpMetricNumber(margin(ebit), percentFromFmpRatio(ratios.ebitMarginTTM)),
-      fcfMargin: revenue && freeCashflow !== null ? (freeCashflow / revenue) * 100 : null,
+      pretaxMargin: percentFromFmpRatio(ratios.pretaxProfitMarginTTM),
+      ebitdaMargin: percentFromFmpRatio(ratios.ebitdaMarginTTM),
+      ebitMargin: percentFromFmpRatio(ratios.ebitMarginTTM),
+      fcfMargin: firstFmpMetricNumber(
+        firstFmpMetricNumber(ratios.freeCashFlowPerShareTTM) !== null && firstFmpMetricNumber(ratios.revenuePerShareTTM)
+          ? (firstFmpMetricNumber(ratios.freeCashFlowPerShareTTM) / firstFmpMetricNumber(ratios.revenuePerShareTTM)) * 100
+          : null,
+        ttmStatementRevenue ? (ttmStatementFreeCashflow / ttmStatementRevenue) * 100 : null
+      ),
       returnOnEquity: percentFromFmpRatio(metrics.returnOnEquityTTM),
       returnOnAssets: percentFromFmpRatio(metrics.returnOnAssetsTTM),
       returnOnInvestedCapital: percentFromFmpRatio(metrics.returnOnInvestedCapitalTTM),
