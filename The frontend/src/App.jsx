@@ -159,14 +159,14 @@ const HOME_FEATURES = [
     icon: "news",
     label: "News",
     title: "Follow the market feed",
-    text: "Read the latest FMP general market news and jump into the companies behind the headlines."
+    text: "Read the latest market headlines and keep up with the companies driving the day."
   },
   {
     id: "financial-statements",
     icon: "statements",
     label: "Financial Statements",
     title: "Read the statements directly",
-    text: "Open income statement, balance sheet, and cash flow lines across annual or quarterly periods from FMP."
+    text: "Open income statement, balance sheet, and cash flow lines across annual or quarterly periods."
   },
   {
     id: "projections",
@@ -208,7 +208,7 @@ const HOME_FEATURES = [
     icon: "treasury",
     label: "Treasury Rates",
     title: "Watch the yield curve",
-    text: "Track the latest U.S. Treasury rates from 1 month through 30 years with recent history from FMP."
+    text: "Track the latest U.S. Treasury rates from 1 month through 30 years with recent history."
   },
   {
     id: "overview",
@@ -6418,7 +6418,7 @@ return (
       <section className="stock-screener-page" id="stock-screener" aria-labelledby="stock-screener-title">
         <div className="section-heading-row screener-heading">
           <div>
-            <span className="home-feature-label">FMP Stock Screener</span>
+            <span className="home-feature-label">Stock Screener</span>
             <h2 id="stock-screener-title">Stock Screener</h2>
             <p>Filter active stocks, ETFs, and funds by size, price, sector, industry, dividend, volume, exchange, and country.</p>
           </div>
@@ -6566,9 +6566,9 @@ return (
       <section className="news-page" id="news" aria-labelledby="news-page-title">
         <div className="financial-statement-hero">
           <div>
-            <span className="home-feature-label">FMP General News</span>
+            <span className="home-feature-label">General News</span>
             <h2 id="news-page-title">News</h2>
-            <p>Follow the latest market headlines from FMP and jump into related stock research when a ticker is attached.</p>
+            <p>Follow the latest market headlines and see what is moving across companies, sectors, and the broader market.</p>
           </div>
           {generalNews?.updatedAt && (
             <span className="market-overview-updated">
@@ -6593,7 +6593,7 @@ return (
               >
                 {article.image && <img src={article.image} alt="" loading="lazy" />}
                 <span className="news-card-source">
-                  {article.publisher || article.site || "FMP"}
+                  {article.publisher || article.site || "News Source"}
                   {article.symbol ? ` · ${article.symbol}` : ""}
                 </span>
                 <strong>{article.title}</strong>
@@ -6613,7 +6613,7 @@ return (
       <section className="financial-statements-page" id="financial-statements" aria-labelledby="financial-statements-title">
         <div className="financial-statement-hero">
           <div>
-            <span className="home-feature-label">FMP Financial Statements</span>
+            <span className="home-feature-label">Financial Statements</span>
             <h2 id="financial-statements-title">Financial Statements</h2>
             <p>Search a company and review income statement, balance sheet, and cash flow lines across the latest annual or quarterly periods.</p>
           </div>
@@ -6718,7 +6718,7 @@ return (
       <section className="treasury-rates-page" id="treasury-rates" aria-labelledby="treasury-rates-title">
         <div className="financial-statement-hero">
           <div>
-            <span className="home-feature-label">FMP Treasury Rates</span>
+            <span className="home-feature-label">Treasury Rates</span>
             <h2 id="treasury-rates-title">Treasury Rates</h2>
             <p>Review the latest U.S. Treasury yield curve from 1 month through 30 years, plus recent daily history.</p>
           </div>
@@ -6757,7 +6757,7 @@ return (
             <div className="financial-statement-table-panel">
               <div className="screener-results-heading">
                 <span>Recent Treasury Rate History</span>
-                <strong>{latestTreasuryRates.date ? `Latest ${formatShortDate(latestTreasuryRates.date)}` : "FMP"}</strong>
+                <strong>{latestTreasuryRates.date ? `Latest ${formatShortDate(latestTreasuryRates.date)}` : "Latest available"}</strong>
               </div>
               <div className="financial-statement-table-wrap">
                 <table className="financial-statement-table treasury-rates-table">
@@ -7337,6 +7337,48 @@ return (
     )}
   </div>
 
+</section>
+<section className="stock-news-section section-anchor" id="stock-news">
+  <div className="similar-companies-header">
+    <div>
+      <span className="similar-companies-kicker">Stock News</span>
+      <h2 className="section-title">{ticker} News</h2>
+    </div>
+    {stockNews?.updatedAt && (
+      <span className="similar-companies-context">
+        Updated {new Date(stockNews.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+      </span>
+    )}
+  </div>
+
+  {isStockNewsLoading && !stockNews?.articles?.length ? (
+    <StockDataLoading label="Loading stock news..." />
+  ) : stockNews?.articles?.length ? (
+    <div className="news-card-grid stock-news-grid">
+      {stockNews.articles.map((article) => (
+        <a
+          className="news-card"
+          key={article.id || article.url}
+          href={article.url}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {article.image && <img src={article.image} alt="" loading="lazy" />}
+          <span className="news-card-source">
+            {article.publisher || article.site || "News Source"}
+            {article.symbol ? ` · ${article.symbol}` : ""}
+          </span>
+          <strong>{article.title}</strong>
+          {article.text && <p>{article.text}</p>}
+          <small>{formatNewsDate(article.publishedDate)}</small>
+        </a>
+      ))}
+    </div>
+  ) : (
+    <div className="similar-companies-empty">
+      No recent stock news is available for this ticker yet.
+    </div>
+  )}
 </section>
 {/* REVENUE CHART */}
 
@@ -8706,48 +8748,6 @@ return (
   )}
 </section>
 
-<section className="stock-news-section section-anchor" id="stock-news">
-  <div className="similar-companies-header">
-    <div>
-      <span className="similar-companies-kicker">FMP Stock News</span>
-      <h2 className="section-title">{ticker} News</h2>
-    </div>
-    {stockNews?.updatedAt && (
-      <span className="similar-companies-context">
-        Updated {new Date(stockNews.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
-      </span>
-    )}
-  </div>
-
-  {isStockNewsLoading && !stockNews?.articles?.length ? (
-    <StockDataLoading label="Loading stock news..." />
-  ) : stockNews?.articles?.length ? (
-    <div className="news-card-grid stock-news-grid">
-      {stockNews.articles.map((article) => (
-        <a
-          className="news-card"
-          key={article.id || article.url}
-          href={article.url}
-          target="_blank"
-          rel="noreferrer"
-        >
-          {article.image && <img src={article.image} alt="" loading="lazy" />}
-          <span className="news-card-source">
-            {article.publisher || article.site || "FMP"}
-            {article.symbol ? ` · ${article.symbol}` : ""}
-          </span>
-          <strong>{article.title}</strong>
-          {article.text && <p>{article.text}</p>}
-          <small>{formatNewsDate(article.publishedDate)}</small>
-        </a>
-      ))}
-    </div>
-  ) : (
-    <div className="similar-companies-empty">
-      No recent FMP stock news is available for this ticker yet.
-    </div>
-  )}
-</section>
     </>
     )}
 
