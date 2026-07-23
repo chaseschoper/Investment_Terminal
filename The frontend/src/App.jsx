@@ -74,6 +74,24 @@ const COMPANY_DOCUMENT_TABS = [
   { id: "all", label: "All SEC Filings" }
 ];
 
+const DEFAULT_SCREENER_FILTERS = {
+  marketCapMoreThan: "1000000000",
+  marketCapLowerThan: "",
+  priceMoreThan: "",
+  priceLowerThan: "",
+  betaMoreThan: "",
+  betaLowerThan: "",
+  dividendMoreThan: "",
+  dividendLowerThan: "",
+  volumeMoreThan: "",
+  volumeLowerThan: "",
+  sector: "",
+  industry: "",
+  exchange: "",
+  country: "US",
+  limit: "50"
+};
+
 const HOME_FEATURES = [
   {
     id: "market-overview",
@@ -95,6 +113,13 @@ const HOME_FEATURES = [
     label: "ETF Overview",
     title: "Break down funds fast",
     text: "Search ETFs and mutual funds to review price, assets, fees, yield, exposure, asset mix, and top holdings when available."
+  },
+  {
+    id: "stock-screener",
+    icon: "screener",
+    label: "Stock Screener",
+    title: "Find stocks by the numbers",
+    text: "Filter active stocks by market cap, price, sector, industry, beta, dividend, volume, exchange, and country."
   },
   {
     id: "projections",
@@ -175,6 +200,15 @@ const renderHomeFeatureIcon = (icon) => {
           <path className="icon-blue" d="M21 25H43M21 33H43M21 41H34" />
           <path className="icon-green" d="M23 25V43M33 25V43M43 25V35" />
           <circle className="icon-dot" cx="44" cy="42" r="5" />
+        </svg>
+      );
+    case "screener":
+      return (
+        <svg {...commonProps}>
+          <path className="icon-muted" d="M12 16H52M18 30H46M24 44H40" />
+          <circle className="icon-blue-fill" cx="20" cy="16" r="5" />
+          <circle className="icon-green-fill" cx="39" cy="30" r="5" />
+          <circle className="icon-red-fill" cx="29" cy="44" r="5" />
         </svg>
       );
     case "projections":
@@ -267,6 +301,14 @@ const formatLargeDollars = (value) => {
   if (Math.abs(value) >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
   if (Math.abs(value) >= 1e3) return `$${(value / 1e3).toFixed(1)}K`;
   return `$${value.toFixed(0)}`;
+};
+
+const formatLargeNumber = (value) => {
+  if (!isNumber(value)) return "N/A";
+  if (Math.abs(value) >= 1e9) return `${(value / 1e9).toFixed(2)}B`;
+  if (Math.abs(value) >= 1e6) return `${(value / 1e6).toFixed(2)}M`;
+  if (Math.abs(value) >= 1e3) return `${(value / 1e3).toFixed(1)}K`;
+  return value.toLocaleString();
 };
 
 const formatPlain = (value) =>
@@ -2271,6 +2313,24 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [etfError, setEtfError] =
     useState("");
 
+  const [screenerFilters, setScreenerFilters] =
+    useState(DEFAULT_SCREENER_FILTERS);
+
+  const [appliedScreenerFilters, setAppliedScreenerFilters] =
+    useState(DEFAULT_SCREENER_FILTERS);
+
+  const [screenerResults, setScreenerResults] =
+    useState([]);
+
+  const [isScreenerLoading, setIsScreenerLoading] =
+    useState(false);
+
+  const [screenerError, setScreenerError] =
+    useState("");
+
+  const [screenerUpdatedAt, setScreenerUpdatedAt] =
+    useState(null);
+
   const [marketClockNow, setMarketClockNow] =
     useState(() => new Date());
 
@@ -2521,6 +2581,40 @@ useEffect(() => {
     window.clearTimeout(startTimer);
   };
 }, [activePage, etfTicker]);
+
+useEffect(() => {
+  if (activePage !== "stock-screener") return;
+
+  let isActive = true;
+
+  const loadStockScreener = async () => {
+    setIsScreenerLoading(true);
+    setScreenerError("");
+
+    try {
+      const response = await axios.get(`${API_URL}/api/stock-screener`, {
+        params: appliedScreenerFilters,
+        timeout: 8000
+      });
+      if (!isActive) return;
+      setScreenerResults(Array.isArray(response.data?.results) ? response.data.results : []);
+      setScreenerUpdatedAt(response.data?.updatedAt || null);
+    } catch (error) {
+      console.error("Stock screener failed", error);
+      if (!isActive) return;
+      setScreenerError("Stock screener data is not available yet.");
+      setScreenerResults([]);
+    } finally {
+      if (isActive) setIsScreenerLoading(false);
+    }
+  };
+
+  loadStockScreener();
+
+  return () => {
+    isActive = false;
+  };
+}, [activePage, appliedScreenerFilters]);
 
 useEffect(() => {
   if (activePage !== "market-overview") return;
@@ -5068,6 +5162,47 @@ const renderStockSearchSuggestions = (destinationPage = "overview") => {
   );
 };
 
+const updateScreenerFilter = (key, value) => {
+  setScreenerFilters((previous) => ({
+    ...previous,
+    [key]: value
+  }));
+};
+
+const screenerNumberInput = (key, label, placeholder = "Any") => (
+  <label className="screener-filter" key={key}>
+    <span>{label}</span>
+    <input
+      type="number"
+      inputMode="decimal"
+      value={screenerFilters[key]}
+      onChange={(event) => updateScreenerFilter(key, event.target.value)}
+      placeholder={placeholder}
+    />
+  </label>
+);
+
+const screenerTextInput = (key, label, placeholder = "Any") => (
+  <label className="screener-filter" key={key}>
+    <span>{label}</span>
+    <input
+      value={screenerFilters[key]}
+      onChange={(event) => updateScreenerFilter(key, event.target.value)}
+      placeholder={placeholder}
+    />
+  </label>
+);
+
+const submitStockScreener = (event) => {
+  event.preventDefault();
+  setAppliedScreenerFilters({ ...screenerFilters });
+};
+
+const resetStockScreener = () => {
+  setScreenerFilters(DEFAULT_SCREENER_FILTERS);
+  setAppliedScreenerFilters(DEFAULT_SCREENER_FILTERS);
+};
+
 const handleStockSearchSubmit = async (event, destinationPage = "overview") => {
   event.preventDefault();
   const symbol = await resolveSearchInputToSymbol(searchInput);
@@ -5274,6 +5409,7 @@ return (
         ["portfolio", "Portfolio"],
         ["watchlists", "Watchlists"],
         ["etfs", "ETF Overview"],
+        ["stock-screener", "Stock Screener"],
         ["earnings-calendar", "Calendar"],
         ["market-overview", "Market Overview"]
       ].map(([page, label]) => (
@@ -5592,6 +5728,133 @@ return (
         ) : (
           <div className="heatmap-loading">Search an ETF to get started.</div>
         )}
+      </section>
+    )}
+
+
+    {activePage === "stock-screener" && (
+      <section className="stock-screener-page" id="stock-screener" aria-labelledby="stock-screener-title">
+        <div className="section-heading-row screener-heading">
+          <div>
+            <span className="home-feature-label">FMP Stock Screener</span>
+            <h2 id="stock-screener-title">Stock Screener</h2>
+            <p>Filter active stocks by size, price, sector, industry, dividend, volume, exchange, and country.</p>
+          </div>
+          {screenerUpdatedAt && (
+            <span className="market-overview-updated">
+              Updated {new Date(screenerUpdatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+            </span>
+          )}
+        </div>
+
+        <form className="screener-panel" onSubmit={submitStockScreener}>
+          <div className="screener-filter-grid">
+            {screenerNumberInput("marketCapMoreThan", "Market Cap More Than", "1000000000")}
+            {screenerNumberInput("marketCapLowerThan", "Market Cap Lower Than")}
+            {screenerNumberInput("priceMoreThan", "Price More Than")}
+            {screenerNumberInput("priceLowerThan", "Price Lower Than")}
+            {screenerNumberInput("betaMoreThan", "Beta More Than")}
+            {screenerNumberInput("betaLowerThan", "Beta Lower Than")}
+            {screenerNumberInput("dividendMoreThan", "Dividend More Than")}
+            {screenerNumberInput("dividendLowerThan", "Dividend Lower Than")}
+            {screenerNumberInput("volumeMoreThan", "Volume More Than")}
+            {screenerNumberInput("volumeLowerThan", "Volume Lower Than")}
+            {screenerTextInput("sector", "Sector", "Technology")}
+            {screenerTextInput("industry", "Industry", "Semiconductors")}
+            {screenerTextInput("exchange", "Exchange", "NASDAQ")}
+            {screenerTextInput("country", "Country", "US")}
+            <label className="screener-filter">
+              <span>Limit</span>
+              <select
+                value={screenerFilters.limit}
+                onChange={(event) => updateScreenerFilter("limit", event.target.value)}
+              >
+                <option value="25">25</option>
+                <option value="50">50</option>
+                <option value="75">75</option>
+                <option value="100">100</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="screener-actions">
+            <button type="submit" className="stock-search-button">
+              {isScreenerLoading ? "Loading..." : "Run Screener"}
+            </button>
+            <button type="button" className="screener-reset-button" onClick={resetStockScreener}>
+              Reset
+            </button>
+          </div>
+        </form>
+
+        <div className="screener-results-panel">
+          <div className="screener-results-heading">
+            <span>{isScreenerLoading ? "Loading stocks..." : `${screenerResults.length} stocks found`}</span>
+            <strong>Stocks only</strong>
+          </div>
+
+          {screenerError ? (
+            <div className="heatmap-loading">{screenerError}</div>
+          ) : isScreenerLoading && !screenerResults.length ? (
+            <div className="heatmap-loading">Loading stock screener...</div>
+          ) : screenerResults.length ? (
+            <div className="screener-table-wrap">
+              <table className="screener-table">
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>Company</th>
+                    <th>Market Cap</th>
+                    <th>Price</th>
+                    <th>Sector</th>
+                    <th>Industry</th>
+                    <th>Beta</th>
+                    <th>Dividend</th>
+                    <th>Volume</th>
+                    <th>Exchange</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {screenerResults.map((row) => (
+                    <tr
+                      key={`${row.symbol}-${row.exchange}`}
+                      onClick={() => {
+                        setSearchInput(row.symbol);
+                        setTicker(row.symbol);
+                        setActivePage("overview");
+                      }}
+                    >
+                      <td>
+                        <span className="screener-symbol-cell">
+                          <span className="stock-search-logo-shell" aria-hidden="true">
+                            <span>{String(row.symbol || "?").slice(0, 1)}</span>
+                            <img
+                              src={row.logo || getDefaultCompanyLogoUrl(row.symbol)}
+                              alt=""
+                              onError={(event) => handleCompanyLogoError(event, row.symbol)}
+                            />
+                          </span>
+                          <strong>{row.symbol}</strong>
+                        </span>
+                      </td>
+                      <td>{row.companyName}</td>
+                      <td>{formatLargeDollars(row.marketCap)}</td>
+                      <td>{formatPrice(row.price)}</td>
+                      <td>{row.sector || "N/A"}</td>
+                      <td>{row.industry || "N/A"}</td>
+                      <td>{formatPlain(row.beta)}</td>
+                      <td>{formatPrice(row.dividend)}</td>
+                      <td>{formatLargeNumber(row.volume)}</td>
+                      <td>{row.exchange || "N/A"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="heatmap-loading">No stocks match those filters yet.</div>
+          )}
+        </div>
       </section>
     )}
 

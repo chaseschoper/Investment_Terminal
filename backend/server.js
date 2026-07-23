@@ -48,6 +48,7 @@ const priceHistoryCache = new Map();
 const companyDocumentsCache = new Map();
 const companyDocumentsInFlight = new Map();
 const stockSearchCache = new Map();
+const stockScreenerCache = new Map();
 const earningsCallPeriodsCache = new Map();
 const earningsCallTranscriptCache = new Map();
 const similarCompanyMetricCache = new Map();
@@ -18291,6 +18292,111 @@ res.json({ results });
 } catch (err) {
 console.error("Stock search failed:", err.response?.status || err.message);
 res.status(500).json({ results: [] });
+}
+});
+
+app.get("/api/stock-screener", async (req, res) => {
+try {
+if (!process.env.FMP_API_KEY || !canUseFmp()) return res.json({ results: [], updatedAt: new Date().toISOString() });
+
+const numericParam = (name, min = null, max = null) => {
+  const value = toNumberOrNull(req.query[name]);
+  if (value === null) return null;
+  if (min !== null && value < min) return null;
+  if (max !== null && value > max) return null;
+  return value;
+};
+const textParam = (name, maxLength = 50) => {
+  const value = String(req.query[name] || "").trim();
+  if (!value) return "";
+  return value.replace(/[^a-zA-Z0-9 .,&'/-]/g, "").slice(0, maxLength);
+};
+
+const limit = Math.min(Math.max(Number(req.query.limit) || 50, 10), 100);
+const page = Math.min(Math.max(Number(req.query.page) || 0, 0), 50);
+const params = {
+  isEtf: false,
+  isFund: false,
+  isActivelyTrading: true,
+  limit,
+  page
+};
+
+[
+  ["marketCapMoreThan", numericParam("marketCapMoreThan", 0)],
+  ["marketCapLowerThan", numericParam("marketCapLowerThan", 0)],
+  ["priceMoreThan", numericParam("priceMoreThan", 0)],
+  ["priceLowerThan", numericParam("priceLowerThan", 0)],
+  ["betaMoreThan", numericParam("betaMoreThan", -20, 20)],
+  ["betaLowerThan", numericParam("betaLowerThan", -20, 20)],
+  ["dividendMoreThan", numericParam("dividendMoreThan", 0)],
+  ["dividendLowerThan", numericParam("dividendLowerThan", 0)],
+  ["volumeMoreThan", numericParam("volumeMoreThan", 0)],
+  ["volumeLowerThan", numericParam("volumeLowerThan", 0)]
+].forEach(([key, value]) => {
+  if (value !== null) params[key] = value;
+});
+
+[
+  ["sector", textParam("sector")],
+  ["industry", textParam("industry")],
+  ["exchange", textParam("exchange", 20)],
+  ["country", textParam("country", 20)]
+].forEach(([key, value]) => {
+  if (value) params[key] = value;
+});
+
+const cacheKey = JSON.stringify(params);
+const cached = stockScreenerCache.get(cacheKey);
+if (cached && cached.expiresAt > Date.now()) return res.json(cached.data);
+
+const { data } = await axios.get("https://financialmodelingprep.com/stable/company-screener", {
+  params: {
+    ...params,
+    apikey: process.env.FMP_API_KEY
+  },
+  timeout: 6000
+});
+
+const results = (Array.isArray(data) ? data : [])
+  .filter((row) => row && row.isEtf !== true && row.isFund !== true)
+  .map((row) => {
+    const symbol = String(row.symbol || "").trim().toUpperCase();
+    return {
+      symbol,
+      companyName: firstText(row.companyName, row.name, symbol),
+      marketCap: toNumberOrNull(row.marketCap),
+      sector: firstText(row.sector),
+      industry: firstText(row.industry),
+      beta: toNumberOrNull(row.beta),
+      price: toNumberOrNull(row.price),
+      dividend: toNumberOrNull(row.lastAnnualDividend),
+      volume: toNumberOrNull(row.volume),
+      exchange: firstText(row.exchangeShortName, row.exchange),
+      country: firstText(row.country),
+      logo: getFinnhubLogoUrl(symbol)
+    };
+  })
+  .filter((row) => row.symbol && /^[A-Z0-9.-]{1,12}$/.test(row.symbol))
+  .sort((a, b) => (b.marketCap || 0) - (a.marketCap || 0));
+
+const responseData = {
+  results,
+  filters: params,
+  updatedAt: new Date().toISOString(),
+  source: "FMP stock screener"
+};
+
+stockScreenerCache.set(cacheKey, {
+  data: responseData,
+  expiresAt: Date.now() + 5 * 60 * 1000
+});
+
+res.json(responseData);
+} catch (err) {
+setFmpCooldown(err, "stock screener", "screener");
+console.log("FMP stock screener skipped:", err.response?.status || err.message);
+res.status(500).json({ results: [], error: "Stock screener data is not available yet." });
 }
 });
 
