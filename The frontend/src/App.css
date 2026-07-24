@@ -4776,11 +4776,11 @@ body {
 
 .market-intel-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(560px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 680px));
   justify-content: center;
-  gap: 22px;
+  gap: 20px;
   margin: 22px auto 0;
-  max-width: min(1760px, calc(100vw - 64px));
+  max-width: min(1420px, calc(100vw - 48px));
 }
 
 .data-mini-table-card {
@@ -4823,7 +4823,7 @@ body {
 
 .data-mini-table th,
 .data-mini-table td {
-  padding: 13px 18px;
+  padding: 12px 14px;
   border-bottom: 1px solid rgba(39, 50, 68, 0.72);
   color: #d1d5db;
   font-size: 12px;
@@ -4848,17 +4848,23 @@ body {
 
 .data-mini-table th:first-child,
 .data-mini-table td:first-child {
-  width: 38%;
+  width: 34%;
 }
 
 .data-mini-table th:nth-child(2),
 .data-mini-table td:nth-child(2) {
-  width: 34%;
+  width: 28%;
 }
 
 .data-mini-table th:nth-child(3),
 .data-mini-table td:nth-child(3) {
-  width: 28%;
+  width: 18%;
+}
+
+.data-mini-table th:nth-child(4),
+.data-mini-table td:nth-child(4) {
+  width: 20%;
+  text-align: right;
 }
 
 .data-mini-table tbody tr:last-child td {
@@ -4889,7 +4895,7 @@ body {
   text-align: center;
 }
 
-@media (max-width: 1220px) {
+@media (max-width: 1460px) {
   .market-intel-grid {
     grid-template-columns: minmax(0, min(920px, 100%));
     max-width: min(920px, calc(100vw - 32px));
