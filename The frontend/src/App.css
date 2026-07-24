@@ -4513,7 +4513,7 @@ body {
 
 .estimate-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(285px, 1fr));
   gap: 16px;
 }
 
@@ -4538,22 +4538,24 @@ body {
 }
 
 .estimate-year-card-header {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: flex-start;
-  justify-content: space-between;
   gap: 12px;
   margin-bottom: 14px;
 }
 
 .estimate-year-card-header h3 {
+  min-width: 0;
   margin: 0;
   color: #ffffff;
   font-size: 18px;
   line-height: 1.2;
+  overflow-wrap: anywhere;
 }
 
 .estimate-year-card-header span {
-  flex: 0 0 auto;
+  min-width: 0;
   max-width: 120px;
   padding: 5px 8px;
   border: 1px solid rgba(56, 189, 248, 0.28);
@@ -4573,19 +4575,28 @@ body {
 
 .estimate-year-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(82px, max-content);
   align-items: baseline;
-  gap: 14px;
+  gap: 12px;
   color: #cbd5e1;
   font-size: 14px;
+  text-align: left;
+}
+
+.estimate-year-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: left;
 }
 
 .estimate-year-row strong {
+  min-width: 0;
+  max-width: 140px;
   color: #ffffff;
-  font-size: 15px;
+  font-size: clamp(13px, 0.95vw, 15px);
   font-weight: 800;
   text-align: right;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .estimate-growth-grid {
@@ -6390,7 +6401,7 @@ body {
   }
 
   .estimate-year-card-header {
-    flex-direction: column;
+    grid-template-columns: 1fr;
   }
 
   .estimate-year-card-header span {
