@@ -1205,7 +1205,6 @@ const chooseHistoricalPeRows = (previousRows, incomingRows) => {
 
 const hasMarketActivityData = (stock = {}) =>
   (Array.isArray(stock.analystUpdates) && stock.analystUpdates.length > 0) ||
-  (Array.isArray(stock.institutionalHolders) && stock.institutionalHolders.length > 0) ||
   (Array.isArray(stock.insiderTransactions) && stock.insiderTransactions.length > 0);
 
 const isLegacyInstitutionalHolderRow = (row = {}) =>
@@ -1216,7 +1215,6 @@ const getCurrentInstitutionalHolderRows = (rows = []) =>
 
 const hasMarketActivityLoaded = (stock = {}) =>
   Boolean(stock.analystUpdatesCheckedAt || (Array.isArray(stock.analystUpdates) && stock.analystUpdates.length)) &&
-  Boolean(stock.institutionalHoldersCheckedAt || getCurrentInstitutionalHolderRows(stock.institutionalHolders).length) &&
   Boolean(stock.insiderTransactionsCheckedAt || (Array.isArray(stock.insiderTransactions) && stock.insiderTransactions.length));
 
 const hasAnyOverviewMetricData = (stock = {}) =>
@@ -8366,32 +8364,6 @@ return (
           key: "date",
           label: "Date",
           render: (row) => row.date || "N/A"
-        }
-      ]}
-    />
-
-    <DataMiniTable
-      title="Top Institutional Holders"
-      subtitle="Latest reported institutional holders"
-      emptyText="No recent holder rows found yet."
-      loading={isInstitutionalHoldersLoading}
-      rows={institutionalHolderRows}
-      columns={[
-        { key: "institution", label: "Institution" },
-        {
-          key: "shares",
-          label: "Shares",
-          render: (row) => formatSharesCount(row.shares)
-        },
-        {
-          key: "percentHeld",
-          label: "% Held",
-          render: (row) => formatPercent(isNumber(row.percentHeld) && Math.abs(row.percentHeld) <= 1 ? row.percentHeld * 100 : row.percentHeld)
-        },
-        {
-          key: "value",
-          label: "Value",
-          render: (row) => formatLargeDollars(row.value)
         }
       ]}
     />
