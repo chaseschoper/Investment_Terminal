@@ -6464,7 +6464,8 @@ body {
   font-size: 15px;
 }
 
-.financial-statements-page {
+.financial-statements-page,
+.fundamental-charts-page {
   display: grid;
   gap: 20px;
   padding: 34px 0 72px;
@@ -6473,7 +6474,10 @@ body {
 .financial-statement-toolbar,
 .financial-statement-hero,
 .financial-statement-controls,
-.financial-statement-table-panel {
+.financial-statement-table-panel,
+.fundamental-builder-panel,
+.fundamental-indicator-panel,
+.fundamental-chart-card {
   border: 1px solid rgba(37, 99, 235, 0.36);
   border-radius: 10px;
   background:
@@ -6649,6 +6653,219 @@ body {
   background-color: rgba(20, 184, 166, 0.08);
 }
 
+.fundamental-builder-panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-top: 2px solid transparent;
+  border-image: linear-gradient(90deg, #14b8a6, #38bdf8, #2563eb) 1;
+}
+
+.fundamental-ticker-toolbar {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.fundamental-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.fundamental-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid rgba(56, 189, 248, 0.34);
+  border-radius: 999px;
+  background: rgba(8, 47, 73, 0.34);
+  color: #e0f2fe;
+  font-size: 13px;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.fundamental-chip span {
+  color: #94a3b8;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.fundamental-empty-note {
+  color: #94a3b8;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.fundamental-period-toggle {
+  width: fit-content;
+}
+
+.fundamental-indicator-panel {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  gap: 16px;
+  padding: 16px;
+}
+
+.fundamental-indicator-sidebar {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.fundamental-indicator-sidebar button,
+.fundamental-indicator-actions button,
+.fundamental-indicator-grid button {
+  border: 1px solid rgba(96, 165, 250, 0.22);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.66);
+  color: #cbd5e1;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.fundamental-indicator-sidebar button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 46px;
+  padding: 0 12px;
+  text-align: left;
+}
+
+.fundamental-indicator-sidebar button strong {
+  color: #67e8f9;
+  font-size: 12px;
+}
+
+.fundamental-indicator-sidebar button.active,
+.fundamental-indicator-grid button.selected {
+  border-color: rgba(45, 212, 191, 0.58);
+  background:
+    linear-gradient(135deg, rgba(20, 184, 166, 0.22), rgba(37, 99, 235, 0.18)),
+    rgba(15, 23, 42, 0.86);
+  color: #ffffff;
+  box-shadow: 0 0 24px rgba(56, 189, 248, 0.1);
+}
+
+.fundamental-indicator-options {
+  display: grid;
+  gap: 14px;
+}
+
+.fundamental-indicator-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.fundamental-indicator-heading span {
+  display: block;
+  color: #67e8f9;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.fundamental-indicator-heading strong {
+  display: block;
+  margin-top: 4px;
+  color: #ffffff;
+  font-size: 22px;
+  font-weight: 950;
+}
+
+.fundamental-indicator-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.fundamental-indicator-actions button {
+  min-height: 36px;
+  padding: 0 12px;
+  color: #93c5fd;
+}
+
+.fundamental-indicator-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.fundamental-indicator-grid button {
+  min-height: 42px;
+  padding: 0 12px;
+  text-align: left;
+}
+
+.fundamental-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(430px, 1fr));
+  gap: 18px;
+}
+
+.fundamental-chart-card {
+  min-width: 0;
+  overflow: hidden;
+  padding: 18px;
+}
+
+.fundamental-chart-card-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.fundamental-chart-card-header span {
+  display: block;
+  color: #67e8f9;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.fundamental-chart-card-header h3 {
+  margin: 4px 0 0;
+  color: #ffffff;
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.fundamental-chart-card-header strong {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 999px;
+  color: #93c5fd;
+  font-size: 11px;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.fundamental-summary-table td span,
+.fundamental-summary-table td small {
+  display: block;
+}
+
+.fundamental-summary-table td small {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 11px;
+}
+
 .treasury-rates-page {
   display: grid;
   gap: 20px;
@@ -6806,6 +7023,10 @@ body {
   .stock-news-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .fundamental-chart-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 640px) {
@@ -6834,9 +7055,28 @@ body {
   .screener-results-heading,
   .financial-statement-toolbar,
   .financial-statement-hero,
-  .financial-statement-controls {
+  .financial-statement-controls,
+  .fundamental-indicator-heading {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .fundamental-indicator-panel {
+    grid-template-columns: 1fr;
+    padding: 14px;
+  }
+
+  .fundamental-indicator-sidebar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .fundamental-indicator-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .fundamental-indicator-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
   }
 
   .financial-statement-hero {
@@ -6852,7 +7092,8 @@ body {
   }
 
   .screener-actions button,
-  .financial-statement-toolbar button {
+  .financial-statement-toolbar button,
+  .fundamental-indicator-actions button {
     width: 100%;
   }
 

@@ -20208,7 +20208,7 @@ const financialStatementPeriodLabel = (row, period) => {
 
 const normalizeFinancialStatementRows = (rows, statementType, period) => {
   const config = FINANCIAL_STATEMENT_ENDPOINTS[statementType] || FINANCIAL_STATEMENT_ENDPOINTS.income;
-  const statementRows = Array.isArray(rows) ? rows.filter(Boolean).slice(0, 5) : [];
+  const statementRows = Array.isArray(rows) ? rows.filter(Boolean) : [];
   const availableFieldSet = new Set(config.fields);
   statementRows.forEach((row) => {
     Object.keys(row || {}).forEach((field) => {
@@ -20252,9 +20252,13 @@ app.get("/api/financial-statements/:ticker", async (req, res) => {
 
     const statementType = FINANCIAL_STATEMENT_ENDPOINTS[req.query.statement] ? req.query.statement : "income";
     const period = String(req.query.period || "annual").toLowerCase() === "quarter" ? "quarter" : "annual";
+    const requestedLimit = Number(req.query.limit);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(Math.max(Math.round(requestedLimit), 1), period === "quarter" ? 80 : 40)
+      : 5;
     const config = FINANCIAL_STATEMENT_ENDPOINTS[statementType];
     const data = await getFmpData(symbol, `financial statements ${statementType} ${period}`, [
-      `/stable/${config.path}?symbol={ticker}&period=${period}&limit=5`
+      `/stable/${config.path}?symbol={ticker}&period=${period}&limit=${limit}`
     ]);
     const statementRows = Array.isArray(data) ? data : data ? [data] : [];
     const normalized = normalizeFinancialStatementRows(statementRows, statementType, period);

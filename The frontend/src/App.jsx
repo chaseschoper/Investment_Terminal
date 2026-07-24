@@ -104,6 +104,115 @@ const FINANCIAL_STATEMENT_PERIODS = [
   { id: "quarter", label: "Quarterly" }
 ];
 
+const FUNDAMENTAL_CHART_INDICATOR_GROUPS = [
+  {
+    id: "income",
+    label: "Income Statement",
+    indicators: [
+      { key: "revenue", label: "Revenue", source: "income", field: "revenue", format: "money" },
+      { key: "grossProfit", label: "Gross Profit", source: "income", field: "grossProfit", format: "money" },
+      { key: "operatingIncome", label: "Operating Income", source: "income", field: "operatingIncome", format: "money" },
+      { key: "incomeBeforeTax", label: "Income Before Tax", source: "income", field: "incomeBeforeTax", format: "money" },
+      { key: "netIncome", label: "Net Income", source: "income", field: "netIncome", format: "money" },
+      { key: "ebitda", label: "EBITDA", source: "income", field: "ebitda", format: "money" },
+      { key: "eps", label: "EPS", source: "income", field: "eps", format: "perShare" },
+      { key: "epsDiluted", label: "Diluted EPS", source: "income", field: "epsDiluted", format: "perShare" },
+      { key: "sgaExpense", label: "SG&A Expense", source: "income", field: "sellingGeneralAndAdministrativeExpenses", format: "money" },
+      { key: "rdExpense", label: "R&D Expense", source: "income", field: "researchAndDevelopmentExpenses", format: "money" },
+      { key: "operatingExpenses", label: "Operating Expenses", source: "income", field: "operatingExpenses", format: "money" },
+      { key: "interestExpense", label: "Interest Expense", source: "income", field: "interestExpense", format: "money" },
+      { key: "weightedAverageShares", label: "Weighted Avg Shares", source: "income", field: "weightedAverageShsOutDil", format: "shares" }
+    ]
+  },
+  {
+    id: "margins",
+    label: "Margins",
+    indicators: [
+      { key: "grossMargin", label: "Gross Margin", format: "percent", calculate: ({ income }) => calculateRatio(income?.grossProfit, income?.revenue) },
+      { key: "operatingMargin", label: "Operating Margin", format: "percent", calculate: ({ income }) => calculateRatio(income?.operatingIncome, income?.revenue) },
+      { key: "pretaxMargin", label: "Pretax Margin", format: "percent", calculate: ({ income }) => calculateRatio(income?.incomeBeforeTax, income?.revenue) },
+      { key: "profitMargin", label: "Profit Margin", format: "percent", calculate: ({ income }) => calculateRatio(income?.netIncome, income?.revenue) },
+      { key: "ebitdaMargin", label: "EBITDA Margin", format: "percent", calculate: ({ income }) => calculateRatio(income?.ebitda, income?.revenue) },
+      { key: "fcfMargin", label: "FCF Margin", format: "percent", calculate: ({ income, cashflow }) => calculateRatio(cashflow?.freeCashFlow, income?.revenue) },
+      { key: "sgaToRevenue", label: "SG&A / Revenue", format: "percent", calculate: ({ income }) => calculateRatio(income?.sellingGeneralAndAdministrativeExpenses, income?.revenue) },
+      { key: "rdToRevenue", label: "R&D / Revenue", format: "percent", calculate: ({ income }) => calculateRatio(income?.researchAndDevelopmentExpenses, income?.revenue) }
+    ]
+  },
+  {
+    id: "balance",
+    label: "Balance Sheet",
+    indicators: [
+      { key: "cashAndEquivalents", label: "Cash & Equivalents", source: "balance", field: "cashAndCashEquivalents", format: "money" },
+      { key: "cashAndShortTermInvestments", label: "Cash + Short-Term Investments", source: "balance", field: "cashAndShortTermInvestments", format: "money" },
+      { key: "totalDebt", label: "Total Debt", source: "balance", field: "totalDebt", format: "money" },
+      { key: "netDebt", label: "Net Debt", source: "balance", field: "netDebt", format: "money" },
+      { key: "totalAssets", label: "Total Assets", source: "balance", field: "totalAssets", format: "money" },
+      { key: "totalLiabilities", label: "Total Liabilities", source: "balance", field: "totalLiabilities", format: "money" },
+      { key: "stockholdersEquity", label: "Stockholders' Equity", source: "balance", field: "totalStockholdersEquity", format: "money" },
+      { key: "workingCapital", label: "Working Capital", format: "money", calculate: ({ balance }) => differenceValue(balance?.totalCurrentAssets, balance?.totalCurrentLiabilities) },
+      { key: "inventory", label: "Inventory", source: "balance", field: "inventory", format: "money" },
+      { key: "netReceivables", label: "Net Receivables", source: "balance", field: "netReceivables", format: "money" },
+      { key: "propertyPlantEquipment", label: "PP&E Net", source: "balance", field: "propertyPlantEquipmentNet", format: "money" },
+      { key: "goodwill", label: "Goodwill", source: "balance", field: "goodwill", format: "money" }
+    ]
+  },
+  {
+    id: "cashflow",
+    label: "Cash Flow",
+    indicators: [
+      { key: "operatingCashFlow", label: "Operating Cash Flow", source: "cashflow", field: "operatingCashFlow", format: "money" },
+      { key: "freeCashFlow", label: "Free Cash Flow", source: "cashflow", field: "freeCashFlow", format: "money" },
+      { key: "capitalExpenditure", label: "Capital Expenditure", source: "cashflow", field: "capitalExpenditure", format: "money" },
+      { key: "stockBasedCompensation", label: "Stock-Based Compensation", source: "cashflow", field: "stockBasedCompensation", format: "money" },
+      { key: "depreciationAndAmortization", label: "D&A", source: "cashflow", field: "depreciationAndAmortization", format: "money" },
+      { key: "dividendsPaid", label: "Dividends Paid", source: "cashflow", field: "dividendsPaid", format: "money" },
+      { key: "shareRepurchases", label: "Share Repurchases", source: "cashflow", field: "commonStockRepurchased", format: "money" },
+      { key: "netChangeInCash", label: "Net Change in Cash", source: "cashflow", field: "netChangeInCash", format: "money" }
+    ]
+  },
+  {
+    id: "returns",
+    label: "Returns & Efficiency",
+    indicators: [
+      { key: "roe", label: "ROE", format: "percent", calculate: ({ income, balance }) => calculateRatio(income?.netIncome, balance?.totalStockholdersEquity) },
+      { key: "roa", label: "ROA", format: "percent", calculate: ({ income, balance }) => calculateRatio(income?.netIncome, balance?.totalAssets) },
+      { key: "roicProxy", label: "ROIC Proxy", format: "percent", calculate: ({ income, balance }) => calculateRatio(income?.operatingIncome, sumValues(balance?.totalDebt, balance?.totalStockholdersEquity)) },
+      { key: "assetTurnover", label: "Asset Turnover", format: "plain", calculate: ({ income, balance }) => calculateRatio(income?.revenue, balance?.totalAssets, false) },
+      { key: "debtToEquity", label: "Debt / Equity", format: "plain", calculate: ({ balance }) => calculateRatio(balance?.totalDebt, balance?.totalStockholdersEquity, false) },
+      { key: "currentRatio", label: "Current Ratio", format: "plain", calculate: ({ balance }) => calculateRatio(balance?.totalCurrentAssets, balance?.totalCurrentLiabilities, false) }
+    ]
+  },
+  {
+    id: "per-share",
+    label: "Per Share",
+    indicators: [
+      { key: "revenuePerShare", label: "Revenue / Share", format: "perShare", calculate: ({ income }) => calculateRatio(income?.revenue, income?.weightedAverageShsOutDil || income?.weightedAverageShsOut, false) },
+      { key: "netIncomePerShare", label: "Net Income / Share", format: "perShare", calculate: ({ income }) => calculateRatio(income?.netIncome, income?.weightedAverageShsOutDil || income?.weightedAverageShsOut, false) },
+      { key: "fcfPerShare", label: "FCF / Share", format: "perShare", calculate: ({ income, cashflow }) => calculateRatio(cashflow?.freeCashFlow, income?.weightedAverageShsOutDil || income?.weightedAverageShsOut, false) },
+      { key: "cashPerShare", label: "Cash / Share", format: "perShare", calculate: ({ income, balance }) => calculateRatio(balance?.cashAndCashEquivalents, income?.weightedAverageShsOutDil || income?.weightedAverageShsOut, false) },
+      { key: "bookValuePerShare", label: "Book Value / Share", format: "perShare", calculate: ({ income, balance }) => calculateRatio(balance?.totalStockholdersEquity, income?.weightedAverageShsOutDil || income?.weightedAverageShsOut, false) }
+    ]
+  },
+  {
+    id: "growth",
+    label: "Growth",
+    indicators: [
+      { key: "revenueGrowth", label: "Revenue Growth", baseKey: "revenue", format: "percent", growthOf: { source: "income", field: "revenue" } },
+      { key: "netIncomeGrowth", label: "Net Income Growth", baseKey: "netIncome", format: "percent", growthOf: { source: "income", field: "netIncome" } },
+      { key: "epsGrowth", label: "EPS Growth", baseKey: "eps", format: "percent", growthOf: { source: "income", field: "eps" } },
+      { key: "operatingCashFlowGrowth", label: "Operating Cash Flow Growth", baseKey: "operatingCashFlow", format: "percent", growthOf: { source: "cashflow", field: "operatingCashFlow" } },
+      { key: "freeCashFlowGrowth", label: "Free Cash Flow Growth", baseKey: "freeCashFlow", format: "percent", growthOf: { source: "cashflow", field: "freeCashFlow" } },
+      { key: "totalDebtGrowth", label: "Total Debt Growth", baseKey: "totalDebt", format: "percent", growthOf: { source: "balance", field: "totalDebt" } }
+    ]
+  }
+];
+
+const FUNDAMENTAL_CHART_INDICATORS = FUNDAMENTAL_CHART_INDICATOR_GROUPS.flatMap((group) =>
+  group.indicators.map((indicator) => ({ ...indicator, groupId: group.id, groupLabel: group.label }))
+);
+
+const DEFAULT_FUNDAMENTAL_INDICATORS = ["revenue", "netIncome", "eps"];
+
 const CALENDAR_MODES = [
   { id: "earnings", label: "Earnings" },
   { id: "dividends", label: "Dividends" },
@@ -283,6 +392,13 @@ const HOME_FEATURES = [
     text: "Open income statement, balance sheet, and cash flow lines across annual or quarterly periods."
   },
   {
+    id: "fundamental-charts",
+    icon: "fundamental-charts",
+    label: "Fundamental Charts",
+    title: "Chart fundamentals your way",
+    text: "Compare stocks across annual or quarterly statement data, margins, cash flow, returns, per-share metrics, and growth."
+  },
+  {
     id: "projections",
     icon: "projections",
     label: "Projections",
@@ -395,6 +511,15 @@ const renderHomeFeatureIcon = (icon) => {
           <path className="icon-blue" d="M20 24H44M20 32H44M20 40H44" />
           <path className="icon-green" d="M28 18V48M38 18V48" />
           <path className="icon-red" d="M19 48H45" />
+        </svg>
+      );
+    case "fundamental-charts":
+      return (
+        <svg {...commonProps}>
+          <path className="icon-muted" d="M12 50H54M12 14V50" />
+          <path className="icon-blue" d="M18 42L27 31L36 35L48 18" />
+          <path className="icon-green" d="M18 28H23M29 22H34M40 16H45" />
+          <path className="icon-red" d="M20 48V38M32 48V30M44 48V24" />
         </svg>
       );
     case "projections":
@@ -530,6 +655,24 @@ const formatStatementValue = (value, row = {}) => {
   return formatLargeDollars(value);
 };
 
+const formatFundamentalChartValue = (value, indicator = {}) => {
+  if (!isNumber(value)) return "N/A";
+  if (indicator.format === "percent") return `${value.toFixed(2)}%`;
+  if (indicator.format === "perShare") return `$${value.toFixed(2)}`;
+  if (indicator.format === "shares") return formatSharesCount(value);
+  if (indicator.format === "plain") return formatPlain(value);
+  return formatLargeDollars(value);
+};
+
+const formatFundamentalAxisValue = (value, indicator = {}) => {
+  if (!isNumber(value)) return "";
+  if (indicator.format === "percent") return `${value.toFixed(0)}%`;
+  if (indicator.format === "perShare") return `$${value.toFixed(0)}`;
+  if (indicator.format === "shares") return formatLargeNumber(value);
+  if (indicator.format === "plain") return formatPlain(value);
+  return formatLargeDollars(value).replace(".00", "");
+};
+
 const formatShortDate = (value) => {
   if (!value) return "N/A";
   const date = new Date(`${value}T12:00:00`);
@@ -540,6 +683,23 @@ const formatShortDate = (value) => {
     year: "numeric"
   });
 };
+
+function sumValues(...values) {
+  const numbers = values.filter(isNumber);
+  if (!numbers.length) return null;
+  return numbers.reduce((total, value) => total + value, 0);
+}
+
+function differenceValue(value, subtractValue) {
+  if (!isNumber(value) || !isNumber(subtractValue)) return null;
+  return value - subtractValue;
+}
+
+function calculateRatio(numerator, denominator, asPercent = true) {
+  if (!isNumber(numerator) || !isNumber(denominator) || denominator === 0) return null;
+  const value = numerator / denominator;
+  return asPercent ? value * 100 : value;
+}
 
 const formatIndexPrice = (value) =>
   isNumber(value) ? value.toLocaleString(undefined, {
@@ -2609,6 +2769,30 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [financialStatementError, setFinancialStatementError] =
     useState("");
 
+  const [fundamentalChartInput, setFundamentalChartInput] =
+    useState("NVDA");
+
+  const [fundamentalChartTickers, setFundamentalChartTickers] =
+    useState(["NVDA"]);
+
+  const [fundamentalChartPeriod, setFundamentalChartPeriod] =
+    useState("annual");
+
+  const [selectedFundamentalIndicators, setSelectedFundamentalIndicators] =
+    useState(DEFAULT_FUNDAMENTAL_INDICATORS);
+
+  const [activeFundamentalIndicatorGroup, setActiveFundamentalIndicatorGroup] =
+    useState("income");
+
+  const [fundamentalChartData, setFundamentalChartData] =
+    useState(null);
+
+  const [isFundamentalChartLoading, setIsFundamentalChartLoading] =
+    useState(false);
+
+  const [fundamentalChartError, setFundamentalChartError] =
+    useState("");
+
   const [marketClockNow, setMarketClockNow] =
     useState(() => new Date());
 
@@ -3037,6 +3221,136 @@ useEffect(() => {
     isActive = false;
   };
 }, [activePage, financialStatementTicker, financialStatementType, financialStatementPeriod]);
+
+useEffect(() => {
+  if (activePage !== "fundamental-charts" || !fundamentalChartTickers.length) return;
+
+  let isActive = true;
+
+  const statementTypes = ["income", "balance", "cashflow"];
+  const periodLimit = fundamentalChartPeriod === "quarter" ? 80 : 40;
+
+  const statementToPeriodMap = (statementData) => {
+    const map = new Map();
+    const periods = Array.isArray(statementData?.periods) ? statementData.periods : [];
+    periods.forEach((period, index) => {
+      const key = period.date || period.label || period.key || String(index);
+      map.set(key, {
+        key,
+        label: period.label || period.date || period.key || "Period",
+        date: period.date || null,
+        currency: period.currency || null,
+        values: {}
+      });
+    });
+
+    (statementData?.rows || []).forEach((row) => {
+      (row.values || []).forEach((value, index) => {
+        const period = periods[index];
+        const key = period?.date || period?.label || period?.key || String(index);
+        if (!map.has(key)) {
+          map.set(key, {
+            key,
+            label: period?.label || period?.date || period?.key || "Period",
+            date: period?.date || null,
+            currency: period?.currency || null,
+            values: {}
+          });
+        }
+        map.get(key).values[row.key] = value;
+      });
+    });
+
+    return map;
+  };
+
+  const loadTickerFundamentals = async (symbol) => {
+    const requests = statementTypes.map((statement) =>
+      axios.get(`${API_URL}/api/financial-statements/${symbol}`, {
+        params: {
+          statement,
+          period: fundamentalChartPeriod,
+          limit: periodLimit
+        },
+        timeout: 12000
+      })
+        .then((response) => [statement, response.data])
+        .catch((error) => {
+          console.error(`Fundamental ${statement} statement failed`, symbol, error);
+          return [statement, null];
+        })
+    );
+
+    const statementEntries = await Promise.all(requests);
+    const statements = Object.fromEntries(statementEntries);
+    const periodMaps = Object.fromEntries(statementEntries.map(([statement, data]) => [
+      statement,
+      statementToPeriodMap(data)
+    ]));
+
+    const allPeriodKeys = new Set();
+    Object.values(periodMaps).forEach((map) => {
+      map.forEach((_, key) => allPeriodKeys.add(key));
+    });
+
+    const periods = [...allPeriodKeys]
+      .map((key) => {
+        const income = periodMaps.income.get(key);
+        const balance = periodMaps.balance.get(key);
+        const cashflow = periodMaps.cashflow.get(key);
+        const firstPeriod = income || balance || cashflow;
+        return {
+          key,
+          label: firstPeriod?.label || key,
+          date: firstPeriod?.date || null,
+          currency: firstPeriod?.currency || null,
+          income: income?.values || {},
+          balance: balance?.values || {},
+          cashflow: cashflow?.values || {}
+        };
+      })
+      .sort((a, b) => {
+        const dateA = a.date ? new Date(`${a.date}T12:00:00`).getTime() : 0;
+        const dateB = b.date ? new Date(`${b.date}T12:00:00`).getTime() : 0;
+        if (dateA && dateB) return dateA - dateB;
+        return String(a.label).localeCompare(String(b.label));
+      });
+
+    return {
+      symbol,
+      statements,
+      periods,
+      updatedAt: new Date().toISOString()
+    };
+  };
+
+  const loadFundamentalCharts = async () => {
+    setIsFundamentalChartLoading(true);
+    setFundamentalChartError("");
+
+    try {
+      const results = await Promise.all(fundamentalChartTickers.map(loadTickerFundamentals));
+      if (!isActive) return;
+      setFundamentalChartData({
+        tickers: results,
+        updatedAt: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error("Fundamental charts failed", error);
+      if (!isActive) return;
+      setFundamentalChartError("Fundamental chart data is not available yet.");
+      setFundamentalChartData(null);
+    } finally {
+      if (isActive) setIsFundamentalChartLoading(false);
+    }
+  };
+
+  loadFundamentalCharts();
+
+  return () => {
+    isActive = false;
+  };
+}, [activePage, fundamentalChartTickers, fundamentalChartPeriod]);
 
 useEffect(() => {
   if (activePage !== "market-overview") return;
@@ -4683,6 +4997,66 @@ const estimateGrowthRows = estimateMetricConfig.map((metric) => ({
   label: `${metric.label} Growth`,
   cells: estimateGrowthCells.filter((cell) => cell.metricKey === metric.key)
 }));
+const selectedFundamentalIndicatorDetails = selectedFundamentalIndicators
+  .map((key) => FUNDAMENTAL_CHART_INDICATORS.find((indicator) => indicator.key === key))
+  .filter(Boolean);
+const getFundamentalIndicatorValue = (period, indicator, previousPeriod = null) => {
+  if (!period || !indicator) return null;
+  if (indicator.growthOf) {
+    const currentValue = period[indicator.growthOf.source]?.[indicator.growthOf.field];
+    const previousValue = previousPeriod?.[indicator.growthOf.source]?.[indicator.growthOf.field];
+    if (!isNumber(currentValue) || !isNumber(previousValue) || previousValue === 0) return null;
+    return ((currentValue - previousValue) / Math.abs(previousValue)) * 100;
+  }
+  if (typeof indicator.calculate === "function") {
+    return indicator.calculate(period);
+  }
+  return period[indicator.source]?.[indicator.field] ?? null;
+};
+const fundamentalChartSeries = selectedFundamentalIndicatorDetails.map((indicator) => {
+  const rowMap = new Map();
+  const latestValues = [];
+
+  (fundamentalChartData?.tickers || []).forEach((tickerResult) => {
+    let latestValue = null;
+    let latestPeriod = null;
+
+    tickerResult.periods.forEach((period, index) => {
+      const value = getFundamentalIndicatorValue(period, indicator, tickerResult.periods[index - 1]);
+      if (!isNumber(value)) return;
+      const periodKey = period.date || period.label || period.key;
+      if (!rowMap.has(periodKey)) {
+        rowMap.set(periodKey, {
+          periodKey,
+          period: period.label || periodKey,
+          date: period.date || null
+        });
+      }
+      rowMap.get(periodKey)[tickerResult.symbol] = value;
+      latestValue = value;
+      latestPeriod = period.label || periodKey;
+    });
+
+    latestValues.push({
+      symbol: tickerResult.symbol,
+      value: latestValue,
+      period: latestPeriod
+    });
+  });
+
+  const rows = [...rowMap.values()].sort((a, b) => {
+    const dateA = a.date ? new Date(`${a.date}T12:00:00`).getTime() : 0;
+    const dateB = b.date ? new Date(`${b.date}T12:00:00`).getTime() : 0;
+    if (dateA && dateB) return dateA - dateB;
+    return String(a.period).localeCompare(String(b.period));
+  });
+
+  return {
+    indicator,
+    rows,
+    latestValues
+  };
+});
 const projectionEstimateGrowthByYear = estimateYearCards.slice(1).reduce((items, estimate, index) => {
   const projectionYear = PROJECTION_YEARS[index];
   const previousEstimate = estimateYearCards[index];
@@ -6241,6 +6615,58 @@ const handleFinancialStatementSearch = async (event) => {
   setFinancialStatementTicker(symbol);
 };
 
+const handleFundamentalChartTickerAdd = async (event) => {
+  event.preventDefault();
+  const rawValues = fundamentalChartInput
+    .split(/[,;\n]/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (!rawValues.length) return;
+
+  const resolvedSymbols = await Promise.all(rawValues.map(async (value) => {
+    const directSymbol = value.toUpperCase();
+    if (/^[A-Z0-9.-]{1,12}$/.test(directSymbol) && !/\s/.test(value)) {
+      return directSymbol;
+    }
+    return resolveSearchInputToSymbol(value);
+  }));
+
+  const nextSymbols = [
+    ...fundamentalChartTickers,
+    ...resolvedSymbols
+      .map((symbol) => String(symbol || "").toUpperCase())
+      .filter((symbol) => /^[A-Z0-9.-]{1,12}$/.test(symbol))
+  ];
+
+  setFundamentalChartTickers([...new Set(nextSymbols)].slice(0, 20));
+  setFundamentalChartInput("");
+};
+
+const removeFundamentalChartTicker = (symbol) => {
+  setFundamentalChartTickers((current) =>
+    current.filter((item) => item !== symbol)
+  );
+};
+
+const toggleFundamentalIndicator = (indicatorKey) => {
+  setSelectedFundamentalIndicators((current) =>
+    current.includes(indicatorKey)
+      ? current.filter((key) => key !== indicatorKey)
+      : [...current, indicatorKey]
+  );
+};
+
+const selectFundamentalIndicatorGroup = (groupId) => {
+  const group = FUNDAMENTAL_CHART_INDICATOR_GROUPS.find((item) => item.id === groupId);
+  if (!group) return;
+  setSelectedFundamentalIndicators((current) => [
+    ...new Set([
+      ...current,
+      ...group.indicators.map((indicator) => indicator.key)
+    ])
+  ]);
+};
+
 const handleStockSearchSubmit = async (event, destinationPage = "overview") => {
   event.preventDefault();
   const symbol = await resolveSearchInputToSymbol(searchInput);
@@ -6443,6 +6869,7 @@ return (
         ["home", "Home"],
         ["overview", "Stock Overview"],
         ["financial-statements", "Financial Statements"],
+        ["fundamental-charts", "Fundamental Charts"],
         ["projections", "Projections"],
         ["comparison", "Compare"],
         ["portfolio", "Portfolio"],
@@ -7070,6 +7497,229 @@ return (
             <div className="heatmap-loading">No financial statement data is available for this ticker yet.</div>
           )}
         </div>
+      </section>
+    )}
+
+
+    {activePage === "fundamental-charts" && (
+      <section className="fundamental-charts-page" id="fundamental-charts" aria-labelledby="fundamental-charts-title">
+        <div className="financial-statement-hero">
+          <div>
+            <span className="home-feature-label">Fundamental Charts</span>
+            <h2 id="fundamental-charts-title">Fundamental Charts</h2>
+            <p>Choose stocks and indicators, then chart the annual or quarterly fundamentals we have from income statements, balance sheets, cash flow statements, and derived ratios.</p>
+          </div>
+          {fundamentalChartData?.updatedAt && (
+            <span className="market-overview-updated">
+              Updated {new Date(fundamentalChartData.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+            </span>
+          )}
+        </div>
+
+        <div className="fundamental-builder-panel">
+          <form className="financial-statement-toolbar fundamental-ticker-toolbar" onSubmit={handleFundamentalChartTickerAdd}>
+            <label className="financial-statement-search">
+              <input
+                value={fundamentalChartInput}
+                onChange={(event) => setFundamentalChartInput(event.target.value)}
+                placeholder="Add tickers or names: NVDA, AMD, Apple..."
+              />
+            </label>
+            <button type="submit" className="stock-search-button">
+              Add
+            </button>
+          </form>
+
+          <div className="fundamental-chip-row" aria-label="Selected tickers">
+            {fundamentalChartTickers.map((symbol) => (
+              <button
+                key={symbol}
+                type="button"
+                className="fundamental-chip"
+                onClick={() => removeFundamentalChartTicker(symbol)}
+                title={`Remove ${symbol}`}
+              >
+                {symbol}
+                <span>×</span>
+              </button>
+            ))}
+            {!fundamentalChartTickers.length && (
+              <span className="fundamental-empty-note">Add at least one ticker to start charting.</span>
+            )}
+          </div>
+
+          <div className="financial-statement-period-toggle fundamental-period-toggle" role="tablist" aria-label="Fundamental chart period">
+            {FINANCIAL_STATEMENT_PERIODS.map((period) => (
+              <button
+                key={period.id}
+                type="button"
+                className={fundamentalChartPeriod === period.id ? "active" : ""}
+                onClick={() => setFundamentalChartPeriod(period.id)}
+              >
+                {period.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="fundamental-indicator-panel">
+          <div className="fundamental-indicator-sidebar" aria-label="Indicator groups">
+            {FUNDAMENTAL_CHART_INDICATOR_GROUPS.map((group) => (
+              <button
+                key={group.id}
+                type="button"
+                className={activeFundamentalIndicatorGroup === group.id ? "active" : ""}
+                onClick={() => setActiveFundamentalIndicatorGroup(group.id)}
+              >
+                <span>{group.label}</span>
+                <strong>{group.indicators.length}</strong>
+              </button>
+            ))}
+          </div>
+
+          <div className="fundamental-indicator-options">
+            <div className="fundamental-indicator-heading">
+              <div>
+                <span>Indicators</span>
+                <strong>
+                  {FUNDAMENTAL_CHART_INDICATOR_GROUPS.find((group) => group.id === activeFundamentalIndicatorGroup)?.label || "Indicators"}
+                </strong>
+              </div>
+              <div className="fundamental-indicator-actions">
+                <button
+                  type="button"
+                  onClick={() => selectFundamentalIndicatorGroup(activeFundamentalIndicatorGroup)}
+                >
+                  Select Group
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedFundamentalIndicators(DEFAULT_FUNDAMENTAL_INDICATORS)}
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+
+            <div className="fundamental-indicator-grid">
+              {(FUNDAMENTAL_CHART_INDICATOR_GROUPS.find((group) => group.id === activeFundamentalIndicatorGroup)?.indicators || []).map((indicator) => (
+                <button
+                  key={indicator.key}
+                  type="button"
+                  className={selectedFundamentalIndicators.includes(indicator.key) ? "selected" : ""}
+                  onClick={() => toggleFundamentalIndicator(indicator.key)}
+                >
+                  {indicator.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {fundamentalChartError ? (
+          <div className="heatmap-loading">{fundamentalChartError}</div>
+        ) : isFundamentalChartLoading && !fundamentalChartData ? (
+          <div className="heatmap-loading">Loading fundamental charts...</div>
+        ) : selectedFundamentalIndicatorDetails.length ? (
+          <>
+            <div className="fundamental-chart-grid">
+              {fundamentalChartSeries.map((series) => (
+                <div className="fundamental-chart-card" key={series.indicator.key}>
+                  <div className="fundamental-chart-card-header">
+                    <div>
+                      <span>{series.indicator.groupLabel}</span>
+                      <h3>{series.indicator.label}</h3>
+                    </div>
+                    <strong>{fundamentalChartPeriod === "annual" ? "Annual" : "Quarterly"}</strong>
+                  </div>
+
+                  {series.rows.length ? (
+                    <ResponsiveContainer width="100%" height={320}>
+                      <LineChart
+                        data={series.rows}
+                        margin={{ top: 12, right: 18, left: 8, bottom: 8 }}
+                      >
+                        <CartesianGrid stroke="#1f2937" strokeDasharray="4 4" />
+                        <XAxis
+                          dataKey="period"
+                          tick={{ fill: "#94a3b8", fontSize: 12 }}
+                          minTickGap={18}
+                        />
+                        <YAxis
+                          tick={{ fill: "#94a3b8", fontSize: 12 }}
+                          tickFormatter={(value) => formatFundamentalAxisValue(value, series.indicator)}
+                          width={76}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            background: "#0f172a",
+                            border: "1px solid rgba(56, 189, 248, 0.3)",
+                            borderRadius: "10px",
+                            color: "#f8fafc"
+                          }}
+                          formatter={(value, name) => [
+                            formatFundamentalChartValue(value, series.indicator),
+                            name
+                          ]}
+                        />
+                        {fundamentalChartTickers.map((symbol, index) => (
+                          <Line
+                            key={`${series.indicator.key}-${symbol}`}
+                            type="monotone"
+                            dataKey={symbol}
+                            stroke={PORTFOLIO_COLORS[index % PORTFOLIO_COLORS.length]}
+                            strokeWidth={2.4}
+                            dot={{ r: 3 }}
+                            connectNulls
+                          />
+                        ))}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="heatmap-loading">No data yet for this indicator.</div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="financial-statement-table-panel">
+              <div className="screener-results-heading">
+                <span>Latest Selected Fundamentals</span>
+                <strong>{fundamentalChartPeriod === "annual" ? "Latest annual period" : "Latest quarter"}</strong>
+              </div>
+              <div className="financial-statement-table-wrap">
+                <table className="financial-statement-table fundamental-summary-table">
+                  <thead>
+                    <tr>
+                      <th>Indicator</th>
+                      {fundamentalChartTickers.map((symbol) => (
+                        <th key={symbol}>{symbol}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fundamentalChartSeries.map((series) => (
+                      <tr key={`summary-${series.indicator.key}`}>
+                        <th>{series.indicator.label}</th>
+                        {fundamentalChartTickers.map((symbol) => {
+                          const latest = series.latestValues.find((value) => value.symbol === symbol);
+                          return (
+                            <td key={`${series.indicator.key}-${symbol}`}>
+                              <span>{formatFundamentalChartValue(latest?.value, series.indicator)}</span>
+                              {latest?.period && <small>{latest.period}</small>}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="heatmap-loading">Select at least one indicator to build charts.</div>
+        )}
       </section>
     )}
 
