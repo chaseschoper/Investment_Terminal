@@ -7200,7 +7200,7 @@ return (
             </div>
           ) : null}
 
-          <div className="ai-card bullish-card">
+          <div className="ai-card bullish-card earnings-signal-card">
             <h3 className="ai-title">Catalysts</h3>
             <ul className="ai-list">
               {aiAnalysis.stockAnalysis.catalysts.map((item) => (
@@ -7209,7 +7209,7 @@ return (
             </ul>
           </div>
 
-          <div className="ai-card bearish-card">
+          <div className="ai-card bearish-card earnings-signal-card">
             <h3 className="ai-title">Risks</h3>
             <ul className="ai-list">
               {aiAnalysis.stockAnalysis.risks.map((item) => (

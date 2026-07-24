@@ -3142,6 +3142,11 @@ body {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
 }
 
+.ai-earnings-brief .ai-analysis-grid-dense {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  align-items: stretch;
+}
+
 .ai-scenario-grid {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
 }
@@ -3171,12 +3176,31 @@ body {
 }
 
 .earnings-readout-card {
-  grid-column: span 2;
+  grid-column: span 7;
 }
 
-.earnings-outlook-card,
+.ai-earnings-brief .ai-momentum-card {
+  grid-column: span 5;
+}
+
+.earnings-signal-card,
+.earnings-outlook-card {
+  grid-column: span 4;
+}
+
 .management-questions-card {
-  grid-column: span 2;
+  grid-column: 1 / -1;
+}
+
+.management-questions-card .ai-list {
+  columns: 2;
+  column-gap: 42px;
+  padding-left: 20px;
+}
+
+.management-questions-card .ai-list li {
+  break-inside: avoid;
+  margin-bottom: 10px;
 }
 
 .ai-momentum-card {
@@ -4070,9 +4094,19 @@ body {
   }
 
   .earnings-readout-card,
+  .earnings-signal-card,
   .earnings-outlook-card,
+  .ai-earnings-brief .ai-momentum-card,
   .management-questions-card {
-    grid-column: auto;
+    grid-column: 1 / -1;
+  }
+
+  .ai-earnings-brief .ai-analysis-grid-dense {
+    grid-template-columns: 1fr;
+  }
+
+  .management-questions-card .ai-list {
+    columns: 1;
   }
 
   .welcome-hero {
