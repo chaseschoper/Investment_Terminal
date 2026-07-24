@@ -126,6 +126,31 @@ const filterRowsByHistoryRange = (rows = [], rangeId = "5", mode = "annual") => 
   return Array.isArray(rows) ? rows.slice(-limit) : [];
 };
 
+const filterFinancialStatementByHistoryRange = (statementData, rangeId = "5", period = "annual") => {
+  if (!statementData?.periods?.length || rangeId === "max") return statementData;
+  const limit = rangeLimitForPeriod(rangeId, period);
+  if (!Number.isFinite(limit) || statementData.periods.length <= limit) return statementData;
+
+  const firstDate = statementData.periods[0]?.date
+    ? new Date(`${statementData.periods[0].date}T12:00:00`).getTime()
+    : null;
+  const lastDate = statementData.periods.at(-1)?.date
+    ? new Date(`${statementData.periods.at(-1).date}T12:00:00`).getTime()
+    : null;
+  const newestFirst = firstDate && lastDate ? firstDate > lastDate : true;
+  const startIndex = newestFirst ? 0 : statementData.periods.length - limit;
+  const endIndex = newestFirst ? limit : statementData.periods.length;
+
+  return {
+    ...statementData,
+    periods: statementData.periods.slice(startIndex, endIndex),
+    rows: (statementData.rows || []).map((row) => ({
+      ...row,
+      values: (row.values || []).slice(startIndex, endIndex)
+    }))
+  };
+};
+
 const historyRangeLabel = (rangeId) =>
   FUNDAMENTAL_HISTORY_RANGES.find((range) => range.id === rangeId)?.label || "5Y";
 
@@ -1977,7 +2002,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 155;
+const FINANCIAL_HISTORY_VERSION = 156;
 const STOCK_ESTIMATE_VERSION = 23;
 const INTERIM_HISTORY_VERSION = 6;
 const VALUATION_METRICS_VERSION = 23;
@@ -3300,7 +3325,7 @@ useEffect(() => {
         params: {
           statement: financialStatementType,
           period: financialStatementPeriod,
-          limit: rangeLimitForPeriod(financialStatementRange, financialStatementPeriod)
+          limit: rangeLimitForPeriod("max", financialStatementPeriod)
         },
         timeout: 9000
       });
@@ -3321,7 +3346,7 @@ useEffect(() => {
   return () => {
     isActive = false;
   };
-}, [activePage, financialStatementTicker, financialStatementType, financialStatementPeriod, financialStatementRange]);
+}, [activePage, financialStatementTicker, financialStatementType, financialStatementPeriod]);
 
 useEffect(() => {
   if (activePage !== "fundamental-charts" || !fundamentalChartTickers.length) return;
@@ -3329,7 +3354,7 @@ useEffect(() => {
   let isActive = true;
 
   const statementTypes = ["income", "balance", "cashflow"];
-  const periodLimit = rangeLimitForPeriod(fundamentalChartRange, fundamentalChartPeriod);
+  const periodLimit = rangeLimitForPeriod("max", fundamentalChartPeriod);
 
   const statementToPeriodMap = (statementData) => {
     const map = new Map();
@@ -3451,7 +3476,7 @@ useEffect(() => {
   return () => {
     isActive = false;
   };
-}, [activePage, fundamentalChartTickers, fundamentalChartPeriod, fundamentalChartRange]);
+}, [activePage, fundamentalChartTickers, fundamentalChartPeriod]);
 
 useEffect(() => {
   if (activePage !== "market-overview") return;
@@ -5198,7 +5223,7 @@ const fundamentalChartSeries = selectedFundamentalIndicatorDetails.map((indicato
 
   return {
     indicator,
-    rows,
+    rows: filterRowsByHistoryRange(rows, fundamentalChartRange, fundamentalChartPeriod),
     latestValues
   };
 });
@@ -6858,6 +6883,12 @@ const renderHistoryRangeToggle = (value, onChange, ariaLabel = "History range") 
   </div>
 );
 
+const visibleFinancialStatementData = filterFinancialStatementByHistoryRange(
+  financialStatementData,
+  financialStatementRange,
+  financialStatementPeriod
+);
+
 const handleStockSearchSubmit = async (event, destinationPage = "overview") => {
   event.preventDefault();
   const symbol = await resolveSearchInputToSymbol(searchInput);
@@ -7665,13 +7696,13 @@ return (
             <div className="heatmap-loading">{financialStatementError}</div>
           ) : isFinancialStatementLoading && !financialStatementData ? (
             <div className="heatmap-loading">Loading financial statements...</div>
-          ) : financialStatementData?.rows?.length ? (
+          ) : visibleFinancialStatementData?.rows?.length ? (
             <div className="financial-statement-table-wrap">
               <table className="financial-statement-table">
                 <thead>
                   <tr>
                     <th>Breakdown</th>
-                    {financialStatementData.periods.map((period) => (
+                    {visibleFinancialStatementData.periods.map((period) => (
                       <th key={period.key}>
                         <span>{period.label}</span>
                         {period.date && <small>{formatShortDate(period.date)}</small>}
@@ -7680,11 +7711,11 @@ return (
                   </tr>
                 </thead>
                 <tbody>
-                  {financialStatementData.rows.map((row) => (
+                  {visibleFinancialStatementData.rows.map((row) => (
                     <tr key={row.key}>
                       <th>{row.label}</th>
                       {row.values.map((value, index) => (
-                        <td key={`${row.key}-${financialStatementData.periods[index]?.key || index}`}>
+                        <td key={`${row.key}-${visibleFinancialStatementData.periods[index]?.key || index}`}>
                           {formatStatementValue(value, row)}
                         </td>
                       ))}

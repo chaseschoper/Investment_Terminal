@@ -76,7 +76,7 @@ const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const alphaVantageFundamentalCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 155;
+const FINANCIAL_HISTORY_VERSION = 156;
 const STOCK_ESTIMATE_VERSION = 23;
 const INTERIM_HISTORY_VERSION = 6;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
@@ -5577,7 +5577,7 @@ function cleanFinancialHistoryRows(rows = []) {
   );
 }
 
-function limitHistoricalFinancialRows(rows, limit = 7) {
+function limitHistoricalFinancialRows(rows, limit = Infinity) {
   const dedupedRows = cleanFinancialHistoryRows(rows);
   if (!Number.isFinite(limit)) return dedupedRows;
 
@@ -5609,7 +5609,7 @@ function limitHistoricalFinancialRows(rows, limit = 7) {
   return mergedRows;
 }
 
-function mergeHistoricalFinancials(primary = [], fallback = [], limit = 7) {
+function mergeHistoricalFinancials(primary = [], fallback = [], limit = Infinity) {
   const rowsByPeriod = new Map();
 
   [...fallback, ...primary].forEach((row) => {
@@ -5663,7 +5663,7 @@ function mergeHistoricalFinancials(primary = [], fallback = [], limit = 7) {
   return limitHistoricalFinancialRows(mergedRows, limit);
 }
 
-function mergeSupplementalHistoricalFields(baseRows = [], supplementalRows = [], limit = 7) {
+function mergeSupplementalHistoricalFields(baseRows = [], supplementalRows = [], limit = Infinity) {
   const rowsByPeriod = new Map();
   const rowKeyFor = (row) => {
     const period = row.period || String(row.year);
@@ -12683,21 +12683,35 @@ async function getHydratedStockDataForFirstResponse(ticker, fallbackData = {}, w
     Boolean(hydratedData.marketActivityUpdatedAt) ||
     Boolean(hydratedData.balanceSheetCheckedAt) ||
     Boolean(hydratedData.valuationMetricsCheckedAt);
+  const hydrateFreshFinancialHistory = async (data) => {
+    const selectedData = Object.keys(data || {}).length ? data : fallbackData;
+    const hasStaleFinancialHistory =
+      selectedData.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
+      !hasCompleteChartHistory({ data: selectedData });
+    const hasWeakInterimHistory =
+      waitForInterimHistory && !hasUsableInterimHistory(selectedData);
+
+    if (!hasStaleFinancialHistory && !hasWeakInterimHistory) return selectedData;
+
+    const remainingMs = Math.max(900, deadline - Date.now());
+    return hydrateQuarterlyHistoryForResponse(
+      ticker,
+      selectedData,
+      Math.min(waitMs || 1800, remainingMs),
+      { forceRefresh: hasStaleFinancialHistory }
+    );
+  };
 
   if (hydratedHasCharts || hydratedHasSupplemental || !fallbackHasCharts) {
     const selectedData = Object.keys(hydratedData).length ? hydratedData : fallbackData;
-    const responseData = waitForInterimHistory && !hasUsableInterimHistory(selectedData)
-      ? await hydrateQuarterlyHistoryForResponse(ticker, selectedData)
-      : selectedData;
+    const responseData = await hydrateFreshFinancialHistory(selectedData);
     return {
       stock: hydratedStock,
       data: responseData
     };
   }
 
-  const responseData = waitForInterimHistory && !hasUsableInterimHistory(fallbackData)
-    ? await hydrateQuarterlyHistoryForResponse(ticker, fallbackData)
-    : fallbackData;
+  const responseData = await hydrateFreshFinancialHistory(fallbackData);
   return {
     stock: hydratedStock,
     data: responseData
@@ -20255,7 +20269,7 @@ app.get("/api/financial-statements/:ticker", async (req, res) => {
     const requestedLimit = Number(req.query.limit);
     const limit = Number.isFinite(requestedLimit)
       ? Math.min(Math.max(Math.round(requestedLimit), 1), period === "quarter" ? 80 : 40)
-      : 5;
+      : period === "quarter" ? 80 : 40;
     const config = FINANCIAL_STATEMENT_ENDPOINTS[statementType];
     const data = await getFmpData(symbol, `financial statements ${statementType} ${period}`, [
       `/stable/${config.path}?symbol={ticker}&period=${period}&limit=${limit}`
