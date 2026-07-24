@@ -3139,7 +3139,7 @@ useEffect(() => {
       if (!isActive) return;
       let willRetry = false;
       setIsCompanyDocumentsLoading(true);
-      axios.get(`${API_URL}/api/company-documents/${ticker}`, { timeout: 45000 })
+      axios.get(`${API_URL}/api/company-documents/${ticker}${attempt > 0 ? "?refresh=1" : ""}`, { timeout: 45000 })
         .then((response) => {
           if (isActive) {
             if (!response.data?.available && attempt < 3) {

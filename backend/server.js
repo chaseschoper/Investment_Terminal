@@ -47,6 +47,8 @@ const broadMarketMoversCache = new Map();
 const priceHistoryCache = new Map();
 const companyDocumentsCache = new Map();
 const companyDocumentsInFlight = new Map();
+const COMPANY_DOCUMENTS_SUCCESS_TTL_MS = 3 * 60 * 60 * 1000;
+const COMPANY_DOCUMENTS_EMPTY_TTL_MS = 2 * 60 * 1000;
 const stockSearchCache = new Map();
 const stockScreenerCache = new Map();
 const stockScreenerOptionsCache = new Map();
@@ -3285,11 +3287,24 @@ async function fetchSecFilingExhibits(cik, filing) {
   }
 }
 
-async function fetchCompanyDocuments(ticker) {
+async function fetchCompanyDocuments(ticker, { forceRefresh = false } = {}) {
   const symbol = String(ticker || "").trim().toUpperCase();
   const cached = companyDocumentsCache.get(symbol);
-  if (cached && Date.now() - cached.fetchedAt < 3 * 60 * 60 * 1000) {
-    return cached.data;
+  if (cached && !forceRefresh) {
+    const hasUsefulDocuments =
+      cached.data?.available &&
+      (
+        cached.data?.allSecFilings?.length ||
+        cached.data?.resultDocuments?.length ||
+        cached.data?.earningsExhibits?.length
+      );
+    const ttl = hasUsefulDocuments ? COMPANY_DOCUMENTS_SUCCESS_TTL_MS : COMPANY_DOCUMENTS_EMPTY_TTL_MS;
+    if (Date.now() - cached.fetchedAt < ttl) {
+      return cached.data;
+    }
+  }
+  if (forceRefresh) {
+    companyDocumentsCache.delete(symbol);
   }
   const inFlight = companyDocumentsInFlight.get(symbol);
   if (inFlight) return inFlight;
@@ -17986,7 +18001,9 @@ app.get("/api/company-documents/:ticker", async (req, res) => {
   }
 
   try {
-    const data = await fetchCompanyDocuments(ticker);
+    const data = await fetchCompanyDocuments(ticker, {
+      forceRefresh: req.query.refresh === "1" || req.query.force === "1"
+    });
     return res.json(data);
   } catch (err) {
     console.error("Company documents fetch failed:", ticker, err.response?.status || err.message);
