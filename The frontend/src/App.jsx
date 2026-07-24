@@ -2432,6 +2432,12 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [isBroadMarketMoversLoading, setIsBroadMarketMoversLoading] =
     useState(false);
 
+  const [topTradedStocks, setTopTradedStocks] =
+    useState({ stocks: [], updatedAt: null });
+
+  const [isTopTradedStocksLoading, setIsTopTradedStocksLoading] =
+    useState(false);
+
   const [etfSearchInput, setEtfSearchInput] =
     useState("SPY");
 
@@ -2736,6 +2742,48 @@ useEffect(() => {
   return () => {
     isActive = false;
     window.clearTimeout(startTimer);
+    window.clearTimeout(refreshTimer);
+  };
+}, [activePage]);
+
+useEffect(() => {
+  if (activePage !== "overview") return;
+
+  let isActive = true;
+  let refreshTimer;
+
+  const loadTopTradedStocks = async () => {
+    if (!topTradedStocks.stocks.length) {
+      setIsTopTradedStocksLoading(true);
+    }
+    let nextRefreshMs = 2 * 60 * 1000;
+    try {
+      const response = await axios.get(`${API_URL}/api/top-traded-stocks`, {
+        timeout: 8500,
+      });
+      if (isActive) {
+        const stocks = Array.isArray(response.data?.stocks) ? response.data.stocks.slice(0, 10) : [];
+        setTopTradedStocks({
+          stocks,
+          updatedAt: response.data?.updatedAt || null
+        });
+        nextRefreshMs = stocks.length ? 2 * 60 * 1000 : 12000;
+      }
+    } catch (error) {
+      console.error("Top traded stocks failed", error);
+      nextRefreshMs = 12000;
+    } finally {
+      if (isActive) {
+        setIsTopTradedStocksLoading(false);
+        refreshTimer = window.setTimeout(loadTopTradedStocks, nextRefreshMs);
+      }
+    }
+  };
+
+  loadTopTradedStocks();
+
+  return () => {
+    isActive = false;
     window.clearTimeout(refreshTimer);
   };
 }, [activePage]);
@@ -5468,6 +5516,46 @@ const renderMarketMoverPanel = (title, rows, tone, scope, isLoading = false) => 
   </section>
 );
 
+const renderTopTradedStocks = () => (
+  <section className="top-traded-overview" aria-labelledby="top-traded-overview-title">
+    <div className="market-movers-block-heading">
+      <span id="top-traded-overview-title">Top Traded Stocks</span>
+      {topTradedStocks.updatedAt && (
+        <strong>
+          Updated {new Date(topTradedStocks.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+        </strong>
+      )}
+    </div>
+    <div className="top-traded-list">
+      {topTradedStocks.stocks.length ? topTradedStocks.stocks.slice(0, 10).map((stock) => (
+        <button
+          className="top-traded-row"
+          key={`top-traded-${stock.symbol}`}
+          type="button"
+          onClick={() => {
+            setSearchInput(stock.symbol);
+            setTicker(stock.symbol);
+            setActivePage("overview");
+          }}
+        >
+          <span>
+            <strong>{stock.symbol}</strong>
+            <small>{stock.name}</small>
+          </span>
+          <em>{formatLargeNumber(stock.volume)}</em>
+          <b className={isNumber(stock.percentChange) && stock.percentChange < 0 ? "negative-text" : "positive-text"}>
+            {formatSignedPercent(stock.percentChange)}
+          </b>
+        </button>
+      )) : (
+        <div className="market-movers-empty">
+          {isTopTradedStocksLoading ? "Loading top traded stocks..." : "No top traded stocks available yet."}
+        </div>
+      )}
+    </div>
+  </section>
+);
+
 const marketOverviewStrip = (
   <div className="market-strip" aria-label="Market index snapshot">
     <div className={`market-signal ${marketSignal.tone}`}>
@@ -7011,6 +7099,7 @@ return (
           </div>
 
         </div>
+        {renderTopTradedStocks()}
         {/* LIVE STOCK CHART */}
 
 <div className="chart-section native-stock-chart-section">
@@ -7133,22 +7222,13 @@ return (
       <div className="ai-text">Building analysis...</div>
     ) : aiAnalysis?.verdict && aiAnalysis?.stockAnalysis ? (
       <>
-        <div className={`ai-brief-hero ${String(aiAnalysis.verdict.stance || "").toLowerCase()}`}>
-          <div>
-            <span className="ai-kicker">MrktRally research brief</span>
-            <div className="ai-sentiment">
-              {aiAnalysis.verdict.stance} · {aiAnalysis.verdict.score}/100
-            </div>
-          </div>
-          <div className="ai-score-ring">
-            <strong>{aiAnalysis.verdict.score}</strong>
-            <span>score</span>
-          </div>
+        <div className="ai-sentiment">
+          {aiAnalysis.verdict.stance} · {aiAnalysis.verdict.score}/100
         </div>
 
         <p className="ai-text">{aiAnalysis.verdict.summary}</p>
 
-        <div className="ai-analysis-grid ai-analysis-grid-dense">
+        <div className="ai-analysis-grid">
           <div className="ai-card">
             <h3 className="ai-title">Valuation</h3>
             <ul className="ai-list">
@@ -7167,40 +7247,7 @@ return (
             </ul>
           </div>
 
-          {aiAnalysis.stockAnalysis.balanceSheet?.length ? (
-            <div className="ai-card">
-              <h3 className="ai-title">Balance Sheet</h3>
-              <ul className="ai-list">
-                {aiAnalysis.stockAnalysis.balanceSheet.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          {aiAnalysis.stockAnalysis.returnsAndEfficiency?.length ? (
-            <div className="ai-card">
-              <h3 className="ai-title">Returns & Efficiency</h3>
-              <ul className="ai-list">
-                {aiAnalysis.stockAnalysis.returnsAndEfficiency.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          {aiAnalysis.stockAnalysis.estimateSetup?.length ? (
-            <div className="ai-card">
-              <h3 className="ai-title">Estimate Setup</h3>
-              <ul className="ai-list">
-                {aiAnalysis.stockAnalysis.estimateSetup.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          <div className="ai-card bullish-card earnings-signal-card">
+          <div className="ai-card bullish-card">
             <h3 className="ai-title">Catalysts</h3>
             <ul className="ai-list">
               {aiAnalysis.stockAnalysis.catalysts.map((item) => (
@@ -7209,7 +7256,7 @@ return (
             </ul>
           </div>
 
-          <div className="ai-card bearish-card earnings-signal-card">
+          <div className="ai-card bearish-card">
             <h3 className="ai-title">Risks</h3>
             <ul className="ai-list">
               {aiAnalysis.stockAnalysis.risks.map((item) => (
@@ -7219,7 +7266,7 @@ return (
           </div>
         </div>
 
-        <div className="ai-analysis-grid ai-scenario-grid">
+        <div className="ai-analysis-grid">
           {aiAnalysis.stockAnalysis.scenarios.map((scenario) => (
             <div className="ai-card" key={scenario.label}>
               <h3 className="ai-title">{scenario.label} Case</h3>
@@ -7244,30 +7291,30 @@ return (
     AI Earnings Call Analysis
   </h2>
 
-  <div className="ai-analysis-box ai-earnings-brief">
+  <div className="ai-earnings-panel">
     {isAiLoading && !aiAnalysis ? (
       <div className="ai-card"><p className="ai-text">Reviewing earnings data...</p></div>
     ) : aiAnalysis?.earningsAnalysis ? (
       <>
-        <div className="ai-brief-hero ai-earnings-hero">
+        <div className="ai-earnings-hero">
           <div>
-            <span className="ai-kicker">MrktRally earnings brief</span>
-            <div className="ai-sentiment">{aiAnalysis.earningsAnalysis.period}</div>
-            <p className="ai-hero-copy">{aiAnalysis.earningsAnalysis.summary}</p>
+            <span className="ai-earnings-kicker">MrktRally earnings brief</span>
+            <h3>{aiAnalysis.earningsAnalysis.period}</h3>
+            <p>{aiAnalysis.earningsAnalysis.summary}</p>
           </div>
           <div className="ai-earnings-gauges">
-            <div className="ai-score-ring">
+            <div className="ai-earnings-gauge">
               <strong>{aiAnalysis.earningsAnalysis.confidence}</strong>
               <span>confidence</span>
             </div>
-            <div className="ai-score-ring caution-ring">
+            <div className="ai-earnings-gauge caution">
               <strong>{aiAnalysis.earningsAnalysis.caution}</strong>
               <span>caution</span>
             </div>
           </div>
         </div>
 
-        <div className="ai-analysis-grid ai-analysis-grid-dense">
+        <div className="ai-earnings-grid">
           <div className="ai-card earnings-readout-card">
             <h3 className="ai-title">Reported Highlights</h3>
             <ul className="ai-list">
@@ -7277,7 +7324,7 @@ return (
             </ul>
           </div>
 
-          <div className="ai-card bullish-card">
+          <div className="ai-card bullish-card earnings-signal-card">
             <h3 className="ai-title">Positive Signals</h3>
             <ul className="ai-list">
               {aiAnalysis.earningsAnalysis.positives.map((item) => (
@@ -7286,7 +7333,7 @@ return (
             </ul>
           </div>
 
-          <div className="ai-card bearish-card">
+          <div className="ai-card bearish-card earnings-signal-card">
             <h3 className="ai-title">Pressure Points</h3>
             <ul className="ai-list">
               {aiAnalysis.earningsAnalysis.risks.map((item) => (

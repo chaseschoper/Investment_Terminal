@@ -3008,109 +3008,15 @@ body {
   }
 }
 .ai-analysis-box {
-  position: relative;
-  overflow: hidden;
-  background:
-    radial-gradient(circle at 12% 0%, rgba(20, 184, 166, 0.16), transparent 34%),
-    linear-gradient(135deg, rgba(15, 23, 42, 0.98), rgba(3, 7, 18, 0.98));
-  border: 1px solid rgba(56, 189, 248, 0.22);
-  border-radius: 18px;
-  padding: 24px;
+  background: transparent;
+  padding: 0;
   margin-bottom: 30px;
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
-}
-
-.ai-brief-hero {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  margin-bottom: 18px;
-  padding: 18px;
-  border: 1px solid rgba(45, 212, 191, 0.22);
-  border-radius: 14px;
-  background: rgba(8, 13, 24, 0.72);
-}
-
-.ai-kicker {
-  display: block;
-  margin-bottom: 8px;
-  color: #67e8f9;
-  font-size: 11px;
-  font-weight: 900;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .ai-sentiment {
-  color: #f8fafc;
   font-size: 24px;
-  font-weight: 900;
-}
-
-.ai-score-ring {
-  display: grid;
-  width: 76px;
-  height: 76px;
-  flex: 0 0 76px;
-  place-items: center;
-  align-content: center;
-  border: 1px solid rgba(96, 165, 250, 0.46);
-  border-radius: 999px;
-  background: radial-gradient(circle, rgba(37, 99, 235, 0.32), rgba(15, 23, 42, 0.92));
-  color: #f8fafc;
-}
-
-.ai-score-ring strong {
-  font-size: 24px;
-  line-height: 1;
-}
-
-.ai-score-ring span {
-  color: #93c5fd;
-  font-size: 10px;
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.ai-hero-copy {
-  max-width: 980px;
-  margin: 12px 0 0;
-  color: #cbd5e1;
-  font-size: 15px;
-  line-height: 1.75;
-}
-
-.ai-earnings-brief {
-  border-color: rgba(20, 184, 166, 0.3);
-  background:
-    radial-gradient(circle at 8% 8%, rgba(45, 212, 191, 0.18), transparent 28%),
-    radial-gradient(circle at 92% 16%, rgba(37, 99, 235, 0.14), transparent 30%),
-    linear-gradient(135deg, rgba(8, 13, 24, 0.98), rgba(3, 7, 18, 0.98));
-}
-
-.ai-earnings-hero {
-  align-items: stretch;
-  background:
-    linear-gradient(135deg, rgba(20, 184, 166, 0.13), rgba(37, 99, 235, 0.09)),
-    rgba(8, 13, 24, 0.84);
-}
-
-.ai-earnings-gauges {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-  flex: 0 0 auto;
-}
-
-.caution-ring {
-  border-color: rgba(251, 113, 133, 0.42);
-  background: radial-gradient(circle, rgba(190, 18, 60, 0.28), rgba(15, 23, 42, 0.92));
-}
-
-.caution-ring span {
-  color: #fecdd3;
+  font-weight: 700;
+  margin-bottom: 20px;
 }
 
 .ai-text {
@@ -3142,11 +3048,6 @@ body {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
 }
 
-.ai-earnings-brief .ai-analysis-grid-dense {
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  align-items: stretch;
-}
-
 .ai-scenario-grid {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
 }
@@ -3154,66 +3055,17 @@ body {
 .ai-card {
   position: relative;
   overflow: hidden;
-  background: linear-gradient(180deg, rgba(17, 24, 39, 0.96), rgba(8, 13, 24, 0.96));
-  border-radius: 12px;
-  padding: 20px;
-  border: 1px solid rgba(39, 50, 68, 0.9);
-}
-
-.ai-card::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(90deg, rgba(45, 212, 191, 0.16), rgba(37, 99, 235, 0.08), transparent);
-  height: 3px;
-}
-
-.earnings-readout-card,
-.earnings-outlook-card,
-.management-questions-card {
-  border-color: rgba(96, 165, 250, 0.24);
-}
-
-.earnings-readout-card {
-  grid-column: span 7;
-}
-
-.ai-earnings-brief .ai-momentum-card {
-  grid-column: span 5;
-}
-
-.earnings-signal-card,
-.earnings-outlook-card {
-  grid-column: span 4;
-}
-
-.management-questions-card {
-  grid-column: 1 / -1;
-}
-
-.management-questions-card .ai-list {
-  columns: 2;
-  column-gap: 42px;
-  padding-left: 20px;
-}
-
-.management-questions-card .ai-list li {
-  break-inside: avoid;
-  margin-bottom: 10px;
-}
-
-.ai-momentum-card {
-  background:
-    radial-gradient(circle at 20% 0%, rgba(20, 184, 166, 0.18), transparent 42%),
-    linear-gradient(180deg, rgba(17, 24, 39, 0.96), rgba(8, 13, 24, 0.96));
+  background: #111827;
+  border-radius: 16px;
+  padding: 24px;
+  border: 1px solid #1f2937;
 }
 
 .ai-title {
-  color: #f8fafc;
-  font-size: 16px;
-  font-weight: 900;
-  margin-bottom: 14px;
+  color: white;
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 18px;
 }
 
 .ai-text {
@@ -3265,6 +3117,224 @@ body {
 
 .negative {
   background: #ef4444;
+}
+
+.ai-earnings-panel {
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 30px;
+  padding: 24px;
+  border: 1px solid rgba(20, 184, 166, 0.3);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 8% 8%, rgba(45, 212, 191, 0.16), transparent 28%),
+    radial-gradient(circle at 92% 18%, rgba(37, 99, 235, 0.14), transparent 32%),
+    linear-gradient(135deg, rgba(8, 13, 24, 0.98), rgba(3, 7, 18, 0.98));
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+}
+
+.ai-earnings-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 20px;
+  padding: 22px;
+  border: 1px solid rgba(45, 212, 191, 0.22);
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, rgba(20, 184, 166, 0.13), rgba(37, 99, 235, 0.09)),
+    rgba(8, 13, 24, 0.84);
+}
+
+.ai-earnings-kicker {
+  display: block;
+  margin-bottom: 10px;
+  color: #67e8f9;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ai-earnings-hero h3 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: clamp(20px, 2vw, 30px);
+  font-weight: 900;
+}
+
+.ai-earnings-hero p {
+  max-width: 1050px;
+  margin: 12px 0 0;
+  color: #cbd5e1;
+  font-size: 15px;
+  line-height: 1.75;
+}
+
+.ai-earnings-gauges {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex: 0 0 auto;
+}
+
+.ai-earnings-gauge {
+  display: grid;
+  width: 78px;
+  height: 78px;
+  place-items: center;
+  align-content: center;
+  border: 1px solid rgba(96, 165, 250, 0.46);
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(37, 99, 235, 0.32), rgba(15, 23, 42, 0.92));
+  color: #f8fafc;
+}
+
+.ai-earnings-gauge.caution {
+  border-color: rgba(251, 113, 133, 0.42);
+  background: radial-gradient(circle, rgba(190, 18, 60, 0.28), rgba(15, 23, 42, 0.92));
+}
+
+.ai-earnings-gauge strong {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.ai-earnings-gauge span {
+  color: #93c5fd;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.ai-earnings-gauge.caution span {
+  color: #fecdd3;
+}
+
+.ai-earnings-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.ai-earnings-panel .ai-card {
+  background:
+    linear-gradient(180deg, rgba(17, 24, 39, 0.96), rgba(8, 13, 24, 0.96));
+  border-radius: 12px;
+  border-color: rgba(39, 50, 68, 0.9);
+}
+
+.earnings-readout-card {
+  grid-column: span 3;
+}
+
+.ai-earnings-panel .ai-momentum-card,
+.earnings-signal-card {
+  grid-column: span 3;
+}
+
+.earnings-outlook-card,
+.management-questions-card {
+  grid-column: span 3;
+}
+
+.management-questions-card .ai-list {
+  line-height: 1.75;
+}
+
+.ai-momentum-card {
+  background:
+    radial-gradient(circle at 20% 0%, rgba(20, 184, 166, 0.18), transparent 42%),
+    linear-gradient(180deg, rgba(17, 24, 39, 0.96), rgba(8, 13, 24, 0.96));
+}
+
+.top-traded-overview {
+  margin: 0 auto 28px;
+  padding: 18px;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 6% 0%, rgba(20, 184, 166, 0.12), transparent 28%),
+    linear-gradient(145deg, rgba(15, 23, 42, 0.92), rgba(3, 7, 13, 0.98));
+}
+
+.top-traded-list {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.top-traded-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "name move"
+    "volume volume";
+  gap: 8px 12px;
+  min-height: 86px;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 10px;
+  background: rgba(2, 6, 12, 0.32);
+  color: #ffffff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.top-traded-row:hover,
+.top-traded-row:focus-visible {
+  border-color: rgba(56, 189, 248, 0.45);
+  background: rgba(30, 41, 59, 0.58);
+  outline: none;
+}
+
+.top-traded-row span {
+  grid-area: name;
+  min-width: 0;
+}
+
+.top-traded-row strong,
+.top-traded-row small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.top-traded-row strong {
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 950;
+}
+
+.top-traded-row small {
+  margin-top: 3px;
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.top-traded-row em {
+  grid-area: volume;
+  color: #93c5fd;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.top-traded-row em::before {
+  content: "Vol ";
+  color: #64748b;
+}
+
+.top-traded-row b {
+  grid-area: move;
+  font-size: 13px;
+  font-weight: 950;
+  font-variant-numeric: tabular-nums;
 }
 .comparison-grid {
 
@@ -4056,6 +4126,10 @@ body {
 }
 
 @media (max-width: 860px) {
+  .top-traded-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .home-feature-grid {
     grid-template-columns: 1fr;
   }
@@ -4075,38 +4149,41 @@ body {
 
 @media (max-width: 640px) {
   .ai-analysis-box {
+    padding: 0;
+  }
+
+  .ai-earnings-panel {
     padding: 16px;
   }
 
-  .ai-brief-hero {
+  .ai-earnings-hero {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .ai-score-ring {
-    width: 64px;
-    height: 64px;
-    flex-basis: 64px;
   }
 
   .ai-earnings-gauges {
     justify-content: flex-start;
   }
 
+  .ai-earnings-gauge {
+    width: 64px;
+    height: 64px;
+  }
+
+  .ai-earnings-grid {
+    grid-template-columns: 1fr;
+  }
+
   .earnings-readout-card,
   .earnings-signal-card,
   .earnings-outlook-card,
-  .ai-earnings-brief .ai-momentum-card,
+  .ai-earnings-panel .ai-momentum-card,
   .management-questions-card {
     grid-column: 1 / -1;
   }
 
-  .ai-earnings-brief .ai-analysis-grid-dense {
+  .top-traded-list {
     grid-template-columns: 1fr;
-  }
-
-  .management-questions-card .ai-list {
-    columns: 1;
   }
 
   .welcome-hero {

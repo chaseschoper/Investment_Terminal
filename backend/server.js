@@ -44,6 +44,7 @@ const nasdaqEarningsDateCache = new Map();
 const marketIndexCache = new Map();
 const marketHeatmapCache = new Map();
 const broadMarketMoversCache = new Map();
+const topTradedStocksCache = new Map();
 const priceHistoryCache = new Map();
 const companyDocumentsCache = new Map();
 const companyDocumentsInFlight = new Map();
@@ -2315,16 +2316,21 @@ async function fetchYahooSparkQuote(ticker) {
 
 async function fetchFmpMarketMoverList(type) {
   if (!process.env.FMP_API_KEY || !canUseFmp()) return [];
-  const endpoint = type === "losers" ? "losers" : "gainers";
+  const endpoint =
+    type === "losers"
+      ? "losers"
+      : type === "active"
+        ? "actives"
+        : "gainers";
 
   try {
-    const response = await axios.get(
-      `https://financialmodelingprep.com/api/v3/stock_market/${endpoint}`,
-      {
-        params: { apikey: process.env.FMP_API_KEY },
-        timeout: 6000
-      }
-    );
+    const url = type === "active"
+      ? "https://financialmodelingprep.com/stable/most-actives"
+      : `https://financialmodelingprep.com/api/v3/stock_market/${endpoint}`;
+    const response = await axios.get(url, {
+      params: { apikey: process.env.FMP_API_KEY },
+      timeout: 6000
+    });
     return Array.isArray(response.data) ? response.data : [];
   } catch (err) {
     setFmpCooldown(err, `market ${endpoint}`, endpoint);
@@ -14020,7 +14026,8 @@ function normalizeMarketMoverRow(row = {}) {
     name: firstText(row.name, row.companyName, row.shortName, row.longName, FALLBACK_COMPANY_NAMES[symbol], symbol),
     price,
     change,
-    percentChange
+    percentChange,
+    volume: parseApiNumber(row.volume ?? row.regularMarketVolume)
   };
 }
 
@@ -14110,6 +14117,100 @@ app.get("/api/market-movers", async (req, res) => {
     gainers: [],
     losers: [],
     source: "FMP market movers",
+    updatedAt: new Date().toISOString(),
+    stale: true
+  });
+});
+
+app.get("/api/top-traded-stocks", async (req, res) => {
+  const cached = topTradedStocksCache.get("latest");
+  const cachedAge = cached ? Date.now() - cached.fetchedAt : Infinity;
+  const freshCacheMs = 90 * 1000;
+  const staleCacheMs = 15 * 60 * 1000;
+
+  if (cached?.data && cachedAge < freshCacheMs) {
+    return res.json(cached.data);
+  }
+
+  const fetchFreshTopTraded = async () => {
+    const rows = await resolveWithin(fetchFmpMarketMoverList("active"), 6500, []);
+    const isLikelyFundOrEtf = (row = {}) => {
+      const text = `${row.symbol || ""} ${row.name || ""}`.toLowerCase();
+      return /\b(etf|fund|trust|2x|3x|bull|bear|ultra|proshares|direxion|ishares|vanguard|spdr)\b/.test(text);
+    };
+    const baseRows = (Array.isArray(rows) ? rows : [])
+      .map(normalizeMarketMoverRow)
+      .filter((row) => row && row.symbol && !isLikelyFundOrEtf(row))
+      .slice(0, 18);
+    const quoteRows = await Promise.all(
+      baseRows.map((row) =>
+        resolveWithin(
+          getFmpData(row.symbol, "top traded quote", ["/stable/quote?symbol={ticker}"]),
+          1600,
+          null
+        )
+      )
+    );
+    const quoteBySymbol = new Map(
+      (Array.isArray(quoteRows) ? quoteRows : []).map((row) => [
+        String((Array.isArray(row) ? row[0] : row)?.symbol || "").trim().toUpperCase(),
+        Array.isArray(row) ? row[0] : row
+      ]).filter(([symbol]) => symbol)
+    );
+    const topTraded = baseRows
+      .map((row) => {
+        const quote = quoteBySymbol.get(row.symbol) || {};
+        return normalizeMarketMoverRow({
+          ...row,
+          name: firstText(row.name, quote.name),
+          price: firstFiniteNumber(row.price, quote.price),
+          change: firstFiniteNumber(row.change, quote.change),
+          changesPercentage: firstFiniteNumber(row.percentChange, quote.changesPercentage, quote.changePercentage),
+          volume: firstFiniteNumber(row.volume, quote.volume)
+        });
+      })
+      .filter(Boolean)
+      .sort((a, b) => {
+        const volumeDiff = (toNumberOrNull(b.volume) ?? -Infinity) - (toNumberOrNull(a.volume) ?? -Infinity);
+        if (volumeDiff !== 0 && Number.isFinite(volumeDiff)) return volumeDiff;
+        return Math.abs(toNumberOrNull(b.percentChange) || 0) - Math.abs(toNumberOrNull(a.percentChange) || 0);
+      })
+      .slice(0, 10);
+    const data = {
+      stocks: topTraded,
+      source: "Most active stocks",
+      updatedAt: new Date().toISOString()
+    };
+
+    if (topTraded.length) {
+      topTradedStocksCache.set("latest", {
+        fetchedAt: Date.now(),
+        data
+      });
+    }
+
+    return data;
+  };
+
+  if (cached?.data && cachedAge < staleCacheMs) {
+    fetchFreshTopTraded().catch((err) => {
+      console.log("Top traded stocks background refresh skipped:", err.message);
+    });
+    return res.json({ ...cached.data, stale: true, refreshing: true });
+  }
+
+  try {
+    const data = await resolveWithin(fetchFreshTopTraded(), 7000, null);
+    if (data?.stocks?.length) return res.json(data);
+  } catch (err) {
+    console.log("Top traded stocks refresh failed:", err.message);
+  }
+
+  if (cached?.data) return res.json({ ...cached.data, stale: true });
+
+  return res.json({
+    stocks: [],
+    source: "Most active stocks",
     updatedAt: new Date().toISOString(),
     stale: true
   });
