@@ -76,7 +76,7 @@ const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const alphaVantageFundamentalCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 154;
+const FINANCIAL_HISTORY_VERSION = 155;
 const STOCK_ESTIMATE_VERSION = 23;
 const INTERIM_HISTORY_VERSION = 6;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
@@ -7873,7 +7873,7 @@ async function fetchFmpIncomeStatementHistory(ticker) {
       params: {
         symbol: ticker,
         period: "annual",
-        limit: 7,
+        limit: 40,
         apikey: process.env.FMP_API_KEY
       },
       timeout: 3500
@@ -7953,10 +7953,10 @@ async function fetchFmpQuarterlyFinancialHistory(ticker) {
   try {
     const [incomeData, cashFlowData] = await Promise.all([
       getFmpData(ticker, "quarterly income statement", [
-        "/stable/income-statement?symbol={ticker}&period=quarter&limit=20"
+        "/stable/income-statement?symbol={ticker}&period=quarter&limit=80"
       ]),
       getFmpData(ticker, "quarterly cash flow", [
-        "/stable/cash-flow-statement?symbol={ticker}&period=quarter&limit=20"
+        "/stable/cash-flow-statement?symbol={ticker}&period=quarter&limit=80"
       ])
     ]);
     const incomeRows = (Array.isArray(incomeData) ? incomeData : incomeData ? [incomeData] : [])
@@ -8026,7 +8026,7 @@ async function fetchFmpQuarterlyFinancialHistory(ticker) {
         row.operatingCashflow !== null ||
         row.freeCashflow !== null
       )
-      .slice(-40);
+      .slice(-80);
   } catch (err) {
     setFmpCooldown(err, "quarterly financials", ticker);
     console.log("FMP quarterly financials skipped:", ticker, err.response?.status || err.message);
@@ -8039,7 +8039,7 @@ async function fetchFmpFinancialHistory(ticker) {
     fetchFmpIncomeStatementHistory(ticker),
     fetchFmpQuarterlyFinancialHistory(ticker),
     getFmpData(ticker, "annual cash flow", [
-      "/stable/cash-flow-statement?symbol={ticker}&period=annual&limit=7"
+      "/stable/cash-flow-statement?symbol={ticker}&period=annual&limit=40"
     ])
   ]);
   const annualCashRows = (Array.isArray(annualCashData) ? annualCashData : annualCashData ? [annualCashData] : [])

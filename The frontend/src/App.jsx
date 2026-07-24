@@ -104,6 +104,31 @@ const FINANCIAL_STATEMENT_PERIODS = [
   { id: "quarter", label: "Quarterly" }
 ];
 
+const FUNDAMENTAL_HISTORY_RANGES = [
+  { id: "3", label: "3Y", years: 3 },
+  { id: "5", label: "5Y", years: 5 },
+  { id: "10", label: "10Y", years: 10 },
+  { id: "15", label: "15Y", years: 15 },
+  { id: "20", label: "20Y", years: 20 },
+  { id: "max", label: "Max", years: null }
+];
+
+const rangeLimitForPeriod = (rangeId, period) => {
+  const range = FUNDAMENTAL_HISTORY_RANGES.find((item) => item.id === rangeId);
+  const isQuarterly = String(period || "").toLowerCase().startsWith("q");
+  if (!range?.years) return isQuarterly ? 80 : 40;
+  return isQuarterly ? range.years * 4 : range.years;
+};
+
+const filterRowsByHistoryRange = (rows = [], rangeId = "5", mode = "annual") => {
+  if (rangeId === "max") return rows;
+  const limit = rangeLimitForPeriod(rangeId, mode);
+  return Array.isArray(rows) ? rows.slice(-limit) : [];
+};
+
+const historyRangeLabel = (rangeId) =>
+  FUNDAMENTAL_HISTORY_RANGES.find((range) => range.id === rangeId)?.label || "5Y";
+
 const FUNDAMENTAL_CHART_INDICATOR_GROUPS = [
   {
     id: "income",
@@ -671,6 +696,27 @@ const formatFundamentalAxisValue = (value, indicator = {}) => {
   if (indicator.format === "shares") return formatLargeNumber(value);
   if (indicator.format === "plain") return formatPlain(value);
   return formatLargeDollars(value).replace(".00", "");
+};
+
+const FundamentalChartTooltip = ({ active, label, payload, indicator }) => {
+  if (!active || !Array.isArray(payload) || !payload.length) return null;
+  const rows = payload
+    .filter((item) => isNumber(item.value))
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+  if (!rows.length) return null;
+
+  return (
+    <div className="fundamental-tooltip">
+      <span>{label}</span>
+      {rows.map((item) => (
+        <div className="fundamental-tooltip-row" key={`${item.name}-${label}`}>
+          <i style={{ background: item.color }} />
+          <strong>{item.name}</strong>
+          <em>{formatFundamentalChartValue(item.value, indicator)}</em>
+        </div>
+      ))}
+    </div>
+  );
 };
 
 const formatShortDate = (value) => {
@@ -1893,7 +1939,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 154;
+const FINANCIAL_HISTORY_VERSION = 155;
 const STOCK_ESTIMATE_VERSION = 23;
 const INTERIM_HISTORY_VERSION = 6;
 const VALUATION_METRICS_VERSION = 23;
@@ -2546,6 +2592,9 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [financialChartMode, setFinancialChartMode] =
     useState("annual");
 
+  const [financialChartRange, setFinancialChartRange] =
+    useState("5");
+
   const [stockChartData, setStockChartData] =
     useState([]);
 
@@ -2760,6 +2809,9 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [financialStatementPeriod, setFinancialStatementPeriod] =
     useState("annual");
 
+  const [financialStatementRange, setFinancialStatementRange] =
+    useState("5");
+
   const [financialStatementData, setFinancialStatementData] =
     useState(null);
 
@@ -2777,6 +2829,9 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
 
   const [fundamentalChartPeriod, setFundamentalChartPeriod] =
     useState("annual");
+
+  const [fundamentalChartRange, setFundamentalChartRange] =
+    useState("5");
 
   const [selectedFundamentalIndicators, setSelectedFundamentalIndicators] =
     useState(DEFAULT_FUNDAMENTAL_INDICATORS);
@@ -3199,7 +3254,8 @@ useEffect(() => {
       const response = await axios.get(`${API_URL}/api/financial-statements/${financialStatementTicker}`, {
         params: {
           statement: financialStatementType,
-          period: financialStatementPeriod
+          period: financialStatementPeriod,
+          limit: rangeLimitForPeriod(financialStatementRange, financialStatementPeriod)
         },
         timeout: 9000
       });
@@ -3220,7 +3276,7 @@ useEffect(() => {
   return () => {
     isActive = false;
   };
-}, [activePage, financialStatementTicker, financialStatementType, financialStatementPeriod]);
+}, [activePage, financialStatementTicker, financialStatementType, financialStatementPeriod, financialStatementRange]);
 
 useEffect(() => {
   if (activePage !== "fundamental-charts" || !fundamentalChartTickers.length) return;
@@ -3228,7 +3284,7 @@ useEffect(() => {
   let isActive = true;
 
   const statementTypes = ["income", "balance", "cashflow"];
-  const periodLimit = fundamentalChartPeriod === "quarter" ? 80 : 40;
+  const periodLimit = rangeLimitForPeriod(fundamentalChartRange, fundamentalChartPeriod);
 
   const statementToPeriodMap = (statementData) => {
     const map = new Map();
@@ -3350,7 +3406,7 @@ useEffect(() => {
   return () => {
     isActive = false;
   };
-}, [activePage, fundamentalChartTickers, fundamentalChartPeriod]);
+}, [activePage, fundamentalChartTickers, fundamentalChartPeriod, fundamentalChartRange]);
 
 useEffect(() => {
   if (activePage !== "market-overview") return;
@@ -4574,21 +4630,45 @@ const allRevenueHistory =
     ],
     "revenue"
   );
-const revenueHistory = filterChartRowsByMode(allRevenueHistory, financialChartMode);
+const revenueHistory = filterRowsByHistoryRange(
+  filterChartRowsByMode(allRevenueHistory, financialChartMode),
+  financialChartRange,
+  financialChartMode
+);
 
 const allEarningsHistory =
   buildChartRows(financialHistory, "earnings");
-const earningsHistory = filterChartRowsByMode(allEarningsHistory, financialChartMode);
+const earningsHistory = filterRowsByHistoryRange(
+  filterChartRowsByMode(allEarningsHistory, financialChartMode),
+  financialChartRange,
+  financialChartMode
+);
 
 const allEpsHistory =
   buildChartRows(financialHistory, "eps");
-const epsHistory = filterChartRowsByMode(allEpsHistory, financialChartMode);
+const epsHistory = filterRowsByHistoryRange(
+  filterChartRowsByMode(allEpsHistory, financialChartMode),
+  financialChartRange,
+  financialChartMode
+);
 const epsBeatMissRows = Array.isArray(stockData?.epsBeatMiss)
   ? stockData.epsBeatMiss
   : [];
-const revenueGrowthRows = buildAnnualGrowthRows(allRevenueHistory, "revenue");
-const earningsGrowthRows = buildAnnualGrowthRows(allEarningsHistory, "earnings");
-const epsGrowthRows = buildAnnualGrowthRows(allEpsHistory, "eps");
+const revenueGrowthRows = filterRowsByHistoryRange(
+  buildAnnualGrowthRows(allRevenueHistory, "revenue"),
+  financialChartRange,
+  "annual"
+);
+const earningsGrowthRows = filterRowsByHistoryRange(
+  buildAnnualGrowthRows(allEarningsHistory, "earnings"),
+  financialChartRange,
+  "annual"
+);
+const epsGrowthRows = filterRowsByHistoryRange(
+  buildAnnualGrowthRows(allEpsHistory, "eps"),
+  financialChartRange,
+  "annual"
+);
 const currentChartYear = new Date().getFullYear();
 const currentPoint = (key, value, transform = (item) => item) =>
   isNumber(value)
@@ -4608,14 +4688,22 @@ const chartRowsWithCurrentFallbackForMode = (rows, key, value, transform) =>
     : chartRowsWithCurrentFallback(rows, key, value, transform);
 const operatingCashflowHistory =
   chartRowsWithCurrentFallbackForMode(
-    filterChartRowsByMode(buildChartRows(financialHistory, "operatingCashflow"), financialChartMode),
+    filterRowsByHistoryRange(
+      filterChartRowsByMode(buildChartRows(financialHistory, "operatingCashflow"), financialChartMode),
+      financialChartRange,
+      financialChartMode
+    ),
     "operatingCashflow",
     stockData?.operatingCashflow,
     (value) => value / 1e9
   );
 const freeCashflowHistory =
   chartRowsWithCurrentFallbackForMode(
-    filterChartRowsByMode(buildChartRows(financialHistory, "freeCashflow"), financialChartMode),
+    filterRowsByHistoryRange(
+      filterChartRowsByMode(buildChartRows(financialHistory, "freeCashflow"), financialChartMode),
+      financialChartRange,
+      financialChartMode
+    ),
     "freeCashflow",
     stockData?.freeCashflow,
     (value) => value / 1e9
@@ -4676,7 +4764,11 @@ const latestOperatingCashflowMetricValue =
       : latestOperatingCashflowFromChart;
 const sharesOutstandingHistory =
   chartRowsWithCurrentFallbackForMode(
-    filterChartRowsByMode(buildChartRows(financialHistory, "sharesOutstanding"), financialChartMode),
+    filterRowsByHistoryRange(
+      filterChartRowsByMode(buildChartRows(financialHistory, "sharesOutstanding"), financialChartMode),
+      financialChartRange,
+      financialChartMode
+    ),
     "sharesOutstanding",
     stockData?.sharesOutstanding
   );
@@ -4691,8 +4783,12 @@ const annualHistoricalPeHistoryBase = filterChartRowsByMode(historicalPeHistoryB
 const quarterlyHistoricalPeHistoryBase = filterChartRowsByMode(historicalPeHistoryBase, "quarterly");
 const historicalPeHistory =
   financialChartMode === "quarterly"
-    ? quarterlyHistoricalPeHistoryBase
-    : chartRowsWithCurrentFallback(annualHistoricalPeHistoryBase, "pe", stockData?.pe);
+    ? filterRowsByHistoryRange(quarterlyHistoricalPeHistoryBase, financialChartRange, financialChartMode)
+    : chartRowsWithCurrentFallback(
+        filterRowsByHistoryRange(annualHistoricalPeHistoryBase, financialChartRange, financialChartMode),
+        "pe",
+        stockData?.pe
+      );
 const allMarginHistory = (stockData?.marginHistory || [])
   .map((row) => ({ ...row, period: row.period || String(row.year) }))
   .filter((row) =>
@@ -4747,7 +4843,11 @@ const latestOperatingMarginMetricValue = isNumber(latestQuarterlyOperatingMargin
 const latestProfitMarginMetricValue = isNumber(latestQuarterlyProfitMarginFromChart)
   ? latestQuarterlyProfitMarginFromChart
   : null;
-const visibleMarginHistory = filterChartRowsByMode(mergedMarginHistory, financialChartMode);
+const visibleMarginHistory = filterRowsByHistoryRange(
+  filterChartRowsByMode(mergedMarginHistory, financialChartMode),
+  financialChartRange,
+  financialChartMode
+);
 const marginChartRowsWithFallback = (rows, key, value) =>
   financialChartMode === "quarterly"
     ? rows
@@ -6667,6 +6767,21 @@ const selectFundamentalIndicatorGroup = (groupId) => {
   ]);
 };
 
+const renderHistoryRangeToggle = (value, onChange, ariaLabel = "History range") => (
+  <div className="history-range-toggle" role="tablist" aria-label={ariaLabel}>
+    {FUNDAMENTAL_HISTORY_RANGES.map((range) => (
+      <button
+        key={range.id}
+        type="button"
+        className={value === range.id ? "active" : ""}
+        onClick={() => onChange(range.id)}
+      >
+        {range.label}
+      </button>
+    ))}
+  </div>
+);
+
 const handleStockSearchSubmit = async (event, destinationPage = "overview") => {
   event.preventDefault();
   const symbol = await resolveSearchInputToSymbol(searchInput);
@@ -7449,6 +7564,11 @@ return (
               </button>
             ))}
           </div>
+          {renderHistoryRangeToggle(
+            financialStatementRange,
+            setFinancialStatementRange,
+            "Financial statement history range"
+          )}
         </div>
 
         <div className="financial-statement-table-panel">
@@ -7458,7 +7578,11 @@ return (
                 ? "Loading statement..."
                 : `${financialStatementTicker} ${financialStatementData?.statementLabel || "Financial Statement"}`}
             </span>
-            <strong>{financialStatementPeriod === "annual" ? "Last 5 years" : "Last 5 quarters"}</strong>
+            <strong>
+              {financialStatementRange === "max"
+                ? "Max history"
+                : `Last ${financialStatementRange} years`}
+            </strong>
           </div>
 
           {financialStatementError ? (
@@ -7560,6 +7684,12 @@ return (
               </button>
             ))}
           </div>
+
+          {renderHistoryRangeToggle(
+            fundamentalChartRange,
+            setFundamentalChartRange,
+            "Fundamental chart history range"
+          )}
         </div>
 
         <div className="fundamental-indicator-panel">
@@ -7630,7 +7760,9 @@ return (
                       <span>{series.indicator.groupLabel}</span>
                       <h3>{series.indicator.label}</h3>
                     </div>
-                    <strong>{fundamentalChartPeriod === "annual" ? "Annual" : "Quarterly"}</strong>
+                    <strong>
+                      {historyRangeLabel(fundamentalChartRange)} · {fundamentalChartPeriod === "annual" ? "Annual" : "Quarterly"}
+                    </strong>
                   </div>
 
                   {series.rows.length ? (
@@ -7651,16 +7783,8 @@ return (
                           width={76}
                         />
                         <Tooltip
-                          contentStyle={{
-                            background: "#0f172a",
-                            border: "1px solid rgba(56, 189, 248, 0.3)",
-                            borderRadius: "10px",
-                            color: "#f8fafc"
-                          }}
-                          formatter={(value, name) => [
-                            formatFundamentalChartValue(value, series.indicator),
-                            name
-                          ]}
+                          shared={false}
+                          content={<FundamentalChartTooltip indicator={series.indicator} />}
                         />
                         {fundamentalChartTickers.map((symbol, index) => (
                           <Line
@@ -7669,7 +7793,8 @@ return (
                             dataKey={symbol}
                             stroke={PORTFOLIO_COLORS[index % PORTFOLIO_COLORS.length]}
                             strokeWidth={2.4}
-                            dot={{ r: 3 }}
+                            dot={{ r: 3, strokeWidth: 2 }}
+                            activeDot={{ r: 7, strokeWidth: 2 }}
                             connectNulls
                           />
                         ))}
@@ -7685,7 +7810,9 @@ return (
             <div className="financial-statement-table-panel">
               <div className="screener-results-heading">
                 <span>Latest Selected Fundamentals</span>
-                <strong>{fundamentalChartPeriod === "annual" ? "Latest annual period" : "Latest quarter"}</strong>
+                <strong>
+                  {historyRangeLabel(fundamentalChartRange)} · {fundamentalChartPeriod === "annual" ? "Latest annual period" : "Latest quarter"}
+                </strong>
               </div>
               <div className="financial-statement-table-wrap">
                 <table className="financial-statement-table fundamental-summary-table">
@@ -8351,6 +8478,12 @@ return (
         Quarterly
       </button>
     </div>
+
+    {renderHistoryRangeToggle(
+      financialChartRange,
+      setFinancialChartRange,
+      "Stock overview chart history range"
+    )}
   </div>
 
 <div className="chart-box">

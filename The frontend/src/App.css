@@ -2109,6 +2109,35 @@ body {
   color: #ffffff;
 }
 
+.history-range-toggle {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding: 4px;
+  border: 1px solid rgba(96, 165, 250, 0.24);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.74);
+  box-shadow: 0 12px 28px rgba(2, 6, 23, 0.18);
+}
+
+.history-range-toggle button {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.history-range-toggle button.active {
+  background: linear-gradient(135deg, rgba(20, 184, 166, 0.88), rgba(37, 99, 235, 0.78));
+  color: #ffffff;
+}
+
 .overview-section-guide {
   position: fixed;
   left: 0;
@@ -6864,6 +6893,59 @@ body {
   margin-top: 4px;
   color: #64748b;
   font-size: 11px;
+}
+
+.fundamental-tooltip {
+  min-width: 180px;
+  padding: 10px 12px;
+  border: 1px solid rgba(56, 189, 248, 0.34);
+  border-radius: 10px;
+  background:
+    radial-gradient(circle at top left, rgba(20, 184, 166, 0.16), transparent 42%),
+    rgba(10, 17, 30, 0.98);
+  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.34);
+}
+
+.fundamental-tooltip > span {
+  display: block;
+  margin-bottom: 8px;
+  color: #93c5fd;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.fundamental-tooltip-row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  color: #e5e7eb;
+  font-size: 12px;
+}
+
+.fundamental-tooltip-row + .fundamental-tooltip-row {
+  margin-top: 6px;
+}
+
+.fundamental-tooltip-row i {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+}
+
+.fundamental-tooltip-row strong {
+  overflow: hidden;
+  color: #f8fafc;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fundamental-tooltip-row em {
+  color: #67e8f9;
+  font-style: normal;
+  font-weight: 950;
+  white-space: nowrap;
 }
 
 .treasury-rates-page {
