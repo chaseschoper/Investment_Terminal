@@ -2114,14 +2114,15 @@ body {
   left: 0;
   top: 50%;
   z-index: 60;
-  width: 252px;
-  transform: translate(calc(-100% + 18px), -50%);
-  opacity: 0.42;
+  width: 176px;
+  max-width: 176px;
+  transform: translate(calc(-100% + 16px), -50%);
+  opacity: 0.5;
   transition:
     transform 220ms ease,
     opacity 220ms ease,
     filter 220ms ease;
-  filter: drop-shadow(0 18px 34px rgba(0, 0, 0, 0.34));
+  filter: drop-shadow(0 14px 26px rgba(0, 0, 0, 0.28));
 }
 
 .overview-section-guide:hover,
@@ -2129,8 +2130,8 @@ body {
   transform: translate(0, -50%);
   opacity: 1;
   filter:
-    drop-shadow(0 18px 34px rgba(0, 0, 0, 0.36))
-    drop-shadow(0 0 22px rgba(56, 189, 248, 0.16));
+    drop-shadow(0 14px 28px rgba(0, 0, 0, 0.32))
+    drop-shadow(0 0 18px rgba(56, 189, 248, 0.14));
 }
 
 .overview-section-guide-handle {
@@ -2138,8 +2139,8 @@ body {
   top: 50%;
   right: 0;
   display: grid;
-  width: 18px;
-  height: 118px;
+  width: 16px;
+  height: 98px;
   transform: translateY(-50%);
   place-items: center;
   border: 1px solid rgba(56, 189, 248, 0.42);
@@ -2153,26 +2154,28 @@ body {
 
 .overview-section-guide-handle span {
   width: 3px;
-  height: 62px;
+  height: 52px;
   border-radius: 999px;
   background: linear-gradient(180deg, #67e8f9, #2563eb);
 }
 
 .overview-section-guide-panel {
-  margin-right: 17px;
-  padding: 14px;
+  width: 160px;
+  max-width: 160px;
+  margin-right: 15px;
+  padding: 10px;
   border: 1px solid rgba(56, 189, 248, 0.24);
   border-left: 0;
   border-radius: 0 18px 18px 0;
   background:
     radial-gradient(circle at 0% 12%, rgba(20, 184, 166, 0.16), transparent 38%),
     linear-gradient(135deg, rgba(15, 23, 42, 0.97), rgba(3, 7, 18, 0.98));
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(14px);
 }
 
 .overview-section-guide-heading {
-  margin: 2px 0 12px;
-  padding: 0 10px 10px;
+  margin: 2px 0 9px;
+  padding: 0 8px 8px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.14);
 }
 
@@ -2183,7 +2186,7 @@ body {
 
 .overview-section-guide-heading span {
   color: #67e8f9;
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 950;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -2192,24 +2195,24 @@ body {
 .overview-section-guide-heading strong {
   margin-top: 4px;
   color: #f8fafc;
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 950;
 }
 
 .overview-section-guide nav {
   display: grid;
-  gap: 6px;
+  gap: 5px;
 }
 
 .overview-section-guide button {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-columns: 28px minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  padding: 9px 10px;
+  padding: 7px 8px;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 9px;
   background: rgba(15, 23, 42, 0.42);
   color: #dbeafe;
   text-align: left;
@@ -2226,20 +2229,25 @@ body {
   outline: none;
 }
 
-.overview-section-guide button span {
+.overview-section-guide-icon {
   display: grid;
+  width: 28px;
   height: 28px;
   place-items: center;
   border: 1px solid rgba(56, 189, 248, 0.28);
   border-radius: 8px;
   color: #67e8f9;
-  font-size: 11px;
-  font-weight: 950;
+  background: rgba(8, 47, 73, 0.28);
+}
+
+.overview-section-guide-icon svg {
+  width: 16px;
+  height: 16px;
 }
 
 .overview-section-guide button strong {
   overflow: hidden;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 900;
   text-overflow: ellipsis;
   white-space: nowrap;

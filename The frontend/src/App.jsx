@@ -126,17 +126,118 @@ const TREASURY_RATE_TERMS = [
 ];
 
 const STOCK_OVERVIEW_SECTIONS = [
-  { id: "overview", label: "Header", short: "01" },
-  { id: "price-chart", label: "Price Chart", short: "02" },
-  { id: "financials", label: "Financial Charts", short: "03" },
-  { id: "metrics", label: "Metrics", short: "04" },
-  { id: "analyst-estimates", label: "Estimates", short: "05" },
-  { id: "similar-companies", label: "Peers", short: "06" },
-  { id: "ai-analysis", label: "AI Analysis", short: "07" },
-  { id: "earnings-calls", label: "Transcript", short: "08" },
-  { id: "company-documents", label: "Documents", short: "09" },
-  { id: "stock-news", label: "News", short: "10" }
+  { id: "overview", label: "Header", icon: "header" },
+  { id: "price-chart", label: "Price Chart", icon: "chart" },
+  { id: "financials", label: "Financial Charts", icon: "bars" },
+  { id: "metrics", label: "Metrics", icon: "grid" },
+  { id: "analyst-estimates", label: "Estimates", icon: "target" },
+  { id: "similar-companies", label: "Peers", icon: "peers" },
+  { id: "ai-analysis", label: "AI Analysis", icon: "spark" },
+  { id: "earnings-calls", label: "Transcript", icon: "transcript" },
+  { id: "company-documents", label: "Documents", icon: "document" },
+  { id: "stock-news", label: "News", icon: "news" }
 ];
+
+const renderOverviewGuideIcon = (icon) => {
+  const commonProps = {
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "2.2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": "true"
+  };
+
+  switch (icon) {
+    case "chart":
+      return (
+        <svg {...commonProps}>
+          <path d="M4 18h16" />
+          <path d="M5 15l4-5 4 3 6-8" />
+          <path d="M16 5h3v3" />
+        </svg>
+      );
+    case "bars":
+      return (
+        <svg {...commonProps}>
+          <path d="M5 19V9" />
+          <path d="M12 19V5" />
+          <path d="M19 19v-7" />
+        </svg>
+      );
+    case "grid":
+      return (
+        <svg {...commonProps}>
+          <rect x="4" y="4" width="6" height="6" rx="1.5" />
+          <rect x="14" y="4" width="6" height="6" rx="1.5" />
+          <rect x="4" y="14" width="6" height="6" rx="1.5" />
+          <rect x="14" y="14" width="6" height="6" rx="1.5" />
+        </svg>
+      );
+    case "target":
+      return (
+        <svg {...commonProps}>
+          <circle cx="12" cy="12" r="8" />
+          <circle cx="12" cy="12" r="3" />
+          <path d="M12 2v3" />
+          <path d="M22 12h-3" />
+        </svg>
+      );
+    case "peers":
+      return (
+        <svg {...commonProps}>
+          <circle cx="7" cy="8" r="3" />
+          <circle cx="17" cy="8" r="3" />
+          <path d="M3.5 19a4.5 4.5 0 0 1 7 0" />
+          <path d="M13.5 19a4.5 4.5 0 0 1 7 0" />
+        </svg>
+      );
+    case "spark":
+      return (
+        <svg {...commonProps}>
+          <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z" />
+          <path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z" />
+        </svg>
+      );
+    case "transcript":
+      return (
+        <svg {...commonProps}>
+          <path d="M6 5h12" />
+          <path d="M6 10h12" />
+          <path d="M6 15h8" />
+          <path d="M6 20h5" />
+        </svg>
+      );
+    case "document":
+      return (
+        <svg {...commonProps}>
+          <path d="M7 3h7l4 4v14H7z" />
+          <path d="M14 3v5h4" />
+          <path d="M10 13h5" />
+          <path d="M10 17h5" />
+        </svg>
+      );
+    case "news":
+      return (
+        <svg {...commonProps}>
+          <path d="M5 5h12v14H5z" />
+          <path d="M17 8h2v9a2 2 0 0 1-2 2" />
+          <path d="M8 9h6" />
+          <path d="M8 13h6" />
+          <path d="M8 17h3" />
+        </svg>
+      );
+    default:
+      return (
+        <svg {...commonProps}>
+          <path d="M4 12h16" />
+          <path d="M12 4v16" />
+          <circle cx="12" cy="12" r="7" />
+        </svg>
+      );
+  }
+};
 
 const HOME_FEATURES = [
   {
@@ -5591,7 +5692,9 @@ const renderOverviewSectionGuide = () => (
               });
             }}
           >
-            <span>{section.short}</span>
+            <span className="overview-section-guide-icon">
+              {renderOverviewGuideIcon(section.icon)}
+            </span>
             <strong>{section.label}</strong>
           </button>
         ))}
