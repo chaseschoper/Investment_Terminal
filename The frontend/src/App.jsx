@@ -7244,78 +7244,92 @@ return (
     AI Earnings Call Analysis
   </h2>
 
-  <div className="ai-analysis-grid">
+  <div className="ai-analysis-box ai-earnings-brief">
     {isAiLoading && !aiAnalysis ? (
       <div className="ai-card"><p className="ai-text">Reviewing earnings data...</p></div>
     ) : aiAnalysis?.earningsAnalysis ? (
       <>
-        <div className="ai-card">
-          <h3 className="ai-title">Latest Earnings Readout</h3>
-          <p className="ai-text">{aiAnalysis.earningsAnalysis.period}</p>
-          <p className="ai-text">{aiAnalysis.earningsAnalysis.summary}</p>
-        </div>
-
-        <div className="ai-card">
-          <h3 className="ai-title">Reported Highlights</h3>
-          <ul className="ai-list">
-            {aiAnalysis.earningsAnalysis.highlights.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="ai-card bullish-card">
-          <h3 className="ai-title">Positive Signals</h3>
-          <ul className="ai-list">
-            {aiAnalysis.earningsAnalysis.positives.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="ai-card bearish-card">
-          <h3 className="ai-title">Pressure Points</h3>
-          <ul className="ai-list">
-            {aiAnalysis.earningsAnalysis.risks.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="ai-card">
-          <h3 className="ai-title">Earnings Momentum</h3>
-          <div className="sentiment-row">
-            <div className="sentiment-label">Confidence</div>
-            <div className="sentiment-bar">
-              <div
-                className="sentiment-fill positive"
-                style={{ width: `${aiAnalysis.earningsAnalysis.confidence}%` }}
-              />
-            </div>
+        <div className="ai-brief-hero ai-earnings-hero">
+          <div>
+            <span className="ai-kicker">MrktRally earnings brief</span>
+            <div className="ai-sentiment">{aiAnalysis.earningsAnalysis.period}</div>
+            <p className="ai-hero-copy">{aiAnalysis.earningsAnalysis.summary}</p>
           </div>
-          <div className="sentiment-row">
-            <div className="sentiment-label">Caution</div>
-            <div className="sentiment-bar">
-              <div
-                className="sentiment-fill negative"
-                style={{ width: `${aiAnalysis.earningsAnalysis.caution}%` }}
-              />
+          <div className="ai-earnings-gauges">
+            <div className="ai-score-ring">
+              <strong>{aiAnalysis.earningsAnalysis.confidence}</strong>
+              <span>confidence</span>
+            </div>
+            <div className="ai-score-ring caution-ring">
+              <strong>{aiAnalysis.earningsAnalysis.caution}</strong>
+              <span>caution</span>
             </div>
           </div>
         </div>
 
-        <div className="ai-card">
-          <h3 className="ai-title">Consensus Outlook</h3>
-          <p className="ai-text">{aiAnalysis.earningsAnalysis.outlook}</p>
-        </div>
+        <div className="ai-analysis-grid ai-analysis-grid-dense">
+          <div className="ai-card earnings-readout-card">
+            <h3 className="ai-title">Reported Highlights</h3>
+            <ul className="ai-list">
+              {aiAnalysis.earningsAnalysis.highlights.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
 
-        <div className="ai-card">
-          <h3 className="ai-title">Questions for Management</h3>
-          <ul className="ai-list">
-            {aiAnalysis.earningsAnalysis.questions.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
+          <div className="ai-card bullish-card">
+            <h3 className="ai-title">Positive Signals</h3>
+            <ul className="ai-list">
+              {aiAnalysis.earningsAnalysis.positives.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="ai-card bearish-card">
+            <h3 className="ai-title">Pressure Points</h3>
+            <ul className="ai-list">
+              {aiAnalysis.earningsAnalysis.risks.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="ai-card ai-momentum-card">
+            <h3 className="ai-title">Earnings Momentum</h3>
+            <div className="sentiment-row">
+              <div className="sentiment-label">Confidence</div>
+              <div className="sentiment-bar">
+                <div
+                  className="sentiment-fill positive"
+                  style={{ width: `${aiAnalysis.earningsAnalysis.confidence}%` }}
+                />
+              </div>
+            </div>
+            <div className="sentiment-row">
+              <div className="sentiment-label">Caution</div>
+              <div className="sentiment-bar">
+                <div
+                  className="sentiment-fill negative"
+                  style={{ width: `${aiAnalysis.earningsAnalysis.caution}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="ai-card earnings-outlook-card">
+            <h3 className="ai-title">Consensus Outlook</h3>
+            <p className="ai-text">{aiAnalysis.earningsAnalysis.outlook}</p>
+          </div>
+
+          <div className="ai-card management-questions-card">
+            <h3 className="ai-title">Questions for Management</h3>
+            <ul className="ai-list">
+              {aiAnalysis.earningsAnalysis.questions.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
         </div>
       </>
     ) : (

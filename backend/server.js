@@ -15950,6 +15950,10 @@ function buildResearchAnalysis(stock) {
   const expectedRevenueText = nextQuarter.revenue ? analysisMoney(nextQuarter.revenue) : "N/A";
   const expectedEpsText = nextQuarter.eps !== null && nextQuarter.eps !== undefined ? `$${round(nextQuarter.eps, 2)}` : "N/A";
   const latestPeriodLabel = latestQuarter.period || (latest.year ? `${latest.year} fiscal year` : "latest reported period");
+  const companyName = data.name || stock.ticker;
+  const businessContext = [data.sector, data.industry].filter(Boolean).join(" / ");
+  const businessContextText = businessContext || "its market";
+  const businessContextLower = businessContextText.toLowerCase();
   const metricLine = (label, value, formatter = (item) => item) =>
     `${label}: ${value === null || value === undefined || Number.isNaN(value) ? "N/A" : formatter(value)}.`;
 
@@ -16028,6 +16032,98 @@ function buildResearchAnalysis(stock) {
   const confidence = Math.round(clamp(50 + (revenueGrowth || 0) / 2 + (incomeGrowth || 0) / 4 + (forecastIncomeGrowth || forecastEpsGrowth || 0) / 4, 15, 90));
   const caution = 100 - confidence;
 
+  const sectorQuestion = (() => {
+    if (/semiconductor|hardware|software|technology|cloud|internet|electronic/i.test(businessContextLower)) {
+      return `For ${companyName}, which product cycle, customer group, or platform shift in ${businessContextText} should investors treat as the real driver of the next two quarters?`;
+    }
+    if (/restaurant|retail|apparel|consumer|automotive|leisure|hotel|casino|travel/i.test(businessContextLower)) {
+      return `For ${companyName}, how much of the latest demand trend came from traffic or units versus pricing, mix, promotions, or channel changes?`;
+    }
+    if (/health|pharma|biotech|medical|life science/i.test(businessContextLower)) {
+      return `For ${companyName}, what product, pipeline, reimbursement, or utilization trend matters most for the next earnings reset?`;
+    }
+    if (/bank|financial|insurance|capital markets|asset management/i.test(businessContextLower)) {
+      return `For ${companyName}, what is management seeing in credit quality, funding costs, capital returns, and client activity that is not obvious in the headline numbers?`;
+    }
+    if (/energy|oil|gas|mining|materials|chemical|steel|commodity/i.test(businessContextLower)) {
+      return `For ${companyName}, how sensitive is the outlook to commodity prices, input costs, capex timing, and volumes over the next few quarters?`;
+    }
+    if (/utility|real estate|reit|telecom/i.test(businessContextLower)) {
+      return `For ${companyName}, how should investors think about rates, financing costs, payout capacity, and capital spending from here?`;
+    }
+    if (/industrial|aerospace|defense|machinery|transport|logistics/i.test(businessContextLower)) {
+      return `For ${companyName}, what are orders, backlog, pricing, and supply-chain timing saying about demand beyond the latest quarter?`;
+    }
+    return `For ${companyName}, what is the one operating metric management watches first that investors may be underweighting?`;
+  })();
+
+  const questionCandidates = [
+    sectorQuestion,
+    quarterRevenueGrowth !== null
+      ? `${latestPeriodLabel} revenue ${quarterRevenueGrowth >= 0 ? "grew" : "declined"} ${round(Math.abs(quarterRevenueGrowth))}%; was that mostly market demand, company-specific execution, pricing, or timing?`
+      : latestQuarter.revenue !== null && latestQuarter.revenue !== undefined
+        ? `What were the biggest drivers behind ${latestPeriodLabel} revenue of ${analysisMoney(toDollarsFromBillions(latestQuarter.revenue))}, and which driver is least likely to repeat?`
+        : null,
+    quarterIncomeGrowth !== null &&
+      quarterRevenueGrowth !== null &&
+      Math.abs(quarterIncomeGrowth - quarterRevenueGrowth) > 5 &&
+      Math.abs(quarterIncomeGrowth - quarterRevenueGrowth) <= 100
+      ? `${latestPeriodLabel} net income ${quarterIncomeGrowth >= quarterRevenueGrowth ? "outpaced" : "lagged"} revenue by ${round(Math.abs(quarterIncomeGrowth - quarterRevenueGrowth))} percentage points; what line item caused the spread?`
+      : quarterIncomeGrowth !== null &&
+          quarterRevenueGrowth !== null &&
+          Math.abs(quarterIncomeGrowth - quarterRevenueGrowth) > 100
+        ? `${latestPeriodLabel} profitability swung much harder than revenue; was that driven by gross margin, operating expense, one-time items, or tax rate?`
+      : data.operatingMargins !== null && data.operatingMargins !== undefined
+        ? `What has to happen for ${companyName} to defend an operating margin near ${round(data.operatingMargins)}% over the next year?`
+        : null,
+    debtToMarketCap !== null && debtToMarketCap > 25
+      ? `Total debt is about ${round(debtToMarketCap)}% of market cap; what is the clearest path to lowering balance-sheet risk?`
+      : cash !== null && totalDebt !== null
+        ? `With ${analysisMoney(cash)} of cash against ${analysisMoney(totalDebt)} of total debt, should management prioritize growth investment, buybacks, dividends, or balance-sheet flexibility?`
+        : null,
+    roic !== null && roic > 15
+      ? `ROIC is ${round(roic)}%; where can ${companyName} reinvest at similar returns, and where are returns starting to fade?`
+      : roic !== null
+        ? `ROIC is ${round(roic)}%; what specific actions could lift returns on capital over the next few years?`
+        : null,
+    fcfYield !== null && fcfYield < 1
+      ? `Free cash flow yield is only ${round(fcfYield)}%; what converts earnings into cash more reliably from here?`
+      : fcfYield !== null
+        ? `Free cash flow yield is around ${round(fcfYield)}%; what is the best use of that cash if the current cycle holds?`
+        : freeCashflow !== null
+          ? `What are the highest-priority uses of annual free cash flow of ${analysisMoney(freeCashflow)}?`
+          : null,
+    forwardPE !== null && forwardPE > 35
+      ? `At ${round(forwardPE)}x forward earnings, what proof point would make the premium multiple feel earned instead of stretched?`
+      : forwardPE !== null && targetUpside !== null
+        ? `At ${round(forwardPE)}x forward earnings with ${round(targetUpside)}% implied target upside, what would change investor perception fastest?`
+        : null,
+    nextQuarter.revenue || nextQuarter.eps
+      ? `For the next report, consensus is looking for ${expectedRevenueText} of revenue and ${expectedEpsText} of EPS; which assumption is most likely too high or too low?`
+      : null,
+    forecastRevenueGrowth !== null && forecastEpsGrowth !== null
+      ? `Current-year estimates imply ${round(forecastRevenueGrowth)}% revenue growth and ${round(forecastEpsGrowth)}% EPS growth; what is the biggest swing factor between those two numbers?`
+      : forecastRevenueGrowth !== null
+        ? `Current-year estimates imply ${round(forecastRevenueGrowth)}% revenue growth; what has to go right operationally for that to hold?`
+        : null,
+    revenuePerEmployee !== null || profitsPerEmployee !== null
+      ? `Productivity is running at ${revenuePerEmployee !== null ? `${analysisMoney(revenuePerEmployee)} revenue per employee` : "N/A revenue per employee"} and ${profitsPerEmployee !== null ? `${analysisMoney(profitsPerEmployee)} profit per employee` : "N/A profit per employee"}; where can efficiency improve without hurting growth?`
+      : null,
+    risks[0] ? `The main MrktRally risk flag is: ${risks[0]} What is management doing now to reduce that risk?` : null,
+    catalysts[0] ? `The main MrktRally upside flag is: ${catalysts[0]} What evidence should investors watch to confirm it is still playing out?` : null
+  ];
+  let managementQuestions = questionCandidates
+    .filter(Boolean)
+    .filter((question, index, items) => items.indexOf(question) === index)
+    .slice(0, 6);
+  if (!managementQuestions.length) {
+    managementQuestions = [
+      `What is the most important operating metric for ${companyName} over the next two quarters?`,
+      `Which part of ${businessContextText} is creating the biggest opportunity or pressure point right now?`,
+      `What would management need to show for investors to become more confident in the next fiscal year?`
+    ];
+  }
+
   return {
     generatedAt: new Date().toISOString(),
     symbol: data.symbol || stock.ticker,
@@ -16094,12 +16190,7 @@ function buildResearchAnalysis(stock) {
       confidence,
       caution,
       outlook: `Consensus implies ${forecastRevenueGrowth !== null ? `${round(forecastRevenueGrowth)}% revenue growth` : "an unavailable revenue growth rate"} and ${forecastIncomeGrowth !== null ? `${round(forecastIncomeGrowth)}% net income growth` : "an unavailable net income growth rate"} from the latest completed fiscal year${nextForecastRevenueGrowth !== null || nextForecastIncomeGrowth !== null ? `, with next-year estimates implying ${nextForecastRevenueGrowth !== null ? `${round(nextForecastRevenueGrowth)}% revenue growth` : "unavailable revenue growth"} and ${nextForecastIncomeGrowth !== null ? `${round(nextForecastIncomeGrowth)}% net income growth` : "unavailable net income growth"}` : ""}. Watch whether operating margin can hold near ${round(data.operatingMargins)}% while the company works toward those estimates.`,
-      questions: [
-        `What assumptions have changed most in the outlook for revenue and demand?`,
-        `Can operating margin remain near ${round(data.operatingMargins)}% while investment continues?`,
-        `What are the largest uses of the ${analysisMoney(freeCashflow)} in annual free cash flow?`,
-        `Which risk could cause results to miss the current consensus EPS estimate of $${round(forecast.eps, 2)}?`
-      ]
+      questions: managementQuestions
     }
   };
 }

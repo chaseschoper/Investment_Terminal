@@ -3073,6 +3073,46 @@ body {
   text-transform: uppercase;
 }
 
+.ai-hero-copy {
+  max-width: 980px;
+  margin: 12px 0 0;
+  color: #cbd5e1;
+  font-size: 15px;
+  line-height: 1.75;
+}
+
+.ai-earnings-brief {
+  border-color: rgba(20, 184, 166, 0.3);
+  background:
+    radial-gradient(circle at 8% 8%, rgba(45, 212, 191, 0.18), transparent 28%),
+    radial-gradient(circle at 92% 16%, rgba(37, 99, 235, 0.14), transparent 30%),
+    linear-gradient(135deg, rgba(8, 13, 24, 0.98), rgba(3, 7, 18, 0.98));
+}
+
+.ai-earnings-hero {
+  align-items: stretch;
+  background:
+    linear-gradient(135deg, rgba(20, 184, 166, 0.13), rgba(37, 99, 235, 0.09)),
+    rgba(8, 13, 24, 0.84);
+}
+
+.ai-earnings-gauges {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex: 0 0 auto;
+}
+
+.caution-ring {
+  border-color: rgba(251, 113, 133, 0.42);
+  background: radial-gradient(circle, rgba(190, 18, 60, 0.28), rgba(15, 23, 42, 0.92));
+}
+
+.caution-ring span {
+  color: #fecdd3;
+}
+
 .ai-text {
   color: #d1d5db;
   line-height: 1.8;
@@ -3122,6 +3162,27 @@ body {
   pointer-events: none;
   background: linear-gradient(90deg, rgba(45, 212, 191, 0.16), rgba(37, 99, 235, 0.08), transparent);
   height: 3px;
+}
+
+.earnings-readout-card,
+.earnings-outlook-card,
+.management-questions-card {
+  border-color: rgba(96, 165, 250, 0.24);
+}
+
+.earnings-readout-card {
+  grid-column: span 2;
+}
+
+.earnings-outlook-card,
+.management-questions-card {
+  grid-column: span 2;
+}
+
+.ai-momentum-card {
+  background:
+    radial-gradient(circle at 20% 0%, rgba(20, 184, 166, 0.18), transparent 42%),
+    linear-gradient(180deg, rgba(17, 24, 39, 0.96), rgba(8, 13, 24, 0.96));
 }
 
 .ai-title {
@@ -4002,6 +4063,16 @@ body {
     width: 64px;
     height: 64px;
     flex-basis: 64px;
+  }
+
+  .ai-earnings-gauges {
+    justify-content: flex-start;
+  }
+
+  .earnings-readout-card,
+  .earnings-outlook-card,
+  .management-questions-card {
+    grid-column: auto;
   }
 
   .welcome-hero {
