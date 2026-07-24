@@ -698,8 +698,28 @@ const formatFundamentalAxisValue = (value, indicator = {}) => {
   return formatLargeDollars(value).replace(".00", "");
 };
 
-const FundamentalChartTooltip = ({ active, label, payload, indicator }) => {
+const FundamentalChartTooltip = ({ active, label, payload, indicator, hoveredPoint }) => {
   if (!active || !Array.isArray(payload) || !payload.length) return null;
+
+  const focusedPoint =
+    hoveredPoint?.indicatorKey === indicator?.key &&
+    (!label || hoveredPoint.period === label || hoveredPoint.periodKey === label)
+      ? hoveredPoint
+      : null;
+
+  if (focusedPoint) {
+    return (
+      <div className="fundamental-tooltip">
+        <span>{focusedPoint.period}</span>
+        <div className="fundamental-tooltip-row">
+          <i style={{ background: focusedPoint.color }} />
+          <strong>{focusedPoint.symbol}</strong>
+          <em>{formatFundamentalChartValue(focusedPoint.value, indicator)}</em>
+        </div>
+      </div>
+    );
+  }
+
   const rows = payload
     .filter((item) => isNumber(item.value))
     .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
@@ -715,6 +735,27 @@ const FundamentalChartTooltip = ({ active, label, payload, indicator }) => {
           <em>{formatFundamentalChartValue(item.value, indicator)}</em>
         </div>
       ))}
+    </div>
+  );
+};
+
+const OverviewChartTooltip = ({ active, label, payload, formatter, valueLabel, symbol, color }) => {
+  if (!active || !Array.isArray(payload) || !payload.length) return null;
+  const point = payload.find((item) => isNumber(item.value));
+  if (!point) return null;
+
+  const period = formatChartPeriodLabel(point.payload?.period || label);
+  const displaySymbol = symbol || point.name || "Stock";
+  const accent = color || point.color || point.fill || point.stroke || "#67e8f9";
+
+  return (
+    <div className="fundamental-tooltip overview-chart-tooltip">
+      <span>{period}</span>
+      <div className="fundamental-tooltip-row">
+        <i style={{ background: accent }} />
+        <strong>{displaySymbol}</strong>
+        <em>{formatter(point.value, valueLabel)}</em>
+      </div>
     </div>
   );
 };
@@ -1248,9 +1289,6 @@ const formatChartPeriodLabel = (period) => {
   if (quarterMatch) return `Q${quarterMatch[2]} ${quarterMatch[1]}`;
   return value || "N/A";
 };
-
-const formatChartTooltipName = (period, valueLabel) =>
-  `${valueLabel} ${formatChartPeriodLabel(period)}`;
 
 const formatGrowthPercent = (value) =>
   isNumber(value) ? `${value > 0 ? "+" : ""}${value.toFixed(1)}%` : "N/A";
@@ -2222,6 +2260,7 @@ function HistoricalLineChart({
   color,
   formatter,
   valueLabel,
+  symbol,
   loading = false,
   mode = "annual"
 }) {
@@ -2242,11 +2281,14 @@ function HistoricalLineChart({
               <XAxis dataKey="period" />
               <YAxis tickFormatter={formatter} width={58} />
               <Tooltip
-                labelFormatter={formatChartPeriodLabel}
-                formatter={(value, name, props) => [
-                  formatter(value),
-                  formatChartTooltipName(props?.payload?.period, valueLabel)
-                ]}
+                content={(
+                  <OverviewChartTooltip
+                    formatter={formatter}
+                    valueLabel={valueLabel}
+                    symbol={symbol}
+                    color={color}
+                  />
+                )}
               />
               <Line
                 type="monotone"
@@ -2840,6 +2882,9 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
     useState("income");
 
   const [fundamentalChartData, setFundamentalChartData] =
+    useState(null);
+
+  const [fundamentalHoveredPoint, setFundamentalHoveredPoint] =
     useState(null);
 
   const [isFundamentalChartLoading, setIsFundamentalChartLoading] =
@@ -5157,6 +5202,37 @@ const fundamentalChartSeries = selectedFundamentalIndicatorDetails.map((indicato
     latestValues
   };
 });
+const renderFundamentalChartDot = (props, options = {}) => {
+  const { cx, cy, value, payload } = props || {};
+  const { indicator, symbol, color, active = false } = options;
+  if (!isNumber(cx) || !isNumber(cy) || !isNumber(value) || !indicator || !symbol) return null;
+
+  const period = payload?.period || payload?.periodKey || "";
+  const point = {
+    indicatorKey: indicator.key,
+    period,
+    periodKey: payload?.periodKey || period,
+    symbol,
+    value,
+    color
+  };
+
+  return (
+    <circle
+      cx={cx}
+      cy={cy}
+      r={active ? 7 : 4}
+      fill="#08111f"
+      stroke={color}
+      strokeWidth={active ? 3 : 2}
+      tabIndex={0}
+      role="img"
+      aria-label={`${symbol} ${indicator.label} ${period}: ${formatFundamentalChartValue(value, indicator)}`}
+      onFocus={() => setFundamentalHoveredPoint(point)}
+      onMouseEnter={() => setFundamentalHoveredPoint(point)}
+    />
+  );
+};
 const projectionEstimateGrowthByYear = estimateYearCards.slice(1).reduce((items, estimate, index) => {
   const projectionYear = PROJECTION_YEARS[index];
   const previousEstimate = estimateYearCards[index];
@@ -7784,20 +7860,37 @@ return (
                         />
                         <Tooltip
                           shared={false}
-                          content={<FundamentalChartTooltip indicator={series.indicator} />}
+                          content={(
+                            <FundamentalChartTooltip
+                              indicator={series.indicator}
+                              hoveredPoint={fundamentalHoveredPoint}
+                            />
+                          )}
                         />
-                        {fundamentalChartTickers.map((symbol, index) => (
-                          <Line
-                            key={`${series.indicator.key}-${symbol}`}
-                            type="monotone"
-                            dataKey={symbol}
-                            stroke={PORTFOLIO_COLORS[index % PORTFOLIO_COLORS.length]}
-                            strokeWidth={2.4}
-                            dot={{ r: 3, strokeWidth: 2 }}
-                            activeDot={{ r: 7, strokeWidth: 2 }}
-                            connectNulls
-                          />
-                        ))}
+                        {fundamentalChartTickers.map((symbol, index) => {
+                          const color = PORTFOLIO_COLORS[index % PORTFOLIO_COLORS.length];
+                          return (
+                            <Line
+                              key={`${series.indicator.key}-${symbol}`}
+                              type="monotone"
+                              dataKey={symbol}
+                              stroke={color}
+                              strokeWidth={2.4}
+                              dot={(props) => renderFundamentalChartDot(props, {
+                                indicator: series.indicator,
+                                symbol,
+                                color
+                              })}
+                              activeDot={(props) => renderFundamentalChartDot(props, {
+                                indicator: series.indicator,
+                                symbol,
+                                color,
+                                active: true
+                              })}
+                              connectNulls
+                            />
+                          );
+                        })}
                       </LineChart>
                     </ResponsiveContainer>
                   ) : (
@@ -8523,11 +8616,14 @@ return (
 />
 
         <Tooltip
-  labelFormatter={formatChartPeriodLabel}
-  formatter={(value, name, props) => [
-    formatChartBillions(value),
-    formatChartTooltipName(props?.payload?.period, "Revenue")
-  ]}
+          content={(
+            <OverviewChartTooltip
+              formatter={formatChartBillions}
+              valueLabel="Revenue"
+              symbol={ticker}
+              color="#3b82f6"
+            />
+          )}
 />
 
         <Bar
@@ -8607,11 +8703,14 @@ return (
           />
 
           <Tooltip
-            labelFormatter={formatChartPeriodLabel}
-            formatter={(value, name, props) => [
-              formatChartBillions(value),
-              formatChartTooltipName(props?.payload?.period, "Net Income")
-            ]}
+            content={(
+              <OverviewChartTooltip
+                formatter={formatChartBillions}
+                valueLabel="Net Income"
+                symbol={ticker}
+                color="#22c55e"
+              />
+            )}
           />
 
           <Line
@@ -8696,11 +8795,14 @@ return (
           />
 
           <Tooltip
-            labelFormatter={formatChartPeriodLabel}
-            formatter={(value, name, props) => [
-              formatChartEps(value),
-              formatChartTooltipName(props?.payload?.period, "EPS")
-            ]}
+            content={(
+              <OverviewChartTooltip
+                formatter={formatChartEps}
+                valueLabel="EPS"
+                symbol={ticker}
+                color="#f59e0b"
+              />
+            )}
           />
 
           <Line
@@ -8752,6 +8854,7 @@ return (
     color="#60a5fa"
     formatter={(value) => `${Number(value).toFixed(1)}x`}
     valueLabel="P/E"
+    symbol={ticker}
     loading={shouldShowHistoricalPeLoading(historicalPeHistory)}
     mode={financialChartMode}
   />
@@ -8762,6 +8865,7 @@ return (
     color="#a78bfa"
     formatter={(value) => `${Number(value).toFixed(1)}%`}
     valueLabel={stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin"}
+    symbol={ticker}
     loading={shouldShowHistoryLoading(grossMarginHistory)}
     mode={financialChartMode}
   />
@@ -8772,6 +8876,7 @@ return (
     color="#f59e0b"
     formatter={(value) => `${Number(value).toFixed(1)}%`}
     valueLabel={stockData.isFinancialCompany ? "Pre-Tax Margin" : "Operating Margin"}
+    symbol={ticker}
     loading={shouldShowHistoryLoading(operatingMarginHistory)}
     mode={financialChartMode}
   />
@@ -8782,6 +8887,7 @@ return (
     color="#34d399"
     formatter={(value) => `${Number(value).toFixed(1)}%`}
     valueLabel="Profit Margin"
+    symbol={ticker}
     loading={shouldShowHistoryLoading(profitMarginHistory)}
     mode={financialChartMode}
   />
@@ -8792,6 +8898,7 @@ return (
     color="#22d3ee"
     formatter={formatChartBillions}
     valueLabel="Operating Cash Flow"
+    symbol={ticker}
     loading={shouldShowHistoryLoading(operatingCashflowHistory)}
     mode={financialChartMode}
   />
@@ -8802,6 +8909,7 @@ return (
     color="#14b8a6"
     formatter={formatChartBillions}
     valueLabel="Free Cash Flow"
+    symbol={ticker}
     loading={shouldShowHistoryLoading(freeCashflowHistory)}
     mode={financialChartMode}
   />

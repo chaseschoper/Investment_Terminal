@@ -6948,6 +6948,15 @@ body {
   white-space: nowrap;
 }
 
+.overview-chart-tooltip {
+  min-width: 220px;
+}
+
+.fundamental-chart-card circle:focus {
+  outline: none;
+  filter: drop-shadow(0 0 8px rgba(103, 232, 249, 0.75));
+}
+
 .treasury-rates-page {
   display: grid;
   gap: 20px;
