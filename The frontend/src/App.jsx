@@ -125,6 +125,19 @@ const TREASURY_RATE_TERMS = [
   { key: "year30", label: "30Y" }
 ];
 
+const STOCK_OVERVIEW_SECTIONS = [
+  { id: "overview", label: "Header", short: "01" },
+  { id: "price-chart", label: "Price Chart", short: "02" },
+  { id: "financials", label: "Financial Charts", short: "03" },
+  { id: "metrics", label: "Metrics", short: "04" },
+  { id: "analyst-estimates", label: "Estimates", short: "05" },
+  { id: "similar-companies", label: "Peers", short: "06" },
+  { id: "ai-analysis", label: "AI Analysis", short: "07" },
+  { id: "earnings-calls", label: "Transcript", short: "08" },
+  { id: "company-documents", label: "Documents", short: "09" },
+  { id: "stock-news", label: "News", short: "10" }
+];
+
 const HOME_FEATURES = [
   {
     id: "market-overview",
@@ -5556,6 +5569,37 @@ const renderTopTradedStocks = () => (
   </section>
 );
 
+const renderOverviewSectionGuide = () => (
+  <aside className="overview-section-guide" aria-label="Stock overview page guide">
+    <div className="overview-section-guide-handle" aria-hidden="true">
+      <span />
+    </div>
+    <div className="overview-section-guide-panel">
+      <div className="overview-section-guide-heading">
+        <span>MrktRally Guide</span>
+        <strong>{stockData.symbol || ticker}</strong>
+      </div>
+      <nav>
+        {STOCK_OVERVIEW_SECTIONS.map((section) => (
+          <button
+            key={section.id}
+            type="button"
+            onClick={() => {
+              document.getElementById(section.id)?.scrollIntoView({
+                behavior: "smooth",
+                block: "start"
+              });
+            }}
+          >
+            <span>{section.short}</span>
+            <strong>{section.label}</strong>
+          </button>
+        ))}
+      </nav>
+    </div>
+  </aside>
+);
+
 const marketOverviewStrip = (
   <div className="market-strip" aria-label="Market index snapshot">
     <div className={`market-signal ${marketSignal.tone}`}>
@@ -7006,6 +7050,7 @@ return (
     {/* SEARCH */}
     {activePage === "overview" && (
     <>
+{renderOverviewSectionGuide()}
 
 <form
   className="topbar"
@@ -7102,7 +7147,7 @@ return (
         </div>
         {/* LIVE STOCK CHART */}
 
-<div className="chart-section native-stock-chart-section">
+<div className="chart-section native-stock-chart-section" id="price-chart">
 
   <div className="stock-chart-header">
     <div>
@@ -8412,7 +8457,7 @@ return (
 </div>
 {/* Analyst Estimates */}
 
-<section className="analyst-estimates-panel">
+<section className="analyst-estimates-panel section-anchor" id="analyst-estimates">
   <div className="analyst-estimates-header">
     <span>Forward Model</span>
     <h2>Analyst Estimates</h2>
