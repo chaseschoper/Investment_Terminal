@@ -4601,6 +4601,40 @@ body {
   max-width: none;
 }
 
+.estimate-growth-matrix {
+  display: grid;
+  gap: 18px;
+  margin-top: 24px;
+}
+
+.estimate-growth-row {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.estimate-growth-row-label {
+  display: flex;
+  align-items: center;
+  min-height: 118px;
+  padding: 16px;
+  border: 1px solid rgba(45, 212, 191, 0.28);
+  border-radius: 8px;
+  background: linear-gradient(145deg, rgba(8, 47, 73, 0.58), rgba(15, 23, 42, 0.95));
+  color: #e0f2fe;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+.estimate-growth-row-cells {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+}
+
 .historical-chart-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -6340,6 +6374,18 @@ body {
 
   .estimate-card-grid,
   .estimate-growth-grid-wide {
+    grid-template-columns: 1fr;
+  }
+
+  .estimate-growth-row {
+    grid-template-columns: 1fr;
+  }
+
+  .estimate-growth-row-label {
+    min-height: auto;
+  }
+
+  .estimate-growth-row-cells {
     grid-template-columns: 1fr;
   }
 

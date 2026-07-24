@@ -4493,10 +4493,13 @@ const estimateMetricConfig = [
   { key: "ebit", label: "EBIT Avg", format: formatEstimateMoney },
   { key: "sgaExpense", label: "SG&A Expense Avg", format: formatEstimateMoney }
 ];
-const estimateGrowthCards = estimateYearCards.slice(1).flatMap((estimate, index) => {
+const estimateGrowthCells = estimateYearCards.slice(1).flatMap((estimate, index) => {
   const previousEstimate = estimateYearCards[index];
   return estimateMetricConfig.map((metric) => ({
     key: `${estimate.fiscalYear}-${metric.key}`,
+    year: estimate.fiscalYear,
+    metricKey: metric.key,
+    metricLabel: metric.label,
     label: `${estimate.fiscalYear || "Future"} ${metric.label} Growth`,
     value: calculateEstimateGrowth(estimate[metric.key], previousEstimate?.[metric.key]),
     period: `${estimate.fiscalYear || "Future"} estimate vs. ${
@@ -4506,6 +4509,21 @@ const estimateGrowthCards = estimateYearCards.slice(1).flatMap((estimate, index)
     }`
   }));
 });
+const estimateGrowthRows = estimateMetricConfig.map((metric) => ({
+  key: metric.key,
+  label: `${metric.label} Growth`,
+  cells: estimateGrowthCells.filter((cell) => cell.metricKey === metric.key)
+}));
+const estimateGrowthByYear = estimateGrowthCells.reduce((items, cell) => {
+  if (!isNumber(cell.year)) return items;
+  return {
+    ...items,
+    [cell.year]: {
+      ...(items[cell.year] || {}),
+      [cell.metricKey]: cell.value
+    }
+  };
+}, {});
 const currentYearRevenueGrowth = calculateEstimateGrowth(
   estimateCurrentYearCard?.revenue,
   previousYearEstimate?.revenue
@@ -4555,12 +4573,12 @@ const getProjectionInputValue = (caseId, key, year) => {
   const savedValue = caseSettings?.[key]?.[year];
   if (savedValue !== undefined) return savedValue;
 
-  if (key === "revenueGrowth" && year === 2027 && isNumber(nextYearRevenueGrowth)) {
-    return nextYearRevenueGrowth.toFixed(2);
+  if (key === "revenueGrowth" && isNumber(estimateGrowthByYear[year]?.revenue)) {
+    return estimateGrowthByYear[year].revenue.toFixed(2);
   }
 
-  if (key === "netIncomeGrowth" && year === 2027 && isNumber(nextYearEarningsGrowth)) {
-    return nextYearEarningsGrowth.toFixed(2);
+  if (key === "netIncomeGrowth" && isNumber(estimateGrowthByYear[year]?.earnings)) {
+    return estimateGrowthByYear[year].earnings.toFixed(2);
   }
 
   return getProjectionAssumptionValue(caseSettings, key, year);
@@ -8302,14 +8320,21 @@ return (
     </article>
   </div>
 
-  <div className="estimate-growth-grid estimate-growth-grid-wide">
-    {estimateGrowthCards.map((growth) => (
-      <div className="estimate-growth-card" key={growth.key}>
-        <span className="estimate-growth-label">{growth.label}</span>
-        <strong className={!isNumber(growth.value) ? "estimate-growth-unavailable" : growth.value >= 0 ? "estimate-growth-positive" : "estimate-growth-negative"}>
-          {estimateValue(formatPercent(growth.value))}
-        </strong>
-        <span className="estimate-growth-period">{growth.period}</span>
+  <div className="estimate-growth-matrix">
+    {estimateGrowthRows.map((row) => (
+      <div className="estimate-growth-row" key={row.key}>
+        <div className="estimate-growth-row-label">{row.label}</div>
+        <div className="estimate-growth-row-cells">
+          {row.cells.map((growth) => (
+            <div className="estimate-growth-card" key={growth.key}>
+              <span className="estimate-growth-label">{growth.year}</span>
+              <strong className={!isNumber(growth.value) ? "estimate-growth-unavailable" : growth.value >= 0 ? "estimate-growth-positive" : "estimate-growth-negative"}>
+                {estimateValue(formatPercent(growth.value))}
+              </strong>
+              <span className="estimate-growth-period">{growth.period}</span>
+            </div>
+          ))}
+        </div>
       </div>
     ))}
   </div>
