@@ -1968,6 +1968,41 @@ function getFmpPriceHistoryDateRange(requestedRange) {
   };
 }
 
+function latestTradingDateKeyFromPoints(points = []) {
+  const sortedKeys = Array.from(
+    new Set(
+      points
+        .map((point) => point?.date?.slice(0, 10))
+        .filter(Boolean)
+    )
+  ).sort();
+  return sortedKeys.at(-1) || null;
+}
+
+function getNewYorkClockParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(date);
+  return {
+    weekday: parts.find((part) => part.type === "weekday")?.value,
+    hour: Number(parts.find((part) => part.type === "hour")?.value),
+    minute: Number(parts.find((part) => part.type === "minute")?.value)
+  };
+}
+
+function isLikelyUsMarketSession(date = new Date()) {
+  const { weekday, hour, minute } = getNewYorkClockParts(date);
+  if (weekday === "Sat" || weekday === "Sun" || !Number.isFinite(hour) || !Number.isFinite(minute)) {
+    return false;
+  }
+  const minutes = hour * 60 + minute;
+  return minutes >= 9 * 60 + 30 && minutes <= 16 * 60 + 10;
+}
+
 async function fetchFmpPriceHistory(ticker, requestedRange) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return null;
@@ -2044,7 +2079,7 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
   const end = new Date();
   end.setUTCHours(23, 59, 59, 999);
   const start = new Date(end);
-  start.setUTCDate(start.getUTCDate() - (requestedRange === "1D" ? 5 : 12));
+  start.setUTCDate(start.getUTCDate() - (requestedRange === "1D" ? 10 : 15));
   start.setUTCHours(0, 0, 0, 0);
   const from = start.toISOString().slice(0, 10);
   const to = end.toISOString().slice(0, 10);
@@ -2085,15 +2120,24 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
         .filter(Boolean)
         .sort((a, b) => a.time - b.time);
 
-      const points = requestedRange === "1D" && allPoints.length
-        ? allPoints.filter((point) =>
-            point.date.slice(0, 10) === allPoints.at(-1).date.slice(0, 10)
-          )
+      const latestTradingDateKey = latestTradingDateKeyFromPoints(allPoints);
+      const latestSessionPoints = latestTradingDateKey
+        ? allPoints.filter((point) => point.date.slice(0, 10) === latestTradingDateKey)
+        : [];
+      const points = requestedRange === "1D" && latestSessionPoints.length >= 2
+        ? latestSessionPoints
         : allPoints;
 
       if (points.length < 2) continue;
 
       const latestPoint = points.at(-1);
+      if (
+        requestedRange === "1D" &&
+        isLikelyUsMarketSession() &&
+        Date.now() - latestPoint.time > 45 * 60 * 1000
+      ) {
+        continue;
+      }
       const firstPoint = points[0];
       const previousPoint = points.at(-2);
       const changeBase = requestedRange === "1D"
