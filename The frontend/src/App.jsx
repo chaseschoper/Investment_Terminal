@@ -4361,9 +4361,15 @@ const estimateFromHistoryYear = (year, fallback = {}) => {
   if (!row) return fallback;
 
   return {
+    fiscalYear: Number(row.year),
+    label: `${row.year} Fiscal Year`,
+    isActual: true,
     revenue: isNumber(row.revenue) ? row.revenue * 1e9 : fallback.revenue,
     earnings: isNumber(row.earnings) ? row.earnings * 1e9 : fallback.earnings,
-    eps: isNumber(row.eps) ? row.eps : fallback.eps
+    eps: isNumber(row.eps) ? row.eps : fallback.eps,
+    ebitda: isNumber(row.ebitda) ? row.ebitda * 1e9 : fallback.ebitda,
+    ebit: isNumber(row.ebit) ? row.ebit * 1e9 : fallback.ebit,
+    sgaExpense: isNumber(row.sgaExpense) ? row.sgaExpense * 1e9 : fallback.sgaExpense
   };
 };
 
@@ -4410,23 +4416,111 @@ const nextYearSource =
 const nextYearEstimate = {
   revenue: isNumber(nextYearSource.revenue) ? nextYearSource.revenue : null,
   earnings: isNumber(nextYearSource.earnings) ? nextYearSource.earnings : null,
-  eps: isNumber(nextYearSource.eps) ? nextYearSource.eps : null
+  eps: isNumber(nextYearSource.eps) ? nextYearSource.eps : null,
+  ebitda: isNumber(nextYearSource.ebitda) ? nextYearSource.ebitda : null,
+  ebit: isNumber(nextYearSource.ebit) ? nextYearSource.ebit : null,
+  sgaExpense: isNumber(nextYearSource.sgaExpense) ? nextYearSource.sgaExpense : null,
+  fiscalYear: isNumber(nextYearSource.fiscalYear) ? nextYearSource.fiscalYear : null,
+  numAnalystsRevenue: isNumber(nextYearSource.numAnalystsRevenue) ? nextYearSource.numAnalystsRevenue : null,
+  numAnalystsEps: isNumber(nextYearSource.numAnalystsEps) ? nextYearSource.numAnalystsEps : null
 };
+const normalizeEstimateYear = (estimate = {}, fallback = {}) => ({
+  fiscalYear: isNumber(estimate.fiscalYear) ? estimate.fiscalYear : fallback.fiscalYear,
+  label: isNumber(estimate.fiscalYear)
+    ? `${estimate.fiscalYear} Fiscal Year`
+    : fallback.label || "Fiscal Year",
+  revenue: isNumber(estimate.revenue) ? estimate.revenue : fallback.revenue ?? null,
+  earnings: isNumber(estimate.earnings) ? estimate.earnings : fallback.earnings ?? null,
+  eps: isNumber(estimate.eps) ? estimate.eps : fallback.eps ?? null,
+  ebitda: isNumber(estimate.ebitda) ? estimate.ebitda : fallback.ebitda ?? null,
+  ebit: isNumber(estimate.ebit) ? estimate.ebit : fallback.ebit ?? null,
+  sgaExpense: isNumber(estimate.sgaExpense) ? estimate.sgaExpense : fallback.sgaExpense ?? null,
+  numAnalystsRevenue: isNumber(estimate.numAnalystsRevenue) ? estimate.numAnalystsRevenue : null,
+  numAnalystsEps: isNumber(estimate.numAnalystsEps) ? estimate.numAnalystsEps : null,
+  source: estimate.source || fallback.source || null,
+  isActual: Boolean(fallback.isActual)
+});
+const estimateFutureYearSources = Array.isArray(stockData?.analystEstimates?.futureYears)
+  ? stockData.analystEstimates.futureYears
+  : [];
+const estimateFutureYears = estimateFutureYearSources
+  .map((estimate) => normalizeEstimateYear(estimate))
+  .filter((estimate) =>
+    isNumber(estimate.fiscalYear) &&
+    (
+      isNumber(estimate.revenue) ||
+      isNumber(estimate.earnings) ||
+      isNumber(estimate.eps) ||
+      isNumber(estimate.ebitda) ||
+      isNumber(estimate.ebit) ||
+      isNumber(estimate.sgaExpense)
+    )
+  )
+  .sort((a, b) => a.fiscalYear - b.fiscalYear);
+const estimateCurrentYearCard = normalizeEstimateYear(
+  estimateFutureYears[0] || currentYearEstimate,
+  currentYearEstimate
+);
+const estimateNextYearCard = normalizeEstimateYear(
+  estimateFutureYears[1] || nextYearEstimate,
+  nextYearEstimate
+);
+const estimateYearCards = [
+  normalizeEstimateYear(previousYearEstimate, {
+    fiscalYear: Number(latestCompletedEstimateYear),
+    label: previousYearLabel,
+    isActual: true
+  }),
+  ...(
+    estimateFutureYears.length
+      ? estimateFutureYears
+      : [estimateCurrentYearCard, estimateNextYearCard].filter((estimate) =>
+          isNumber(estimate.revenue) || isNumber(estimate.earnings) || isNumber(estimate.eps)
+        )
+  )
+].filter((estimate, index, rows) =>
+  (isNumber(estimate.fiscalYear) || index === 0) &&
+  rows.findIndex((row) =>
+    row.fiscalYear === estimate.fiscalYear &&
+    Boolean(row.isActual) === Boolean(estimate.isActual)
+  ) === index
+);
+const estimateMetricConfig = [
+  { key: "revenue", label: "Revenue", format: formatEstimateMoney },
+  { key: "earnings", label: "Net Income", format: formatEstimateMoney },
+  { key: "eps", label: "EPS", format: formatEstimateEps },
+  { key: "ebitda", label: "EBITDA Avg", format: formatEstimateMoney },
+  { key: "ebit", label: "EBIT Avg", format: formatEstimateMoney },
+  { key: "sgaExpense", label: "SG&A Expense Avg", format: formatEstimateMoney }
+];
+const estimateGrowthCards = estimateYearCards.slice(1).flatMap((estimate, index) => {
+  const previousEstimate = estimateYearCards[index];
+  return estimateMetricConfig.map((metric) => ({
+    key: `${estimate.fiscalYear}-${metric.key}`,
+    label: `${estimate.fiscalYear || "Future"} ${metric.label} Growth`,
+    value: calculateEstimateGrowth(estimate[metric.key], previousEstimate?.[metric.key]),
+    period: `${estimate.fiscalYear || "Future"} estimate vs. ${
+      previousEstimate?.isActual
+        ? `${previousEstimate.fiscalYear} actual`
+        : `${previousEstimate?.fiscalYear || "prior year"} estimate`
+    }`
+  }));
+});
 const currentYearRevenueGrowth = calculateEstimateGrowth(
-  currentYearEstimate?.revenue,
+  estimateCurrentYearCard?.revenue,
   previousYearEstimate?.revenue
 );
 const currentYearEarningsGrowth = calculateEstimateGrowth(
-  currentYearEstimate?.earnings,
+  estimateCurrentYearCard?.earnings,
   previousYearEstimate?.earnings
 );
 const nextYearRevenueGrowth = calculateEstimateGrowth(
-  nextYearEstimate?.revenue,
-  currentYearEstimate?.revenue
+  estimateNextYearCard?.revenue,
+  estimateCurrentYearCard?.revenue
 );
 const nextYearEarningsGrowth = calculateEstimateGrowth(
-  nextYearEstimate?.earnings,
-  currentYearEstimate?.earnings
+  estimateNextYearCard?.earnings,
+  estimateCurrentYearCard?.earnings
 );
 const projectionSymbol = String(stockData?.symbol || ticker || "").toUpperCase();
 const projectionSettingsByCase =
@@ -8149,354 +8243,75 @@ return (
 </div>
 {/* Analyst Estimates */}
 
-<div
-  style={{
-    marginTop: "40px",
-    padding: "30px",
-    background: "#0b1117",
-    borderRadius: "18px",
-    border: "1px solid #1f2937",
-    color: "white",
-  }}
->
-
-<h2
-  style={{
-    color: "white",
-    fontSize: "24px",
-    fontWeight: "700",
-    marginBottom: "20px",
-  }}
->
-  Analyst Estimates
-</h2>
-
-  <div
-  style={{
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: "24px",
-    maxWidth: "1100px",
-    margin: "0 auto",
-  }}
->
-
-    {/* Previous Year */}
-    <div
-  style={{
-    padding: "20px",
-    borderRadius: "14px",
-    background: "#111827",
-    border: "1px solid #1f2937",
-  }}
->
-
-      <h3 className="text-lg font-semibold mb-3">
-        {previousYearLabel}
-      </h3>
-
-      <div className="space-y-2">
-
-        <div
-  style={{
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "20px",
-    marginBottom: "10px",
-  }}
->
-          <span>Revenue</span>
-
-          <span>
-            {estimateValue(formatEstimateMoney(
-              previousYearEstimate?.revenue
-            ))}
-          </span>
-        </div>
-
-        <div
-  style={{
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "20px",
-    marginBottom: "10px",
-  }}
->
-          <span>Net Income</span>
-
-          <span>
-            {estimateValue(formatEstimateMoney(
-              previousYearEstimate?.earnings
-            ))}
-          </span>
-        </div>
-
-<div
-  style={{
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "20px",
-    marginBottom: "10px",
-  }}
->
-          <span>EPS</span>
-
-          <span>
-            {estimateValue(formatEstimateEps(
-              previousYearEstimate?.eps
-            ))}
-          </span>
-        </div>
-
-      </div>
-
-    </div>
-
-    {/* Next Quarter */}
-    <div
-  style={{
-    padding: "20px",
-    borderRadius: "14px",
-    background: "#111827",
-    border: "1px solid #1f2937",
-  }}
->
-
-      <h3 className="text-lg font-semibold mb-3">
-        Next Quarter
-      </h3>
-
-      <div className="space-y-2">
-
-<div
-  style={{
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "20px",
-    marginBottom: "10px",
-  }}
->
-          <span>Revenue</span>
-
-          <span>
-            {nextQuarterValue(formatEstimateMoney(
-              nextQuarterEstimate?.revenue
-            ))}
-          </span>
-        </div>
-
-<div
-  style={{
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "20px",
-    marginBottom: "10px",
-  }}
->
-          <span>EPS</span>
-
-          <span>
-            {nextQuarterValue(formatEstimateEps(
-              nextQuarterEstimate?.eps
-            ))}
-          </span>
-        </div>
-
-<div
-  style={{
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "20px",
-    marginBottom: "10px",
-  }}
->
-          <span>Report</span>
-
-          <span>
-            {nextQuarterValue(nextQuarterDateLabel || nextQuarterEstimate?.fiscalQuarter || "N/A")}
-          </span>
-        </div>
-
-      </div>
-
-    </div>
-
-    {/* Current Year */}
-    <div
-  style={{
-    padding: "20px",
-    borderRadius: "14px",
-    background: "#111827",
-    border: "1px solid #1f2937",
-  }}
->
-
-      <h3 className="text-lg font-semibold mb-3">
-        Current Year
-      </h3>
-
-      <div className="space-y-2">
-
-<div
-  style={{
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "20px",
-    marginBottom: "10px",
-  }}
->
-          <span>Revenue</span>
-
-          <span>
-            {estimateValue(formatEstimateMoney(
-              currentYearEstimate?.revenue
-            ))}
-          </span>
-        </div>
-
-<div
-  style={{
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "20px",
-    marginBottom: "10px",
-  }}
->
-          <span>Net Income</span>
-
-          <span>
-            {estimateValue(formatEstimateMoney(
-              currentYearEstimate?.earnings
-            ))}
-          </span>
-        </div>
-
-<div
-  style={{
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "20px",
-    marginBottom: "10px",
-  }}
->
-          <span>EPS</span>
-
-          <span>
-            {estimateValue(formatEstimateEps(
-              currentYearEstimate?.eps
-            ))}
-          </span>
-        </div>
-
-      </div>
-
-    </div>
-
-    {/* Next Year */}
-    <div
-  style={{
-    padding: "20px",
-    borderRadius: "14px",
-    background: "#111827",
-    border: "1px solid #1f2937",
-  }}
->
-
-      <h3 className="text-lg font-semibold mb-3">
-        Next Year
-      </h3>
-
-      <div className="space-y-2">
-
-<div
-  style={{
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "20px",
-    marginBottom: "10px",
-  }}
->
-          <span>Revenue</span>
-
-          <span>
-            {estimateValue(formatEstimateMoney(
-              nextYearEstimate?.revenue
-            ))}
-          </span>
-        </div>
-
-<div
-  style={{
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "20px",
-    marginBottom: "10px",
-  }}
->
-          <span>Net Income</span>
-
-          <span>
-            {estimateValue(formatEstimateMoney(
-              nextYearEstimate?.earnings
-            ))}
-          </span>
-        </div>
-
-<div
-  style={{
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "20px",
-    marginBottom: "10px",
-  }}
->
-          <span>EPS</span>
-
-          <span>
-            {estimateValue(formatEstimateEps(
-              nextYearEstimate?.eps
-            ))}
-          </span>
-        </div>
-
-      </div>
-
-    </div>
-
+<section className="analyst-estimates-panel">
+  <div className="analyst-estimates-header">
+    <span>Forward Model</span>
+    <h2>Analyst Estimates</h2>
   </div>
 
-  <div className="estimate-growth-grid">
-    <div className="estimate-growth-card">
-      <span className="estimate-growth-label">Current Year Revenue Growth</span>
-      <strong className={!isNumber(currentYearRevenueGrowth) ? "estimate-growth-unavailable" : currentYearRevenueGrowth >= 0 ? "estimate-growth-positive" : "estimate-growth-negative"}>
-        {estimateValue(formatPercent(currentYearRevenueGrowth))}
-      </strong>
-      <span className="estimate-growth-period">Current estimate vs. {previousYearLabel} actual</span>
-    </div>
+  <div className="estimate-card-grid">
+    {estimateYearCards.map((estimate) => (
+      <article
+        className={`estimate-year-card ${estimate.isActual ? "estimate-year-card-actual" : ""}`}
+        key={`${estimate.isActual ? "actual" : "estimate"}-${estimate.fiscalYear || estimate.label}`}
+      >
+        <div className="estimate-year-card-header">
+          <h3>{estimate.label || `${estimate.fiscalYear} Fiscal Year`}</h3>
+          {estimate.isActual ? (
+            <span>Reported</span>
+          ) : (
+            <span>
+              {[
+                isNumber(estimate.numAnalystsRevenue) ? `${estimate.numAnalystsRevenue} rev` : null,
+                isNumber(estimate.numAnalystsEps) ? `${estimate.numAnalystsEps} EPS` : null
+              ].filter(Boolean).join(" / ") || "Estimate"}
+            </span>
+          )}
+        </div>
 
-    <div className="estimate-growth-card">
-      <span className="estimate-growth-label">Current Year Earnings Growth</span>
-      <strong className={!isNumber(currentYearEarningsGrowth) ? "estimate-growth-unavailable" : currentYearEarningsGrowth >= 0 ? "estimate-growth-positive" : "estimate-growth-negative"}>
-        {estimateValue(formatPercent(currentYearEarningsGrowth))}
-      </strong>
-      <span className="estimate-growth-period">Current estimate vs. {previousYearLabel} actual</span>
-    </div>
+        <div className="estimate-year-card-rows">
+          {estimateMetricConfig.map((metric) => (
+            <div className="estimate-year-row" key={`${estimate.fiscalYear}-${metric.key}`}>
+              <span>{metric.label}</span>
+              <strong>{estimateValue(metric.format(estimate[metric.key]))}</strong>
+            </div>
+          ))}
+        </div>
+      </article>
+    ))}
 
-    <div className="estimate-growth-card">
-      <span className="estimate-growth-label">Next Year Revenue Growth</span>
-      <strong className={!isNumber(nextYearRevenueGrowth) ? "estimate-growth-unavailable" : nextYearRevenueGrowth >= 0 ? "estimate-growth-positive" : "estimate-growth-negative"}>
-        {estimateValue(formatPercent(nextYearRevenueGrowth))}
-      </strong>
-      <span className="estimate-growth-period">Next estimate vs. current estimate</span>
-    </div>
+    <article className="estimate-year-card estimate-quarter-card">
+      <div className="estimate-year-card-header">
+        <h3>Next Quarter</h3>
+        <span>{nextQuarterEstimate?.fiscalQuarter || "Upcoming"}</span>
+      </div>
+      <div className="estimate-year-card-rows">
+        <div className="estimate-year-row">
+          <span>Revenue</span>
+          <strong>{nextQuarterValue(formatEstimateMoney(nextQuarterEstimate?.revenue))}</strong>
+        </div>
+        <div className="estimate-year-row">
+          <span>EPS</span>
+          <strong>{nextQuarterValue(formatEstimateEps(nextQuarterEstimate?.eps))}</strong>
+        </div>
+        <div className="estimate-year-row">
+          <span>Report</span>
+          <strong>{nextQuarterValue(nextQuarterDateLabel || nextQuarterEstimate?.fiscalQuarter || "N/A")}</strong>
+        </div>
+      </div>
+    </article>
+  </div>
 
-    <div className="estimate-growth-card">
-      <span className="estimate-growth-label">Next Year Earnings Growth</span>
-      <strong className={!isNumber(nextYearEarningsGrowth) ? "estimate-growth-unavailable" : nextYearEarningsGrowth >= 0 ? "estimate-growth-positive" : "estimate-growth-negative"}>
-        {estimateValue(formatPercent(nextYearEarningsGrowth))}
-      </strong>
-      <span className="estimate-growth-period">Next estimate vs. current estimate</span>
-    </div>
+  <div className="estimate-growth-grid estimate-growth-grid-wide">
+    {estimateGrowthCards.map((growth) => (
+      <div className="estimate-growth-card" key={growth.key}>
+        <span className="estimate-growth-label">{growth.label}</span>
+        <strong className={!isNumber(growth.value) ? "estimate-growth-unavailable" : growth.value >= 0 ? "estimate-growth-positive" : "estimate-growth-negative"}>
+          {estimateValue(formatPercent(growth.value))}
+        </strong>
+        <span className="estimate-growth-period">{growth.period}</span>
+      </div>
+    ))}
   </div>
 
   <div className="market-intel-grid">
@@ -8571,7 +8386,7 @@ return (
     />
   </div>
 
-</div>
+</section>
 
 {/* SIMILAR COMPANIES */}
 

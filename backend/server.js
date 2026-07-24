@@ -634,9 +634,9 @@ const KNOWN_FINANCIAL_INSTITUTIONS = new Set([
 ]);
 
 const MARKET_INDICES = [
-  { key: "sp500", label: "S&P 500", yahooSymbol: "^GSPC", fmpSymbol: "^GSPC", futuresSymbol: "ES=F", fmpFuturesSymbol: "ESUSD", investingPath: "us-spx-500", stockAnalysisLabel: "S&P500" },
-  { key: "dow", label: "Dow Jones", yahooSymbol: "^DJI", fmpSymbol: "^DJI", futuresSymbol: "YM=F", fmpFuturesSymbol: "YMUSD", investingPath: "us-30", stockAnalysisLabel: "Dow Jones" },
-  { key: "nasdaq", label: "Nasdaq", yahooSymbol: "^NDX", fmpSymbol: "^IXIC", futuresSymbol: "NQ=F", fmpFuturesSymbol: "NQUSD", investingPath: "nq-100", stockAnalysisLabel: "Nasdaq" },
+  { key: "sp500", label: "S&P 500", yahooSymbol: "^GSPC", fmpSymbol: "^GSPC", futuresSymbol: "ES=F", fmpFuturesSymbol: "ESUSD", cnbcFuturesSymbol: "@SP.1", investingPath: "us-spx-500", stockAnalysisLabel: "S&P500" },
+  { key: "dow", label: "Dow Jones", yahooSymbol: "^DJI", fmpSymbol: "^DJI", futuresSymbol: "YM=F", fmpFuturesSymbol: "YMUSD", cnbcFuturesSymbol: "@DJ.1", investingPath: "us-30", stockAnalysisLabel: "Dow Jones" },
+  { key: "nasdaq", label: "Nasdaq", yahooSymbol: "^NDX", fmpSymbol: "^IXIC", futuresSymbol: "NQ=F", fmpFuturesSymbol: "NQUSD", cnbcFuturesSymbol: "@ND.1", investingPath: "nq-100", stockAnalysisLabel: "Nasdaq" },
   { key: "russell2000", label: "Russell 2000", yahooSymbol: "^RUT", fmpSymbol: "^RUT", futuresSymbol: "RTY=F", fmpFuturesSymbol: "RTYUSD", investingPath: "smallcap-2000", stockAnalysisLabel: "Russell 2000" }
 ];
 
@@ -5003,6 +5003,23 @@ const normalizeFmpAnnualEstimateBlocks = (rows = []) =>
       )
     );
 
+async function fetchFmpFutureAnnualEstimateBlocks(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return [];
+  try {
+    const rows = await getFmpData(symbol, "future annual analyst estimates", [
+      "/stable/analyst-estimates?symbol={ticker}&period=annual&limit=10"
+    ]);
+    return normalizeFmpAnnualEstimateBlocks(
+      normalizeFmpAnnualEstimateRows(rows, { symbol, maxFutureYears: 6 })
+    );
+  } catch (err) {
+    setFmpCooldown(err, "future annual analyst estimates", symbol);
+    console.log("FMP future annual estimates skipped:", symbol, err.response?.status || err.message);
+    return [];
+  }
+}
+
 const estimateLooksSaneAgainstHistory = (estimate = {}, latestAnnual = {}) => {
   const estimateRevenue = toNumberOrNull(estimate.revenueAvg ?? estimate.estimatedRevenueAvg);
   const estimateEps = toNumberOrNull(estimate.epsAvg ?? estimate.estimatedEpsAvg);
@@ -5449,6 +5466,9 @@ function mergeHistoricalFinancials(primary = [], fallback = [], limit = 7) {
       eps: row.eps ?? existing.eps ?? null,
       grossProfit: row.grossProfit ?? existing.grossProfit ?? null,
       operatingIncome: row.operatingIncome ?? existing.operatingIncome ?? null,
+      ebitda: row.ebitda ?? existing.ebitda ?? null,
+      ebit: row.ebit ?? existing.ebit ?? null,
+      sgaExpense: row.sgaExpense ?? existing.sgaExpense ?? null,
       operatingCashflow: row.operatingCashflow ?? existing.operatingCashflow ?? null,
       freeCashflow: row.freeCashflow ?? existing.freeCashflow ?? null,
       sharesOutstanding: row.sharesOutstanding ?? existing.sharesOutstanding ?? null,
@@ -5464,6 +5484,9 @@ function mergeHistoricalFinancials(primary = [], fallback = [], limit = 7) {
       row.eps !== null ||
       row.grossProfit !== null ||
       row.operatingIncome !== null ||
+      row.ebitda !== null ||
+      row.ebit !== null ||
+      row.sgaExpense !== null ||
       row.operatingCashflow !== null ||
       row.freeCashflow !== null ||
       row.sharesOutstanding !== null
@@ -5512,6 +5535,9 @@ function mergeSupplementalHistoricalFields(baseRows = [], supplementalRows = [],
       ...existing,
       grossProfit: existing.grossProfit ?? row.grossProfit ?? null,
       operatingIncome: existing.operatingIncome ?? row.operatingIncome ?? null,
+      ebitda: existing.ebitda ?? row.ebitda ?? null,
+      ebit: existing.ebit ?? row.ebit ?? null,
+      sgaExpense: existing.sgaExpense ?? row.sgaExpense ?? null,
       operatingCashflow: existing.operatingCashflow ?? row.operatingCashflow ?? null,
       freeCashflow: existing.freeCashflow ?? row.freeCashflow ?? null,
       sharesOutstanding: existing.sharesOutstanding ?? row.sharesOutstanding ?? null,
@@ -5526,6 +5552,9 @@ function mergeSupplementalHistoricalFields(baseRows = [], supplementalRows = [],
       row.eps !== null ||
       row.grossProfit !== null ||
       row.operatingIncome !== null ||
+      row.ebitda !== null ||
+      row.ebit !== null ||
+      row.sgaExpense !== null ||
       row.operatingCashflow !== null ||
       row.freeCashflow !== null ||
       row.sharesOutstanding !== null
@@ -5746,6 +5775,9 @@ function finalizeFinancialHistory(rows, sharesOutstanding) {
     eps: normalizeHistoricalEps(row, sharesOutstanding),
     grossProfit: toNumberOrNull(row.grossProfit),
     operatingIncome: toNumberOrNull(row.operatingIncome),
+    ebitda: toNumberOrNull(row.ebitda),
+    ebit: toNumberOrNull(row.ebit),
+    sgaExpense: toNumberOrNull(row.sgaExpense),
     operatingCashflow: toNumberOrNull(row.operatingCashflow),
     freeCashflow: toNumberOrNull(row.freeCashflow),
     sharesOutstanding: normalizeHistoricalShares(
@@ -6992,12 +7024,98 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
     !hasCompleteCompanyProfileSnapshot(responseData) ||
     responseData.estimateDataVersion !== STOCK_ESTIMATE_VERSION ||
     responseData.analystEstimatesSource !== "FMP" ||
+    !Array.isArray(responseData.analystEstimates?.futureYears) ||
+    !responseData.analystEstimates.futureYears.length ||
     !hasCompleteNextQuarterEstimate(responseData.analystEstimates?.nextQuarter);
   if (needsFmpFastPatch) {
     const fastPatch = await resolveWithin(buildFastStockSnapshot(ticker, responseData), 2600, null);
     if (fastPatch) responseData = prepareCachedStockResponseData(ticker, fastPatch);
   }
   responseData = await ensureCompleteNextQuarterEstimateForResponse(ticker, responseData);
+  if (!Array.isArray(responseData.analystEstimates?.futureYears) || !responseData.analystEstimates.futureYears.length) {
+    const futureYears = await resolveWithin(fetchFmpFutureAnnualEstimateBlocks(ticker), 2200, []);
+    if (futureYears.length) {
+      const analystEstimates = {
+        ...(responseData.analystEstimates || {}),
+        currentYear: {
+          ...(responseData.analystEstimates?.currentYear || {}),
+          ...(futureYears[0] || {}),
+          ebitda: futureYears[0]?.ebitda ?? responseData.analystEstimates?.currentYear?.ebitda ?? null,
+          ebit: futureYears[0]?.ebit ?? responseData.analystEstimates?.currentYear?.ebit ?? null,
+          sgaExpense: futureYears[0]?.sgaExpense ?? responseData.analystEstimates?.currentYear?.sgaExpense ?? null,
+          fiscalYear: futureYears[0]?.fiscalYear ?? responseData.analystEstimates?.currentYear?.fiscalYear ?? null,
+          numAnalystsRevenue: futureYears[0]?.numAnalystsRevenue ?? responseData.analystEstimates?.currentYear?.numAnalystsRevenue ?? null,
+          numAnalystsEps: futureYears[0]?.numAnalystsEps ?? responseData.analystEstimates?.currentYear?.numAnalystsEps ?? null
+        },
+        nextYear: {
+          ...(responseData.analystEstimates?.nextYear || {}),
+          ...(futureYears[1] || {}),
+          ebitda: futureYears[1]?.ebitda ?? responseData.analystEstimates?.nextYear?.ebitda ?? null,
+          ebit: futureYears[1]?.ebit ?? responseData.analystEstimates?.nextYear?.ebit ?? null,
+          sgaExpense: futureYears[1]?.sgaExpense ?? responseData.analystEstimates?.nextYear?.sgaExpense ?? null,
+          fiscalYear: futureYears[1]?.fiscalYear ?? responseData.analystEstimates?.nextYear?.fiscalYear ?? null,
+          numAnalystsRevenue: futureYears[1]?.numAnalystsRevenue ?? responseData.analystEstimates?.nextYear?.numAnalystsRevenue ?? null,
+          numAnalystsEps: futureYears[1]?.numAnalystsEps ?? responseData.analystEstimates?.nextYear?.numAnalystsEps ?? null
+        },
+        followingYear: {
+          ...(responseData.analystEstimates?.followingYear || {}),
+          ...(futureYears[2] || {})
+        },
+        futureYears
+      };
+      responseData = {
+        ...responseData,
+        analystEstimates,
+        analystEstimatesSource: "FMP",
+        estimateDataVersion: STOCK_ESTIMATE_VERSION
+      };
+      Stock.findOneAndUpdate(
+        { ticker },
+        {
+          $set: {
+            "data.analystEstimates": analystEstimates,
+            "data.analystEstimatesSource": "FMP",
+            "data.estimateDataVersion": STOCK_ESTIMATE_VERSION
+          }
+        }
+      ).catch((err) => {
+        console.log("Future annual estimate response cache skipped:", ticker, err.message);
+      });
+    }
+  }
+  const latestAnnualRow = (responseData.revenueData || [])
+    .filter((row) => !row?.isInterim && !row?.isCurrent && Number.isFinite(Number(row?.year)))
+    .sort((a, b) => Number(a.year) - Number(b.year))
+    .at(-1);
+  if (
+    latestAnnualRow &&
+    (
+      toNumberOrNull(latestAnnualRow.ebitda) === null ||
+      toNumberOrNull(latestAnnualRow.ebit) === null ||
+      toNumberOrNull(latestAnnualRow.sgaExpense) === null
+    )
+  ) {
+    const incomeRows = await resolveWithin(fetchFmpIncomeStatementHistory(ticker), 2200, []);
+    if (incomeRows.length) {
+      const revenueData = mergeSupplementalHistoricalFields(responseData.revenueData || [], incomeRows, 9);
+      responseData = {
+        ...responseData,
+        revenueData
+      };
+      Stock.findOneAndUpdate(
+        { ticker },
+        {
+          $set: {
+            "data.revenueData": revenueData,
+            "data.financialHistoryVersion": FINANCIAL_HISTORY_VERSION,
+            "data.financialHistoryCheckedAt": new Date().toISOString()
+          }
+        }
+      ).catch((err) => {
+        console.log("Latest income statement field cache skipped:", ticker, err.message);
+      });
+    }
+  }
   if (responseData.valuationMetricsVersion !== VALUATION_METRICS_VERSION) {
     const valuationPatch = await resolveWithin(fetchFmpStableValuationMetrics(ticker), 2600, {});
     const valuationFields = {};
@@ -7523,6 +7641,9 @@ async function fetchFmpIncomeStatementHistory(ticker) {
         earnings: toBillions(row.netIncome),
         grossProfit: toBillions(row.grossProfit),
         operatingIncome: toBillions(row.operatingIncome),
+        ebitda: toBillions(row.ebitda),
+        ebit: toBillions(row.ebit),
+        sgaExpense: toBillions(row.sellingGeneralAndAdministrativeExpenses),
         eps: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
         sharesOutstanding: toNumberOrNull(
           row.weightedAverageShsOutDil ??
@@ -7626,6 +7747,9 @@ async function fetchFmpQuarterlyFinancialHistory(ticker) {
           earnings: toBillions(row.netIncome),
           grossProfit: toBillions(row.grossProfit),
           operatingIncome: toBillions(row.operatingIncome),
+          ebitda: toBillions(row.ebitda),
+          ebit: toBillions(row.ebit),
+          sgaExpense: toBillions(row.sellingGeneralAndAdministrativeExpenses),
           operatingCashflow: toBillions(
             cash.operatingCashFlow ??
               cash.operatingCashflow ??
@@ -11009,7 +11133,7 @@ async function fetchStockData(ticker) {
   const saneFmpAnalystEstimates = fmpAnalystEstimates.filter((row) =>
     estimateLooksSaneAgainstHistory(row, latestAnnual)
   );
-  const fmpFutureYearEstimates = normalizeFmpAnnualEstimateBlocks(saneFmpAnalystEstimates);
+  const fmpFutureYearEstimates = normalizeFmpAnnualEstimateBlocks(fmpAnalystEstimates);
   const fmpCurrentEstimate = saneFmpAnalystEstimates[0] || {};
   const fmpNextEstimate = saneFmpAnalystEstimates[1] || {};
   const fmpFollowingEstimate = saneFmpAnalystEstimates[2] || {};
@@ -14000,6 +14124,42 @@ app.get("/api/market-indices", async (req, res) => {
     };
   };
 
+  const fetchCnbcFuture = async (index) => {
+    if (!index.cnbcFuturesSymbol) return null;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 1600);
+    try {
+      const response = await fetch(
+        `https://quote.cnbc.com/quote-html-webservice/quote.htm?symbols=${encodeURIComponent(index.cnbcFuturesSymbol)}&output=json`,
+        {
+          headers: {
+            "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
+            Accept: "application/json,text/plain,*/*"
+          },
+          signal: controller.signal
+        }
+      );
+      if (!response.ok) return null;
+      const data = await response.json();
+      const quote = data?.QuickQuoteResult?.QuickQuote?.[0];
+      const price = toNumberOrNull(quote?.last);
+      if (price === null || quote?.code === "1") return null;
+      return {
+        symbol: index.cnbcFuturesSymbol,
+        label: `${index.label} futures`,
+        price,
+        change: toNumberOrNull(quote?.change),
+        percentChange: toNumberOrNull(quote?.change_pct),
+        source: "CNBC Futures"
+      };
+    } catch (err) {
+      console.log("CNBC market index futures skipped:", index.label, err.message);
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+
   const fetchBestIndexQuote = async (index) => {
     const sources = [
       ["FMP", fetchFmpIndex],
@@ -14061,7 +14221,8 @@ app.get("/api/market-indices", async (req, res) => {
               }
               return null;
             })
-            .then((fmpFuture) => fmpFuture || fetchYahooFuture(index)),
+            .then((fmpFuture) => fmpFuture || fetchCnbcFuture(index))
+            .then((future) => future || fetchYahooFuture(index)),
           2600,
           null
         );
