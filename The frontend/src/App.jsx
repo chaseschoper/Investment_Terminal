@@ -8730,16 +8730,13 @@ return (
                 <th>NI Growth</th>
                 {projectionCase.rows.map((row) => (
                   <td key={row.year}>
-                    {row.year === PROJECTION_YEARS[0] ? (
-                      estimateValue(formatPercent(row.netIncomeGrowth))
-                    ) : (
-                      <input
-                        value={getProjectionInputValue(projectionCase.id, "netIncomeGrowth", row.year)}
-                        onChange={(event) => updateProjectionSetting(projectionCase.id, "netIncomeGrowth", row.year, event.target.value)}
-                        inputMode="decimal"
-                        aria-label={`${projectionCase.label} ${row.year} net income growth`}
-                      />
-                    )}
+                    <input
+                      value={getProjectionInputValue(projectionCase.id, "netIncomeGrowth", row.year)}
+                      onChange={(event) => updateProjectionSetting(projectionCase.id, "netIncomeGrowth", row.year, event.target.value)}
+                      placeholder={isNumber(row.netIncomeGrowth) ? row.netIncomeGrowth.toFixed(2) : "N/A"}
+                      inputMode="decimal"
+                      aria-label={`${projectionCase.label} ${row.year} net income growth`}
+                    />
                   </td>
                 ))}
               </tr>

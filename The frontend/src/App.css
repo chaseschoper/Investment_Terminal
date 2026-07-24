@@ -5228,6 +5228,7 @@ body {
 .projections-table td {
   padding: 11px 12px;
   border-bottom: 1px solid #1f2937;
+  color: #f9fafb;
   text-align: right;
   white-space: nowrap;
 }
@@ -5270,6 +5271,7 @@ body {
 
 .projection-input-row td {
   background: #111827;
+  color: #f9fafb;
 }
 
 .projections-table input {
@@ -5280,8 +5282,14 @@ body {
   border-radius: 6px;
   background: #020617;
   color: #f9fafb;
+  -webkit-text-fill-color: #f9fafb;
   text-align: right;
   font: inherit;
+}
+
+.projections-table input::placeholder {
+  color: #f9fafb;
+  opacity: 1;
 }
 
 .projections-table input:focus {
