@@ -7294,6 +7294,12 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
   const hasMissingInsiderRows = !marketActivityCheckedRecently &&
     (!Array.isArray(responseData.insiderTransactions) || !responseData.insiderTransactions.length);
   const hasMissingHolderRows = !Array.isArray(responseData.institutionalHolders) || !responseData.institutionalHolders.length;
+  const hasMarketBeatHolderRows = (responseData.institutionalHolders || []).some((row) =>
+    /MarketBeat/i.test(String(row?.source || ""))
+  );
+  const hasIncompleteHolderRows = (responseData.institutionalHolders || []).some((row) =>
+    row?.institution && (toNumberOrNull(row.shares) === null || toNumberOrNull(row.percentHeld) === null)
+  );
   const hasIncompleteInsiderRows = (responseData.insiderTransactions || []).some((row) =>
     (row.owner || row.filerName) && !(row.transaction || row.transactionType)
   );
@@ -7303,9 +7309,11 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
     hasMissingAnalystRows ||
     hasMissingInsiderRows ||
     hasMissingHolderRows ||
+    hasMarketBeatHolderRows ||
+    hasIncompleteHolderRows ||
     hasIncompleteInsiderRows
   ) {
-    const fmpMarketActivity = await resolveWithin(fetchFmpMarketActivity(ticker), 1800, {
+    const fmpMarketActivity = await resolveWithin(fetchFmpMarketActivity(ticker), 4200, {
       analystUpdates: [],
       institutionalHolders: [],
       insiderTransactions: []
@@ -8630,7 +8638,10 @@ async function fetchFmpMarketActivity(ticker) {
   }
 
   const cached = readCachedMarketActivity(fmpMarketActivityCache, symbol);
-  if (cached) return cached;
+  const cachedHasMarketBeatHolders = (cached?.institutionalHolders || []).some((row) =>
+    /MarketBeat/i.test(String(row?.source || ""))
+  );
+  if (cached && !cachedHasMarketBeatHolders) return cached;
 
   const emptyResult = { analystUpdates: [], institutionalHolders: [], insiderTransactions: [] };
   const [priceTargetNewsData, gradesData, holdersData, insiderData] = await Promise.all([
@@ -8640,7 +8651,12 @@ async function fetchFmpMarketActivity(ticker) {
     resolveWithin(getFmpData(symbol, "analyst actions", [
       "/stable/grades?symbol={ticker}"
     ]), STOCK_PROVIDER_TIMEOUT_MS, null),
-    resolveWithin(fetchMarketBeatInstitutionalHolders(symbol), STOCK_PROVIDER_TIMEOUT_MS, []),
+    resolveWithin(
+      fetchNasdaqInstitutionalHolders(symbol)
+        .then((rows) => rows.length ? rows : fetchMarketBeatInstitutionalHolders(symbol)),
+      STOCK_PROVIDER_TIMEOUT_MS,
+      []
+    ),
     resolveWithin(getFmpData(symbol, "insider trading", [
       "/stable/insider-trading/search?symbol={ticker}"
     ]), STOCK_PROVIDER_TIMEOUT_MS, null)
@@ -8799,6 +8815,13 @@ const parseMarketBeatPercent = (value) => {
   return match ? toNumberOrNull(match[1]) : null;
 };
 
+const parseCommaNumber = (value) => {
+  const text = String(value || "").replace(/[$,%]/g, "").replace(/,/g, "").trim();
+  if (!text || /^N\/A$/i.test(text) || /^New$/i.test(text)) return null;
+  const match = text.match(/-?\d+(?:\.\d+)?/);
+  return match ? toNumberOrNull(match[0]) : null;
+};
+
 const parseMarketBeatMoneyNumber = (value) => {
   const text = String(value || "").replace(/,/g, "").trim();
   if (!text || /^-+$/.test(text) || /^N\/A$/i.test(text)) return null;
@@ -8901,6 +8924,77 @@ async function fetchMarketBeatInstitutionalHolders(ticker) {
     result,
     result.length ? 6 * 60 * 60 * 1000 : 20 * 60 * 1000
   );
+}
+
+async function fetchNasdaqInstitutionalHolders(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol) return [];
+
+  const cacheKey = `${symbol}:nasdaq-holders`;
+  const cached = readCachedMarketActivity(marketBeatAnalystCache, cacheKey);
+  if (cached) return cached;
+
+  try {
+    const response = await axios.get(
+      `https://api.nasdaq.com/api/company/${encodeURIComponent(symbol)}/institutional-holdings`,
+      {
+        params: {
+          limit: 25,
+          type: "TOTAL",
+          sortColumn: "sharesHeld",
+          sortOrder: "DESC"
+        },
+        headers: {
+          "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
+          Accept: "application/json, text/plain, */*",
+          Origin: "https://www.nasdaq.com",
+          Referer: `https://www.nasdaq.com/market-activity/stocks/${symbol.toLowerCase()}/institutional-holdings`
+        },
+        timeout: 3500,
+        validateStatus: () => true
+      }
+    );
+    if (response.status >= 400 || !response.data?.data) {
+      throw new Error(`Nasdaq holders ${response.status}`);
+    }
+
+    const rows = response.data?.data?.holdingsTransactions?.table?.rows || [];
+    const totalSharesHeld = parseCommaNumber(
+      response.data?.data?.holdingsTransactions?.sharesHeld
+    );
+    const ownershipPercent = parseMarketBeatPercent(
+      response.data?.data?.ownershipSummary?.SharesOutstandingPCT?.value
+    );
+    const result = rows
+      .map((row) => {
+        const shares = parseCommaNumber(row.sharesHeld);
+        const marketValueInThousands = parseCommaNumber(row.marketValue);
+        return {
+          institution: firstText(row.ownerName),
+          shares,
+          value: marketValueInThousands !== null ? marketValueInThousands * 1000 : null,
+          percentHeld: totalSharesHeld && ownershipPercent !== null && shares !== null
+            ? (shares / totalSharesHeld) * ownershipPercent
+            : null,
+          percentChange: parseMarketBeatPercent(row.sharesChangePCT),
+          reportDate: marketBeatDateToIso(row.date),
+          source: "Nasdaq"
+        };
+      })
+      .filter((item) => item.institution && toNumberOrNull(item.shares) !== null)
+      .sort((a, b) => (toNumberOrNull(b.shares) || 0) - (toNumberOrNull(a.shares) || 0))
+      .slice(0, 10);
+
+    return writeCachedMarketActivity(
+      marketBeatAnalystCache,
+      cacheKey,
+      result,
+      result.length ? 6 * 60 * 60 * 1000 : 90 * 1000
+    );
+  } catch (err) {
+    console.log("Nasdaq institutional holders skipped:", symbol, err.response?.status || err.message);
+    return writeCachedMarketActivity(marketBeatAnalystCache, cacheKey, [], 90 * 1000);
+  }
 }
 
 async function fetchMarketBeatAnalystUpdates(ticker) {
@@ -10220,11 +10314,16 @@ async function publishBalanceSheetSnapshot(ticker) {
 async function buildMarketActivitySnapshot(ticker, previousData = {}) {
   const [
     marketBeatAnalystUpdates,
-    marketBeatInstitutionalHolders,
+    institutionalHolders,
     secInsiderTransactions
   ] = await Promise.all([
     resolveWithin(fetchMarketBeatAnalystUpdates(ticker), 2400, []),
-    resolveWithin(fetchMarketBeatInstitutionalHolders(ticker), 2400, []),
+    resolveWithin(
+      fetchNasdaqInstitutionalHolders(ticker)
+        .then((rows) => rows.length ? rows : fetchMarketBeatInstitutionalHolders(ticker)),
+      2400,
+      []
+    ),
     resolveWithin(fetchSecInsiderTransactions(ticker), 2800, [])
   ]);
 
@@ -10232,8 +10331,8 @@ async function buildMarketActivitySnapshot(ticker, previousData = {}) {
     analystUpdates: marketBeatAnalystUpdates.length
       ? marketBeatAnalystUpdates
       : previousData.analystUpdates || [],
-    institutionalHolders: marketBeatInstitutionalHolders.length
-      ? marketBeatInstitutionalHolders
+    institutionalHolders: institutionalHolders.length
+      ? institutionalHolders
       : previousData.institutionalHolders || [],
     insiderTransactions: secInsiderTransactions.length
       ? secInsiderTransactions
@@ -10263,15 +10362,18 @@ async function publishMarketActivitySnapshot(ticker) {
     (data.analystUpdates || []).every((row) => !row?.source || /FMP/i.test(String(row.source))) &&
     (data.insiderTransactions || []).every((row) => !row?.source || /FMP/i.test(String(row.source))) &&
     (data.institutionalHolders || []).every((row) =>
-      !row?.source || /FMP|MarketBeat/i.test(String(row.source))
+      !row?.source || /Nasdaq|FMP/i.test(String(row.source))
     );
+  const hasIncompleteInstitutionalHolderRows = (data.institutionalHolders || []).some((row) =>
+    row?.institution && (toNumberOrNull(row.shares) === null || toNumberOrNull(row.percentHeld) === null)
+  );
 
-  if (((checkedRecently && hasAllMarketActivitySections) || failedRecently) && hasOnlyAcceptedMarketActivityRows) {
+  if (((checkedRecently && hasAllMarketActivitySections) || failedRecently) && hasOnlyAcceptedMarketActivityRows && !hasIncompleteInstitutionalHolderRows) {
     return;
   }
 
   const publishFmpRows = async () => {
-    const data = await resolveWithin(fetchFmpMarketActivity(ticker), 2200, {
+    const data = await resolveWithin(fetchFmpMarketActivity(ticker), 4200, {
       analystUpdates: [],
       institutionalHolders: [],
       insiderTransactions: []
