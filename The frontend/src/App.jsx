@@ -9700,7 +9700,7 @@ return (
               <span>Dividend</span>
               <span>Yield</span>
               <span>Frequency</span>
-              <span>Payment date</span>
+              <span>Ex-dividend date</span>
             </>
           ) : (
             <>
@@ -9762,7 +9762,7 @@ return (
                 <strong data-label="Dividend">{formatCalendarEps(event.dividend)}</strong>
                 <strong data-label="Yield">{formatCalendarPercent(event.yield)}</strong>
                 <span data-label="Frequency">{event.frequency || "N/A"}</span>
-                <span data-label="Payment date">{formatShortDate(event.paymentDate)}</span>
+                <span data-label="Ex-dividend date">{formatShortDate(event.exDividendDate)}</span>
               </>
             ) : (
               <>

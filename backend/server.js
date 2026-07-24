@@ -18444,6 +18444,13 @@ const parseCalendarIsoDate = (value) => {
 
 const calendarIsoDate = (date) => date.toISOString().slice(0, 10);
 
+const shiftCalendarIsoDate = (isoDate, days) => {
+  const date = parseCalendarIsoDate(isoDate);
+  if (!date) return isoDate;
+  date.setUTCDate(date.getUTCDate() + days);
+  return calendarIsoDate(date);
+};
+
 const buildCalendarDates = (startValue) => {
   const requestedStart = parseCalendarIsoDate(startValue);
   const weekStart = requestedStart || (() => {
@@ -18486,14 +18493,20 @@ app.get("/api/calendar-events", async (req, res) => {
     }
 
     const endpoint = type === "dividends" ? "dividends-calendar" : "ipos-calendar";
+    const queryFrom = type === "dividends"
+      ? shiftCalendarIsoDate(dates[0], -120)
+      : dates[0];
     const rows = await getFmpData("calendar", `${type} calendar page`, [
-      `/stable/${endpoint}?from=${dates[0]}&to=${dates[6]}`
+      `/stable/${endpoint}?from=${queryFrom}&to=${dates[6]}`
     ]);
     const rawRows = Array.isArray(rows) ? rows : rows ? [rows] : [];
     const eventsByDate = new Map();
 
     rawRows.forEach((row) => {
-      const date = String(row.date || row.exDividendDate || row.daa || "").slice(0, 10);
+      const exDividendDate = String(row.exDividendDate || row.date || "").slice(0, 10);
+      const paymentDate = String(row.paymentDate || "").slice(0, 10);
+      const ipoDate = String(row.date || row.daa || "").slice(0, 10);
+      const date = type === "dividends" ? paymentDate : ipoDate;
       if (!dates.includes(date)) return;
       const symbol = String(row.symbol || "").trim().toUpperCase();
       if (!symbol) return;
@@ -18506,8 +18519,9 @@ app.get("/api/calendar-events", async (req, res) => {
             dividend: firstFiniteNumber(row.adjDividend, row.dividend),
             yield: firstFiniteNumber(row.yield),
             frequency: firstText(row.frequency) || "N/A",
+            exDividendDate,
             recordDate: firstText(row.recordDate),
-            paymentDate: firstText(row.paymentDate),
+            paymentDate,
             declarationDate: firstText(row.declarationDate),
             source: "FMP dividends calendar"
           }
