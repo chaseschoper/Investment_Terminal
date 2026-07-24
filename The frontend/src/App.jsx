@@ -4514,13 +4514,15 @@ const estimateGrowthRows = estimateMetricConfig.map((metric) => ({
   label: `${metric.label} Growth`,
   cells: estimateGrowthCells.filter((cell) => cell.metricKey === metric.key)
 }));
-const estimateGrowthByYear = estimateGrowthCells.reduce((items, cell) => {
-  if (!isNumber(cell.year)) return items;
+const projectionEstimateGrowthByYear = estimateYearCards.slice(1).reduce((items, estimate, index) => {
+  const projectionYear = PROJECTION_YEARS[index];
+  const previousEstimate = estimateYearCards[index];
+  if (!projectionYear || !previousEstimate) return items;
   return {
     ...items,
-    [cell.year]: {
-      ...(items[cell.year] || {}),
-      [cell.metricKey]: cell.value
+    [projectionYear]: {
+      revenue: calculateEstimateGrowth(estimate.revenue, previousEstimate.revenue),
+      earnings: calculateEstimateGrowth(estimate.earnings, previousEstimate.earnings)
     }
   };
 }, {});
@@ -4531,14 +4533,6 @@ const currentYearRevenueGrowth = calculateEstimateGrowth(
 const currentYearEarningsGrowth = calculateEstimateGrowth(
   estimateCurrentYearCard?.earnings,
   previousYearEstimate?.earnings
-);
-const nextYearRevenueGrowth = calculateEstimateGrowth(
-  estimateNextYearCard?.revenue,
-  estimateCurrentYearCard?.revenue
-);
-const nextYearEarningsGrowth = calculateEstimateGrowth(
-  estimateNextYearCard?.earnings,
-  estimateCurrentYearCard?.earnings
 );
 const projectionSymbol = String(stockData?.symbol || ticker || "").toUpperCase();
 const projectionSettingsByCase =
@@ -4573,12 +4567,12 @@ const getProjectionInputValue = (caseId, key, year) => {
   const savedValue = caseSettings?.[key]?.[year];
   if (savedValue !== undefined) return savedValue;
 
-  if (key === "revenueGrowth" && isNumber(estimateGrowthByYear[year]?.revenue)) {
-    return estimateGrowthByYear[year].revenue.toFixed(2);
+  if (key === "revenueGrowth" && isNumber(projectionEstimateGrowthByYear[year]?.revenue)) {
+    return projectionEstimateGrowthByYear[year].revenue.toFixed(2);
   }
 
-  if (key === "netIncomeGrowth" && isNumber(estimateGrowthByYear[year]?.earnings)) {
-    return estimateGrowthByYear[year].earnings.toFixed(2);
+  if (key === "netIncomeGrowth" && isNumber(projectionEstimateGrowthByYear[year]?.earnings)) {
+    return projectionEstimateGrowthByYear[year].earnings.toFixed(2);
   }
 
   return getProjectionAssumptionValue(caseSettings, key, year);
@@ -4586,8 +4580,8 @@ const getProjectionInputValue = (caseId, key, year) => {
 const projectionShareBase =
   isNumber(stockData?.sharesOutstanding) && stockData.sharesOutstanding > 0
     ? stockData.sharesOutstanding * 1000000
-    : isNumber(currentYearEstimate?.earnings) && isNumber(currentYearEstimate?.eps) && currentYearEstimate.eps !== 0
-      ? currentYearEstimate.earnings / currentYearEstimate.eps
+    : isNumber(estimateCurrentYearCard?.earnings) && isNumber(estimateCurrentYearCard?.eps) && estimateCurrentYearCard.eps !== 0
+      ? estimateCurrentYearCard.earnings / estimateCurrentYearCard.eps
       : null;
 const buildProjectionRows = (caseId) => PROJECTION_YEARS.reduce((rows, year) => {
   const previousRow = rows.at(-1);
@@ -4605,12 +4599,12 @@ const buildProjectionRows = (caseId) => PROJECTION_YEARS.reduce((rows, year) => 
   const baseNetIncomeOverride = parseInputNumber(getProjectionInputValue(caseId, "netIncome", year));
   const baseSharesOverride = parseInputNumber(getProjectionInputValue(caseId, "shares", year));
   const revenue = isBaseYear
-    ? firstNumber(baseRevenueOverride, currentYearEstimate?.revenue)
+    ? firstNumber(baseRevenueOverride, estimateCurrentYearCard?.revenue)
     : isNumber(previousRow?.revenue)
       ? previousRow.revenue * (1 + revenueGrowthRate)
       : null;
   const netIncome = isBaseYear
-    ? firstNumber(baseNetIncomeOverride, currentYearEstimate?.earnings)
+    ? firstNumber(baseNetIncomeOverride, estimateCurrentYearCard?.earnings)
     : isNumber(previousRow?.netIncome)
       ? previousRow.netIncome * (1 + netIncomeGrowthRate)
       : null;
@@ -4619,8 +4613,8 @@ const buildProjectionRows = (caseId) => PROJECTION_YEARS.reduce((rows, year) => 
     : isNumber(previousRow?.shares)
       ? previousRow.shares * (1 + sharesGrowthRate)
       : null;
-  const eps = isBaseYear && isNumber(currentYearEstimate?.eps)
-    ? currentYearEstimate.eps
+  const eps = isBaseYear && isNumber(estimateCurrentYearCard?.eps)
+    ? estimateCurrentYearCard.eps
     : isNumber(netIncome) && isNumber(shares) && shares !== 0
       ? netIncome / shares
       : null;
