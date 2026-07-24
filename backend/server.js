@@ -79,6 +79,7 @@ const INTERIM_HISTORY_VERSION = 6;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const BALANCE_SHEET_METRICS_VERSION = 14;
 const VALUATION_METRICS_VERSION = 23;
+const FOREIGN_CURRENCY_CONVERSION_VERSION = 2;
 const EARNINGS_CALL_VERSION = 18;
 const FMP_VALUATION_METRIC_FIELDS = [
   "pe",
@@ -633,10 +634,10 @@ const KNOWN_FINANCIAL_INSTITUTIONS = new Set([
 ]);
 
 const MARKET_INDICES = [
-  { key: "sp500", label: "S&P 500", yahooSymbol: "^GSPC", fmpSymbol: "^GSPC", futuresSymbol: "ES=F", investingPath: "us-spx-500", stockAnalysisLabel: "S&P500" },
-  { key: "dow", label: "Dow Jones", yahooSymbol: "^DJI", fmpSymbol: "^DJI", futuresSymbol: "YM=F", investingPath: "us-30", stockAnalysisLabel: "Dow Jones" },
-  { key: "nasdaq", label: "Nasdaq", yahooSymbol: "^NDX", fmpSymbol: "^IXIC", futuresSymbol: "NQ=F", investingPath: "nq-100", stockAnalysisLabel: "Nasdaq" },
-  { key: "russell2000", label: "Russell 2000", yahooSymbol: "^RUT", fmpSymbol: "^RUT", futuresSymbol: "RTY=F", investingPath: "smallcap-2000", stockAnalysisLabel: "Russell 2000" }
+  { key: "sp500", label: "S&P 500", yahooSymbol: "^GSPC", fmpSymbol: "^GSPC", futuresSymbol: "ES=F", fmpFuturesSymbol: "ESUSD", investingPath: "us-spx-500", stockAnalysisLabel: "S&P500" },
+  { key: "dow", label: "Dow Jones", yahooSymbol: "^DJI", fmpSymbol: "^DJI", futuresSymbol: "YM=F", fmpFuturesSymbol: "YMUSD", investingPath: "us-30", stockAnalysisLabel: "Dow Jones" },
+  { key: "nasdaq", label: "Nasdaq", yahooSymbol: "^NDX", fmpSymbol: "^IXIC", futuresSymbol: "NQ=F", fmpFuturesSymbol: "NQUSD", investingPath: "nq-100", stockAnalysisLabel: "Nasdaq" },
+  { key: "russell2000", label: "Russell 2000", yahooSymbol: "^RUT", fmpSymbol: "^RUT", futuresSymbol: "RTY=F", fmpFuturesSymbol: "RTYUSD", investingPath: "smallcap-2000", stockAnalysisLabel: "Russell 2000" }
 ];
 
 const SP500_HEATMAP_COMPANIES = [
@@ -1252,7 +1253,8 @@ async function fetchFmpStableValuationMetrics(ticker) {
     const profile = Array.isArray(profileData) ? profileData[0] || {} : profileData || {};
     const rating = Array.isArray(ratingData) ? ratingData[0] || {} : ratingData || {};
     const priceTarget = Array.isArray(priceTargetData) ? priceTargetData[0] || {} : priceTargetData || {};
-    const estimates = normalizeFmpAnnualEstimateRows(estimatesData, { symbol, maxFutureYears: 3 });
+    const estimates = normalizeFmpAnnualEstimateRows(estimatesData, { symbol, maxFutureYears: 6 });
+    const annualEstimateRows = normalizeFmpAnnualEstimateBlocks(estimates);
     const currentYearEstimate = estimates[0] || {};
     const nextYearEstimate =
       estimates.find((row) => row !== currentYearEstimate && row.estimateDate > currentYearEstimate.estimateDate) ||
@@ -1418,6 +1420,7 @@ async function fetchFmpStableValuationMetrics(ticker) {
       nextYearRevenue: toNumberOrNull(nextYearEstimate.revenueAvg ?? nextYearEstimate.estimatedRevenueAvg),
       nextYearEps,
       nextYearNetIncome: toNumberOrNull(nextYearEstimate.netIncomeAvg ?? nextYearEstimate.estimatedNetIncomeAvg),
+      annualEstimateRows,
       valuationMetricsSource: "FMP stable ratios/key metrics"
     };
   } catch (err) {
@@ -1625,7 +1628,7 @@ async function fetchFmpMetricCards(ticker) {
       getFmpData(symbol, "metric cards cash flow quarter", ["/stable/cash-flow-statement?symbol={ticker}&period=quarter&limit=4"]),
       getFmpData(symbol, "metric cards income quarter", ["/stable/income-statement?symbol={ticker}&period=quarter&limit=4"]),
       getFmpData(symbol, "metric cards annual growth", ["/stable/financial-growth?symbol={ticker}&period=annual&limit=2"]),
-      getFmpData(symbol, "metric cards analyst estimates", ["/stable/analyst-estimates?symbol={ticker}&period=annual&limit=8"]),
+      getFmpData(symbol, "metric cards analyst estimates", ["/stable/analyst-estimates?symbol={ticker}&period=annual&limit=10"]),
       getFmpData(symbol, "metric cards rating snapshot", ["/stable/ratings-snapshot?symbol={ticker}"]),
       getFmpData(symbol, "metric cards price target summary", ["/stable/price-target-summary?symbol={ticker}"]),
       resolveWithin(fetchStockAnalysisValuationMetrics(symbol), 2200, {})
@@ -1644,7 +1647,7 @@ async function fetchFmpMetricCards(ticker) {
     const rating = Array.isArray(ratingData) ? ratingData[0] || {} : ratingData || {};
     const priceTarget = Array.isArray(priceTargetData) ? priceTargetData[0] || {} : priceTargetData || {};
     const stockAnalysisValuation = stockAnalysisValuationData || {};
-    const estimates = normalizeFmpAnnualEstimateRows(estimatesData, { symbol, maxFutureYears: 3 });
+    const estimates = normalizeFmpAnnualEstimateRows(estimatesData, { symbol, maxFutureYears: 6 });
     const currentYearEstimate = estimates[0] || {};
 
     const price = firstFmpMetricNumber(quote.price, metrics.stockPrice, metrics.price);
@@ -3996,6 +3999,9 @@ function normalizeForeignAdrEstimateBlock(block, config, usdRate, sharesOutstand
   });
   const revenue = normalizeForeignAdrMoneyEstimate(block.revenue, usdRate, revenueThreshold);
   const rawEarnings = normalizeForeignAdrMoneyEstimate(block.earnings, usdRate, earningsThreshold);
+  const ebitda = normalizeForeignAdrMoneyEstimate(block.ebitda, usdRate, earningsThreshold);
+  const ebit = normalizeForeignAdrMoneyEstimate(block.ebit, usdRate, earningsThreshold);
+  const sgaExpense = normalizeForeignAdrMoneyEstimate(block.sgaExpense, usdRate, earningsThreshold);
   const earnings =
     toNumberOrNull(rawEarnings) !== null
       ? rawEarnings
@@ -4007,6 +4013,9 @@ function normalizeForeignAdrEstimateBlock(block, config, usdRate, sharesOutstand
     ...block,
     revenue,
     earnings,
+    ebitda,
+    ebit,
+    sgaExpense,
     eps
   };
 }
@@ -4247,15 +4256,55 @@ const finalizeStockMetricCardResponse = (ticker, data = {}) =>
     ? sanitizeFmpAdrMetricCards(data)
     : data;
 
+async function finalizeStockResponseForClient(ticker, data = {}) {
+  const adrNormalized = await normalizeForeignAdrStockData(ticker, data);
+  const currencyNormalized = await normalizeForeignFinancialCurrencyStockData(ticker, adrNormalized);
+  return finalizeStockMetricCardResponse(ticker, currencyNormalized);
+}
+
+function latestAnnualRevenueMagnitude(data = {}) {
+  const annualRows = Array.isArray(data.revenueData)
+    ? data.revenueData.filter((row) => !row?.isInterim && toNumberOrNull(row?.revenue) !== null)
+    : [];
+  const latest = annualRows[annualRows.length - 1] || {};
+  return toNumberOrNull(latest.revenue);
+}
+
+async function fetchFmpReportedFinancialCurrency(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return null;
+  try {
+    const rows = await getFmpData(symbol, "reported financial currency", [
+      "/stable/income-statement?symbol={ticker}&period=annual&limit=1"
+    ]);
+    const row = Array.isArray(rows) ? rows[0] || {} : rows || {};
+    return firstText(row.reportedCurrency, row.currency) || null;
+  } catch (err) {
+    setFmpCooldown(err, "reported financial currency", symbol);
+    console.log("FMP reported currency skipped:", symbol, err.response?.status || err.message);
+    return null;
+  }
+}
+
 async function normalizeForeignAdrStockData(ticker, data = {}) {
   const config = FOREIGN_ADR_CONFIG[ticker];
   if (!config) {
     return data;
   }
   if (data.currencyAdjustedFor === `${ticker}_${config.displayCurrency}_ADR`) {
-    return data.isAdr === true && data.valuationMetricsVersion === VALUATION_METRICS_VERSION
-      ? sanitizeFmpAdrMetricCards(data)
-      : data;
+    const latestAnnualRevenue = latestAnnualRevenueMagnitude(data);
+    const looksAlreadyConverted =
+      latestAnnualRevenue === null ||
+      Math.abs(latestAnnualRevenue) < (config.convertedRevenueBillionsThreshold || 1000);
+    if (data.foreignCurrencyConversionVersion === FOREIGN_CURRENCY_CONVERSION_VERSION || looksAlreadyConverted) {
+      const versionedData = {
+        ...data,
+        foreignCurrencyConversionVersion: FOREIGN_CURRENCY_CONVERSION_VERSION
+      };
+      return versionedData.isAdr === true && versionedData.valuationMetricsVersion === VALUATION_METRICS_VERSION
+        ? sanitizeFmpAdrMetricCards(versionedData)
+        : versionedData;
+    }
   }
 
   const usdRate = await fetchUsdRate(config.sourceCurrency, config.fallbackUsdRate);
@@ -4302,7 +4351,12 @@ async function normalizeForeignAdrStockData(ticker, data = {}) {
           config,
           usdRate,
           sharesOutstanding
-        )
+        ),
+        futureYears: Array.isArray(data.analystEstimates.futureYears)
+          ? data.analystEstimates.futureYears.map((row) =>
+              normalizeForeignAdrEstimateBlock(row, config, usdRate, sharesOutstanding)
+            )
+          : data.analystEstimates.futureYears
       }
     : data.analystEstimates;
   const epsBeatMiss = normalizeForeignAdrEpsBeatMissRows(data.epsBeatMiss, config, usdRate);
@@ -4372,7 +4426,8 @@ async function normalizeForeignAdrStockData(ticker, data = {}) {
     financialCurrency: config.displayCurrency,
     sourceFinancialCurrency: config.sourceCurrency,
     adrRatio: config.adrRatio,
-    currencyAdjustedFor: `${ticker}_${config.displayCurrency}_ADR`
+    currencyAdjustedFor: `${ticker}_${config.displayCurrency}_ADR`,
+    foreignCurrencyConversionVersion: FOREIGN_CURRENCY_CONVERSION_VERSION
   };
 
   if (data.isAdr === true && data.valuationMetricsVersion === VALUATION_METRICS_VERSION) {
@@ -4400,6 +4455,9 @@ function convertGenericForeignRowToUsd(row, usdRate) {
     "operatingIncome",
     "operatingCashflow",
     "freeCashflow",
+    "ebitda",
+    "ebit",
+    "sgaExpense",
     "value"
   ]);
   const eps = toNumberOrNull(row.eps);
@@ -4409,13 +4467,30 @@ function convertGenericForeignRowToUsd(row, usdRate) {
   return next;
 }
 
-function convertGenericEstimateBlockToUsd(block, usdRate) {
+const HIGH_SCALE_FINANCIAL_CURRENCIES = new Set(["JPY", "KRW", "TWD", "CNY", "IDR", "VND"]);
+
+function convertGenericEstimateBlockToUsd(block, usdRate, options = {}) {
   if (!block) return block;
-  const next = convertMoneyFields(block, usdRate, ["revenue", "earnings"]);
+  const sourceCurrency = String(options.sourceCurrency || "").toUpperCase();
+  const useScaleGuard = HIGH_SCALE_FINANCIAL_CURRENCIES.has(sourceCurrency);
+  const threshold = options.quarterly ? 300000000000 : 1000000000000;
+  const next = { ...block };
+  ["revenue", "earnings", "ebitda", "ebit", "sgaExpense"].forEach((field) => {
+    const value = toNumberOrNull(next[field]);
+    if (value === null) return;
+    if (!useScaleGuard || Math.abs(value) >= threshold) next[field] = value * usdRate;
+  });
   const eps = toNumberOrNull(block.eps);
-  if (eps !== null) next.eps = eps * usdRate;
+  if (eps !== null && (!useScaleGuard || Math.abs(eps) >= (options.quarterly ? 8 : 40))) {
+    next.eps = eps * usdRate;
+  }
   return next;
 }
+
+const convertGenericEstimateBlocksToUsd = (rows, usdRate, options = {}) =>
+  Array.isArray(rows)
+    ? rows.map((row) => convertGenericEstimateBlockToUsd(row, usdRate, options))
+    : rows;
 
 function convertGenericEpsBeatMissToUsd(rows, usdRate) {
   if (!Array.isArray(rows)) return rows;
@@ -4430,11 +4505,26 @@ function convertGenericEpsBeatMissToUsd(rows, usdRate) {
 }
 
 async function normalizeForeignFinancialCurrencyStockData(ticker, data = {}) {
-  const sourceCurrency = firstText(data.sourceFinancialCurrency, data.financialCurrency);
+  const rowSourceCurrency = Array.isArray(data.revenueData)
+    ? firstText(...data.revenueData.map((row) => row?.sourceCurrency))
+    : null;
+  let sourceCurrency = firstText(data.sourceFinancialCurrency, rowSourceCurrency, data.financialCurrency);
+  if ((!sourceCurrency || String(sourceCurrency).toUpperCase() === "USD") && Math.abs(latestAnnualRevenueMagnitude(data) || 0) > 1000) {
+    const reportedCurrency = await fetchFmpReportedFinancialCurrency(ticker);
+    if (reportedCurrency && String(reportedCurrency).toUpperCase() !== "USD") {
+      sourceCurrency = reportedCurrency;
+    }
+  }
   if (!sourceCurrency || String(sourceCurrency).toUpperCase() === "USD") {
     return data;
   }
-  if (String(data.currencyAdjustedFor || "").includes("_USD_")) {
+  if (String(data.currencyAdjustedFor || "").includes("_USD_ADR")) {
+    return data;
+  }
+  const alreadyConverted =
+    String(data.currencyAdjustedFor || "").includes("_USD_") &&
+    data.foreignCurrencyConversionVersion === FOREIGN_CURRENCY_CONVERSION_VERSION;
+  if (alreadyConverted) {
     return data;
   }
 
@@ -4444,10 +4534,14 @@ async function normalizeForeignFinancialCurrencyStockData(ticker, data = {}) {
   const analystEstimates = data.analystEstimates
     ? {
         ...data.analystEstimates,
-        nextQuarter: convertGenericEstimateBlockToUsd(data.analystEstimates.nextQuarter, usdRate),
-        currentYear: convertGenericEstimateBlockToUsd(data.analystEstimates.currentYear, usdRate),
-        nextYear: convertGenericEstimateBlockToUsd(data.analystEstimates.nextYear, usdRate),
-        followingYear: convertGenericEstimateBlockToUsd(data.analystEstimates.followingYear, usdRate)
+        nextQuarter: convertGenericEstimateBlockToUsd(data.analystEstimates.nextQuarter, usdRate, {
+          sourceCurrency,
+          quarterly: true
+        }),
+        currentYear: convertGenericEstimateBlockToUsd(data.analystEstimates.currentYear, usdRate, { sourceCurrency }),
+        nextYear: convertGenericEstimateBlockToUsd(data.analystEstimates.nextYear, usdRate, { sourceCurrency }),
+        followingYear: convertGenericEstimateBlockToUsd(data.analystEstimates.followingYear, usdRate, { sourceCurrency }),
+        futureYears: convertGenericEstimateBlocksToUsd(data.analystEstimates.futureYears, usdRate, { sourceCurrency })
       }
     : data.analystEstimates;
 
@@ -4494,7 +4588,8 @@ async function normalizeForeignFinancialCurrencyStockData(ticker, data = {}) {
     epsBeatMiss: convertGenericEpsBeatMissToUsd(data.epsBeatMiss, usdRate),
     financialCurrency: "USD",
     sourceFinancialCurrency: sourceCurrency,
-    currencyAdjustedFor: `${ticker}_${sourceCurrency}_TO_USD`
+    currencyAdjustedFor: `${ticker}_${sourceCurrency}_TO_USD`,
+    foreignCurrencyConversionVersion: FOREIGN_CURRENCY_CONVERSION_VERSION
   };
 }
 
@@ -4859,7 +4954,7 @@ const normalizeFmpAnnualEstimateRows = (rows = [], options = {}) => {
   const now = new Date();
   const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const currentYear = now.getUTCFullYear();
-  const maxFutureYear = currentYear + (options.maxFutureYears ?? 3);
+  const maxFutureYear = currentYear + (options.maxFutureYears ?? 6);
 
   return (Array.isArray(rows) ? rows : rows ? [rows] : [])
     .filter((row) => !symbol || String(row.symbol || "").trim().toUpperCase() === symbol)
@@ -4874,6 +4969,39 @@ const normalizeFmpAnnualEstimateRows = (rows = [], options = {}) => {
     })
     .sort((a, b) => a.estimateDate - b.estimateDate);
 };
+
+const normalizeFmpAnnualEstimateBlock = (row = {}) => {
+  if (!row || Number.isNaN(row.estimateDate?.getTime?.())) return null;
+  const fiscalYear = row.estimateDate.getUTCFullYear();
+  return {
+    fiscalYear,
+    date: String(row.date || "").slice(0, 10) || null,
+    revenue: toNumberOrNull(fmpEstimateField(row, "revenueAvg", "estimatedRevenueAvg")),
+    earnings: toNumberOrNull(fmpEstimateField(row, "netIncomeAvg", "estimatedNetIncomeAvg")),
+    ebitda: toNumberOrNull(fmpEstimateField(row, "ebitdaAvg", "estimatedEbitdaAvg")),
+    ebit: toNumberOrNull(fmpEstimateField(row, "ebitAvg", "estimatedEbitAvg")),
+    sgaExpense: toNumberOrNull(fmpEstimateField(row, "sgaExpenseAvg", "estimatedSgaExpenseAvg")),
+    eps: toNumberOrNull(fmpEstimateField(row, "epsAvg", "estimatedEpsAvg")),
+    numAnalystsRevenue: toNumberOrNull(row.numAnalystsRevenue),
+    numAnalystsEps: toNumberOrNull(row.numAnalystsEps),
+    source: "FMP"
+  };
+};
+
+const normalizeFmpAnnualEstimateBlocks = (rows = []) =>
+  rows
+    .map(normalizeFmpAnnualEstimateBlock)
+    .filter((row) =>
+      row &&
+      (
+        toNumberOrNull(row.revenue) !== null ||
+        toNumberOrNull(row.earnings) !== null ||
+        toNumberOrNull(row.ebitda) !== null ||
+        toNumberOrNull(row.ebit) !== null ||
+        toNumberOrNull(row.sgaExpense) !== null ||
+        toNumberOrNull(row.eps) !== null
+      )
+    );
 
 const estimateLooksSaneAgainstHistory = (estimate = {}, latestAnnual = {}) => {
   const estimateRevenue = toNumberOrNull(estimate.revenueAvg ?? estimate.estimatedRevenueAvg);
@@ -5324,6 +5452,7 @@ function mergeHistoricalFinancials(primary = [], fallback = [], limit = 7) {
       operatingCashflow: row.operatingCashflow ?? existing.operatingCashflow ?? null,
       freeCashflow: row.freeCashflow ?? existing.freeCashflow ?? null,
       sharesOutstanding: row.sharesOutstanding ?? existing.sharesOutstanding ?? null,
+      sourceCurrency: firstText(row.sourceCurrency, existing.sourceCurrency) || null,
       source: row.source || existing.source
     });
   });
@@ -5633,6 +5762,7 @@ function finalizeFinancialHistory(rows, sharesOutstanding) {
       ),
       sharesOutstanding
     ),
+    sourceCurrency: firstText(row.sourceCurrency) || null,
     source: row.source
   }));
 }
@@ -6743,10 +6873,11 @@ async function prepareStockResponseData(ticker, data = {}, options = {}) {
     : await repairHistoricalPeIfNeeded(ticker, baseData);
   const fmpMetricCards = await resolveWithin(fetchFmpMetricCards(ticker), options.fast ? 1800 : 3200, {});
   if (Object.keys(fmpMetricCards || {}).length) persistFmpMetricCards(ticker, fmpMetricCards);
-  return normalizeForeignAdrStockData(
+  const adrNormalized = await normalizeForeignAdrStockData(
     ticker,
     applyFmpMetricCards(withDerivedQuarterlyHistoricalPe(repairedData), fmpMetricCards)
   );
+  return normalizeForeignFinancialCurrencyStockData(ticker, adrNormalized);
 }
 
 function prepareCachedStockResponseData(ticker, data = {}) {
@@ -7116,12 +7247,12 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
         };
       }
     }
-    return finalizeStockMetricCardResponse(ticker, responseData);
+    return finalizeStockResponseForClient(ticker, responseData);
   }
 
   const fmpPeRows = await resolveWithin(fetchFmpHistoricalPe(ticker), 1000, []);
   if (!Array.isArray(fmpPeRows) || !fmpPeRows.length) {
-    return finalizeStockMetricCardResponse(ticker, responseData);
+    return finalizeStockResponseForClient(ticker, responseData);
   }
 
   const quarterlyPeRows = await resolveWithin(
@@ -7153,7 +7284,7 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
     console.log("Fast historical PE response cache skipped:", ticker, err.message);
   });
 
-  return finalizeStockMetricCardResponse(ticker, responseData);
+  return finalizeStockResponseForClient(ticker, responseData);
 }
 
 async function fetchYahooTimeSeriesFinancials(ticker) {
@@ -7404,6 +7535,7 @@ async function fetchFmpIncomeStatementHistory(ticker) {
               row.weightedAverageShsOut
             ) / 1000000
           : null,
+        sourceCurrency: firstText(row.reportedCurrency, row.currency) || null,
         source: "FMP stable income statement"
       }))
       .filter((row) => row.year)
@@ -7512,6 +7644,7 @@ async function fetchFmpQuarterlyFinancialHistory(ticker) {
                   row.weightedAverageShsOut
               ) / 1000000
             : null,
+          sourceCurrency: firstText(row.reportedCurrency, row.currency) || null,
           source: "FMP quarterly financials"
         };
       })
@@ -7548,6 +7681,7 @@ async function fetchFmpFinancialHistory(ticker) {
           row.netCashProvidedByOperatingActivities
       ),
       freeCashflow: toBillions(row.freeCashFlow ?? row.freeCashflow),
+      sourceCurrency: firstText(row.reportedCurrency, row.currency) || null,
       source: "FMP stable cash flow statement"
     }))
     .filter((row) => row.year)
@@ -10185,6 +10319,11 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
         source: calendarQuarterEstimate.source || "FMP earnings history"
       }
     : previousNextQuarterEstimate;
+  const fmpFutureYearEstimates = Array.isArray(fmpValuation.annualEstimateRows)
+    ? fmpValuation.annualEstimateRows
+    : [];
+  const fastCurrentYearEstimate = fmpFutureYearEstimates[0] || {};
+  const fastNextYearEstimate = fmpFutureYearEstimates[1] || {};
 
   const analystEstimates = {
     nextQuarter: {
@@ -10197,15 +10336,19 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     },
     currentYear: {
       ...(previousData.analystEstimates?.currentYear || {}),
+      ...(fastCurrentYearEstimate || {}),
       revenue: firstNumber(
+        normalizeStatementDollars(fastCurrentYearEstimate.revenue),
         normalizeStatementDollars(fmpValuation.currentYearRevenue),
         previousData.analystEstimates?.currentYear?.revenue
       ),
       earnings: firstNumber(
+        fastCurrentYearEstimate.earnings,
         fmpValuation.currentYearNetIncome,
         previousData.analystEstimates?.currentYear?.earnings
       ),
       eps: firstNumber(
+        toNumberOrNull(fastCurrentYearEstimate.eps),
         toNumberOrNull(fmpValuation.currentYearEps),
         previousData.analystEstimates?.currentYear?.eps
       ),
@@ -10213,20 +10356,27 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     },
     nextYear: {
       ...(previousData.analystEstimates?.nextYear || {}),
+      ...(fastNextYearEstimate || {}),
       revenue: firstNumber(
+        normalizeStatementDollars(fastNextYearEstimate.revenue),
         normalizeStatementDollars(fmpValuation.nextYearRevenue),
         previousData.analystEstimates?.nextYear?.revenue
       ),
       earnings: firstNumber(
+        fastNextYearEstimate.earnings,
         fmpValuation.nextYearNetIncome,
         previousData.analystEstimates?.nextYear?.earnings
       ),
       eps: firstNumber(
+        toNumberOrNull(fastNextYearEstimate.eps),
         toNumberOrNull(fmpValuation.nextYearEps),
         previousData.analystEstimates?.nextYear?.eps
       ),
       source: "FMP"
-    }
+    },
+    futureYears: fmpFutureYearEstimates.length
+      ? fmpFutureYearEstimates
+      : previousData.analystEstimates?.futureYears || []
   };
   const epsBeatMiss = buildEpsBeatMissSeries(previousData.epsBeatMiss || [], analystEstimates.nextQuarter);
   const nextEps = toNumberOrNull(analystEstimates.nextYear.eps);
@@ -10570,7 +10720,7 @@ async function fetchStockData(ticker) {
       "/stable/price-target-consensus?symbol={ticker}"
     ]), STOCK_PROVIDER_TIMEOUT_MS, null),
     resolveWithin(getFmpData(ticker, "analyst estimates", [
-      "/stable/analyst-estimates?symbol={ticker}&period=annual&limit=8"
+      "/stable/analyst-estimates?symbol={ticker}&period=annual&limit=10"
     ]), STOCK_PROVIDER_TIMEOUT_MS, null),
     resolveWithin(getFmpData(ticker, "rating", [
       "/stable/ratings-snapshot?symbol={ticker}"
@@ -10609,7 +10759,7 @@ async function fetchStockData(ticker) {
     : fmpAnalystEstimateData
       ? [fmpAnalystEstimateData]
       : [];
-  fmpAnalystEstimates = normalizeFmpAnnualEstimateRows(fmpAnalystEstimates, { symbol: ticker, maxFutureYears: 3 });
+  fmpAnalystEstimates = normalizeFmpAnnualEstimateRows(fmpAnalystEstimates, { symbol: ticker, maxFutureYears: 6 });
   fmpRating = Array.isArray(fmpRatingData)
     ? fmpRatingData[0] || {}
     : fmpRatingData || {};
@@ -10706,6 +10856,10 @@ async function fetchStockData(ticker) {
   const previousAnnual = annualRows[annualRows.length - 2] || {};
   const stockAnalysisFinancialCurrency = firstText(
     ...stockAnalysisFinancialData.map((row) => row.sourceCurrency)
+  );
+  const historicalFinancialCurrency = firstText(
+    ...revenueData.map((row) => row.sourceCurrency),
+    stockAnalysisFinancialCurrency
   );
   const chartRevenueGrowth = historicalGrowth(revenueData, "revenue");
   const chartEarningsGrowth = historicalGrowth(revenueData, "earnings");
@@ -10855,6 +11009,7 @@ async function fetchStockData(ticker) {
   const saneFmpAnalystEstimates = fmpAnalystEstimates.filter((row) =>
     estimateLooksSaneAgainstHistory(row, latestAnnual)
   );
+  const fmpFutureYearEstimates = normalizeFmpAnnualEstimateBlocks(saneFmpAnalystEstimates);
   const fmpCurrentEstimate = saneFmpAnalystEstimates[0] || {};
   const fmpNextEstimate = saneFmpAnalystEstimates[1] || {};
   const fmpFollowingEstimate = saneFmpAnalystEstimates[2] || {};
@@ -11519,7 +11674,7 @@ async function fetchStockData(ticker) {
   const employeeCountValue = firstFiniteNumber(fmpStableValuation.employeeCount, fmpQuoteProfile.employeeCount);
   const isFmpAdr = fmpQuoteProfile.isAdr === true;
 
-  let data = await normalizeForeignAdrStockData(ticker, preserveBankMargins(withGuaranteedAnalystSection({
+  let data = preserveBankMargins(withGuaranteedAnalystSection({
     isFinancialCompany,
     bankMetrics: displayedBankMetrics,
     marginHistory,
@@ -11529,7 +11684,7 @@ async function fetchStockData(ticker) {
     isAdr: isFmpAdr,
     currency: firstText(fmpQuoteProfile.currency, yahooSupplementalData.currency, quote.currency, previousData?.currency),
     financialCurrency: firstText(fmpQuoteProfile.financialCurrency, yahooSupplementalData.financialCurrency, yahooSupplementalData.currency, quote.currency, previousData?.financialCurrency),
-    sourceFinancialCurrency: stockAnalysisFinancialCurrency || previousData?.sourceFinancialCurrency || null,
+    sourceFinancialCurrency: historicalFinancialCurrency || previousData?.sourceFinancialCurrency || null,
     sector: firstText(fmpQuoteProfile.sector, profile.gicsSector, profile.sector, yahooSupplementalData.sector, previousData?.sector),
     industry: firstText(fmpQuoteProfile.industry, profile.finnhubIndustry, profile.gicsSubIndustry, profile.industry, yahooSupplementalData.industry, previousData?.industry),
     ceo: firstText(fmpQuoteProfile.ceo, previousData?.ceo),
@@ -11665,7 +11820,8 @@ async function fetchStockData(ticker) {
       nextQuarter: calendarQuarterEstimate.source || "FMP earnings history",
       currentYear: "FMP",
       nextYear: "FMP",
-      followingYear: "FMP"
+      followingYear: "FMP",
+      futureYears: "FMP"
     },
     analystEstimates: {
       nextQuarter: {
@@ -11677,20 +11833,24 @@ async function fetchStockData(ticker) {
         source: calendarQuarterEstimate.source || "FMP earnings history"
       },
       currentYear: {
+        ...(fmpFutureYearEstimates[0] || {}),
         revenue: displayedCurrentRevenueValue,
         earnings: displayedCurrentEarningsValue,
         eps: displayedCurrentEpsValue
       },
       nextYear: {
+        ...(fmpFutureYearEstimates[1] || {}),
         revenue: displayedNextRevenueValue,
         earnings: displayedNextEarningsValue,
         eps: displayedNextEpsValue
       },
       followingYear: {
-        revenue: null,
-        earnings: null,
-        eps: null
-      }
+        ...(fmpFutureYearEstimates[2] || {}),
+        revenue: fmpFutureYearEstimates[2]?.revenue ?? null,
+        earnings: fmpFutureYearEstimates[2]?.earnings ?? null,
+        eps: fmpFutureYearEstimates[2]?.eps ?? null
+      },
+      futureYears: fmpFutureYearEstimates
     },
     quarterEstimateCheckedAt: new Date().toISOString(),
     estimateDataVersion: STOCK_ESTIMATE_VERSION,
@@ -11702,10 +11862,11 @@ async function fetchStockData(ticker) {
     latestInterimPeriod: revenueData.findLast((row) => row.isInterim)?.period || null,
     revenueHistory,
     revenueData
-  }), previousData));
-  data = await normalizeForeignFinancialCurrencyStockData(ticker, data);
+  }), previousData);
   const fmpMetricCards = await resolveWithin(fetchFmpMetricCards(ticker), STOCK_PROVIDER_TIMEOUT_MS, {});
   data = applyFmpMetricCards(data, fmpMetricCards);
+  data = await normalizeForeignAdrStockData(ticker, data);
+  data = await normalizeForeignFinancialCurrencyStockData(ticker, data);
 
   await Stock.findOneAndUpdate(
     { ticker },
@@ -13743,31 +13904,34 @@ app.get("/api/market-indices", async (req, res) => {
   };
 
   const fetchYahooFuture = async (index) => {
-    if (!canUseYahoo() || !index.futuresSymbol) return null;
+    if (!index.futuresSymbol) return null;
 
-    const quote = await resolveWithin(
-      yahooFinance.quote(index.futuresSymbol).catch(() => null),
-      2500,
-      null
-    );
-    let price = firstYahooNumber(quote?.regularMarketPrice);
-    let change = firstFiniteNumber(quote?.regularMarketChange);
-    let percentChange = firstFiniteNumber(quote?.regularMarketChangePercent);
-    let marketState = quote?.marketState || null;
+    let price = null;
+    let change = null;
+    let percentChange = null;
+    let marketState = null;
 
-    if (price === null) {
-      const chartResponse = await axios.get(
-        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(index.futuresSymbol)}`,
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3500);
+      const chartResponse = await fetch(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(index.futuresSymbol)}?interval=5m&range=1d`,
         {
-          params: { interval: "5m", range: "1d" },
           headers: {
             "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
             Accept: "application/json,text/plain,*/*"
           },
-          timeout: 3500
+          signal: controller.signal
         }
       );
-      const result = chartResponse.data?.chart?.result?.[0];
+      clearTimeout(timeout);
+      if (!chartResponse.ok) {
+        const error = new Error(`Yahoo futures chart ${chartResponse.status}`);
+        error.response = { status: chartResponse.status };
+        throw error;
+      }
+      const chartData = await chartResponse.json();
+      const result = chartData?.chart?.result?.[0];
       const meta = result?.meta || {};
       const closes = result?.indicators?.quote?.[0]?.close || [];
       price = firstFiniteNumber(
@@ -13778,6 +13942,20 @@ app.get("/api/market-indices", async (req, res) => {
       change = price !== null && previousClose !== null ? price - previousClose : null;
       percentChange = change !== null && previousClose > 0 ? (change / previousClose) * 100 : null;
       marketState = meta.marketState || marketState;
+    } catch (err) {
+      console.log("Market index futures chart skipped:", index.label, err.response?.status || err.message);
+    }
+
+    if (price === null && canUseYahoo()) {
+      const quote = await resolveWithin(
+        yahooFinance.quote(index.futuresSymbol).catch(() => null),
+        1200,
+        null
+      );
+      price = firstYahooNumber(quote?.regularMarketPrice);
+      change = firstFiniteNumber(quote?.regularMarketChange);
+      percentChange = firstFiniteNumber(quote?.regularMarketChangePercent);
+      marketState = quote?.marketState || marketState;
     }
 
     if (price === null) return null;
@@ -13790,6 +13968,35 @@ app.get("/api/market-indices", async (req, res) => {
       percentChange,
       marketState,
       source: "Yahoo Futures"
+    };
+  };
+
+  const fetchFmpFuture = async (index) => {
+    if (!process.env.FMP_API_KEY || !canUseFmp() || !index.fmpFuturesSymbol) return null;
+    const response = await axios.get("https://financialmodelingprep.com/stable/quote", {
+      params: {
+        symbol: index.fmpFuturesSymbol,
+        apikey: process.env.FMP_API_KEY
+      },
+      timeout: 1600,
+      validateStatus: () => true
+    });
+    if (response.status === 402 || response.status === 403) return null;
+    if (response.status >= 400) {
+      const error = new Error(`FMP futures quote ${response.status}`);
+      error.response = response;
+      throw error;
+    }
+    const quote = Array.isArray(response.data) ? response.data[0] : response.data;
+    const price = toNumberOrNull(quote?.price);
+    if (price === null) return null;
+    return {
+      symbol: index.fmpFuturesSymbol,
+      label: `${index.label} futures`,
+      price,
+      change: toNumberOrNull(quote?.change),
+      percentChange: toNumberOrNull(quote?.changePercentage),
+      source: "FMP Futures"
     };
   };
 
@@ -13824,23 +14031,49 @@ app.get("/api/market-indices", async (req, res) => {
 
   const fetchFreshIndices = async () => {
     const stockAnalysisMoves = await resolveWithin(fetchStockAnalysisIndexMoves(), 2600, new Map());
-    const indices = await Promise.all(MARKET_INDICES.map(async (index) => {
+    const indexQuotes = await Promise.all(MARKET_INDICES.map(async (index) => {
       let indexQuote = await fetchBestIndexQuote(index);
       indexQuote = applyStockAnalysisMove(index, indexQuote, stockAnalysisMoves);
 
       if (!indexQuote) return cachedByKey.get(index.key) || null;
 
+      return {
+        ...indexQuote,
+        futures: cachedByKey.get(index.key)?.futures || null
+      };
+    }));
+
+    const indices = [];
+    for (const [indexPosition, index] of MARKET_INDICES.entries()) {
+      const indexQuote = indexQuotes[indexPosition];
+      if (!indexQuote) {
+        indices.push(cachedByKey.get(index.key) || null);
+        continue;
+      }
       try {
-        const futures = await resolveWithin(fetchYahooFuture(index), 1400, null);
-        return futures
+        if (indexPosition > 0) await wait(175);
+        const futures = await resolveWithin(
+          fetchFmpFuture(index)
+            .catch((err) => {
+              if (err?.response?.status !== 402 && err?.response?.status !== 403) {
+                setFmpCooldown(err, "market index futures", index.label);
+                console.log("FMP market index futures skipped:", index.label, err.response?.status || err.message);
+              }
+              return null;
+            })
+            .then((fmpFuture) => fmpFuture || fetchYahooFuture(index)),
+          2600,
+          null
+        );
+        indices.push(futures
           ? { ...indexQuote, futures }
-          : { ...indexQuote, futures: cachedByKey.get(index.key)?.futures || null };
+          : { ...indexQuote, futures: cachedByKey.get(index.key)?.futures || null });
       } catch (err) {
         setYahooCooldown(err, "market index futures", index.label);
         console.log("Market index futures skipped:", index.label, err.response?.status || err.message);
-        return { ...indexQuote, futures: cachedByKey.get(index.key)?.futures || null };
+        indices.push({ ...indexQuote, futures: cachedByKey.get(index.key)?.futures || null });
       }
-    }));
+    }
 
     const mergedIndices = MARKET_INDICES.map((index) =>
       indices.find((item) => item?.key === index.key) || cachedByKey.get(index.key)

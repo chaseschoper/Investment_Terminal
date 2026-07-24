@@ -2649,7 +2649,11 @@ useEffect(() => {
               .map((item) => ({
                 ...item,
                 ...(previousByKey.get(item.key) || {}),
-                ...(indicesByKey.get(item.key) || {})
+                ...(indicesByKey.get(item.key) || {}),
+                futures:
+                  indicesByKey.get(item.key)?.futures ||
+                  previousByKey.get(item.key)?.futures ||
+                  null
               }));
             localStorage.setItem(MARKET_INDICES_STORAGE_KEY, JSON.stringify(ordered));
             return ordered;
