@@ -7779,7 +7779,6 @@ return (
           <div className="section-heading-row company-profile-heading">
             <div>
               <span className="home-feature-label">Company Profile</span>
-              <h2>Company Description</h2>
             </div>
             {stockData.website && (
               <a href={stockData.website} target="_blank" rel="noreferrer">
@@ -7796,7 +7795,6 @@ return (
           <div className="section-heading-row company-profile-heading">
             <div>
               <span className="home-feature-label">Leadership</span>
-              <h2>Company Executives</h2>
             </div>
           </div>
           <div className="company-executives-table-wrap">
