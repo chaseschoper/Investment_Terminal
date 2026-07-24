@@ -7325,6 +7325,8 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
     if (!hasFetchedMarketActivity) {
       responseData = {
         ...responseData,
+        institutionalHolders: hasMarketBeatHolderRows ? [] : responseData.institutionalHolders || [],
+        institutionalHoldersCheckedAt: hasMarketBeatHolderRows ? null : responseData.institutionalHoldersCheckedAt,
         marketActivityUpdatedAt: responseData.marketActivityUpdatedAt || new Date().toISOString()
       };
     } else {
@@ -7334,7 +7336,9 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
       : responseData.analystUpdates || [];
     const nextInstitutionalHolders = fmpMarketActivity.institutionalHolders?.length
       ? fmpMarketActivity.institutionalHolders
-      : responseData.institutionalHolders || [];
+      : hasMarketBeatHolderRows
+        ? []
+        : responseData.institutionalHolders || [];
     const nextInsiderTransactions = fmpMarketActivity.insiderTransactions?.length
       ? fmpMarketActivity.insiderTransactions
       : responseData.insiderTransactions || [];

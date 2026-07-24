@@ -1208,9 +1208,15 @@ const hasMarketActivityData = (stock = {}) =>
   (Array.isArray(stock.institutionalHolders) && stock.institutionalHolders.length > 0) ||
   (Array.isArray(stock.insiderTransactions) && stock.insiderTransactions.length > 0);
 
+const isLegacyInstitutionalHolderRow = (row = {}) =>
+  /MarketBeat/i.test(String(row?.source || ""));
+
+const getCurrentInstitutionalHolderRows = (rows = []) =>
+  (Array.isArray(rows) ? rows : []).filter((row) => !isLegacyInstitutionalHolderRow(row));
+
 const hasMarketActivityLoaded = (stock = {}) =>
   Boolean(stock.analystUpdatesCheckedAt || (Array.isArray(stock.analystUpdates) && stock.analystUpdates.length)) &&
-  Boolean(stock.institutionalHoldersCheckedAt || (Array.isArray(stock.institutionalHolders) && stock.institutionalHolders.length)) &&
+  Boolean(stock.institutionalHoldersCheckedAt || getCurrentInstitutionalHolderRows(stock.institutionalHolders).length) &&
   Boolean(stock.insiderTransactionsCheckedAt || (Array.isArray(stock.insiderTransactions) && stock.insiderTransactions.length));
 
 const hasAnyOverviewMetricData = (stock = {}) =>
@@ -1406,12 +1412,15 @@ const stabilizeRefreshingStockData = (previous, incoming) => {
     stable.epsBeatMiss = previous.epsBeatMiss;
   }
   ["analystUpdates", "institutionalHolders", "insiderTransactions"].forEach((field) => {
+    const previousRows = field === "institutionalHolders"
+      ? getCurrentInstitutionalHolderRows(previous[field])
+      : previous[field];
     if (
-      Array.isArray(previous[field]) &&
-      previous[field].length &&
+      Array.isArray(previousRows) &&
+      previousRows.length &&
       (!Array.isArray(incoming[field]) || !incoming[field].length)
     ) {
-      stable[field] = previous[field];
+      stable[field] = previousRows;
     }
   });
   METRIC_STABLE_FIELDS.forEach((field) => {
@@ -5144,16 +5153,23 @@ const nextQuarterValue = (value) =>
     ? "Loading..."
     : stockValue(value);
 const analystUpdateRows = stockData.analystUpdates || [];
-const institutionalHolderRows = stockData.institutionalHolders || [];
+const institutionalHolderRows = getCurrentInstitutionalHolderRows(stockData.institutionalHolders);
+const hasLegacyInstitutionalHolderRows =
+  (stockData.institutionalHolders || []).some((row) => isLegacyInstitutionalHolderRow(row));
 const insiderMoveRows = stockData.insiderTransactions || [];
 const isAnalystUpdatesLoading =
   (isInitialStockLoad || stockData?.refreshing) &&
   !stockData?.analystUpdatesCheckedAt &&
   !analystUpdateRows.length;
 const isInstitutionalHoldersLoading =
-  (isInitialStockLoad || stockData?.refreshing) &&
-  !stockData?.institutionalHoldersCheckedAt &&
-  !institutionalHolderRows.length;
+  !institutionalHolderRows.length &&
+  (
+    hasLegacyInstitutionalHolderRows ||
+    (
+      (isInitialStockLoad || stockData?.refreshing) &&
+      !stockData?.institutionalHoldersCheckedAt
+    )
+  );
 const isInsiderMovesLoading =
   (isInitialStockLoad || stockData?.refreshing) &&
   !stockData?.insiderTransactionsCheckedAt &&
