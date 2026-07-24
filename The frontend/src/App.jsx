@@ -7133,13 +7133,22 @@ return (
       <div className="ai-text">Building analysis...</div>
     ) : aiAnalysis?.verdict && aiAnalysis?.stockAnalysis ? (
       <>
-        <div className="ai-sentiment">
-          {aiAnalysis.verdict.stance} · {aiAnalysis.verdict.score}/100
+        <div className={`ai-brief-hero ${String(aiAnalysis.verdict.stance || "").toLowerCase()}`}>
+          <div>
+            <span className="ai-kicker">MrktRally research brief</span>
+            <div className="ai-sentiment">
+              {aiAnalysis.verdict.stance} · {aiAnalysis.verdict.score}/100
+            </div>
+          </div>
+          <div className="ai-score-ring">
+            <strong>{aiAnalysis.verdict.score}</strong>
+            <span>score</span>
+          </div>
         </div>
 
         <p className="ai-text">{aiAnalysis.verdict.summary}</p>
 
-        <div className="ai-analysis-grid">
+        <div className="ai-analysis-grid ai-analysis-grid-dense">
           <div className="ai-card">
             <h3 className="ai-title">Valuation</h3>
             <ul className="ai-list">
@@ -7157,6 +7166,39 @@ return (
               ))}
             </ul>
           </div>
+
+          {aiAnalysis.stockAnalysis.balanceSheet?.length ? (
+            <div className="ai-card">
+              <h3 className="ai-title">Balance Sheet</h3>
+              <ul className="ai-list">
+                {aiAnalysis.stockAnalysis.balanceSheet.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {aiAnalysis.stockAnalysis.returnsAndEfficiency?.length ? (
+            <div className="ai-card">
+              <h3 className="ai-title">Returns & Efficiency</h3>
+              <ul className="ai-list">
+                {aiAnalysis.stockAnalysis.returnsAndEfficiency.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {aiAnalysis.stockAnalysis.estimateSetup?.length ? (
+            <div className="ai-card">
+              <h3 className="ai-title">Estimate Setup</h3>
+              <ul className="ai-list">
+                {aiAnalysis.stockAnalysis.estimateSetup.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
 
           <div className="ai-card bullish-card">
             <h3 className="ai-title">Catalysts</h3>
@@ -7177,7 +7219,7 @@ return (
           </div>
         </div>
 
-        <div className="ai-analysis-grid">
+        <div className="ai-analysis-grid ai-scenario-grid">
           {aiAnalysis.stockAnalysis.scenarios.map((scenario) => (
             <div className="ai-card" key={scenario.label}>
               <h3 className="ai-title">{scenario.label} Case</h3>

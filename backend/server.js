@@ -365,6 +365,7 @@ const MR_RALLY_COMPANY_LOOKUP_TIMEOUT_MS = 2500;
 const STOCK_PROVIDER_TIMEOUT_MS = 8000;
 const STOCK_SLOW_PROVIDER_TIMEOUT_MS = 10000;
 const STOCK_FAST_CHART_HYDRATION_WAIT_MS = 2400;
+const STOCK_FINANCIAL_FRESHNESS_MS = 10 * 60 * 1000;
 const STOCK_INITIAL_SEC_TIMEOUT_MS = 9000;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
@@ -6082,6 +6083,90 @@ function hasRequestedCoreChartHistory(data = {}, wantsQuarterlyHistory = false) 
     : hasAnnualCoreChartHistory({ data });
 }
 
+function latestInterimHistoryMarker(data = {}) {
+  const rows = Array.isArray(data.revenueData) ? data.revenueData : [];
+  return rows
+    .filter((row) => row?.isInterim && row?.period !== "Current")
+    .map((row) => {
+      const quarter = Number(String(row.period || "").match(/Q([1-4])/i)?.[1]);
+      const year = Number(row.year);
+      const dateMs = Date.parse(`${row.date || ""}T00:00:00Z`);
+      return {
+        year: Number.isFinite(year) ? year : null,
+        quarter: Number.isFinite(quarter) ? quarter : null,
+        dateMs: Number.isFinite(dateMs) ? dateMs : null
+      };
+    })
+    .filter((row) => row.year && (row.quarter || row.dateMs))
+    .sort((a, b) => {
+      if (a.year !== b.year) return a.year - b.year;
+      if ((a.quarter || 0) !== (b.quarter || 0)) return (a.quarter || 0) - (b.quarter || 0);
+      return (a.dateMs || 0) - (b.dateMs || 0);
+    })
+    .at(-1) || null;
+}
+
+async function fetchFmpLatestQuarterMarker(ticker) {
+  const rows = await getFmpData(ticker, "latest quarterly income marker", [
+    "/stable/income-statement?symbol={ticker}&period=quarter&limit=1"
+  ]);
+  const row = Array.isArray(rows) ? rows[0] : rows;
+  if (!row) return null;
+  const year = Number(row.calendarYear || row.fiscalYear || String(row.date || "").slice(0, 4));
+  const quarter = fmpQuarterNumber(row);
+  const dateMs = Date.parse(`${row.date || ""}T00:00:00Z`);
+  if (!year || (!quarter && !Number.isFinite(dateMs))) return null;
+  return {
+    year,
+    quarter,
+    dateMs: Number.isFinite(dateMs) ? dateMs : null
+  };
+}
+
+function isQuarterMarkerNewer(latestProviderMarker, cachedMarker) {
+  if (!latestProviderMarker) return false;
+  if (!cachedMarker) return true;
+  if (latestProviderMarker.year !== cachedMarker.year) {
+    return latestProviderMarker.year > cachedMarker.year;
+  }
+  if ((latestProviderMarker.quarter || 0) !== (cachedMarker.quarter || 0)) {
+    return (latestProviderMarker.quarter || 0) > (cachedMarker.quarter || 0);
+  }
+  if (latestProviderMarker.dateMs && cachedMarker.dateMs) {
+    return latestProviderMarker.dateMs > cachedMarker.dateMs;
+  }
+  return false;
+}
+
+async function hasNewerFmpQuarterThanCached(ticker, data = {}) {
+  const latestProviderMarker = await fetchFmpLatestQuarterMarker(ticker);
+  return isQuarterMarkerNewer(latestProviderMarker, latestInterimHistoryMarker(data));
+}
+
+async function markFinancialHistoryFreshnessChecked(ticker) {
+  await Stock.findOneAndUpdate(
+    { ticker },
+    {
+      $set: {
+        "data.financialHistoryFreshnessCheckedAt": new Date().toISOString()
+      }
+    }
+  ).catch((err) => {
+    console.log("Financial history freshness marker skipped:", ticker, err.message);
+  });
+}
+
+function isFinancialHistoryFreshnessRecent(data = {}) {
+  const checkedAt = data.financialHistoryFreshnessCheckedAt
+    ? new Date(data.financialHistoryFreshnessCheckedAt).getTime()
+    : null;
+  return Boolean(
+    checkedAt &&
+    Number.isFinite(checkedAt) &&
+    Date.now() - checkedAt < STOCK_FINANCIAL_FRESHNESS_MS
+  );
+}
+
 function isCompletedStockAnalysisAnnualHeader(header = {}) {
   if (!header.id || header.id === "TTM") return false;
   const endDate = new Date(`${header.id}T00:00:00Z`);
@@ -10889,6 +10974,7 @@ async function publishChartHistorySnapshot(ticker, previousData = {}, secAnnualM
   const nextData = withGuaranteedAnalystSection({
     ...previousData,
     financialHistoryCheckedAt: new Date().toISOString(),
+    financialHistoryFreshnessCheckedAt: new Date().toISOString(),
     interimHistoryCheckedAt: new Date().toISOString(),
     interimHistoryVersion: INTERIM_HISTORY_VERSION,
     hasInterimHistory: revenueData.some((row) => row.isInterim),
@@ -12205,6 +12291,7 @@ async function fetchStockData(ticker) {
     estimateDataVersion: STOCK_ESTIMATE_VERSION,
     financialHistoryVersion: FINANCIAL_HISTORY_VERSION,
     financialHistoryCheckedAt: new Date().toISOString(),
+    financialHistoryFreshnessCheckedAt: new Date().toISOString(),
     interimHistoryCheckedAt: new Date().toISOString(),
     interimHistoryVersion: INTERIM_HISTORY_VERSION,
     hasInterimHistory: revenueData.some((row) => row.isInterim),
@@ -12316,6 +12403,7 @@ async function publishFastFinancialHistorySnapshot(ticker) {
         "data.marginHistory": marginHistory.length ? marginHistory : previousData.marginHistory || [],
         "data.financialHistoryVersion": FINANCIAL_HISTORY_VERSION,
         "data.financialHistoryCheckedAt": checkedAt,
+        "data.financialHistoryFreshnessCheckedAt": checkedAt,
         "data.interimHistoryCheckedAt": checkedAt,
         "data.interimHistoryVersion": INTERIM_HISTORY_VERSION,
         "data.hasInterimHistory": revenueData.some((row) => row.isInterim),
@@ -12325,8 +12413,8 @@ async function publishFastFinancialHistorySnapshot(ticker) {
   );
 }
 
-async function hydrateQuarterlyHistoryForResponse(ticker, previousData = {}, timeoutMs = 1800) {
-  if (hasUsableInterimHistory(previousData)) return previousData;
+async function hydrateQuarterlyHistoryForResponse(ticker, previousData = {}, timeoutMs = 1800, options = {}) {
+  if (!options.forceRefresh && hasUsableInterimHistory(previousData)) return previousData;
 
   const fmpRows = await resolveWithin(
     fetchFmpFinancialHistory(ticker),
@@ -12384,6 +12472,7 @@ async function hydrateQuarterlyHistoryForResponse(ticker, previousData = {}, tim
     marginHistory: marginHistory.length ? marginHistory : previousData.marginHistory || [],
     financialHistoryVersion: FINANCIAL_HISTORY_VERSION,
     financialHistoryCheckedAt: checkedAt,
+    financialHistoryFreshnessCheckedAt: checkedAt,
     interimHistoryCheckedAt: checkedAt,
     interimHistoryVersion: INTERIM_HISTORY_VERSION,
     hasInterimHistory: true,
@@ -12524,6 +12613,7 @@ function startFullStockRefresh(ticker) {
         data.valuationMetricsVersion === VALUATION_METRICS_VERSION &&
         data.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION &&
         data.estimateDataVersion === STOCK_ESTIMATE_VERSION &&
+        isFinancialHistoryFreshnessRecent(data) &&
         hasCompleteChartHistory(stock) &&
         hasUsableInterimHistory(data);
 
@@ -14958,28 +15048,53 @@ app.get("/api/stock/:ticker", async (req, res) => {
       const isCoreIncomplete =
         !requestedChartHistoryReady ||
         (wantsQuarterlyHistory && needsInterimHistoryRefresh);
+      let hasNewerQuarter = false;
+      if (!isFinancialHistoryFreshnessRecent(stock.data || {})) {
+        const newerQuarterResult = await resolveWithin(
+          hasNewerFmpQuarterThanCached(ticker, stock.data || {}),
+          1600,
+          null
+        );
+        hasNewerQuarter = newerQuarterResult === true;
+        if (newerQuarterResult === false) {
+          markFinancialHistoryFreshnessChecked(ticker);
+        }
+      }
       const isStale =
         isOutdated ||
         isCoreIncomplete ||
+        hasNewerQuarter ||
         !updatedAt ||
         Date.now() - updatedAt.getTime() > STOCK_FULL_REFRESH_MS;
       if (isStale) {
         startStockFetch(ticker);
         const needsFastHydration =
           isCoreIncomplete ||
+          hasNewerQuarter ||
           (wantsQuarterlyHistory && !hasUsableInterimHistory(stock.data || {}));
         const hydrated = needsFastHydration
-          ? await getHydratedStockDataForFirstResponse(
-              ticker,
-              stock.data || {},
-              STOCK_FAST_CHART_HYDRATION_WAIT_MS,
-              { waitForInterimHistory: wantsQuarterlyHistory }
-            )
+          ? hasNewerQuarter
+            ? {
+                stock,
+                data: await hydrateQuarterlyHistoryForResponse(
+                  ticker,
+                  stock.data || {},
+                  STOCK_FAST_CHART_HYDRATION_WAIT_MS,
+                  { forceRefresh: true }
+                )
+              }
+            : await getHydratedStockDataForFirstResponse(
+                ticker,
+                stock.data || {},
+                STOCK_FAST_CHART_HYDRATION_WAIT_MS,
+                { waitForInterimHistory: wantsQuarterlyHistory }
+              )
           : { stock, data: stock.data || {} };
         const responseData = await prepareCachedStockResponseDataFast(ticker, hydrated.data || stock.data || {});
         maybeEnqueueMarketActivitySnapshot(ticker, responseData);
         const isStillRefreshing =
           isCoreIncomplete ||
+          hasNewerQuarter ||
           !hasRequestedCoreChartHistory(responseData, wantsQuarterlyHistory);
 
         return res.json({
@@ -15775,8 +15890,16 @@ function buildResearchAnalysis(stock) {
     .filter((row) => row?.year)
     .sort((a, b) => a.year - b.year);
   const annualHistory = history.filter((row) => !row?.isInterim && !row?.isCurrent);
+  const quarterlyHistory = history.filter((row) => row?.isInterim && !row?.isCurrent);
   const latest = annualHistory.at(-1) || history.at(-1) || {};
   const previous = annualHistory.at(-2) || history.at(-2) || {};
+  const latestQuarter = quarterlyHistory.at(-1) || {};
+  const priorYearQuarter = latestQuarter?.period
+    ? quarterlyHistory.find((row) =>
+        Number(row.year) === Number(latestQuarter.year) - 1 &&
+        String(row.period || "").replace(/^\d{4}\s*/, "") === String(latestQuarter.period || "").replace(/^\d{4}\s*/, "")
+      )
+    : null;
   const price = toNumberOrNull(data.price);
   const target = toNumberOrNull(data.targetMean);
   const marketCap = toNumberOrNull(data.marketCap);
@@ -15784,6 +15907,21 @@ function buildResearchAnalysis(stock) {
   const pe = toNumberOrNull(data.pe);
   const forwardPE = toNumberOrNull(data.forwardPE);
   const priceToSales = toNumberOrNull(data.priceToSales);
+  const evToEbitda = toNumberOrNull(data.evToEbitda);
+  const fcfMargin = toNumberOrNull(data.fcfMargin);
+  const ebitdaMargin = toNumberOrNull(data.ebitdaMargin);
+  const ebitMargin = toNumberOrNull(data.ebitMargin);
+  const roe = toNumberOrNull(data.returnOnEquity);
+  const roa = toNumberOrNull(data.returnOnAssets);
+  const roic = toNumberOrNull(data.returnOnInvestedCapital);
+  const roce = toNumberOrNull(data.returnOnCapitalEmployed);
+  const totalDebt = toNumberOrNull(data.totalDebt);
+  const cash = toNumberOrNull(data.cashAndCashEquivalents ?? data.totalCash);
+  const netCash = toNumberOrNull(data.netCash);
+  const workingCapital = toNumberOrNull(data.workingCapital);
+  const revenuePerEmployee = toNumberOrNull(data.revenuePerEmployee);
+  const profitsPerEmployee = toNumberOrNull(data.profitsPerEmployee);
+  const employeeCount = toNumberOrNull(data.employeeCount);
   const revenueGrowth = firstFiniteNumber(
     percentChange(latest.revenue, previous.revenue),
     data.revenueGrowth
@@ -15797,11 +15935,23 @@ function buildResearchAnalysis(stock) {
   const fcfYield = marketCap && freeCashflow ? (freeCashflow / marketCap) * 100 : null;
   const forecast = data.analystEstimates?.currentYear || {};
   const nextForecast = data.analystEstimates?.nextYear || {};
+  const nextQuarter = data.analystEstimates?.nextQuarter || {};
   const forecastRevenueGrowth = percentChange(forecast.revenue, toDollarsFromBillions(latest.revenue));
   const forecastIncomeGrowth = percentChange(forecast.earnings, toDollarsFromBillions(latest.earnings));
   const forecastEpsGrowth = percentChange(forecast.eps, latest.eps);
   const nextForecastRevenueGrowth = percentChange(nextForecast.revenue, forecast.revenue);
   const nextForecastIncomeGrowth = percentChange(nextForecast.earnings, forecast.earnings);
+  const quarterRevenueGrowth = percentChange(latestQuarter.revenue, priorYearQuarter?.revenue);
+  const quarterIncomeGrowth = percentChange(latestQuarter.earnings, priorYearQuarter?.earnings);
+  const quarterEpsGrowth = percentChange(latestQuarter.eps, priorYearQuarter?.eps);
+  const netDebt = totalDebt !== null && cash !== null ? totalDebt - cash : null;
+  const debtToMarketCap = marketCap && totalDebt !== null ? (totalDebt / marketCap) * 100 : null;
+  const cashToDebt = totalDebt && cash !== null ? cash / totalDebt : null;
+  const expectedRevenueText = nextQuarter.revenue ? analysisMoney(nextQuarter.revenue) : "N/A";
+  const expectedEpsText = nextQuarter.eps !== null && nextQuarter.eps !== undefined ? `$${round(nextQuarter.eps, 2)}` : "N/A";
+  const latestPeriodLabel = latestQuarter.period || (latest.year ? `${latest.year} fiscal year` : "latest reported period");
+  const metricLine = (label, value, formatter = (item) => item) =>
+    `${label}: ${value === null || value === undefined || Number.isNaN(value) ? "N/A" : formatter(value)}.`;
 
   let score = 50;
   score += clamp((revenueGrowth || 0) / 3, -12, 15);
@@ -15818,20 +15968,26 @@ function buildResearchAnalysis(stock) {
   const catalysts = [];
   const risks = [];
   if (revenueGrowth !== null && revenueGrowth > 10) catalysts.push(`Revenue expanded ${round(revenueGrowth)}% in the latest reported year.`);
+  if (quarterRevenueGrowth !== null && quarterRevenueGrowth > 8) catalysts.push(`${latestPeriodLabel} revenue grew ${round(quarterRevenueGrowth)}% from the comparable quarter.`);
   if (incomeGrowth !== null && incomeGrowth > revenueGrowth) catalysts.push(`Net income grew faster than revenue at ${round(incomeGrowth)}%, indicating operating leverage.`);
+  if (quarterIncomeGrowth !== null && quarterIncomeGrowth > quarterRevenueGrowth) catalysts.push(`${latestPeriodLabel} net income grew faster than revenue, showing quarter-level margin leverage.`);
   if (forwardPE && pe && forwardPE < pe * 0.9) catalysts.push(`Forward P/E of ${round(forwardPE)}x is below the current ${round(pe)}x multiple.`);
   if (targetUpside !== null && targetUpside > 8) catalysts.push(`The consensus target implies ${round(targetUpside)}% upside from the current price.`);
   if (fcfYield !== null && fcfYield > 2) catalysts.push(`Free cash flow yield is ${round(fcfYield)}%, supporting reinvestment or capital returns.`);
   if (forecastRevenueGrowth !== null && forecastRevenueGrowth > 5) catalysts.push(`Consensus revenue implies approximately ${round(forecastRevenueGrowth)}% growth from the latest completed fiscal year.`);
   if (forecastIncomeGrowth !== null && forecastIncomeGrowth > 5) catalysts.push(`Consensus net income implies approximately ${round(forecastIncomeGrowth)}% growth from the latest completed fiscal year.`);
+  if (roic !== null && roic > 12) catalysts.push(`ROIC of ${round(roic)}% suggests the business is earning attractive returns on invested capital.`);
 
   if (revenueGrowth !== null && revenueGrowth < 3) risks.push(`Revenue growth slowed to ${round(revenueGrowth)}%, leaving less room for execution misses.`);
+  if (quarterRevenueGrowth !== null && quarterRevenueGrowth < 0) risks.push(`${latestPeriodLabel} revenue declined ${round(Math.abs(quarterRevenueGrowth))}% from the comparable quarter.`);
   if (incomeGrowth !== null && incomeGrowth < 0) risks.push(`Net income declined ${round(Math.abs(incomeGrowth))}% in the latest reported year.`);
+  if (quarterIncomeGrowth !== null && quarterIncomeGrowth < 0) risks.push(`${latestPeriodLabel} net income declined ${round(Math.abs(quarterIncomeGrowth))}% year over year.`);
   if (forwardPE && forwardPE > 45) risks.push(`A ${round(forwardPE)}x forward P/E embeds high expectations.`);
   if (priceToSales && priceToSales > 10) risks.push(`Price-to-sales of ${round(priceToSales)}x leaves the valuation sensitive to slower growth.`);
   if (targetUpside !== null && targetUpside < 0) risks.push(`The consensus target is ${round(Math.abs(targetUpside))}% below the current price.`);
   if (fcfYield !== null && fcfYield < 1) risks.push(`Free cash flow yield is only ${round(fcfYield)}%, offering limited valuation support.`);
   if (data.operatingMargins < 5) risks.push(`Operating margin is thin at ${round(data.operatingMargins)}%.`);
+  if (debtToMarketCap !== null && debtToMarketCap > 35) risks.push(`Total debt equals roughly ${round(debtToMarketCap)}% of market cap, so the balance sheet deserves close attention.`);
 
   if (!catalysts.length) catalysts.push("Consensus estimates point to stable operations, but a stronger growth acceleration would improve the setup.");
   if (!risks.length) risks.push("The main risk is execution falling short of the growth and margin assumptions reflected in the valuation.");
@@ -15852,10 +16008,20 @@ function buildResearchAnalysis(stock) {
       : null;
 
   const highlights = [];
+  if (latestQuarter.revenue !== null && latestQuarter.revenue !== undefined) {
+    highlights.push(`${latestPeriodLabel} revenue was ${analysisMoney(toDollarsFromBillions(latestQuarter.revenue))}${quarterRevenueGrowth !== null ? `, ${quarterRevenueGrowth >= 0 ? "up" : "down"} ${round(Math.abs(quarterRevenueGrowth))}% from the comparable quarter` : ""}.`);
+  }
+  if (latestQuarter.earnings !== null && latestQuarter.earnings !== undefined) {
+    highlights.push(`${latestPeriodLabel} net income was ${analysisMoney(toDollarsFromBillions(latestQuarter.earnings))}${quarterIncomeGrowth !== null ? `, ${quarterIncomeGrowth >= 0 ? "up" : "down"} ${round(Math.abs(quarterIncomeGrowth))}% year over year` : ""}.`);
+  }
+  if (latestQuarter.eps !== null && latestQuarter.eps !== undefined) {
+    highlights.push(`${latestPeriodLabel} EPS was $${round(latestQuarter.eps, 2)}${quarterEpsGrowth !== null ? `, a ${round(quarterEpsGrowth)}% comparable-quarter change` : ""}.`);
+  }
   if (latest.revenue !== null) highlights.push(`${latest.year} revenue was ${analysisMoney(toDollarsFromBillions(latest.revenue))}, ${revenueGrowth >= 0 ? "up" : "down"} ${round(Math.abs(revenueGrowth || 0))}% year over year.`);
   if (latest.earnings !== null) highlights.push(`Net income was ${analysisMoney(toDollarsFromBillions(latest.earnings))}, with a ${round(data.profitMargins)}% profit margin.`);
   if (latest.eps !== null) highlights.push(`Diluted EPS was $${round(latest.eps, 2)}${epsGrowth !== null ? `, a ${round(epsGrowth)}% year-over-year change` : ""}.`);
   highlights.push(`Annual free cash flow was ${analysisMoney(freeCashflow)}${fcfYield !== null ? `, equal to a ${round(fcfYield)}% yield` : ""}.`);
+  highlights.push(`Next report setup: expected revenue ${expectedRevenueText}, expected EPS ${expectedEpsText}${nextQuarter.date ? `, report date ${nextQuarter.date}` : ""}.`);
 
   const earningsPositives = catalysts.slice(0, 4);
   const earningsRisks = risks.slice(0, 4);
@@ -15874,14 +16040,40 @@ function buildResearchAnalysis(stock) {
       valuation: [
         `Current P/E: ${pe ? `${round(pe)}x` : "N/A"}; forward P/E: ${forwardPE ? `${round(forwardPE)}x` : "N/A"}.`,
         `Price-to-sales: ${priceToSales ? `${round(priceToSales)}x` : "N/A"}.`,
+        `EV/EBITDA: ${evToEbitda ? `${round(evToEbitda)}x` : "N/A"}.`,
         `Consensus target: ${analysisMoney(target)}${targetUpside !== null ? ` (${round(targetUpside)}% potential return)` : ""}.`,
         `Free cash flow yield: ${fcfYield !== null ? `${round(fcfYield)}%` : "N/A"}.`
       ],
       financialQuality: [
         `Gross margin ${round(data.grossMargins)}%, operating margin ${round(data.operatingMargins)}%, profit margin ${round(data.profitMargins)}%.`,
+        `EBITDA margin ${round(ebitdaMargin)}%, EBIT margin ${round(ebitMargin)}%, FCF margin ${round(fcfMargin)}%.`,
         `Latest revenue growth ${round(revenueGrowth)}%; net income growth ${round(incomeGrowth)}%.`,
+        `${latestPeriodLabel} revenue growth ${quarterRevenueGrowth !== null ? `${round(quarterRevenueGrowth)}%` : "N/A"}; EPS growth ${quarterEpsGrowth !== null ? `${round(quarterEpsGrowth)}%` : "N/A"}.`,
         `Annual free cash flow ${analysisMoney(freeCashflow)} from ${data.freeCashflowSource || "available financial data"}.`,
         `Current-year consensus revenue ${analysisMoney(forecast.revenue)} and EPS ${forecast.eps !== null && forecast.eps !== undefined ? `$${round(forecast.eps, 2)}` : "N/A"}.`
+      ],
+      balanceSheet: [
+        metricLine("Cash & short-term investments", cash, analysisMoney),
+        metricLine("Total debt", totalDebt, analysisMoney),
+        metricLine("Net cash / debt", netCash ?? (netDebt !== null ? -netDebt : null), analysisMoney),
+        metricLine("Working capital", workingCapital, analysisMoney),
+        `Cash-to-debt: ${cashToDebt !== null ? `${round(cashToDebt, 2)}x` : "N/A"}.`
+      ],
+      returnsAndEfficiency: [
+        metricLine("ROE", roe, (value) => `${round(value)}%`),
+        metricLine("ROA", roa, (value) => `${round(value)}%`),
+        metricLine("ROIC", roic, (value) => `${round(value)}%`),
+        metricLine("ROCE", roce, (value) => `${round(value)}%`),
+        metricLine("Revenue per employee", revenuePerEmployee, analysisMoney),
+        metricLine("Profit per employee", profitsPerEmployee, analysisMoney),
+        metricLine("Employee count", employeeCount, (value) => `${Math.round(value).toLocaleString()}`)
+      ],
+      estimateSetup: [
+        `Next quarter expected revenue: ${expectedRevenueText}.`,
+        `Next quarter expected EPS: ${expectedEpsText}.`,
+        `Current fiscal-year revenue estimate: ${analysisMoney(forecast.revenue)}${forecastRevenueGrowth !== null ? ` (${round(forecastRevenueGrowth)}% vs. latest fiscal year)` : ""}.`,
+        `Current fiscal-year EPS estimate: ${forecast.eps !== null && forecast.eps !== undefined ? `$${round(forecast.eps, 2)}` : "N/A"}${forecastEpsGrowth !== null ? ` (${round(forecastEpsGrowth)}% vs. latest fiscal year)` : ""}.`,
+        `Next fiscal-year revenue estimate: ${analysisMoney(nextForecast.revenue)}${nextForecastRevenueGrowth !== null ? ` (${round(nextForecastRevenueGrowth)}% vs. current estimate)` : ""}.`
       ],
       catalysts: catalysts.slice(0, 5),
       risks: risks.slice(0, 5),
@@ -15893,7 +16085,9 @@ function buildResearchAnalysis(stock) {
     },
     earningsAnalysis: {
       period: latest.year ? `Latest reported fiscal year: ${latest.year}` : "Latest reported period",
-      summary: `${data.name || stock.ticker} reported ${analysisMoney(toDollarsFromBillions(latest.revenue))} of revenue and ${analysisMoney(toDollarsFromBillions(latest.earnings))} of net income. Consensus now points to ${analysisMoney(forecast.revenue)} of current-year revenue and $${round(forecast.eps, 2)} of EPS.`,
+      summary: latestQuarter?.revenue !== null && latestQuarter?.revenue !== undefined
+        ? `${data.name || stock.ticker}'s newest quarter on MrktRally is ${latestPeriodLabel}: revenue ${analysisMoney(toDollarsFromBillions(latestQuarter.revenue))}, net income ${analysisMoney(toDollarsFromBillions(latestQuarter.earnings))}, and EPS ${latestQuarter.eps !== null && latestQuarter.eps !== undefined ? `$${round(latestQuarter.eps, 2)}` : "N/A"}. The next setup is ${expectedRevenueText} of expected revenue and ${expectedEpsText} of expected EPS.`
+        : `${data.name || stock.ticker} reported ${analysisMoney(toDollarsFromBillions(latest.revenue))} of revenue and ${analysisMoney(toDollarsFromBillions(latest.earnings))} of net income. Consensus now points to ${analysisMoney(forecast.revenue)} of current-year revenue and $${round(forecast.eps, 2)} of EPS.`,
       highlights,
       positives: earningsPositives,
       risks: earningsRisks,
