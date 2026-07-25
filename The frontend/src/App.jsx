@@ -349,6 +349,7 @@ const FUNDAMENTAL_METRIC_FIELD_LABELS = {
   capexToRevenue: "Capex / Revenue",
   capitalExpenditureCoverageRatio: "Capex Coverage",
   cashConversionCycle: "Cash Conversion Cycle",
+  cashDebtCoverage: "Cash / Debt",
   cashPerShare: "Cash / Share",
   cashRatio: "Cash Ratio",
   continuousOperationsProfitMargin: "Continuing Ops Profit Margin",
@@ -393,6 +394,7 @@ const FUNDAMENTAL_METRIC_FIELD_LABELS = {
   intangiblesToTotalAssets: "Intangibles / Assets",
   investedCapital: "Invested Capital",
   inventoryTurnover: "Inventory Turnover",
+  liabilitiesToAssets: "Liabilities / Assets",
   longTermDebtToCapitalRatio: "Long-Term Debt / Capital",
   marketCap: "Market Cap",
   netCurrentAssetValue: "Net Current Asset Value",
@@ -424,6 +426,7 @@ const FUNDAMENTAL_METRIC_FIELD_LABELS = {
   priceToFreeCashFlowRatio: "Price / Free Cash Flow",
   priceToOperatingCashFlowRatio: "Price / Operating Cash Flow",
   priceToSalesRatio: "Price / Sales",
+  quickAssets: "Quick Assets",
   quickRatio: "Quick Ratio",
   receivablesTurnover: "Receivables Turnover",
   researchAndDevelopementToRevenue: "R&D / Revenue",
@@ -565,6 +568,7 @@ const metricMoneyFields = new Set([
   "investedCapital",
   "marketCap",
   "netCurrentAssetValue",
+  "quickAssets",
   "tangibleAssetValue",
   "workingCapital"
 ]);
@@ -624,42 +628,6 @@ const FUNDAMENTAL_CHART_INDICATOR_GROUPS = [
     indicators: statementIndicators("cashflow", FUNDAMENTAL_STATEMENT_FIELDS.cashflow)
   },
   {
-    id: "returns",
-    label: "Returns & Efficiency",
-    indicators: [
-      { key: "roe", label: "ROE", format: "percent", calculate: ({ income, balance }) => calculateRatio(income?.netIncome, balance?.totalStockholdersEquity) },
-      { key: "roa", label: "ROA", format: "percent", calculate: ({ income, balance }) => calculateRatio(income?.netIncome, balance?.totalAssets) },
-      { key: "roicProxy", label: "ROIC Proxy", format: "percent", calculate: ({ income, balance }) => calculateRatio(income?.operatingIncome, sumValues(balance?.totalDebt, balance?.totalStockholdersEquity)) },
-      { key: "assetTurnover", label: "Asset Turnover", format: "plain", calculate: ({ income, balance }) => calculateRatio(income?.revenue, balance?.totalAssets, false) },
-      { key: "debtToEquity", label: "Debt / Equity", format: "plain", calculate: ({ balance }) => calculateRatio(balance?.totalDebt, balance?.totalStockholdersEquity, false) },
-      { key: "currentRatio", label: "Current Ratio", format: "plain", calculate: ({ balance }) => calculateRatio(balance?.totalCurrentAssets, balance?.totalCurrentLiabilities, false) }
-    ]
-  },
-  {
-    id: "leverage-liquidity",
-    label: "Leverage & Liquidity",
-    indicators: [
-      { key: "workingCapital", label: "Working Capital", format: "money", calculate: ({ balance }) => differenceValue(balance?.totalCurrentAssets, balance?.totalCurrentLiabilities) },
-      { key: "netCash", label: "Net Cash", format: "money", calculate: ({ balance }) => differenceValue(balance?.cashAndCashEquivalents, balance?.totalDebt) },
-      { key: "cashDebtCoverage", label: "Cash / Debt", format: "plain", calculate: ({ balance }) => calculateRatio(balance?.cashAndCashEquivalents, balance?.totalDebt, false) },
-      { key: "debtToAssets", label: "Debt / Assets", format: "plain", calculate: ({ balance }) => calculateRatio(balance?.totalDebt, balance?.totalAssets, false) },
-      { key: "liabilitiesToAssets", label: "Liabilities / Assets", format: "plain", calculate: ({ balance }) => calculateRatio(balance?.totalLiabilities, balance?.totalAssets, false) },
-      { key: "currentAssetsLessInventory", label: "Quick Assets", format: "money", calculate: ({ balance }) => differenceValue(balance?.totalCurrentAssets, balance?.inventory) },
-      { key: "quickRatio", label: "Quick Ratio", format: "plain", calculate: ({ balance }) => calculateRatio(differenceValue(balance?.totalCurrentAssets, balance?.inventory), balance?.totalCurrentLiabilities, false) }
-    ]
-  },
-  {
-    id: "per-share",
-    label: "Per Share",
-    indicators: [
-      { key: "revenuePerShare", label: "Revenue / Share", format: "perShare", calculate: ({ income }) => calculateRatio(income?.revenue, income?.weightedAverageShsOutDil || income?.weightedAverageShsOut, false) },
-      { key: "netIncomePerShare", label: "Net Income / Share", format: "perShare", calculate: ({ income }) => calculateRatio(income?.netIncome, income?.weightedAverageShsOutDil || income?.weightedAverageShsOut, false) },
-      { key: "fcfPerShare", label: "FCF / Share", format: "perShare", calculate: ({ income, cashflow }) => calculateRatio(cashflow?.freeCashFlow, income?.weightedAverageShsOutDil || income?.weightedAverageShsOut, false) },
-      { key: "cashPerShare", label: "Cash / Share", format: "perShare", calculate: ({ income, balance }) => calculateRatio(balance?.cashAndCashEquivalents, income?.weightedAverageShsOutDil || income?.weightedAverageShsOut, false) },
-      { key: "bookValuePerShare", label: "Book Value / Share", format: "perShare", calculate: ({ income, balance }) => calculateRatio(balance?.totalStockholdersEquity, income?.weightedAverageShsOutDil || income?.weightedAverageShsOut, false) }
-    ]
-  },
-  {
     id: "growth",
     label: "Growth",
     indicators: [
@@ -700,7 +668,7 @@ const FUNDAMENTAL_CHART_INDICATOR_GROUPS = [
   },
   {
     id: "per-share-metrics",
-    label: "Per Share Metrics",
+    label: "Per Share",
     indicators: metricIndicators([
       "revenuePerShare",
       "netIncomePerShare",
@@ -716,7 +684,7 @@ const FUNDAMENTAL_CHART_INDICATOR_GROUPS = [
   },
   {
     id: "liquidity-solvency-metrics",
-    label: "Liquidity & Solvency Metrics",
+    label: "Liquidity & Solvency",
     indicators: metricIndicators([
       "currentRatio",
       "quickRatio",
@@ -734,12 +702,15 @@ const FUNDAMENTAL_CHART_INDICATOR_GROUPS = [
       "solvencyRatio",
       "netDebtToEBITDA",
       "workingCapital",
-      "netCurrentAssetValue"
+      "netCurrentAssetValue",
+      { field: "cashDebtCoverage", label: "Cash / Debt" },
+      { field: "liabilitiesToAssets", label: "Liabilities / Assets" },
+      { field: "quickAssets", label: "Quick Assets" }
     ])
   },
   {
     id: "profitability-metrics",
-    label: "Profitability Metrics",
+    label: "Profitability",
     indicators: metricIndicators([
       "grossProfitMargin",
       "operatingProfitMargin",
@@ -749,19 +720,19 @@ const FUNDAMENTAL_CHART_INDICATOR_GROUPS = [
       "continuousOperationsProfitMargin",
       "ebitdaMargin",
       "ebitMargin",
-      { field: "returnOnEquity", label: "ROE", aliases: ["roe"] },
-      "returnOnAssets",
-      { field: "returnOnInvestedCapital", label: "ROIC", aliases: ["roic"] },
-      "returnOnCapitalEmployed",
-      "returnOnTangibleAssets",
       "effectiveTaxRate",
       "incomeQuality"
     ])
   },
   {
     id: "efficiency-metrics",
-    label: "Efficiency Metrics",
+    label: "Efficiency & Returns",
     indicators: metricIndicators([
+      { field: "returnOnEquity", label: "ROE", aliases: ["roe"] },
+      "returnOnAssets",
+      { field: "returnOnInvestedCapital", label: "ROIC", aliases: ["roic"] },
+      "returnOnCapitalEmployed",
+      "returnOnTangibleAssets",
       "assetTurnover",
       "fixedAssetTurnover",
       "inventoryTurnover",
@@ -1370,6 +1341,134 @@ function calculateFundamentalMargin(period, metricField, numerator, denominator,
   if (statementRatioValue !== null) return statementRatioValue;
 
   return calculateRatio(numerator, denominator);
+}
+
+function calculateFundamentalMetricFallback(period, field) {
+  const income = period?.income || {};
+  const balance = period?.balance || {};
+  const cashflow = period?.cashflow || {};
+  const shares = firstNumber(income.weightedAverageShsOutDil, income.weightedAverageShsOut);
+  const revenue = firstNumber(income.revenue);
+  const grossProfit = firstNumber(income.grossProfit);
+  const operatingIncome = firstNumber(income.operatingIncome);
+  const incomeBeforeTax = firstNumber(income.incomeBeforeTax);
+  const netIncome = firstNumber(income.netIncome);
+  const ebitda = firstNumber(income.ebitda);
+  const ebit = firstNumber(income.ebit, income.operatingIncome);
+  const costOfRevenue = firstNumber(income.costOfRevenue);
+  const cash = firstNumber(balance.cashAndShortTermInvestments, balance.cashAndCashEquivalents);
+  const totalDebt = firstNumber(balance.totalDebt, sumValues(balance.shortTermDebt, balance.longTermDebt));
+  const equity = firstNumber(balance.totalStockholdersEquity, balance.totalEquity);
+  const totalAssets = firstNumber(balance.totalAssets);
+  const totalLiabilities = firstNumber(balance.totalLiabilities);
+  const currentAssets = firstNumber(balance.totalCurrentAssets);
+  const currentLiabilities = firstNumber(balance.totalCurrentLiabilities);
+  const inventory = firstNumber(balance.inventory);
+  const receivables = firstNumber(balance.netReceivables);
+  const payables = firstNumber(balance.accountPayables);
+  const operatingCashFlow = firstNumber(cashflow.operatingCashFlow, cashflow.netCashProvidedByOperatingActivities);
+  const freeCashFlow = firstNumber(cashflow.freeCashFlow);
+  const capex = firstNumber(cashflow.capitalExpenditure);
+  const depreciation = firstNumber(cashflow.depreciationAndAmortization);
+  const quickAssets = differenceValue(currentAssets, inventory);
+  const workingCapital = differenceValue(currentAssets, currentLiabilities);
+  const netDebt = differenceValue(totalDebt, cash);
+  const investedCapital = differenceValue(sumValues(totalDebt, equity), cash);
+  const goodwillAndIntangibles = sumValues(balance.goodwill, balance.intangibleAssets);
+  const tangibleAssetValue = isNumber(totalAssets)
+    ? totalAssets - (goodwillAndIntangibles || 0)
+    : null;
+  const capitalEmployed = differenceValue(totalAssets, currentLiabilities);
+  const daysOfSalesOutstanding = calculateRatio(isNumber(receivables) ? receivables * 365 : null, revenue, false);
+  const daysOfInventoryOutstanding = calculateRatio(isNumber(inventory) ? inventory * 365 : null, costOfRevenue, false);
+  const daysOfPayablesOutstanding = calculateRatio(isNumber(payables) ? payables * 365 : null, costOfRevenue, false);
+
+  const fallbacks = {
+    revenuePerShare: calculateRatio(revenue, shares, false),
+    netIncomePerShare: calculateRatio(netIncome, shares, false),
+    operatingCashFlowPerShare: calculateRatio(operatingCashFlow, shares, false),
+    freeCashFlowPerShare: calculateRatio(freeCashFlow, shares, false),
+    cashPerShare: calculateRatio(cash, shares, false),
+    bookValuePerShare: calculateRatio(equity, shares, false),
+    tangibleBookValuePerShare: calculateRatio(tangibleAssetValue, shares, false),
+    shareholdersEquityPerShare: calculateRatio(equity, shares, false),
+    interestDebtPerShare: calculateRatio(totalDebt, shares, false),
+    capexPerShare: calculateRatio(capex, shares, false),
+    currentRatio: calculateRatio(currentAssets, currentLiabilities, false),
+    quickRatio: calculateRatio(quickAssets, currentLiabilities, false),
+    cashRatio: calculateRatio(cash, currentLiabilities, false),
+    debtToEquityRatio: calculateRatio(totalDebt, equity, false),
+    debtToAssetsRatio: calculateRatio(totalDebt, totalAssets, false),
+    debtToCapitalRatio: calculateRatio(totalDebt, sumValues(totalDebt, equity), false),
+    longTermDebtToCapitalRatio: calculateRatio(balance.longTermDebt, sumValues(balance.longTermDebt, equity), false),
+    financialLeverageRatio: calculateRatio(totalAssets, equity, false),
+    interestCoverageRatio: calculateRatio(operatingIncome, Math.abs(firstNumber(income.interestExpense) || 0), false),
+    debtServiceCoverageRatio: calculateRatio(operatingCashFlow, totalDebt, false),
+    operatingCashFlowCoverageRatio: calculateRatio(operatingCashFlow, totalDebt, false),
+    shortTermOperatingCashFlowCoverageRatio: calculateRatio(operatingCashFlow, balance.shortTermDebt, false),
+    operatingCashFlowRatio: calculateRatio(operatingCashFlow, currentLiabilities, false),
+    solvencyRatio: calculateRatio(sumValues(netIncome, depreciation), totalLiabilities, false),
+    netDebtToEBITDA: calculateRatio(netDebt, ebitda, false),
+    workingCapital,
+    netCurrentAssetValue: differenceValue(currentAssets, totalLiabilities),
+    cashDebtCoverage: calculateRatio(cash, totalDebt, false),
+    liabilitiesToAssets: calculateRatio(totalLiabilities, totalAssets, false),
+    quickAssets,
+    grossProfitMargin: calculateRatio(grossProfit, revenue, false),
+    operatingProfitMargin: calculateRatio(operatingIncome, revenue, false),
+    pretaxProfitMargin: calculateRatio(incomeBeforeTax, revenue, false),
+    netProfitMargin: calculateRatio(netIncome, revenue, false),
+    bottomLineProfitMargin: calculateRatio(netIncome, revenue, false),
+    continuousOperationsProfitMargin: calculateRatio(netIncome, revenue, false),
+    ebitdaMargin: calculateRatio(ebitda, revenue, false),
+    ebitMargin: calculateRatio(ebit, revenue, false),
+    returnOnEquity: calculateRatio(netIncome, equity, false),
+    returnOnAssets: calculateRatio(netIncome, totalAssets, false),
+    returnOnInvestedCapital: calculateRatio(operatingIncome, investedCapital, false),
+    returnOnCapitalEmployed: calculateRatio(operatingIncome, capitalEmployed, false),
+    returnOnTangibleAssets: calculateRatio(netIncome, tangibleAssetValue, false),
+    effectiveTaxRate: calculateRatio(income.incomeTaxExpense, incomeBeforeTax, false),
+    incomeQuality: calculateRatio(operatingCashFlow, netIncome, false),
+    assetTurnover: calculateRatio(revenue, totalAssets, false),
+    fixedAssetTurnover: calculateRatio(revenue, balance.propertyPlantEquipmentNet, false),
+    inventoryTurnover: calculateRatio(costOfRevenue, inventory, false),
+    receivablesTurnover: calculateRatio(revenue, receivables, false),
+    payablesTurnover: calculateRatio(costOfRevenue, payables, false),
+    workingCapitalTurnoverRatio: calculateRatio(revenue, workingCapital, false),
+    daysOfSalesOutstanding,
+    daysOfInventoryOutstanding,
+    daysOfPayablesOutstanding,
+    cashConversionCycle: sumValues(daysOfSalesOutstanding, daysOfInventoryOutstanding, isNumber(daysOfPayablesOutstanding) ? -daysOfPayablesOutstanding : null),
+    operatingCycle: sumValues(daysOfSalesOutstanding, daysOfInventoryOutstanding),
+    averageInventory: inventory,
+    averagePayables: payables,
+    averageReceivables: receivables,
+    operatingCashFlowSalesRatio: calculateRatio(operatingCashFlow, revenue, false),
+    freeCashFlowOperatingCashFlowRatio: calculateRatio(freeCashFlow, operatingCashFlow, false),
+    investedCapital,
+    tangibleAssetValue,
+    intangiblesToTotalAssets: calculateRatio(goodwillAndIntangibles, totalAssets, false),
+    researchAndDevelopementToRevenue: calculateRatio(income.researchAndDevelopmentExpenses, revenue, false),
+    salesGeneralAndAdministrativeToRevenue: calculateRatio(income.sellingGeneralAndAdministrativeExpenses, revenue, false),
+    stockBasedCompensationToRevenue: calculateRatio(cashflow.stockBasedCompensation, revenue, false),
+    capexToRevenue: calculateRatio(capex, revenue, false),
+    capexToOperatingCashFlow: calculateRatio(capex, operatingCashFlow, false),
+    capexToDepreciation: calculateRatio(capex, depreciation, false)
+  };
+
+  const value = fallbacks[field];
+  if (isNumber(value)) return value;
+
+  if (field === "daysSalesOutstanding") return fallbacks.daysOfSalesOutstanding;
+  if (field === "daysInventoryOutstanding" || field === "daysOfInventoryOnHand") return fallbacks.daysOfInventoryOutstanding;
+  if (field === "daysPayablesOutstanding") return fallbacks.daysOfPayablesOutstanding;
+  if (field === "roe") return fallbacks.returnOnEquity;
+  if (field === "roic") return fallbacks.returnOnInvestedCapital;
+  if (field === "debtToEquity") return fallbacks.debtToEquityRatio;
+  if (field === "debtToAssets") return fallbacks.debtToAssetsRatio;
+  if (field === "interestCoverage") return fallbacks.interestCoverageRatio;
+
+  return null;
 }
 
 const formatIndexPrice = (value) =>
@@ -5771,6 +5870,12 @@ const getFundamentalIndicatorValue = (period, indicator, previousPeriod = null) 
       if (isNumber(aliasValue)) {
         return indicator.scalePercent ? normalizePercentMetric(aliasValue) : aliasValue;
       }
+    }
+  }
+  if (!isNumber(value) && indicator.source === "metrics") {
+    const fallbackValue = calculateFundamentalMetricFallback(period, indicator.field);
+    if (isNumber(fallbackValue)) {
+      return indicator.scalePercent ? normalizePercentMetric(fallbackValue) : fallbackValue;
     }
   }
   if (indicator.scalePercent && isNumber(value)) {
