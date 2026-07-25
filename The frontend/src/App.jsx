@@ -2843,6 +2843,19 @@ const formatSignedEpsSurprise = (value) => {
   return `${sign}$${Math.abs(value).toFixed(2)}`;
 };
 
+const parseEpsBeatMissFiscalLabel = (label = "") => {
+  const text = String(label || "");
+  const quarterMatch = text.match(/\bQ\s*([1-4])\b/i);
+  const fiscalYearMatch = text.match(/\bFY\s*(\d{2,4})\b/i);
+  const fiscalQuarter = quarterMatch ? Number(quarterMatch[1]) : null;
+  let fiscalYear = fiscalYearMatch ? Number(fiscalYearMatch[1]) : null;
+  if (fiscalYear !== null && fiscalYear < 100) fiscalYear += 2000;
+  return {
+    fiscalQuarter: Number.isFinite(fiscalQuarter) ? fiscalQuarter : null,
+    fiscalYear: Number.isFinite(fiscalYear) ? fiscalYear : null
+  };
+};
+
 const financialHistoryFiscalKey = (row = {}) => {
   const year = Number(row.fiscalYear || row.year);
   const quarterMatch = String(row.period || row.label || "").match(/\bQ\s*([1-4])\b/i);
@@ -2859,6 +2872,59 @@ const buildGaapDilutedEpsByFiscalKey = (rows = []) => {
     if (key && isNumber(value)) byFiscalKey.set(key, value);
   });
   return byFiscalKey;
+};
+
+const isReportedEpsBeatMissRow = (row = {}) =>
+  isNumber(row.actual) || isNumber(row.gaapActual);
+
+const epsBeatMissRowKey = (row = {}) =>
+  financialHistoryFiscalKey(row) || (row.period ? String(row.period) : row.label ? `label:${row.label}` : null);
+
+const mergeUpcomingEpsBeatMissEstimate = (rows = [], nextQuarter = {}) => {
+  const estimate = firstNumber(nextQuarter?.eps);
+  if (!isNumber(estimate)) return rows;
+
+  const label = nextQuarter?.fiscalQuarter || "Next Quarter";
+  const fiscal = parseEpsBeatMissFiscalLabel(label);
+  const upcomingRow = {
+    period: nextQuarter?.date || `upcoming:${label}`,
+    fiscalYear: fiscal.fiscalYear,
+    fiscalQuarter: fiscal.fiscalQuarter,
+    label,
+    estimate,
+    actual: null,
+    gaapActual: null,
+    surprise: null,
+    gaapSurprise: null,
+    surprisePercent: null,
+    source: nextQuarter?.source || "Earnings calendar"
+  };
+  const upcomingKey = epsBeatMissRowKey(upcomingRow);
+  const merged = [...(Array.isArray(rows) ? rows : [])];
+  const existingIndex = merged.findIndex((row) =>
+    !isReportedEpsBeatMissRow(row) &&
+    ((upcomingKey && epsBeatMissRowKey(row) === upcomingKey) ||
+      (nextQuarter?.date && row.period === nextQuarter.date))
+  );
+
+  if (existingIndex >= 0) {
+    merged[existingIndex] = {
+      ...merged[existingIndex],
+      ...upcomingRow,
+      label: label || merged[existingIndex].label || "Next Quarter"
+    };
+  } else {
+    merged.push(upcomingRow);
+  }
+
+  return merged
+    .filter((row) => isNumber(row?.estimate) || isNumber(row?.actual) || isNumber(row?.gaapActual))
+    .sort((a, b) => {
+      const periodA = String(a.period || "").startsWith("upcoming:") ? "9999-12-31" : String(a.period || "");
+      const periodB = String(b.period || "").startsWith("upcoming:") ? "9999-12-31" : String(b.period || "");
+      return periodA.localeCompare(periodB);
+    })
+    .slice(-5);
 };
 
 function EpsBeatMissChart({ rows = [], basis = "normalized", onBasisChange, financialHistory = [] }) {
@@ -5502,7 +5568,7 @@ const epsHistory = filterRowsByHistoryRange(
   financialChartMode
 );
 const epsChartLabel = epsChartShareOption(epsChartShareBasis).label;
-const epsBeatMissRows = Array.isArray(stockData?.epsBeatMiss)
+const epsBeatMissBaseRows = Array.isArray(stockData?.epsBeatMiss)
   ? stockData.epsBeatMiss
   : [];
 const revenueGrowthRows = filterRowsByHistoryRange(
@@ -5830,8 +5896,13 @@ const nextQuarterEstimate = {
   revenue: isNumber(nextQuarterSource.revenue) ? nextQuarterSource.revenue : null,
   eps: isNumber(nextQuarterSource.eps) ? nextQuarterSource.eps : null,
   date: nextQuarterSource.date || null,
-  fiscalQuarter: nextQuarterSource.fiscalQuarter || null
+  fiscalQuarter: nextQuarterSource.fiscalQuarter || null,
+  source: nextQuarterSource.source || null
 };
+const epsBeatMissRows = mergeUpcomingEpsBeatMissEstimate(
+  epsBeatMissBaseRows,
+  nextQuarterEstimate
+);
 const nextQuarterDate = nextQuarterEstimate.date
   ? new Date(`${nextQuarterEstimate.date}T12:00:00`)
   : null;
