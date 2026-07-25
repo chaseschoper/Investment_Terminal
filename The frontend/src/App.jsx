@@ -2002,7 +2002,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 156;
+const FINANCIAL_HISTORY_VERSION = 157;
 const STOCK_ESTIMATE_VERSION = 23;
 const INTERIM_HISTORY_VERSION = 6;
 const VALUATION_METRICS_VERSION = 23;
@@ -7427,7 +7427,7 @@ return (
       <section className="stock-screener-page" id="stock-screener" aria-labelledby="stock-screener-title">
         <div className="section-heading-row market-overview-heading screener-heading">
           <div>
-            <div className="welcome-kicker">Stock Screener</div>
+            <div className="welcome-kicker">Find Market Ideas</div>
             <h2 id="stock-screener-title">Stock Screener</h2>
             <p>Filter active stocks, ETFs, and funds by size, price, sector, industry, dividend, volume, exchange, and country.</p>
           </div>

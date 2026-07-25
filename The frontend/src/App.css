@@ -6317,8 +6317,22 @@ body {
   max-width: 760px;
 }
 
+.screener-heading > div {
+  flex: 1;
+  text-align: center;
+}
+
+.screener-heading .welcome-kicker {
+  justify-content: center;
+}
+
 .screener-heading h2 {
   color: #ffffff;
+}
+
+.screener-heading p {
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .screener-panel,
