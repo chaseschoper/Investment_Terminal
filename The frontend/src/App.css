@@ -6310,14 +6310,15 @@ body {
 .stock-screener-page {
   display: grid;
   gap: 22px;
-  padding: 32px 0 72px;
+  padding: 46px 0 72px;
 }
 
 .screener-heading p {
   max-width: 760px;
-  color: #a7b0c0;
-  font-size: 16px;
-  line-height: 1.6;
+}
+
+.screener-heading h2 {
+  color: #ffffff;
 }
 
 .screener-panel,
@@ -6636,7 +6637,7 @@ body {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: rgba(10, 17, 30, 0.98);
+  background: #0a111e;
   color: #93c5fd;
   font-size: 12px;
   font-weight: 950;
@@ -6660,26 +6661,41 @@ body {
 .financial-statement-table th:first-child {
   position: sticky;
   left: 0;
-  z-index: 2;
+  z-index: 3;
   min-width: 280px;
-  background: rgba(10, 17, 30, 0.98);
+  background: #0a111e;
   color: #f8fafc;
   text-align: left;
+  box-shadow: 14px 0 24px rgba(2, 6, 23, 0.72);
+}
+
+.financial-statement-table thead th:first-child {
+  z-index: 4;
+  background: #0a111e;
 }
 
 .financial-statement-table tbody th {
+  background: #0d1726;
   color: #e5e7eb;
   font-weight: 900;
 }
 
 .financial-statement-table tbody tr:nth-child(even) td,
-.financial-statement-table tbody tr:nth-child(even) th {
+.financial-statement-table tbody tr:nth-child(even) td {
   background-color: rgba(15, 23, 42, 0.42);
 }
 
+.financial-statement-table tbody tr:nth-child(even) th {
+  background: #101b2b;
+}
+
 .financial-statement-table tbody tr:hover td,
-.financial-statement-table tbody tr:hover th {
+.financial-statement-table tbody tr:hover td {
   background-color: rgba(20, 184, 166, 0.08);
+}
+
+.financial-statement-table tbody tr:hover th {
+  background: #12313d;
 }
 
 .fundamental-builder-panel {

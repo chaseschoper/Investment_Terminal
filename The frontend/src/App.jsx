@@ -7425,9 +7425,9 @@ return (
 
     {activePage === "stock-screener" && (
       <section className="stock-screener-page" id="stock-screener" aria-labelledby="stock-screener-title">
-        <div className="section-heading-row screener-heading">
+        <div className="section-heading-row market-overview-heading screener-heading">
           <div>
-            <span className="home-feature-label">Stock Screener</span>
+            <div className="welcome-kicker">Stock Screener</div>
             <h2 id="stock-screener-title">Stock Screener</h2>
             <p>Filter active stocks, ETFs, and funds by size, price, sector, industry, dividend, volume, exchange, and country.</p>
           </div>
