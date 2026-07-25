@@ -20457,6 +20457,225 @@ const normalizeFundamentalMetricRows = (keyMetricRows, ratioRows, period) => {
   return { periods, rows };
 };
 
+const divideNullable = (numerator, denominator) => {
+  const top = toNumberOrNull(numerator);
+  const bottom = toNumberOrNull(denominator);
+  if (top === null || bottom === null || bottom === 0) return null;
+  return top / bottom;
+};
+
+const sumNullable = (...values) => {
+  const numbers = values.map(toNumberOrNull).filter((value) => value !== null);
+  if (!numbers.length) return null;
+  return numbers.reduce((total, value) => total + value, 0);
+};
+
+const subtractNullable = (value, subtractValue) => {
+  const left = toNumberOrNull(value);
+  const right = toNumberOrNull(subtractValue);
+  if (left === null && right === null) return null;
+  return (left || 0) - (right || 0);
+};
+
+const rollingSum = (rows, startIndex, fields, count = 4) => {
+  const windowRows = rows.slice(startIndex, startIndex + count);
+  if (!windowRows.length) return null;
+  let hasValue = false;
+  const total = windowRows.reduce((sum, row) => {
+    const value = firstFiniteNumber(...fields.map((field) => row?.[field]));
+    if (value === null) return sum;
+    hasValue = true;
+    return sum + value;
+  }, 0);
+  return hasValue ? total : null;
+};
+
+async function buildDerivedQuarterlyFundamentalMetricRows(symbol, limit) {
+  const [incomeData, balanceData, cashflowData] = await Promise.all([
+    getFmpData(symbol, "derived quarterly metrics income", [
+      `/stable/income-statement?symbol={ticker}&period=quarter&limit=${limit}`
+    ]),
+    getFmpData(symbol, "derived quarterly metrics balance", [
+      `/stable/balance-sheet-statement?symbol={ticker}&period=quarter&limit=${limit}`
+    ]),
+    getFmpData(symbol, "derived quarterly metrics cash flow", [
+      `/stable/cash-flow-statement?symbol={ticker}&period=quarter&limit=${limit}`
+    ])
+  ]);
+
+  const incomeRows = Array.isArray(incomeData) ? incomeData.filter(Boolean) : incomeData ? [incomeData] : [];
+  const balanceRows = Array.isArray(balanceData) ? balanceData.filter(Boolean) : balanceData ? [balanceData] : [];
+  const cashflowRows = Array.isArray(cashflowData) ? cashflowData.filter(Boolean) : cashflowData ? [cashflowData] : [];
+  const dates = [...new Set(incomeRows.map((row) => String(row.date || "").slice(0, 10)).filter(Boolean))];
+  const pricesByDate = await fetchFmpDailyPricesForDates(symbol, dates);
+  const balanceByDate = new Map(balanceRows.map((row) => [String(row.date || "").slice(0, 10), row]));
+  const cashflowByDate = new Map(cashflowRows.map((row) => [String(row.date || "").slice(0, 10), row]));
+
+  return incomeRows.map((income, index) => {
+    const date = String(income.date || "").slice(0, 10);
+    const balance = balanceByDate.get(date) || {};
+    const cashflow = cashflowByDate.get(date) || {};
+    const price = firstFiniteNumber(pricesByDate.get(date)?.price);
+    const shares = firstFiniteNumber(income.weightedAverageShsOutDil, income.weightedAverageShsOut);
+    const marketCap = price !== null && shares !== null ? price * shares : null;
+    const cash = firstFiniteNumber(balance.cashAndShortTermInvestments, balance.cashAndCashEquivalents);
+    const totalDebt = firstFiniteNumber(
+      balance.totalDebt,
+      sumNullable(balance.shortTermDebt, balance.longTermDebt)
+    );
+    const equity = firstFiniteNumber(balance.totalStockholdersEquity, balance.totalEquity);
+    const totalAssets = firstFiniteNumber(balance.totalAssets);
+    const totalLiabilities = firstFiniteNumber(balance.totalLiabilities);
+    const totalCurrentAssets = firstFiniteNumber(balance.totalCurrentAssets);
+    const totalCurrentLiabilities = firstFiniteNumber(balance.totalCurrentLiabilities);
+    const inventory = firstFiniteNumber(balance.inventory);
+    const receivables = firstFiniteNumber(balance.netReceivables);
+    const payables = firstFiniteNumber(balance.accountPayables);
+    const ttmRevenue = rollingSum(incomeRows, index, ["revenue"]);
+    const ttmCostOfRevenue = rollingSum(incomeRows, index, ["costOfRevenue"]);
+    const ttmGrossProfit = rollingSum(incomeRows, index, ["grossProfit"]);
+    const ttmOperatingIncome = rollingSum(incomeRows, index, ["operatingIncome"]);
+    const ttmIncomeBeforeTax = rollingSum(incomeRows, index, ["incomeBeforeTax"]);
+    const ttmNetIncome = rollingSum(incomeRows, index, ["netIncome"]);
+    const ttmEbitda = rollingSum(incomeRows, index, ["ebitda"]);
+    const ttmOperatingCashFlow = rollingSum(cashflowRows, index, ["operatingCashFlow", "netCashProvidedByOperatingActivities"]);
+    const ttmFreeCashFlow = rollingSum(cashflowRows, index, ["freeCashFlow"]);
+    const ttmInterestExpense = Math.abs(rollingSum(incomeRows, index, ["interestExpense"]) || 0);
+    const enterpriseValue =
+      marketCap !== null || totalDebt !== null || cash !== null
+        ? (marketCap || 0) + (totalDebt || 0) - (cash || 0)
+        : null;
+    const investedCapital =
+      totalDebt !== null || equity !== null || cash !== null
+        ? (totalDebt || 0) + (equity || 0) - (cash || 0)
+        : null;
+    const tangibleAssetValue = subtractNullable(
+      subtractNullable(totalAssets, balance.goodwill),
+      balance.intangibleAssets
+    );
+    const currentEps = firstFiniteNumber(income.epsDiluted, income.eps);
+    const priorYearEps = firstFiniteNumber(incomeRows[index + 4]?.epsDiluted, incomeRows[index + 4]?.eps);
+    const annualizedEps = currentEps !== null ? currentEps * 4 : null;
+    const bookValuePerShare = divideNullable(equity, shares);
+    const peRatio = divideNullable(price, annualizedEps);
+    const epsGrowth = priorYearEps && currentEps !== null
+      ? ((currentEps - priorYearEps) / Math.abs(priorYearEps)) * 100
+      : null;
+    const grahamNumber =
+      annualizedEps !== null && annualizedEps > 0 && bookValuePerShare !== null && bookValuePerShare > 0
+        ? Math.sqrt(22.5 * annualizedEps * bookValuePerShare)
+        : null;
+    const grahamNetNet = divideNullable(
+      sumNullable(
+        cash,
+        receivables !== null ? receivables * 0.75 : null,
+        inventory !== null ? inventory * 0.5 : null,
+        totalLiabilities !== null ? -totalLiabilities : null
+      ),
+      shares
+    );
+
+    return {
+      date,
+      symbol,
+      reportedCurrency: firstText(income.reportedCurrency, balance.reportedCurrency, cashflow.reportedCurrency),
+      fiscalYear: income.fiscalYear || income.calendarYear,
+      calendarYear: income.calendarYear || income.fiscalYear,
+      period: income.period || "Q",
+      marketCap,
+      enterpriseValue,
+      priceToEarningsRatio: peRatio,
+      priceToSalesRatio: divideNullable(marketCap, ttmRevenue),
+      priceToBookRatio: divideNullable(marketCap, equity),
+      priceToFreeCashFlowRatio: divideNullable(marketCap, ttmFreeCashFlow),
+      priceToOperatingCashFlowRatio: divideNullable(marketCap, ttmOperatingCashFlow),
+      priceToEarningsGrowthRatio: epsGrowth ? divideNullable(peRatio, epsGrowth) : null,
+      evToSales: divideNullable(enterpriseValue, ttmRevenue),
+      enterpriseValueMultiple: divideNullable(enterpriseValue, ttmEbitda),
+      evToOperatingCashFlow: divideNullable(enterpriseValue, ttmOperatingCashFlow),
+      evToFreeCashFlow: divideNullable(enterpriseValue, ttmFreeCashFlow),
+      earningsYield: divideNullable(ttmNetIncome, marketCap),
+      freeCashFlowYield: divideNullable(ttmFreeCashFlow, marketCap),
+      grahamNumber,
+      grahamNetNet,
+      revenuePerShare: divideNullable(income.revenue, shares),
+      netIncomePerShare: divideNullable(income.netIncome, shares),
+      operatingCashFlowPerShare: divideNullable(cashflow.operatingCashFlow || cashflow.netCashProvidedByOperatingActivities, shares),
+      freeCashFlowPerShare: divideNullable(cashflow.freeCashFlow, shares),
+      cashPerShare: divideNullable(cash, shares),
+      bookValuePerShare,
+      tangibleBookValuePerShare: divideNullable(tangibleAssetValue, shares),
+      shareholdersEquityPerShare: divideNullable(equity, shares),
+      interestDebtPerShare: divideNullable(totalDebt, shares),
+      capexPerShare: divideNullable(cashflow.capitalExpenditure, shares),
+      currentRatio: divideNullable(totalCurrentAssets, totalCurrentLiabilities),
+      quickRatio: divideNullable(subtractNullable(totalCurrentAssets, inventory), totalCurrentLiabilities),
+      cashRatio: divideNullable(cash, totalCurrentLiabilities),
+      debtToEquityRatio: divideNullable(totalDebt, equity),
+      debtToAssetsRatio: divideNullable(totalDebt, totalAssets),
+      debtToCapitalRatio: divideNullable(totalDebt, sumNullable(totalDebt, equity)),
+      longTermDebtToCapitalRatio: divideNullable(balance.longTermDebt, sumNullable(balance.longTermDebt, equity)),
+      financialLeverageRatio: divideNullable(totalAssets, equity),
+      interestCoverageRatio: ttmInterestExpense ? divideNullable(ttmOperatingIncome, ttmInterestExpense) : null,
+      debtServiceCoverageRatio: divideNullable(ttmOperatingCashFlow, totalDebt),
+      operatingCashFlowCoverageRatio: divideNullable(ttmOperatingCashFlow, totalDebt),
+      shortTermOperatingCashFlowCoverageRatio: divideNullable(ttmOperatingCashFlow, balance.shortTermDebt),
+      operatingCashFlowRatio: divideNullable(ttmOperatingCashFlow, totalCurrentLiabilities),
+      solvencyRatio: divideNullable(sumNullable(ttmNetIncome, cashflow.depreciationAndAmortization), totalLiabilities),
+      netDebtToEBITDA: divideNullable(subtractNullable(totalDebt, cash), ttmEbitda),
+      workingCapital: subtractNullable(totalCurrentAssets, totalCurrentLiabilities),
+      netCurrentAssetValue: subtractNullable(totalCurrentAssets, totalLiabilities),
+      grossProfitMargin: divideNullable(ttmGrossProfit, ttmRevenue),
+      operatingProfitMargin: divideNullable(ttmOperatingIncome, ttmRevenue),
+      pretaxProfitMargin: divideNullable(ttmIncomeBeforeTax, ttmRevenue),
+      netProfitMargin: divideNullable(ttmNetIncome, ttmRevenue),
+      bottomLineProfitMargin: divideNullable(ttmNetIncome, ttmRevenue),
+      continuousOperationsProfitMargin: divideNullable(ttmNetIncome, ttmRevenue),
+      ebitdaMargin: divideNullable(ttmEbitda, ttmRevenue),
+      ebitMargin: divideNullable(ttmOperatingIncome, ttmRevenue),
+      returnOnEquity: divideNullable(ttmNetIncome, equity),
+      returnOnAssets: divideNullable(ttmNetIncome, totalAssets),
+      returnOnInvestedCapital: divideNullable(ttmOperatingIncome, investedCapital),
+      returnOnCapitalEmployed: divideNullable(ttmOperatingIncome, subtractNullable(totalAssets, totalCurrentLiabilities)),
+      returnOnTangibleAssets: divideNullable(ttmNetIncome, tangibleAssetValue),
+      effectiveTaxRate: divideNullable(income.incomeTaxExpense, income.incomeBeforeTax),
+      incomeQuality: divideNullable(ttmOperatingCashFlow, ttmNetIncome),
+      assetTurnover: divideNullable(ttmRevenue, totalAssets),
+      fixedAssetTurnover: divideNullable(ttmRevenue, balance.propertyPlantEquipmentNet),
+      inventoryTurnover: divideNullable(ttmCostOfRevenue, inventory),
+      receivablesTurnover: divideNullable(ttmRevenue, receivables),
+      payablesTurnover: divideNullable(ttmCostOfRevenue, payables),
+      workingCapitalTurnoverRatio: divideNullable(ttmRevenue, subtractNullable(totalCurrentAssets, totalCurrentLiabilities)),
+      daysOfSalesOutstanding: divideNullable(receivables * 365, ttmRevenue),
+      daysOfInventoryOutstanding: divideNullable(inventory * 365, ttmCostOfRevenue),
+      daysOfPayablesOutstanding: divideNullable(payables * 365, ttmCostOfRevenue),
+      cashConversionCycle: sumNullable(
+        divideNullable(receivables * 365, ttmRevenue),
+        divideNullable(inventory * 365, ttmCostOfRevenue),
+        -(divideNullable(payables * 365, ttmCostOfRevenue) || 0)
+      ),
+      operatingCycle: sumNullable(
+        divideNullable(receivables * 365, ttmRevenue),
+        divideNullable(inventory * 365, ttmCostOfRevenue)
+      ),
+      averageInventory: inventory,
+      averagePayables: payables,
+      averageReceivables: receivables,
+      operatingCashFlowSalesRatio: divideNullable(ttmOperatingCashFlow, ttmRevenue),
+      freeCashFlowOperatingCashFlowRatio: divideNullable(ttmFreeCashFlow, ttmOperatingCashFlow),
+      investedCapital,
+      tangibleAssetValue,
+      intangiblesToTotalAssets: divideNullable(sumNullable(balance.goodwill, balance.intangibleAssets), totalAssets),
+      researchAndDevelopementToRevenue: divideNullable(income.researchAndDevelopmentExpenses, income.revenue),
+      salesGeneralAndAdministrativeToRevenue: divideNullable(income.sellingGeneralAndAdministrativeExpenses, income.revenue),
+      stockBasedCompensationToRevenue: divideNullable(cashflow.stockBasedCompensation, income.revenue),
+      capexToRevenue: divideNullable(cashflow.capitalExpenditure, income.revenue),
+      capexToOperatingCashFlow: divideNullable(cashflow.capitalExpenditure, cashflow.operatingCashFlow || cashflow.netCashProvidedByOperatingActivities),
+      capexToDepreciation: divideNullable(cashflow.capitalExpenditure, cashflow.depreciationAndAmortization)
+    };
+  });
+}
+
 app.get("/api/financial-statements/:ticker", async (req, res) => {
   try {
     const symbol = String(req.params.ticker || "").trim().toUpperCase();
@@ -20511,6 +20730,21 @@ app.get("/api/fundamental-metrics/:ticker", async (req, res) => {
     const limit = Number.isFinite(requestedLimit)
       ? Math.min(Math.max(Math.round(requestedLimit), 1), period === "quarter" ? 80 : 40)
       : period === "quarter" ? 80 : 40;
+
+    if (period === "quarter") {
+      const derivedRows = await buildDerivedQuarterlyFundamentalMetricRows(symbol, limit);
+      const normalized = normalizeFundamentalMetricRows(derivedRows, [], period);
+
+      return res.json({
+        symbol,
+        statement: "metrics",
+        statementLabel: "Derived Quarterly Metrics",
+        period,
+        source: "FMP quarterly statements and quarter-end prices",
+        updatedAt: new Date().toISOString(),
+        ...normalized
+      });
+    }
 
     const [keyMetricsData, ratiosData] = await Promise.all([
       getFmpData(symbol, `fundamental key metrics ${period}`, [

@@ -3965,9 +3965,7 @@ useEffect(() => {
           return [statement, null];
         })
     );
-    const metricRequest = fundamentalChartPeriod === "quarter"
-      ? Promise.resolve(["metrics", null])
-      : axios.get(`${API_URL}/api/fundamental-metrics/${symbol}`, {
+    const metricRequest = axios.get(`${API_URL}/api/fundamental-metrics/${symbol}`, {
         params: {
           period: fundamentalChartPeriod,
           limit: periodLimit
@@ -3976,9 +3974,9 @@ useEffect(() => {
       })
         .then((response) => ["metrics", response.data])
         .catch((error) => {
-          console.error("Fundamental key metrics failed", symbol, error);
-          return ["metrics", null];
-        });
+        console.error("Fundamental key metrics failed", symbol, error);
+        return ["metrics", null];
+      });
 
     const statementEntries = await Promise.all([...statementRequests, metricRequest]);
     const statements = Object.fromEntries(statementEntries);
@@ -5742,12 +5740,10 @@ const estimateGrowthRows = estimateMetricConfig.map((metric) => ({
   label: `${metric.label} Growth`,
   cells: estimateGrowthCells.filter((cell) => cell.metricKey === metric.key)
 }));
-const isFundamentalIndicatorAvailableForPeriod = (indicator) =>
-  fundamentalChartPeriod !== "quarter" || indicator.source !== "metrics";
 const availableFundamentalIndicatorGroups = FUNDAMENTAL_CHART_INDICATOR_GROUPS
   .map((group) => ({
     ...group,
-    indicators: group.indicators.filter(isFundamentalIndicatorAvailableForPeriod)
+    indicators: group.indicators
   }))
   .filter((group) => group.indicators.length);
 const activeFundamentalIndicatorGroupDetails =
@@ -5756,7 +5752,7 @@ const activeFundamentalIndicatorGroupDetails =
   null;
 const selectedFundamentalIndicatorDetails = selectedFundamentalIndicators
   .map((key) => FUNDAMENTAL_CHART_INDICATORS.find((indicator) => indicator.key === key))
-  .filter((indicator) => indicator && isFundamentalIndicatorAvailableForPeriod(indicator));
+  .filter(Boolean);
 const getFundamentalIndicatorValue = (period, indicator, previousPeriod = null) => {
   if (!period || !indicator) return null;
   if (indicator.growthOf) {
