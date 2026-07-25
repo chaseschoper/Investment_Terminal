@@ -2260,7 +2260,14 @@ const chartRowsScore = (rows = [], keys = ["revenue", "earnings", "eps"]) => {
   const realRows = rows.filter((row) => row && !row.isCurrent);
   const valueCount = realRows.reduce((total, row) =>
     total + keys.filter((key) => isNumber(row?.[key])).length, 0);
-  return valueCount + countInterimRows(realRows) * 3 + realRows.length;
+  const epsBasisFieldCount = realRows.reduce((total, row) =>
+    total + ["epsBasic", "epsDiluted"].filter((key) => isNumber(row?.[key])).length, 0);
+  const epsBasisDifferenceCount = realRows.filter((row) =>
+    isNumber(row?.epsBasic) &&
+    isNumber(row?.epsDiluted) &&
+    Math.abs(row.epsBasic - row.epsDiluted) > 0.0001
+  ).length;
+  return valueCount + epsBasisFieldCount * 4 + epsBasisDifferenceCount * 8 + countInterimRows(realRows) * 3 + realRows.length;
 };
 
 const chooseRicherRows = (previousRows, incomingRows, keys) => {
@@ -2704,7 +2711,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 160;
+const FINANCIAL_HISTORY_VERSION = 161;
 const STOCK_ESTIMATE_VERSION = 23;
 const INTERIM_HISTORY_VERSION = 6;
 const VALUATION_METRICS_VERSION = 23;
@@ -2874,6 +2881,11 @@ const buildGaapDilutedEpsByFiscalKey = (rows = []) => {
   return byFiscalKey;
 };
 
+const buildGaapDilutedEpsReportedRows = (rows = []) =>
+  (rows || [])
+    .filter((row) => row?.isInterim && isNumber(firstNumber(row.epsDiluted, row.eps)))
+    .sort((a, b) => String(b.date || b.period || "").localeCompare(String(a.date || a.period || "")));
+
 const isReportedEpsBeatMissRow = (row = {}) =>
   isNumber(row.actual) || isNumber(row.gaapActual);
 
@@ -2934,9 +2946,23 @@ function EpsBeatMissChart({ rows = [], basis = "normalized", onBasisChange, fina
     () => buildGaapDilutedEpsByFiscalKey(financialHistory),
     [financialHistory]
   );
+  const gaapDilutedReportedRows = useMemo(
+    () => buildGaapDilutedEpsReportedRows(financialHistory),
+    [financialHistory]
+  );
+  const reportedBeatRows = useMemo(
+    () => (rows || []).filter(isReportedEpsBeatMissRow),
+    [rows]
+  );
   const gaapActualForRow = (row) => {
     const key = financialHistoryFiscalKey(row);
-    return firstNumber(key ? gaapDilutedEpsByFiscalKey.get(key) : null, row?.gaapActual);
+    const reportedIndex = isReportedEpsBeatMissRow(row)
+      ? reportedBeatRows.findIndex((item) => item === row)
+      : -1;
+    const orderMatchedGaap = reportedIndex >= 0
+      ? firstNumber(gaapDilutedReportedRows[reportedIndex]?.epsDiluted, gaapDilutedReportedRows[reportedIndex]?.eps)
+      : null;
+    return firstNumber(key ? gaapDilutedEpsByFiscalKey.get(key) : null, row?.gaapActual, orderMatchedGaap);
   };
   const actualForRow = (row) => {
     if (basis === "gaap") {
