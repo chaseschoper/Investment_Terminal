@@ -76,7 +76,7 @@ const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const alphaVantageFundamentalCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 159;
+const FINANCIAL_HISTORY_VERSION = 160;
 const HISTORICAL_PE_VERSION = 3;
 const STOCK_ESTIMATE_VERSION = 23;
 const INTERIM_HISTORY_VERSION = 6;
@@ -6025,6 +6025,8 @@ function finalizeFinancialHistory(rows, sharesOutstanding) {
     revenue: toNumberOrNull(row.revenue),
     earnings: toNumberOrNull(row.earnings),
     eps: normalizeHistoricalEps(row, sharesOutstanding),
+    epsBasic: toNumberOrNull(row.epsBasic),
+    epsDiluted: firstFiniteNumber(row.epsDiluted, normalizeHistoricalEps(row, sharesOutstanding)),
     grossProfit: toNumberOrNull(row.grossProfit),
     operatingIncome: toNumberOrNull(row.operatingIncome),
     ebitda: toNumberOrNull(row.ebitda),
@@ -8812,7 +8814,7 @@ async function fetchFmpEpsSurprises(ticker) {
     return fetchFinnhubEpsSurprises(symbol);
   }
 
-  const cacheKey = `fmp:${symbol}:gaap-v1`;
+  const cacheKey = `fmp:${symbol}:gaap-v3`;
   const cached = readCachedMarketActivity(epsSurpriseCache, cacheKey);
   if (cached) return cached;
 
@@ -8833,22 +8835,35 @@ async function fetchFmpEpsSurprises(ticker) {
         []
       )
     ]);
-    const gaapEpsByRecentIndex = (Array.isArray(incomeRows) ? incomeRows : incomeRows ? [incomeRows] : [])
+    const incomeRowsByRecentIndex = (Array.isArray(incomeRows) ? incomeRows : incomeRows ? [incomeRows] : [])
       .filter(Boolean)
-      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
+      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+    const gaapEpsByRecentIndex = incomeRowsByRecentIndex
       .map((row) => toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps));
+    let reportedIncomeIndex = 0;
     let data = mergeEpsBeatMissRows(
       (Array.isArray(rows) ? rows : rows ? [rows] : [])
         .filter((item) => String(item.symbol || "").trim().toUpperCase() === symbol)
         .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
-        .map((item, index) => {
+        .map((item) => {
           const estimate = toNumberOrNull(item.epsEstimated ?? item.epsEstimate);
           const actual = toNumberOrNull(item.epsActual);
-          const gaapActual = gaapEpsByRecentIndex[index] ?? null;
+          const isReportedQuarter = actual !== null;
+          const incomeRow = isReportedQuarter ? incomeRowsByRecentIndex[reportedIncomeIndex++] || {} : {};
+          const fiscalYear = toNumberOrNull(
+            incomeRow.fiscalYear ??
+              incomeRow.calendarYear ??
+              String(incomeRow.date || "").slice(0, 4)
+          );
+          const fiscalQuarter = fmpQuarterNumber(incomeRow);
+          const gaapActual = isReportedQuarter ? gaapEpsByRecentIndex[reportedIncomeIndex - 1] ?? null : null;
           const surprise = actual !== null && estimate !== null ? actual - estimate : null;
           const gaapSurprise = gaapActual !== null && estimate !== null ? gaapActual - estimate : null;
           return {
             period: yahooDateToIso(item.date),
+            fiscalYear,
+            fiscalQuarter,
+            label: fiscalYear && fiscalQuarter ? `Q${fiscalQuarter} FY${String(fiscalYear).slice(-2)}` : null,
             estimate,
             actual,
             gaapActual,

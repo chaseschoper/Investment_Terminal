@@ -15,6 +15,7 @@ import {
 
 import {
   useEffect,
+  useMemo,
   useRef,
   useState
 } from "react";
@@ -2703,7 +2704,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 159;
+const FINANCIAL_HISTORY_VERSION = 160;
 const STOCK_ESTIMATE_VERSION = 23;
 const INTERIM_HISTORY_VERSION = 6;
 const VALUATION_METRICS_VERSION = 23;
@@ -2842,17 +2843,43 @@ const formatSignedEpsSurprise = (value) => {
   return `${sign}$${Math.abs(value).toFixed(2)}`;
 };
 
-function EpsBeatMissChart({ rows = [], basis = "normalized", onBasisChange }) {
+const financialHistoryFiscalKey = (row = {}) => {
+  const year = Number(row.fiscalYear || row.year);
+  const quarterMatch = String(row.period || row.label || "").match(/\bQ\s*([1-4])\b/i);
+  const quarter = quarterMatch ? Number(quarterMatch[1]) : Number(row.fiscalQuarter);
+  return Number.isFinite(year) && Number.isFinite(quarter) ? `${year}:Q${quarter}` : null;
+};
+
+const buildGaapDilutedEpsByFiscalKey = (rows = []) => {
+  const byFiscalKey = new Map();
+  (rows || []).forEach((row) => {
+    if (!row?.isInterim) return;
+    const key = financialHistoryFiscalKey(row);
+    const value = firstNumber(row.epsDiluted, row.eps);
+    if (key && isNumber(value)) byFiscalKey.set(key, value);
+  });
+  return byFiscalKey;
+};
+
+function EpsBeatMissChart({ rows = [], basis = "normalized", onBasisChange, financialHistory = [] }) {
   const [selectedIndex, setSelectedIndex] = useState(null);
   const activeOption = epsBeatMissOption(basis);
-  const actualForRow = (row) =>
-    basis === "gaap"
-      ? firstNumber(row?.gaapActual, row?.actual)
-      : firstNumber(row?.actual, row?.gaapActual);
+  const gaapDilutedEpsByFiscalKey = useMemo(
+    () => buildGaapDilutedEpsByFiscalKey(financialHistory),
+    [financialHistory]
+  );
+  const gaapActualForRow = (row) => {
+    const key = financialHistoryFiscalKey(row);
+    return firstNumber(key ? gaapDilutedEpsByFiscalKey.get(key) : null, row?.gaapActual);
+  };
+  const actualForRow = (row) => {
+    if (basis === "gaap") {
+      return firstNumber(gaapActualForRow(row), row?.actual);
+    }
+    return firstNumber(row?.actual, gaapActualForRow(row));
+  };
   const surpriseForRow = (row, actualValue) =>
-    basis === "gaap" && isNumber(row?.gaapSurprise)
-      ? row.gaapSurprise
-      : basis === "normalized" && isNumber(row?.surprise)
+    basis === "normalized" && isNumber(row?.surprise)
         ? row.surprise
         : isNumber(actualValue) && isNumber(row?.estimate)
           ? actualValue - row.estimate
@@ -9651,6 +9678,7 @@ return (
         rows={epsBeatMissRows}
         basis={epsBeatMissBasis}
         onBasisChange={setEpsBeatMissBasis}
+        financialHistory={financialHistory}
       />
 
       {financialChartMode === "annual" && (
