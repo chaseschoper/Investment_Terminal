@@ -76,7 +76,7 @@ const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const alphaVantageFundamentalCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 158;
+const FINANCIAL_HISTORY_VERSION = 159;
 const HISTORICAL_PE_VERSION = 3;
 const STOCK_ESTIMATE_VERSION = 23;
 const INTERIM_HISTORY_VERSION = 6;
@@ -4125,8 +4125,10 @@ function convertForeignAdrRow(row, config, usdRate, sharesOutstanding = null) {
     const recalculatedEps = computeEpsFromEarningsAndShares(next.earnings, sharesOutstanding);
     if (recalculatedEps !== null) next.eps = recalculatedEps;
   } else {
-    const eps = toNumberOrNull(row.eps);
-    if (eps !== null) next.eps = eps * config.adrRatio * usdRate;
+    ["eps", "epsBasic", "epsDiluted"].forEach((field) => {
+      const value = toNumberOrNull(row[field]);
+      if (value !== null) next[field] = value * config.adrRatio * usdRate;
+    });
   }
   next.sourceCurrency = config.sourceCurrency;
   next.displayCurrency = config.displayCurrency;
@@ -4696,8 +4698,10 @@ function convertGenericForeignRowToUsd(row, usdRate) {
     "sgaExpense",
     "value"
   ]);
-  const eps = toNumberOrNull(row.eps);
-  if (eps !== null) next.eps = eps * usdRate;
+  ["eps", "epsBasic", "epsDiluted"].forEach((field) => {
+    const value = toNumberOrNull(row[field]);
+    if (value !== null) next[field] = value * usdRate;
+  });
   next.sourceCurrency = row.sourceCurrency || null;
   next.displayCurrency = "USD";
   return next;
@@ -8952,36 +8956,56 @@ const buildEpsBeatMissSeries = (reportedRows = [], nextQuarterEstimate = {}) => 
   const nextEstimate = toNumberOrNull(nextQuarterEstimate?.eps);
   const nextDate = yahooDateToIso(nextQuarterEstimate?.date);
   const nextLabel = firstText(nextQuarterEstimate?.fiscalQuarter, "Next Quarter");
+  const nextPeriod = nextDate || `upcoming:${nextLabel}`;
   const nextFiscal = parseEpsBeatMissFiscalLabel(nextLabel);
   const nextKey = epsBeatMissKey({
-    period: nextDate,
+    period: nextPeriod,
     label: nextLabel,
     fiscalYear: nextFiscal.fiscalYear,
     fiscalQuarter: nextFiscal.fiscalQuarter
   });
-  if (
-    nextEstimate !== null &&
-    nextDate &&
-    !rows.some((row) =>
-      (nextKey && epsBeatMissKey(row) === nextKey) ||
-      row.period === nextDate
-    )
-  ) {
+  const nextRowIndex = rows.findIndex((row) =>
+    (nextKey && epsBeatMissKey(row) === nextKey) ||
+    (nextDate && row.period === nextDate)
+  );
+  if (nextEstimate !== null && nextRowIndex >= 0 && !isReportedEpsRow(rows[nextRowIndex])) {
+    rows[nextRowIndex] = {
+      ...rows[nextRowIndex],
+      period: nextDate || rows[nextRowIndex].period || nextPeriod,
+      fiscalYear: nextFiscal.fiscalYear || rows[nextRowIndex].fiscalYear || null,
+      fiscalQuarter: nextFiscal.fiscalQuarter || rows[nextRowIndex].fiscalQuarter || null,
+      label: nextLabel || rows[nextRowIndex].label || "Next Quarter",
+      estimate: nextEstimate,
+      actual: null,
+      gaapActual: null,
+      surprise: null,
+      gaapSurprise: null,
+      surprisePercent: null,
+      source: "FMP earnings calendar"
+    };
+  } else if (nextEstimate !== null && nextRowIndex < 0) {
     rows.push({
-      period: nextDate,
+      period: nextPeriod,
       fiscalYear: nextFiscal.fiscalYear || null,
       fiscalQuarter: nextFiscal.fiscalQuarter || null,
       label: nextLabel,
       estimate: nextEstimate,
       actual: null,
+      gaapActual: null,
       surprise: null,
+      gaapSurprise: null,
       surprisePercent: null,
       source: "FMP earnings calendar"
     });
   }
 
   return rows
-    .filter((row) => row.estimate !== null || row.actual !== null)
+    .filter((row) => row.estimate !== null || row.actual !== null || row.gaapActual !== null)
+    .sort((a, b) => {
+      const periodA = String(a.period || "").startsWith("upcoming:") ? "9999-12-31" : String(a.period || "");
+      const periodB = String(b.period || "").startsWith("upcoming:") ? "9999-12-31" : String(b.period || "");
+      return periodA.localeCompare(periodB);
+    })
     .slice(-5);
 };
 

@@ -2467,6 +2467,8 @@ const stabilizeRefreshingStockData = (previous, incoming) => {
     "revenue",
     "earnings",
     "eps",
+    "epsBasic",
+    "epsDiluted",
     "operatingCashflow",
     "freeCashflow",
     "sharesOutstanding"
@@ -2474,7 +2476,9 @@ const stabilizeRefreshingStockData = (previous, incoming) => {
   stable.revenueHistory = chooseRicherRows(previous.revenueHistory, incoming.revenueHistory, [
     "revenue",
     "earnings",
-    "eps"
+    "eps",
+    "epsBasic",
+    "epsDiluted"
   ]);
   stable.marginHistory = chooseRicherRows(previous.marginHistory, incoming.marginHistory, [
     "grossMargin",
@@ -2699,7 +2703,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 158;
+const FINANCIAL_HISTORY_VERSION = 159;
 const STOCK_ESTIMATE_VERSION = 23;
 const INTERIM_HISTORY_VERSION = 6;
 const VALUATION_METRICS_VERSION = 23;
