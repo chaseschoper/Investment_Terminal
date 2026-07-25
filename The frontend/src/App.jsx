@@ -104,23 +104,6 @@ const FINANCIAL_STATEMENT_PERIODS = [
   { id: "quarter", label: "Quarterly" }
 ];
 
-const EPS_ACCOUNTING_OPTIONS = [
-  { id: "gaap", label: "GAAP" },
-  { id: "nonGaap", label: "Non-GAAP" }
-];
-
-const EPS_SHARE_OPTIONS = [
-  { id: "diluted", label: "Diluted" },
-  { id: "basic", label: "Basic" }
-];
-
-const epsBasisLabel = (accounting = "gaap", shareBasis = "diluted") =>
-  accounting === "nonGaap"
-    ? "Normalized EPS"
-    : shareBasis === "basic"
-      ? "GAAP Basic EPS"
-      : "GAAP Diluted EPS";
-
 const FUNDAMENTAL_HISTORY_RANGES = [
   { id: "3", label: "3Y", years: 3 },
   { id: "5", label: "5Y", years: 5 },
@@ -165,33 +148,6 @@ const filterFinancialStatementByHistoryRange = (statementData, rangeId = "5", pe
       ...row,
       values: (row.values || []).slice(startIndex, endIndex)
     }))
-  };
-};
-
-const filterFinancialStatementByEpsBasis = (
-  statementData,
-  statementType,
-  accountingBasis = "gaap",
-  shareBasis = "diluted"
-) => {
-  if (!statementData?.rows?.length || statementType !== "income") return statementData;
-  const keepEpsKey =
-    accountingBasis === "nonGaap"
-      ? "normalizedEps"
-      : shareBasis === "basic"
-        ? "eps"
-        : "epsDiluted";
-  const epsKeys = new Set(["eps", "epsDiluted", "normalizedEps"]);
-
-  return {
-    ...statementData,
-    rows: statementData.rows
-      .filter((row) => !epsKeys.has(row.key) || row.key === keepEpsKey)
-      .map((row) =>
-        row.key === keepEpsKey
-          ? { ...row, label: epsBasisLabel(accountingBasis, shareBasis) }
-          : row
-      )
   };
 };
 
@@ -2083,56 +2039,6 @@ const buildChartRows = (rows, key) =>
       (item.isInterim || item.year <= new Date().getFullYear())
     );
 
-const selectedEpsValue = (row, accountingBasis = "gaap", shareBasis = "diluted") => {
-  if (!row) return null;
-  if (accountingBasis === "nonGaap") {
-    return firstNumber(row.normalizedEps, row.epsNonGaap, row.adjustedEps);
-  }
-  return shareBasis === "basic"
-    ? firstNumber(row.epsBasic, row.eps)
-    : firstNumber(row.epsDiluted, row.eps);
-};
-
-const buildSelectedEpsRows = (rows = [], accountingBasis = "gaap", shareBasis = "diluted") =>
-  (rows || [])
-    .map((row) => ({
-      year: row.year,
-      period: row.period || String(row.year),
-      isInterim: Boolean(row.isInterim),
-      isCurrent: Boolean(row.isCurrent),
-      source: row.source,
-      eps: selectedEpsValue(row, accountingBasis, shareBasis)
-    }))
-    .filter((row) =>
-      row.year &&
-      isNumber(row.eps) &&
-      row.source !== "Modeled fallback" &&
-      row.source !== "Current metric fallback" &&
-      (row.isInterim || row.year <= new Date().getFullYear())
-    );
-
-const recalculatePeRowsForEpsBasis = (peRows = [], financialRows = [], accountingBasis = "gaap", shareBasis = "diluted") => {
-  const epsByKey = new Map();
-  buildSelectedEpsRows(financialRows, accountingBasis, shareBasis).forEach((row) => {
-    const period = row.period || String(row.year);
-    epsByKey.set(row.isInterim ? `${row.year}:${period}` : `${row.year}:annual`, row.eps);
-  });
-
-  return (peRows || [])
-    .map((row) => {
-      const period = row.period || String(row.year);
-      const key = row.isInterim ? `${row.year}:${period}` : `${row.year}:annual`;
-      const selectedEps = epsByKey.get(key);
-      if (!isNumber(selectedEps) || selectedEps === 0 || !isNumber(row.price)) return row;
-      return {
-        ...row,
-        eps: selectedEps,
-        pe: row.price / selectedEps
-      };
-    })
-    .filter((row) => isNumber(row.pe) && Number.isFinite(row.pe) && Math.abs(row.pe) < 1000);
-};
-
 const mergeChartRows = (rows, key) => {
   const merged = new Map();
 
@@ -2893,31 +2799,21 @@ const formatSignedEpsSurprise = (value) => {
   return `${sign}$${Math.abs(value).toFixed(2)}`;
 };
 
-function EpsBeatMissChart({ rows = [], accountingBasis = "nonGaap", shareBasis = "diluted" }) {
+function EpsBeatMissChart({ rows = [] }) {
   const [selectedIndex, setSelectedIndex] = useState(null);
-  const actualForRow = (row) =>
-    accountingBasis === "gaap"
-      ? firstNumber(row?.gaapActual, row?.actual)
-      : firstNumber(row?.actual, row?.normalizedActual, row?.gaapActual);
   const chartRows = rows
-    .map((row) => ({
-      ...row,
-      displayActual: actualForRow(row)
-    }))
-    .filter((row) => isNumber(row?.estimate) || isNumber(row?.displayActual))
+    .filter((row) => isNumber(row?.estimate) || isNumber(row?.actual))
     .slice(-5);
   if (!chartRows.length) return null;
   const surpriseValueFor = (row) =>
-    accountingBasis === "gaap" && isNumber(row.gaapSurprise)
-      ? row.gaapSurprise
-      : isNumber(row.surprise)
+    isNumber(row.surprise)
       ? row.surprise
-      : isNumber(row.displayActual) && isNumber(row.estimate)
-        ? row.displayActual - row.estimate
+      : isNumber(row.actual) && isNumber(row.estimate)
+        ? row.actual - row.estimate
         : null;
 
   const values = chartRows
-    .flatMap((row) => [row.estimate, row.displayActual])
+    .flatMap((row) => [row.estimate, row.actual])
     .filter(isNumber);
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -2943,7 +2839,7 @@ function EpsBeatMissChart({ rows = [], accountingBasis = "nonGaap", shareBasis =
             {formatEpsBeatMissLabel(chartRows.at(-1))} estimate {formatEstimateEps(referenceEstimate)}
           </span>
         </div>
-        <span className="eps-beat-miss-mode">{epsBasisLabel(accountingBasis, shareBasis)}</span>
+        <span className="eps-beat-miss-mode">Normalized EPS</span>
       </div>
 
       <svg className="eps-beat-miss-plot" viewBox="0 0 100 62" role="img" aria-label="Normalized EPS beat miss chart">
@@ -2957,7 +2853,7 @@ function EpsBeatMissChart({ rows = [], accountingBasis = "nonGaap", shareBasis =
         {chartRows.map((row, index) => {
           const x = xFor(index);
           const estimateY = yFor(row.estimate);
-          const actualValue = row.displayActual;
+          const actualValue = row.actual;
           const actualY = yFor(actualValue);
           const surprise = surpriseValueFor(row);
           const missed = isNumber(surprise) ? surprise < 0 : false;
@@ -3027,7 +2923,7 @@ function EpsBeatMissChart({ rows = [], accountingBasis = "nonGaap", shareBasis =
       {selectedRow && (
         <div className="eps-beat-miss-detail">
           <strong>{formatEpsBeatMissLabel(selectedRow)}</strong>
-          <span>Actual {isNumber(selectedRow.displayActual) ? formatEstimateEps(selectedRow.displayActual) : "N/A"}</span>
+          <span>Actual {isNumber(selectedRow.actual) ? formatEstimateEps(selectedRow.actual) : "N/A"}</span>
           <span>Estimate {isNumber(selectedRow.estimate) ? formatEstimateEps(selectedRow.estimate) : "N/A"}</span>
           <span className={isNumber(selectedSurprise) && selectedSurprise < 0 ? "miss" : "beat"}>
             {isNumber(selectedSurprise)
@@ -3424,12 +3320,6 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [financialChartRange, setFinancialChartRange] =
     useState("5");
 
-  const [epsAccountingBasis, setEpsAccountingBasis] =
-    useState("gaap");
-
-  const [epsShareBasis, setEpsShareBasis] =
-    useState("diluted");
-
   const [stockChartData, setStockChartData] =
     useState([]);
 
@@ -3646,12 +3536,6 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
 
   const [financialStatementRange, setFinancialStatementRange] =
     useState("5");
-
-  const [financialStatementEpsAccountingBasis, setFinancialStatementEpsAccountingBasis] =
-    useState("gaap");
-
-  const [financialStatementEpsShareBasis, setFinancialStatementEpsShareBasis] =
-    useState("diluted");
 
   const [financialStatementData, setFinancialStatementData] =
     useState(null);
@@ -4084,18 +3968,6 @@ useEffect(() => {
     isActive = false;
   };
 }, [activePage, screenerOptions]);
-
-useEffect(() => {
-  if (epsAccountingBasis === "nonGaap" && epsShareBasis !== "diluted") {
-    setEpsShareBasis("diluted");
-  }
-}, [epsAccountingBasis, epsShareBasis]);
-
-useEffect(() => {
-  if (financialStatementEpsAccountingBasis === "nonGaap" && financialStatementEpsShareBasis !== "diluted") {
-    setFinancialStatementEpsShareBasis("diluted");
-  }
-}, [financialStatementEpsAccountingBasis, financialStatementEpsShareBasis]);
 
 useEffect(() => {
   if (activePage !== "financial-statements" || !financialStatementTicker) return;
@@ -5515,7 +5387,7 @@ const earningsHistory = filterRowsByHistoryRange(
 );
 
 const allEpsHistory =
-  buildSelectedEpsRows(financialHistory, epsAccountingBasis, epsShareBasis);
+  buildChartRows(financialHistory, "eps");
 const epsHistory = filterRowsByHistoryRange(
   filterChartRowsByMode(allEpsHistory, financialChartMode),
   financialChartRange,
@@ -5642,12 +5514,7 @@ const sharesOutstandingHistory =
     "sharesOutstanding",
     stockData?.sharesOutstanding
   );
-const historicalPeHistoryBase = recalculatePeRowsForEpsBasis(
-  stockData?.historicalPe || [],
-  financialHistory,
-  epsAccountingBasis,
-  epsShareBasis
-)
+const historicalPeHistoryBase = (stockData?.historicalPe || [])
   .map((row) => ({ ...row, period: row.period || String(row.year) }))
   .filter((row) =>
     row?.year &&
@@ -7717,12 +7584,7 @@ const renderHistoryRangeToggle = (value, onChange, ariaLabel = "History range") 
 );
 
 const visibleFinancialStatementData = filterFinancialStatementByHistoryRange(
-  filterFinancialStatementByEpsBasis(
-    financialStatementData,
-    financialStatementType,
-    financialStatementEpsAccountingBasis,
-    financialStatementEpsShareBasis
-  ),
+  financialStatementData,
   financialStatementRange,
   financialStatementPeriod
 );
@@ -8513,35 +8375,6 @@ return (
             financialStatementRange,
             setFinancialStatementRange,
             "Financial statement history range"
-          )}
-          {financialStatementType === "income" && (
-            <>
-              <div className="financial-statement-period-toggle" role="tablist" aria-label="Income statement EPS accounting basis">
-                {EPS_ACCOUNTING_OPTIONS.map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    className={financialStatementEpsAccountingBasis === option.id ? "active" : ""}
-                    onClick={() => setFinancialStatementEpsAccountingBasis(option.id)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-              <div className="financial-statement-period-toggle" role="tablist" aria-label="Income statement EPS share basis">
-                {EPS_SHARE_OPTIONS.map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    className={financialStatementEpsShareBasis === option.id ? "active" : ""}
-                    onClick={() => setFinancialStatementEpsShareBasis(option.id)}
-                    disabled={financialStatementEpsAccountingBasis === "nonGaap" && option.id === "basic"}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            </>
           )}
         </div>
 
@@ -9475,33 +9308,6 @@ return (
       setFinancialChartRange,
       "Stock overview chart history range"
     )}
-
-    <div className="chart-mode-toggle" aria-label="EPS accounting basis">
-      {EPS_ACCOUNTING_OPTIONS.map((option) => (
-        <button
-          key={option.id}
-          className={`chart-mode-button ${epsAccountingBasis === option.id ? "active" : ""}`}
-          type="button"
-          onClick={() => setEpsAccountingBasis(option.id)}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
-
-    <div className="chart-mode-toggle" aria-label="EPS share basis">
-      {EPS_SHARE_OPTIONS.map((option) => (
-        <button
-          key={option.id}
-          className={`chart-mode-button ${epsShareBasis === option.id ? "active" : ""}`}
-          type="button"
-          onClick={() => setEpsShareBasis(option.id)}
-          disabled={epsAccountingBasis === "nonGaap" && option.id === "basic"}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
   </div>
 
 <div className="chart-box">
@@ -9682,7 +9488,7 @@ return (
 <div className="chart-section">
 
   <h2 className="section-title">
-    {epsBasisLabel(epsAccountingBasis, epsShareBasis)} Chart
+    EPS Chart
   </h2>
 
   <div className="chart-box">
@@ -9723,7 +9529,7 @@ return (
             content={(
               <OverviewChartTooltip
                 formatter={formatChartEps}
-                valueLabel={epsBasisLabel(epsAccountingBasis, epsShareBasis)}
+                valueLabel="EPS"
                 symbol={ticker}
                 color="#f59e0b"
               />
@@ -9744,11 +9550,7 @@ return (
 
       </ResponsiveContainer>
 
-      <EpsBeatMissChart
-        rows={epsBeatMissRows}
-        accountingBasis={epsAccountingBasis}
-        shareBasis={epsShareBasis}
-      />
+      <EpsBeatMissChart rows={epsBeatMissRows} />
 
       {financialChartMode === "annual" && (
         <ChartGrowthStrip
@@ -9777,7 +9579,7 @@ return (
 
 <div className="historical-chart-grid">
   <HistoricalLineChart
-    title={`Historical P/E (${epsBasisLabel(epsAccountingBasis, epsShareBasis)})`}
+    title="Historical Year-End P/E"
     data={historicalPeHistory}
     dataKey="pe"
     color="#60a5fa"
