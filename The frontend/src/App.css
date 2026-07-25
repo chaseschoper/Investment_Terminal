@@ -6319,11 +6319,11 @@ body {
 
 .screener-heading > div {
   flex: 1;
-  text-align: center;
+  text-align: left;
 }
 
 .screener-heading .welcome-kicker {
-  justify-content: center;
+  justify-content: flex-start;
 }
 
 .screener-heading h2 {
@@ -6331,8 +6331,8 @@ body {
 }
 
 .screener-heading p {
-  margin-left: auto;
-  margin-right: auto;
+  margin-left: 0;
+  margin-right: 0;
 }
 
 .screener-panel,

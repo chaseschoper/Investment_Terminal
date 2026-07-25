@@ -154,25 +154,201 @@ const filterFinancialStatementByHistoryRange = (statementData, rangeId = "5", pe
 const historyRangeLabel = (rangeId) =>
   FUNDAMENTAL_HISTORY_RANGES.find((range) => range.id === rangeId)?.label || "5Y";
 
+const FUNDAMENTAL_STATEMENT_FIELDS = {
+  income: [
+    "revenue",
+    "costOfRevenue",
+    "grossProfit",
+    "grossProfitRatio",
+    "researchAndDevelopmentExpenses",
+    "generalAndAdministrativeExpenses",
+    "sellingAndMarketingExpenses",
+    "sellingGeneralAndAdministrativeExpenses",
+    "operatingExpenses",
+    "operatingIncome",
+    "operatingIncomeRatio",
+    "interestIncome",
+    "interestExpense",
+    "incomeBeforeTax",
+    "incomeBeforeTaxRatio",
+    "incomeTaxExpense",
+    "netIncome",
+    "netIncomeRatio",
+    "eps",
+    "epsDiluted",
+    "weightedAverageShsOut",
+    "weightedAverageShsOutDil",
+    "ebitda",
+    "ebitdaratio"
+  ],
+  balance: [
+    "cashAndCashEquivalents",
+    "shortTermInvestments",
+    "cashAndShortTermInvestments",
+    "netReceivables",
+    "inventory",
+    "otherCurrentAssets",
+    "totalCurrentAssets",
+    "propertyPlantEquipmentNet",
+    "goodwill",
+    "intangibleAssets",
+    "longTermInvestments",
+    "taxAssets",
+    "otherNonCurrentAssets",
+    "totalNonCurrentAssets",
+    "totalAssets",
+    "accountPayables",
+    "shortTermDebt",
+    "taxPayables",
+    "deferredRevenue",
+    "otherCurrentLiabilities",
+    "totalCurrentLiabilities",
+    "longTermDebt",
+    "deferredRevenueNonCurrent",
+    "deferredTaxLiabilitiesNonCurrent",
+    "otherNonCurrentLiabilities",
+    "totalNonCurrentLiabilities",
+    "totalLiabilities",
+    "preferredStock",
+    "commonStock",
+    "retainedEarnings",
+    "accumulatedOtherComprehensiveIncomeLoss",
+    "othertotalStockholdersEquity",
+    "totalStockholdersEquity",
+    "totalEquity",
+    "totalLiabilitiesAndStockholdersEquity",
+    "minorityInterest",
+    "totalLiabilitiesAndTotalEquity",
+    "totalInvestments",
+    "totalDebt",
+    "netDebt"
+  ],
+  cashflow: [
+    "netIncome",
+    "depreciationAndAmortization",
+    "deferredIncomeTax",
+    "stockBasedCompensation",
+    "changeInWorkingCapital",
+    "accountsReceivables",
+    "inventory",
+    "accountsPayables",
+    "otherWorkingCapital",
+    "otherNonCashItems",
+    "netCashProvidedByOperatingActivities",
+    "operatingCashFlow",
+    "investmentsInPropertyPlantAndEquipment",
+    "acquisitionsNet",
+    "purchasesOfInvestments",
+    "salesMaturitiesOfInvestments",
+    "otherInvestingActivites",
+    "netCashUsedForInvestingActivites",
+    "debtRepayment",
+    "commonStockIssued",
+    "commonStockRepurchased",
+    "dividendsPaid",
+    "otherFinancingActivites",
+    "netCashUsedProvidedByFinancingActivities",
+    "effectOfForexChangesOnCash",
+    "netChangeInCash",
+    "cashAtEndOfPeriod",
+    "cashAtBeginningOfPeriod",
+    "capitalExpenditure",
+    "freeCashFlow"
+  ]
+};
+
+const FUNDAMENTAL_FIELD_LABELS = {
+  accountsPayables: "Accounts Payable",
+  accountsReceivables: "Accounts Receivable",
+  accumulatedOtherComprehensiveIncomeLoss: "Accumulated Other Comprehensive Income/Loss",
+  capitalExpenditure: "Capital Expenditure",
+  cashAndCashEquivalents: "Cash & Equivalents",
+  cashAndShortTermInvestments: "Cash + Short-Term Investments",
+  cashAtBeginningOfPeriod: "Cash at Beginning of Period",
+  cashAtEndOfPeriod: "Cash at End of Period",
+  changeInWorkingCapital: "Change in Working Capital",
+  commonStockIssued: "Common Stock Issued",
+  commonStockRepurchased: "Common Stock Repurchased",
+  costOfRevenue: "Cost of Revenue",
+  deferredIncomeTax: "Deferred Income Tax",
+  deferredRevenueNonCurrent: "Deferred Revenue, Non-Current",
+  deferredTaxLiabilitiesNonCurrent: "Deferred Tax Liabilities, Non-Current",
+  depreciationAndAmortization: "Depreciation & Amortization",
+  dividendsPaid: "Dividends Paid",
+  ebitda: "EBITDA",
+  ebitdaratio: "EBITDA Margin",
+  eps: "EPS",
+  epsDiluted: "Diluted EPS",
+  freeCashFlow: "Free Cash Flow",
+  generalAndAdministrativeExpenses: "G&A Expense",
+  grossProfit: "Gross Profit",
+  grossProfitRatio: "Gross Margin",
+  incomeBeforeTax: "Income Before Tax",
+  incomeBeforeTaxRatio: "Pretax Margin",
+  incomeTaxExpense: "Income Tax Expense",
+  investmentsInPropertyPlantAndEquipment: "Investments in PP&E",
+  netCashProvidedByOperatingActivities: "Net Cash Provided by Operations",
+  netCashUsedForInvestingActivites: "Net Cash Used for Investing",
+  netCashUsedProvidedByFinancingActivities: "Net Cash from Financing",
+  netDebt: "Net Debt",
+  netIncome: "Net Income",
+  netIncomeRatio: "Profit Margin",
+  netReceivables: "Net Receivables",
+  operatingCashFlow: "Operating Cash Flow",
+  operatingExpenses: "Operating Expenses",
+  operatingIncome: "Operating Income",
+  operatingIncomeRatio: "Operating Margin",
+  othertotalStockholdersEquity: "Other Stockholders' Equity",
+  propertyPlantEquipmentNet: "PP&E Net",
+  researchAndDevelopmentExpenses: "R&D Expense",
+  salesMaturitiesOfInvestments: "Sales/Maturities of Investments",
+  sellingAndMarketingExpenses: "Selling & Marketing Expense",
+  sellingGeneralAndAdministrativeExpenses: "SG&A Expense",
+  stockBasedCompensation: "Stock-Based Compensation",
+  totalCurrentAssets: "Total Current Assets",
+  totalCurrentLiabilities: "Total Current Liabilities",
+  totalDebt: "Total Debt",
+  totalEquity: "Total Equity",
+  totalInvestments: "Total Investments",
+  totalLiabilities: "Total Liabilities",
+  totalLiabilitiesAndStockholdersEquity: "Liabilities + Stockholders' Equity",
+  totalLiabilitiesAndTotalEquity: "Liabilities + Total Equity",
+  totalNonCurrentAssets: "Total Non-Current Assets",
+  totalNonCurrentLiabilities: "Total Non-Current Liabilities",
+  totalStockholdersEquity: "Stockholders' Equity",
+  weightedAverageShsOut: "Weighted Avg Shares",
+  weightedAverageShsOutDil: "Weighted Avg Diluted Shares"
+};
+
+const prettyFundamentalFieldLabel = (field) =>
+  FUNDAMENTAL_FIELD_LABELS[field] ||
+  String(field || "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+
+const fundamentalFieldFormat = (field) => {
+  const cleanField = String(field || "").toLowerCase();
+  if (cleanField.includes("ratio") || cleanField.endsWith("margin")) return "percent";
+  if (cleanField.includes("eps") || cleanField.includes("pershare")) return "perShare";
+  if (cleanField.includes("shsout") || cleanField.includes("shares")) return "shares";
+  return "money";
+};
+
+const statementIndicators = (statement, fields) =>
+  fields.map((field) => ({
+    key: `${statement}_${field}`,
+    label: prettyFundamentalFieldLabel(field),
+    source: statement,
+    field,
+    format: fundamentalFieldFormat(field),
+    scalePercent: String(field || "").toLowerCase().includes("ratio")
+  }));
+
 const FUNDAMENTAL_CHART_INDICATOR_GROUPS = [
   {
     id: "income",
     label: "Income Statement",
-    indicators: [
-      { key: "revenue", label: "Revenue", source: "income", field: "revenue", format: "money" },
-      { key: "grossProfit", label: "Gross Profit", source: "income", field: "grossProfit", format: "money" },
-      { key: "operatingIncome", label: "Operating Income", source: "income", field: "operatingIncome", format: "money" },
-      { key: "incomeBeforeTax", label: "Income Before Tax", source: "income", field: "incomeBeforeTax", format: "money" },
-      { key: "netIncome", label: "Net Income", source: "income", field: "netIncome", format: "money" },
-      { key: "ebitda", label: "EBITDA", source: "income", field: "ebitda", format: "money" },
-      { key: "eps", label: "EPS", source: "income", field: "eps", format: "perShare" },
-      { key: "epsDiluted", label: "Diluted EPS", source: "income", field: "epsDiluted", format: "perShare" },
-      { key: "sgaExpense", label: "SG&A Expense", source: "income", field: "sellingGeneralAndAdministrativeExpenses", format: "money" },
-      { key: "rdExpense", label: "R&D Expense", source: "income", field: "researchAndDevelopmentExpenses", format: "money" },
-      { key: "operatingExpenses", label: "Operating Expenses", source: "income", field: "operatingExpenses", format: "money" },
-      { key: "interestExpense", label: "Interest Expense", source: "income", field: "interestExpense", format: "money" },
-      { key: "weightedAverageShares", label: "Weighted Avg Shares", source: "income", field: "weightedAverageShsOutDil", format: "shares" }
-    ]
+    indicators: statementIndicators("income", FUNDAMENTAL_STATEMENT_FIELDS.income)
   },
   {
     id: "margins",
@@ -191,34 +367,12 @@ const FUNDAMENTAL_CHART_INDICATOR_GROUPS = [
   {
     id: "balance",
     label: "Balance Sheet",
-    indicators: [
-      { key: "cashAndEquivalents", label: "Cash & Equivalents", source: "balance", field: "cashAndCashEquivalents", format: "money" },
-      { key: "cashAndShortTermInvestments", label: "Cash + Short-Term Investments", source: "balance", field: "cashAndShortTermInvestments", format: "money" },
-      { key: "totalDebt", label: "Total Debt", source: "balance", field: "totalDebt", format: "money" },
-      { key: "netDebt", label: "Net Debt", source: "balance", field: "netDebt", format: "money" },
-      { key: "totalAssets", label: "Total Assets", source: "balance", field: "totalAssets", format: "money" },
-      { key: "totalLiabilities", label: "Total Liabilities", source: "balance", field: "totalLiabilities", format: "money" },
-      { key: "stockholdersEquity", label: "Stockholders' Equity", source: "balance", field: "totalStockholdersEquity", format: "money" },
-      { key: "workingCapital", label: "Working Capital", format: "money", calculate: ({ balance }) => differenceValue(balance?.totalCurrentAssets, balance?.totalCurrentLiabilities) },
-      { key: "inventory", label: "Inventory", source: "balance", field: "inventory", format: "money" },
-      { key: "netReceivables", label: "Net Receivables", source: "balance", field: "netReceivables", format: "money" },
-      { key: "propertyPlantEquipment", label: "PP&E Net", source: "balance", field: "propertyPlantEquipmentNet", format: "money" },
-      { key: "goodwill", label: "Goodwill", source: "balance", field: "goodwill", format: "money" }
-    ]
+    indicators: statementIndicators("balance", FUNDAMENTAL_STATEMENT_FIELDS.balance)
   },
   {
     id: "cashflow",
     label: "Cash Flow",
-    indicators: [
-      { key: "operatingCashFlow", label: "Operating Cash Flow", source: "cashflow", field: "operatingCashFlow", format: "money" },
-      { key: "freeCashFlow", label: "Free Cash Flow", source: "cashflow", field: "freeCashFlow", format: "money" },
-      { key: "capitalExpenditure", label: "Capital Expenditure", source: "cashflow", field: "capitalExpenditure", format: "money" },
-      { key: "stockBasedCompensation", label: "Stock-Based Compensation", source: "cashflow", field: "stockBasedCompensation", format: "money" },
-      { key: "depreciationAndAmortization", label: "D&A", source: "cashflow", field: "depreciationAndAmortization", format: "money" },
-      { key: "dividendsPaid", label: "Dividends Paid", source: "cashflow", field: "dividendsPaid", format: "money" },
-      { key: "shareRepurchases", label: "Share Repurchases", source: "cashflow", field: "commonStockRepurchased", format: "money" },
-      { key: "netChangeInCash", label: "Net Change in Cash", source: "cashflow", field: "netChangeInCash", format: "money" }
-    ]
+    indicators: statementIndicators("cashflow", FUNDAMENTAL_STATEMENT_FIELDS.cashflow)
   },
   {
     id: "returns",
@@ -230,6 +384,19 @@ const FUNDAMENTAL_CHART_INDICATOR_GROUPS = [
       { key: "assetTurnover", label: "Asset Turnover", format: "plain", calculate: ({ income, balance }) => calculateRatio(income?.revenue, balance?.totalAssets, false) },
       { key: "debtToEquity", label: "Debt / Equity", format: "plain", calculate: ({ balance }) => calculateRatio(balance?.totalDebt, balance?.totalStockholdersEquity, false) },
       { key: "currentRatio", label: "Current Ratio", format: "plain", calculate: ({ balance }) => calculateRatio(balance?.totalCurrentAssets, balance?.totalCurrentLiabilities, false) }
+    ]
+  },
+  {
+    id: "leverage-liquidity",
+    label: "Leverage & Liquidity",
+    indicators: [
+      { key: "workingCapital", label: "Working Capital", format: "money", calculate: ({ balance }) => differenceValue(balance?.totalCurrentAssets, balance?.totalCurrentLiabilities) },
+      { key: "netCash", label: "Net Cash", format: "money", calculate: ({ balance }) => differenceValue(balance?.cashAndCashEquivalents, balance?.totalDebt) },
+      { key: "cashDebtCoverage", label: "Cash / Debt", format: "plain", calculate: ({ balance }) => calculateRatio(balance?.cashAndCashEquivalents, balance?.totalDebt, false) },
+      { key: "debtToAssets", label: "Debt / Assets", format: "plain", calculate: ({ balance }) => calculateRatio(balance?.totalDebt, balance?.totalAssets, false) },
+      { key: "liabilitiesToAssets", label: "Liabilities / Assets", format: "plain", calculate: ({ balance }) => calculateRatio(balance?.totalLiabilities, balance?.totalAssets, false) },
+      { key: "currentAssetsLessInventory", label: "Quick Assets", format: "money", calculate: ({ balance }) => differenceValue(balance?.totalCurrentAssets, balance?.inventory) },
+      { key: "quickRatio", label: "Quick Ratio", format: "plain", calculate: ({ balance }) => calculateRatio(differenceValue(balance?.totalCurrentAssets, balance?.inventory), balance?.totalCurrentLiabilities, false) }
     ]
   },
   {
@@ -247,12 +414,17 @@ const FUNDAMENTAL_CHART_INDICATOR_GROUPS = [
     id: "growth",
     label: "Growth",
     indicators: [
-      { key: "revenueGrowth", label: "Revenue Growth", baseKey: "revenue", format: "percent", growthOf: { source: "income", field: "revenue" } },
-      { key: "netIncomeGrowth", label: "Net Income Growth", baseKey: "netIncome", format: "percent", growthOf: { source: "income", field: "netIncome" } },
-      { key: "epsGrowth", label: "EPS Growth", baseKey: "eps", format: "percent", growthOf: { source: "income", field: "eps" } },
-      { key: "operatingCashFlowGrowth", label: "Operating Cash Flow Growth", baseKey: "operatingCashFlow", format: "percent", growthOf: { source: "cashflow", field: "operatingCashFlow" } },
-      { key: "freeCashFlowGrowth", label: "Free Cash Flow Growth", baseKey: "freeCashFlow", format: "percent", growthOf: { source: "cashflow", field: "freeCashFlow" } },
-      { key: "totalDebtGrowth", label: "Total Debt Growth", baseKey: "totalDebt", format: "percent", growthOf: { source: "balance", field: "totalDebt" } }
+      { key: "revenueGrowth", label: "Revenue Growth", baseKey: "income_revenue", format: "percent", growthOf: { source: "income", field: "revenue" } },
+      { key: "grossProfitGrowth", label: "Gross Profit Growth", baseKey: "income_grossProfit", format: "percent", growthOf: { source: "income", field: "grossProfit" } },
+      { key: "operatingIncomeGrowth", label: "Operating Income Growth", baseKey: "income_operatingIncome", format: "percent", growthOf: { source: "income", field: "operatingIncome" } },
+      { key: "netIncomeGrowth", label: "Net Income Growth", baseKey: "income_netIncome", format: "percent", growthOf: { source: "income", field: "netIncome" } },
+      { key: "epsGrowth", label: "EPS Growth", baseKey: "income_eps", format: "percent", growthOf: { source: "income", field: "eps" } },
+      { key: "ebitdaGrowth", label: "EBITDA Growth", baseKey: "income_ebitda", format: "percent", growthOf: { source: "income", field: "ebitda" } },
+      { key: "operatingCashFlowGrowth", label: "Operating Cash Flow Growth", baseKey: "cashflow_operatingCashFlow", format: "percent", growthOf: { source: "cashflow", field: "operatingCashFlow" } },
+      { key: "freeCashFlowGrowth", label: "Free Cash Flow Growth", baseKey: "cashflow_freeCashFlow", format: "percent", growthOf: { source: "cashflow", field: "freeCashFlow" } },
+      { key: "totalAssetsGrowth", label: "Total Assets Growth", baseKey: "balance_totalAssets", format: "percent", growthOf: { source: "balance", field: "totalAssets" } },
+      { key: "totalDebtGrowth", label: "Total Debt Growth", baseKey: "balance_totalDebt", format: "percent", growthOf: { source: "balance", field: "totalDebt" } },
+      { key: "equityGrowth", label: "Equity Growth", baseKey: "balance_totalStockholdersEquity", format: "percent", growthOf: { source: "balance", field: "totalStockholdersEquity" } }
     ]
   }
 ];
@@ -261,7 +433,7 @@ const FUNDAMENTAL_CHART_INDICATORS = FUNDAMENTAL_CHART_INDICATOR_GROUPS.flatMap(
   group.indicators.map((indicator) => ({ ...indicator, groupId: group.id, groupLabel: group.label }))
 );
 
-const DEFAULT_FUNDAMENTAL_INDICATORS = ["revenue", "netIncome", "eps"];
+const DEFAULT_FUNDAMENTAL_INDICATORS = ["income_revenue", "income_netIncome", "income_eps"];
 
 const CALENDAR_MODES = [
   { id: "earnings", label: "Earnings" },
@@ -5181,7 +5353,11 @@ const getFundamentalIndicatorValue = (period, indicator, previousPeriod = null) 
   if (typeof indicator.calculate === "function") {
     return indicator.calculate(period);
   }
-  return period[indicator.source]?.[indicator.field] ?? null;
+  const value = period[indicator.source]?.[indicator.field] ?? null;
+  if (indicator.scalePercent && isNumber(value)) {
+    return Math.abs(value) <= 1 ? value * 100 : value;
+  }
+  return value;
 };
 const fundamentalChartSeries = selectedFundamentalIndicatorDetails.map((indicator) => {
   const rowMap = new Map();
