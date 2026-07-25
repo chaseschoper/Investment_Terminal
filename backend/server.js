@@ -20382,6 +20382,63 @@ const normalizeFinancialStatementRows = (rows, statementType, period) => {
   };
 };
 
+const normalizeFundamentalMetricRows = (keyMetricRows, ratioRows, period) => {
+  const periodMap = new Map();
+  const collectRows = (rows, sourceKey) => {
+    (Array.isArray(rows) ? rows : []).filter(Boolean).forEach((row, index) => {
+      const key = `${row.date || index}-${row.period || period}`;
+      const existing = periodMap.get(key) || {
+        raw: {},
+        date: row.date || null,
+        period: row.period || period,
+        calendarYear: row.calendarYear,
+        fiscalYear: row.fiscalYear,
+        reportedCurrency: row.reportedCurrency
+      };
+      existing.raw = { ...existing.raw, ...row };
+      existing[sourceKey] = row;
+      periodMap.set(key, existing);
+    });
+  };
+
+  collectRows(keyMetricRows, "keyMetrics");
+  collectRows(ratioRows, "ratios");
+
+  const periods = [...periodMap.entries()]
+    .map(([key, entry]) => ({
+      key,
+      label: financialStatementPeriodLabel(entry.raw, period),
+      date: entry.date || null,
+      filingDate: entry.raw?.fillingDate || entry.raw?.filingDate || null,
+      currency: firstText(entry.reportedCurrency)
+    }))
+    .sort((a, b) => {
+      const dateA = a.date ? new Date(`${a.date}T12:00:00`).getTime() : 0;
+      const dateB = b.date ? new Date(`${b.date}T12:00:00`).getTime() : 0;
+      if (dateA && dateB) return dateB - dateA;
+      return String(b.label || "").localeCompare(String(a.label || ""));
+    });
+
+  const entriesByKey = new Map([...periodMap.entries()]);
+  const fieldSet = new Set();
+  periodMap.forEach((entry) => {
+    Object.keys(entry.raw || {}).forEach((field) => {
+      if (!FINANCIAL_STATEMENT_META_FIELDS.has(field) && toNumberOrNull(entry.raw[field]) !== null) {
+        fieldSet.add(field);
+      }
+    });
+  });
+
+  const rows = [...fieldSet].sort((a, b) => financialStatementLabel(a).localeCompare(financialStatementLabel(b))).map((field) => ({
+    key: field,
+    label: financialStatementLabel(field),
+    format: financialStatementValueFormat(field),
+    values: periods.map((periodItem) => toNumberOrNull(entriesByKey.get(periodItem.key)?.raw?.[field]))
+  }));
+
+  return { periods, rows };
+};
+
 app.get("/api/financial-statements/:ticker", async (req, res) => {
   try {
     const symbol = String(req.params.ticker || "").trim().toUpperCase();
@@ -20418,6 +20475,57 @@ app.get("/api/financial-statements/:ticker", async (req, res) => {
     setFmpCooldown(err, "financial statements", req.params.ticker);
     console.log("FMP financial statements skipped:", req.params.ticker, err.response?.status || err.message);
     res.status(500).json({ error: "Financial statements are not available yet." });
+  }
+});
+
+app.get("/api/fundamental-metrics/:ticker", async (req, res) => {
+  try {
+    const symbol = String(req.params.ticker || "").trim().toUpperCase();
+    if (!symbol || !/^[A-Z0-9.-]{1,15}$/.test(symbol)) {
+      return res.status(400).json({ error: "Invalid ticker" });
+    }
+    if (!process.env.FMP_API_KEY || !canUseFmp()) {
+      return res.status(503).json({ error: "Fundamental metrics are not available yet." });
+    }
+
+    const period = String(req.query.period || "annual").toLowerCase() === "quarter" ? "quarter" : "annual";
+    const requestedLimit = Number(req.query.limit);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(Math.max(Math.round(requestedLimit), 1), period === "quarter" ? 80 : 40)
+      : period === "quarter" ? 80 : 40;
+
+    const [keyMetricsData, ratiosData] = await Promise.all([
+      getFmpData(symbol, `fundamental key metrics ${period}`, [
+        `/stable/key-metrics?symbol={ticker}&period=${period}&limit=${limit}`
+      ]).catch((err) => {
+        console.log("FMP fundamental key metrics skipped:", symbol, err.response?.status || err.message);
+        return [];
+      }),
+      getFmpData(symbol, `fundamental ratios ${period}`, [
+        `/stable/ratios?symbol={ticker}&period=${period}&limit=${limit}`
+      ]).catch((err) => {
+        console.log("FMP fundamental ratios skipped:", symbol, err.response?.status || err.message);
+        return [];
+      })
+    ]);
+
+    const keyMetricRows = Array.isArray(keyMetricsData) ? keyMetricsData : keyMetricsData ? [keyMetricsData] : [];
+    const ratioRows = Array.isArray(ratiosData) ? ratiosData : ratiosData ? [ratiosData] : [];
+    const normalized = normalizeFundamentalMetricRows(keyMetricRows, ratioRows, period);
+
+    res.json({
+      symbol,
+      statement: "metrics",
+      statementLabel: "Key Metrics & Ratios",
+      period,
+      source: "FMP key metrics and financial ratios",
+      updatedAt: new Date().toISOString(),
+      ...normalized
+    });
+  } catch (err) {
+    setFmpCooldown(err, "fundamental metrics", req.params.ticker);
+    console.log("FMP fundamental metrics skipped:", req.params.ticker, err.response?.status || err.message);
+    res.status(500).json({ error: "Fundamental metrics are not available yet." });
   }
 });
 

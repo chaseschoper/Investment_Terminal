@@ -320,7 +320,118 @@ const FUNDAMENTAL_FIELD_LABELS = {
   weightedAverageShsOutDil: "Weighted Avg Diluted Shares"
 };
 
+const FUNDAMENTAL_METRIC_FIELD_LABELS = {
+  assetTurnover: "Asset Turnover",
+  averageInventory: "Average Inventory",
+  averagePayables: "Average Payables",
+  averageReceivables: "Average Receivables",
+  bookValuePerShare: "Book Value / Share",
+  bottomLineProfitMargin: "Bottom Line Profit Margin",
+  capexPerShare: "Capex / Share",
+  capexToDepreciation: "Capex / Depreciation",
+  capexToOperatingCashFlow: "Capex / Operating Cash Flow",
+  capexToRevenue: "Capex / Revenue",
+  capitalExpenditureCoverageRatio: "Capex Coverage",
+  cashConversionCycle: "Cash Conversion Cycle",
+  cashPerShare: "Cash / Share",
+  cashRatio: "Cash Ratio",
+  continuousOperationsProfitMargin: "Continuing Ops Profit Margin",
+  currentRatio: "Current Ratio",
+  daysOfInventoryOnHand: "Days Inventory on Hand",
+  daysInventoryOutstanding: "Days Inventory Outstanding",
+  daysOfPayablesOutstanding: "Days Payables Outstanding",
+  daysPayablesOutstanding: "Days Payables Outstanding",
+  daysOfSalesOutstanding: "Days Sales Outstanding",
+  daysSalesOutstanding: "Days Sales Outstanding",
+  debtServiceCoverageRatio: "Debt Service Coverage",
+  debtToAssets: "Debt / Assets",
+  debtToAssetsRatio: "Debt / Assets",
+  debtToCapitalRatio: "Debt / Capital",
+  debtToEquity: "Debt / Equity",
+  debtToEquityRatio: "Debt / Equity",
+  dividendPaidAndCapexCoverageRatio: "Dividend + Capex Coverage",
+  dividendPayoutRatio: "Dividend Payout Ratio",
+  dividendYield: "Dividend Yield",
+  earningsYield: "Earnings Yield",
+  ebitMargin: "EBIT Margin",
+  ebitdaMargin: "EBITDA Margin",
+  effectiveTaxRate: "Effective Tax Rate",
+  enterpriseValue: "Enterprise Value",
+  enterpriseValueMultiple: "EV / EBITDA",
+  enterpriseValueOverEBITDA: "EV / EBITDA",
+  evToFreeCashFlow: "EV / Free Cash Flow",
+  evToOperatingCashFlow: "EV / Operating Cash Flow",
+  evToSales: "EV / Sales",
+  financialLeverageRatio: "Financial Leverage",
+  fixedAssetTurnover: "Fixed Asset Turnover",
+  freeCashFlowOperatingCashFlowRatio: "FCF / Operating Cash Flow",
+  freeCashFlowPerShare: "Free Cash Flow / Share",
+  freeCashFlowYield: "Free Cash Flow Yield",
+  grahamNetNet: "Graham Net-Net",
+  grahamNumber: "Graham Number",
+  grossProfitMargin: "Gross Margin",
+  incomeQuality: "Income Quality",
+  interestCoverage: "Interest Coverage",
+  interestCoverageRatio: "Interest Coverage",
+  interestDebtPerShare: "Interest Debt / Share",
+  intangiblesToTotalAssets: "Intangibles / Assets",
+  investedCapital: "Invested Capital",
+  inventoryTurnover: "Inventory Turnover",
+  longTermDebtToCapitalRatio: "Long-Term Debt / Capital",
+  marketCap: "Market Cap",
+  netCurrentAssetValue: "Net Current Asset Value",
+  netDebtToEBITDA: "Net Debt / EBITDA",
+  netIncomePerEBT: "Net Income / EBT",
+  netIncomePerShare: "Net Income / Share",
+  netProfitMargin: "Profit Margin",
+  operatingCashFlowCoverageRatio: "Operating Cash Flow Coverage",
+  operatingCashFlowPerShare: "Operating Cash Flow / Share",
+  operatingCashFlowRatio: "Operating Cash Flow Ratio",
+  operatingCashFlowSalesRatio: "Operating Cash Flow / Sales",
+  operatingCycle: "Operating Cycle",
+  operatingProfitMargin: "Operating Margin",
+  payablesTurnover: "Payables Turnover",
+  payoutRatio: "Payout Ratio",
+  pbRatio: "Price / Book",
+  pfcfRatio: "Price / Free Cash Flow",
+  pocfratio: "Price / Operating Cash Flow",
+  pretaxProfitMargin: "Pretax Margin",
+  priceBookValueRatio: "Price / Book",
+  priceCashFlowRatio: "Price / Cash Flow",
+  priceEarningsRatio: "P/E Ratio",
+  priceEarningsToGrowthRatio: "PEG Ratio",
+  priceFairValue: "Price / Fair Value",
+  priceSalesRatio: "Price / Sales",
+  priceToBookRatio: "Price / Book",
+  priceToEarningsGrowthRatio: "PEG Ratio",
+  priceToEarningsRatio: "P/E Ratio",
+  priceToFreeCashFlowRatio: "Price / Free Cash Flow",
+  priceToOperatingCashFlowRatio: "Price / Operating Cash Flow",
+  priceToSalesRatio: "Price / Sales",
+  quickRatio: "Quick Ratio",
+  receivablesTurnover: "Receivables Turnover",
+  researchAndDevelopementToRevenue: "R&D / Revenue",
+  returnOnAssets: "ROA",
+  returnOnCapitalEmployed: "ROCE",
+  returnOnEquity: "ROE",
+  returnOnInvestedCapital: "ROIC",
+  returnOnTangibleAssets: "Return on Tangible Assets",
+  revenuePerShare: "Revenue / Share",
+  roe: "ROE",
+  roic: "ROIC",
+  salesGeneralAndAdministrativeToRevenue: "SG&A / Revenue",
+  shareholdersEquityPerShare: "Equity / Share",
+  shortTermOperatingCashFlowCoverageRatio: "Short-Term OCF Coverage",
+  solvencyRatio: "Solvency Ratio",
+  stockBasedCompensationToRevenue: "Stock-Based Comp / Revenue",
+  tangibleAssetValue: "Tangible Asset Value",
+  tangibleBookValuePerShare: "Tangible Book Value / Share",
+  workingCapital: "Working Capital",
+  workingCapitalTurnoverRatio: "Working Capital Turnover"
+};
+
 const prettyFundamentalFieldLabel = (field) =>
+  FUNDAMENTAL_METRIC_FIELD_LABELS[field] ||
   FUNDAMENTAL_FIELD_LABELS[field] ||
   String(field || "")
     .replace(/([a-z])([A-Z])/g, "$1 $2")
@@ -344,6 +455,74 @@ const statementIndicators = (statement, fields) =>
     scalePercent: String(field || "").toLowerCase().includes("ratio")
   }));
 
+const metricPercentFields = new Set([
+  "bottomLineProfitMargin",
+  "capexToDepreciation",
+  "capexToOperatingCashFlow",
+  "capexToRevenue",
+  "continuousOperationsProfitMargin",
+  "debtToAssets",
+  "debtToAssetsRatio",
+  "debtToCapitalRatio",
+  "dividendPayoutRatio",
+  "dividendYield",
+  "earningsYield",
+  "ebitMargin",
+  "ebitdaMargin",
+  "effectiveTaxRate",
+  "freeCashFlowOperatingCashFlowRatio",
+  "freeCashFlowYield",
+  "grossProfitMargin",
+  "intangiblesToTotalAssets",
+  "longTermDebtToCapitalRatio",
+  "netProfitMargin",
+  "operatingCashFlowSalesRatio",
+  "operatingProfitMargin",
+  "payoutRatio",
+  "pretaxProfitMargin",
+  "researchAndDevelopementToRevenue",
+  "returnOnAssets",
+  "returnOnCapitalEmployed",
+  "returnOnEquity",
+  "returnOnInvestedCapital",
+  "returnOnTangibleAssets",
+  "roe",
+  "roic",
+  "salesGeneralAndAdministrativeToRevenue",
+  "stockBasedCompensationToRevenue"
+]);
+
+const metricMoneyFields = new Set([
+  "averageInventory",
+  "averagePayables",
+  "averageReceivables",
+  "enterpriseValue",
+  "grahamNetNet",
+  "grahamNumber",
+  "investedCapital",
+  "marketCap",
+  "netCurrentAssetValue",
+  "tangibleAssetValue",
+  "workingCapital"
+]);
+
+const fundamentalMetricFormat = (field) => {
+  if (metricPercentFields.has(field)) return "percent";
+  if (metricMoneyFields.has(field)) return "money";
+  if (String(field || "").toLowerCase().includes("pershare")) return "perShare";
+  return "plain";
+};
+
+const metricIndicators = (fields) =>
+  fields.map((field) => ({
+    key: `metrics_${field}`,
+    label: prettyFundamentalFieldLabel(field),
+    source: "metrics",
+    field,
+    format: fundamentalMetricFormat(field),
+    scalePercent: metricPercentFields.has(field)
+  }));
+
 const FUNDAMENTAL_CHART_INDICATOR_GROUPS = [
   {
     id: "income",
@@ -354,14 +533,15 @@ const FUNDAMENTAL_CHART_INDICATOR_GROUPS = [
     id: "margins",
     label: "Margins",
     indicators: [
-      { key: "grossMargin", label: "Gross Margin", format: "percent", calculate: ({ income }) => calculateRatio(income?.grossProfit, income?.revenue) },
-      { key: "operatingMargin", label: "Operating Margin", format: "percent", calculate: ({ income }) => calculateRatio(income?.operatingIncome, income?.revenue) },
-      { key: "pretaxMargin", label: "Pretax Margin", format: "percent", calculate: ({ income }) => calculateRatio(income?.incomeBeforeTax, income?.revenue) },
-      { key: "profitMargin", label: "Profit Margin", format: "percent", calculate: ({ income }) => calculateRatio(income?.netIncome, income?.revenue) },
-      { key: "ebitdaMargin", label: "EBITDA Margin", format: "percent", calculate: ({ income }) => calculateRatio(income?.ebitda, income?.revenue) },
-      { key: "fcfMargin", label: "FCF Margin", format: "percent", calculate: ({ income, cashflow }) => calculateRatio(cashflow?.freeCashFlow, income?.revenue) },
-      { key: "sgaToRevenue", label: "SG&A / Revenue", format: "percent", calculate: ({ income }) => calculateRatio(income?.sellingGeneralAndAdministrativeExpenses, income?.revenue) },
-      { key: "rdToRevenue", label: "R&D / Revenue", format: "percent", calculate: ({ income }) => calculateRatio(income?.researchAndDevelopmentExpenses, income?.revenue) }
+      { key: "grossMargin", label: "Gross Margin", format: "percent", calculate: (period) => calculateFundamentalMargin(period, "grossProfitMargin", period.income?.grossProfit, period.income?.revenue, "grossProfitRatio") },
+      { key: "operatingMargin", label: "Operating Margin", format: "percent", calculate: (period) => calculateFundamentalMargin(period, "operatingProfitMargin", period.income?.operatingIncome, period.income?.revenue, "operatingIncomeRatio") },
+      { key: "pretaxMargin", label: "Pretax Margin", format: "percent", calculate: (period) => calculateFundamentalMargin(period, "pretaxProfitMargin", period.income?.incomeBeforeTax, period.income?.revenue, "incomeBeforeTaxRatio") },
+      { key: "profitMargin", label: "Profit Margin", format: "percent", calculate: (period) => calculateFundamentalMargin(period, "netProfitMargin", period.income?.netIncome, period.income?.revenue, "netIncomeRatio") },
+      { key: "ebitdaMargin", label: "EBITDA Margin", format: "percent", calculate: (period) => calculateFundamentalMargin(period, "ebitdaMargin", period.income?.ebitda, period.income?.revenue, "ebitdaratio") },
+      { key: "ebitMargin", label: "EBIT Margin", format: "percent", calculate: (period) => calculateFundamentalMargin(period, "ebitMargin", period.income?.ebit, period.income?.revenue) },
+      { key: "fcfMargin", label: "FCF Margin", format: "percent", calculate: (period) => calculateFundamentalMargin(period, null, period.cashflow?.freeCashFlow, period.income?.revenue) },
+      { key: "sgaToRevenue", label: "SG&A / Revenue", format: "percent", calculate: (period) => calculateFundamentalMargin(period, "salesGeneralAndAdministrativeToRevenue", period.income?.sellingGeneralAndAdministrativeExpenses, period.income?.revenue) },
+      { key: "rdToRevenue", label: "R&D / Revenue", format: "percent", calculate: (period) => calculateFundamentalMargin(period, "researchAndDevelopementToRevenue", period.income?.researchAndDevelopmentExpenses, period.income?.revenue) }
     ]
   },
   {
@@ -426,6 +606,144 @@ const FUNDAMENTAL_CHART_INDICATOR_GROUPS = [
       { key: "totalDebtGrowth", label: "Total Debt Growth", baseKey: "balance_totalDebt", format: "percent", growthOf: { source: "balance", field: "totalDebt" } },
       { key: "equityGrowth", label: "Equity Growth", baseKey: "balance_totalStockholdersEquity", format: "percent", growthOf: { source: "balance", field: "totalStockholdersEquity" } }
     ]
+  },
+  {
+    id: "valuation-metrics",
+    label: "Valuation Metrics",
+    indicators: metricIndicators([
+      "marketCap",
+      "enterpriseValue",
+      "priceEarningsRatio",
+      "peRatio",
+      "priceToSalesRatio",
+      "priceSalesRatio",
+      "priceToBookRatio",
+      "pbRatio",
+      "priceToFreeCashFlowRatio",
+      "pfcfRatio",
+      "priceToOperatingCashFlowRatio",
+      "pocfratio",
+      "priceToEarningsGrowthRatio",
+      "priceEarningsToGrowthRatio",
+      "evToSales",
+      "enterpriseValueOverEBITDA",
+      "enterpriseValueMultiple",
+      "evToOperatingCashFlow",
+      "evToFreeCashFlow",
+      "earningsYield",
+      "freeCashFlowYield",
+      "grahamNumber",
+      "grahamNetNet"
+    ])
+  },
+  {
+    id: "per-share-metrics",
+    label: "Per Share Metrics",
+    indicators: metricIndicators([
+      "revenuePerShare",
+      "netIncomePerShare",
+      "operatingCashFlowPerShare",
+      "freeCashFlowPerShare",
+      "cashPerShare",
+      "bookValuePerShare",
+      "tangibleBookValuePerShare",
+      "shareholdersEquityPerShare",
+      "interestDebtPerShare",
+      "capexPerShare"
+    ])
+  },
+  {
+    id: "liquidity-solvency-metrics",
+    label: "Liquidity & Solvency Metrics",
+    indicators: metricIndicators([
+      "currentRatio",
+      "quickRatio",
+      "cashRatio",
+      "debtToEquityRatio",
+      "debtToEquity",
+      "debtToAssetsRatio",
+      "debtToAssets",
+      "debtToCapitalRatio",
+      "longTermDebtToCapitalRatio",
+      "financialLeverageRatio",
+      "interestCoverageRatio",
+      "interestCoverage",
+      "debtServiceCoverageRatio",
+      "operatingCashFlowCoverageRatio",
+      "shortTermOperatingCashFlowCoverageRatio",
+      "operatingCashFlowRatio",
+      "solvencyRatio",
+      "netDebtToEBITDA",
+      "workingCapital",
+      "netCurrentAssetValue"
+    ])
+  },
+  {
+    id: "profitability-metrics",
+    label: "Profitability Metrics",
+    indicators: metricIndicators([
+      "grossProfitMargin",
+      "operatingProfitMargin",
+      "pretaxProfitMargin",
+      "netProfitMargin",
+      "bottomLineProfitMargin",
+      "continuousOperationsProfitMargin",
+      "ebitdaMargin",
+      "ebitMargin",
+      "returnOnEquity",
+      "roe",
+      "returnOnAssets",
+      "returnOnInvestedCapital",
+      "roic",
+      "returnOnCapitalEmployed",
+      "returnOnTangibleAssets",
+      "effectiveTaxRate",
+      "incomeQuality"
+    ])
+  },
+  {
+    id: "efficiency-metrics",
+    label: "Efficiency Metrics",
+    indicators: metricIndicators([
+      "assetTurnover",
+      "fixedAssetTurnover",
+      "inventoryTurnover",
+      "receivablesTurnover",
+      "payablesTurnover",
+      "workingCapitalTurnoverRatio",
+      "daysOfSalesOutstanding",
+      "daysSalesOutstanding",
+      "daysOfInventoryOnHand",
+      "daysInventoryOutstanding",
+      "daysOfPayablesOutstanding",
+      "daysPayablesOutstanding",
+      "cashConversionCycle",
+      "operatingCycle",
+      "averageInventory",
+      "averagePayables",
+      "averageReceivables",
+      "operatingCashFlowSalesRatio",
+      "freeCashFlowOperatingCashFlowRatio"
+    ])
+  },
+  {
+    id: "company-scale-metrics",
+    label: "Company Profile & Scale Metrics",
+    indicators: metricIndicators([
+      "marketCap",
+      "enterpriseValue",
+      "investedCapital",
+      "tangibleAssetValue",
+      "netCurrentAssetValue",
+      "workingCapital",
+      "intangiblesToTotalAssets",
+      "researchAndDevelopementToRevenue",
+      "salesGeneralAndAdministrativeToRevenue",
+      "stockBasedCompensationToRevenue",
+      "capexToRevenue",
+      "capexToOperatingCashFlow",
+      "capexToDepreciation"
+    ])
   }
 ];
 
@@ -983,6 +1301,21 @@ function calculateRatio(numerator, denominator, asPercent = true) {
   if (!isNumber(numerator) || !isNumber(denominator) || denominator === 0) return null;
   const value = numerator / denominator;
   return asPercent ? value * 100 : value;
+}
+
+function normalizePercentMetric(value) {
+  if (!isNumber(value)) return null;
+  return Math.abs(value) <= 1 ? value * 100 : value;
+}
+
+function calculateFundamentalMargin(period, metricField, numerator, denominator, statementRatioField = null) {
+  const metricValue = metricField ? normalizePercentMetric(period?.metrics?.[metricField]) : null;
+  if (metricValue !== null) return metricValue;
+
+  const statementRatioValue = statementRatioField ? normalizePercentMetric(period?.income?.[statementRatioField]) : null;
+  if (statementRatioValue !== null) return statementRatioValue;
+
+  return calculateRatio(numerator, denominator);
 }
 
 const formatIndexPrice = (value) =>
@@ -3563,7 +3896,7 @@ useEffect(() => {
   };
 
   const loadTickerFundamentals = async (symbol) => {
-    const requests = statementTypes.map((statement) =>
+    const statementRequests = statementTypes.map((statement) =>
       axios.get(`${API_URL}/api/financial-statements/${symbol}`, {
         params: {
           statement,
@@ -3578,8 +3911,20 @@ useEffect(() => {
           return [statement, null];
         })
     );
+    const metricRequest = axios.get(`${API_URL}/api/fundamental-metrics/${symbol}`, {
+      params: {
+        period: fundamentalChartPeriod,
+        limit: periodLimit
+      },
+      timeout: 12000
+    })
+      .then((response) => ["metrics", response.data])
+      .catch((error) => {
+        console.error("Fundamental key metrics failed", symbol, error);
+        return ["metrics", null];
+      });
 
-    const statementEntries = await Promise.all(requests);
+    const statementEntries = await Promise.all([...statementRequests, metricRequest]);
     const statements = Object.fromEntries(statementEntries);
     const periodMaps = Object.fromEntries(statementEntries.map(([statement, data]) => [
       statement,
@@ -3596,7 +3941,8 @@ useEffect(() => {
         const income = periodMaps.income.get(key);
         const balance = periodMaps.balance.get(key);
         const cashflow = periodMaps.cashflow.get(key);
-        const firstPeriod = income || balance || cashflow;
+        const metrics = periodMaps.metrics.get(key);
+        const firstPeriod = income || balance || cashflow || metrics;
         return {
           key,
           label: firstPeriod?.label || key,
@@ -3604,7 +3950,8 @@ useEffect(() => {
           currency: firstPeriod?.currency || null,
           income: income?.values || {},
           balance: balance?.values || {},
-          cashflow: cashflow?.values || {}
+          cashflow: cashflow?.values || {},
+          metrics: metrics?.values || {}
         };
       })
       .sort((a, b) => {
