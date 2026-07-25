@@ -213,12 +213,11 @@ const FUNDAMENTAL_STATEMENT_FIELDS = {
     "commonStock",
     "retainedEarnings",
     "accumulatedOtherComprehensiveIncomeLoss",
-    "othertotalStockholdersEquity",
+    "otherTotalStockholdersEquity",
     "totalStockholdersEquity",
     "totalEquity",
-    "totalLiabilitiesAndStockholdersEquity",
-    "minorityInterest",
     "totalLiabilitiesAndTotalEquity",
+    "minorityInterest",
     "totalInvestments",
     "totalDebt",
     "netDebt"
@@ -240,14 +239,21 @@ const FUNDAMENTAL_STATEMENT_FIELDS = {
     "acquisitionsNet",
     "purchasesOfInvestments",
     "salesMaturitiesOfInvestments",
-    "otherInvestingActivites",
-    "netCashUsedForInvestingActivites",
-    "debtRepayment",
-    "commonStockIssued",
+    "otherInvestingActivities",
+    "netCashProvidedByInvestingActivities",
+    "netDebtIssuance",
+    "longTermNetDebtIssuance",
+    "shortTermNetDebtIssuance",
+    "netStockIssuance",
+    "netCommonStockIssuance",
+    "commonStockIssuance",
     "commonStockRepurchased",
-    "dividendsPaid",
-    "otherFinancingActivites",
-    "netCashUsedProvidedByFinancingActivities",
+    "netPreferredStockIssuance",
+    "netDividendsPaid",
+    "commonDividendsPaid",
+    "preferredDividendsPaid",
+    "otherFinancingActivities",
+    "netCashProvidedByFinancingActivities",
     "effectOfForexChangesOnCash",
     "netChangeInCash",
     "cashAtEndOfPeriod",
@@ -268,6 +274,8 @@ const FUNDAMENTAL_FIELD_LABELS = {
   cashAtEndOfPeriod: "Cash at End of Period",
   changeInWorkingCapital: "Change in Working Capital",
   commonStockIssued: "Common Stock Issued",
+  commonStockIssuance: "Common Stock Issued",
+  commonDividendsPaid: "Common Dividends Paid",
   commonStockRepurchased: "Common Stock Repurchased",
   costOfRevenue: "Cost of Revenue",
   deferredIncomeTax: "Deferred Income Tax",
@@ -287,10 +295,15 @@ const FUNDAMENTAL_FIELD_LABELS = {
   incomeBeforeTaxRatio: "Pretax Margin",
   incomeTaxExpense: "Income Tax Expense",
   investmentsInPropertyPlantAndEquipment: "Investments in PP&E",
+  longTermNetDebtIssuance: "Long-Term Net Debt Issuance",
+  netCashProvidedByFinancingActivities: "Net Cash from Financing",
+  netCashProvidedByInvestingActivities: "Net Cash from Investing",
   netCashProvidedByOperatingActivities: "Net Cash Provided by Operations",
-  netCashUsedForInvestingActivites: "Net Cash Used for Investing",
-  netCashUsedProvidedByFinancingActivities: "Net Cash from Financing",
   netDebt: "Net Debt",
+  netDebtIssuance: "Net Debt Issuance",
+  netDividendsPaid: "Dividends Paid",
+  netCommonStockIssuance: "Net Common Stock Issuance",
+  netPreferredStockIssuance: "Net Preferred Stock Issuance",
   netIncome: "Net Income",
   netIncomeRatio: "Profit Margin",
   netReceivables: "Net Receivables",
@@ -298,12 +311,16 @@ const FUNDAMENTAL_FIELD_LABELS = {
   operatingExpenses: "Operating Expenses",
   operatingIncome: "Operating Income",
   operatingIncomeRatio: "Operating Margin",
-  othertotalStockholdersEquity: "Other Stockholders' Equity",
+  otherFinancingActivities: "Other Financing Activities",
+  otherInvestingActivities: "Other Investing Activities",
+  otherTotalStockholdersEquity: "Other Stockholders' Equity",
+  preferredDividendsPaid: "Preferred Dividends Paid",
   propertyPlantEquipmentNet: "PP&E Net",
   researchAndDevelopmentExpenses: "R&D Expense",
   salesMaturitiesOfInvestments: "Sales/Maturities of Investments",
   sellingAndMarketingExpenses: "Selling & Marketing Expense",
   sellingGeneralAndAdministrativeExpenses: "SG&A Expense",
+  shortTermNetDebtIssuance: "Short-Term Net Debt Issuance",
   stockBasedCompensation: "Stock-Based Compensation",
   totalCurrentAssets: "Total Current Assets",
   totalCurrentLiabilities: "Total Current Liabilities",
@@ -311,7 +328,6 @@ const FUNDAMENTAL_FIELD_LABELS = {
   totalEquity: "Total Equity",
   totalInvestments: "Total Investments",
   totalLiabilities: "Total Liabilities",
-  totalLiabilitiesAndStockholdersEquity: "Liabilities + Stockholders' Equity",
   totalLiabilitiesAndTotalEquity: "Liabilities + Total Equity",
   totalNonCurrentAssets: "Total Non-Current Assets",
   totalNonCurrentLiabilities: "Total Non-Current Liabilities",
@@ -445,15 +461,62 @@ const fundamentalFieldFormat = (field) => {
   return "money";
 };
 
+const incomeMarginFieldConfig = {
+  grossProfitRatio: {
+    metricField: "grossProfitMargin",
+    numeratorField: "grossProfit",
+    denominatorField: "revenue"
+  },
+  operatingIncomeRatio: {
+    metricField: "operatingProfitMargin",
+    numeratorField: "operatingIncome",
+    denominatorField: "revenue"
+  },
+  incomeBeforeTaxRatio: {
+    metricField: "pretaxProfitMargin",
+    numeratorField: "incomeBeforeTax",
+    denominatorField: "revenue"
+  },
+  netIncomeRatio: {
+    metricField: "netProfitMargin",
+    numeratorField: "netIncome",
+    denominatorField: "revenue"
+  },
+  ebitdaratio: {
+    metricField: "ebitdaMargin",
+    numeratorField: "ebitda",
+    denominatorField: "revenue"
+  }
+};
+
 const statementIndicators = (statement, fields) =>
-  fields.map((field) => ({
-    key: `${statement}_${field}`,
-    label: prettyFundamentalFieldLabel(field),
-    source: statement,
-    field,
-    format: fundamentalFieldFormat(field),
-    scalePercent: String(field || "").toLowerCase().includes("ratio")
-  }));
+  fields.map((field) => {
+    const marginConfig = statement === "income" ? incomeMarginFieldConfig[field] : null;
+    if (marginConfig) {
+      return {
+        key: `${statement}_${field}`,
+        label: prettyFundamentalFieldLabel(field),
+        source: statement,
+        field,
+        format: "percent",
+        calculate: (period) => calculateFundamentalMargin(
+          period,
+          marginConfig.metricField,
+          period.income?.[marginConfig.numeratorField],
+          period.income?.[marginConfig.denominatorField],
+          field
+        )
+      };
+    }
+    return {
+      key: `${statement}_${field}`,
+      label: prettyFundamentalFieldLabel(field),
+      source: statement,
+      field,
+      format: fundamentalFieldFormat(field),
+      scalePercent: String(field || "").toLowerCase().includes("ratio")
+    };
+  });
 
 const metricPercentFields = new Set([
   "bottomLineProfitMargin",
@@ -513,15 +576,21 @@ const fundamentalMetricFormat = (field) => {
   return "plain";
 };
 
-const metricIndicators = (fields) =>
-  fields.map((field) => ({
+const metricIndicator = (spec) => {
+  const config = typeof spec === "string" ? { field: spec } : spec;
+  const field = config.field;
+  return {
     key: `metrics_${field}`,
-    label: prettyFundamentalFieldLabel(field),
+    label: config.label || prettyFundamentalFieldLabel(field),
     source: "metrics",
     field,
+    aliases: config.aliases || [],
     format: fundamentalMetricFormat(field),
     scalePercent: metricPercentFields.has(field)
-  }));
+  };
+};
+
+const metricIndicators = (fields) => fields.map(metricIndicator);
 
 const FUNDAMENTAL_CHART_INDICATOR_GROUPS = [
   {
@@ -613,23 +682,16 @@ const FUNDAMENTAL_CHART_INDICATOR_GROUPS = [
     indicators: metricIndicators([
       "marketCap",
       "enterpriseValue",
-      "priceEarningsRatio",
-      "peRatio",
-      "priceToSalesRatio",
-      "priceSalesRatio",
-      "priceToBookRatio",
-      "pbRatio",
-      "priceToFreeCashFlowRatio",
-      "pfcfRatio",
-      "priceToOperatingCashFlowRatio",
-      "pocfratio",
-      "priceToEarningsGrowthRatio",
-      "priceEarningsToGrowthRatio",
-      "evToSales",
-      "enterpriseValueOverEBITDA",
-      "enterpriseValueMultiple",
-      "evToOperatingCashFlow",
-      "evToFreeCashFlow",
+      { field: "priceToEarningsRatio", label: "P/E Ratio", aliases: ["priceEarningsRatio"] },
+      { field: "priceToSalesRatio", label: "Price / Sales", aliases: ["priceSalesRatio"] },
+      { field: "priceToBookRatio", label: "Price / Book", aliases: ["priceBookValueRatio", "pbRatio"] },
+      { field: "priceToFreeCashFlowRatio", label: "Price / Free Cash Flow", aliases: ["pfcfRatio"] },
+      { field: "priceToOperatingCashFlowRatio", label: "Price / Operating Cash Flow", aliases: ["pocfratio", "priceCashFlowRatio"] },
+      { field: "priceToEarningsGrowthRatio", label: "PEG Ratio", aliases: ["priceEarningsToGrowthRatio"] },
+      { field: "evToSales", label: "EV / Sales" },
+      { field: "enterpriseValueMultiple", label: "EV / EBITDA", aliases: ["enterpriseValueOverEBITDA", "evToEBITDA"] },
+      { field: "evToOperatingCashFlow", label: "EV / Operating Cash Flow" },
+      { field: "evToFreeCashFlow", label: "EV / Free Cash Flow" },
       "earningsYield",
       "freeCashFlowYield",
       "grahamNumber",
@@ -659,15 +721,12 @@ const FUNDAMENTAL_CHART_INDICATOR_GROUPS = [
       "currentRatio",
       "quickRatio",
       "cashRatio",
-      "debtToEquityRatio",
-      "debtToEquity",
-      "debtToAssetsRatio",
-      "debtToAssets",
+      { field: "debtToEquityRatio", label: "Debt / Equity", aliases: ["debtToEquity"] },
+      { field: "debtToAssetsRatio", label: "Debt / Assets", aliases: ["debtToAssets"] },
       "debtToCapitalRatio",
       "longTermDebtToCapitalRatio",
       "financialLeverageRatio",
-      "interestCoverageRatio",
-      "interestCoverage",
+      { field: "interestCoverageRatio", label: "Interest Coverage", aliases: ["interestCoverage"] },
       "debtServiceCoverageRatio",
       "operatingCashFlowCoverageRatio",
       "shortTermOperatingCashFlowCoverageRatio",
@@ -690,11 +749,9 @@ const FUNDAMENTAL_CHART_INDICATOR_GROUPS = [
       "continuousOperationsProfitMargin",
       "ebitdaMargin",
       "ebitMargin",
-      "returnOnEquity",
-      "roe",
+      { field: "returnOnEquity", label: "ROE", aliases: ["roe"] },
       "returnOnAssets",
-      "returnOnInvestedCapital",
-      "roic",
+      { field: "returnOnInvestedCapital", label: "ROIC", aliases: ["roic"] },
       "returnOnCapitalEmployed",
       "returnOnTangibleAssets",
       "effectiveTaxRate",
@@ -711,12 +768,9 @@ const FUNDAMENTAL_CHART_INDICATOR_GROUPS = [
       "receivablesTurnover",
       "payablesTurnover",
       "workingCapitalTurnoverRatio",
-      "daysOfSalesOutstanding",
-      "daysSalesOutstanding",
-      "daysOfInventoryOnHand",
-      "daysInventoryOutstanding",
-      "daysOfPayablesOutstanding",
-      "daysPayablesOutstanding",
+      { field: "daysOfSalesOutstanding", label: "Days Sales Outstanding", aliases: ["daysSalesOutstanding"] },
+      { field: "daysOfInventoryOutstanding", label: "Days Inventory Outstanding", aliases: ["daysInventoryOutstanding", "daysOfInventoryOnHand"] },
+      { field: "daysOfPayablesOutstanding", label: "Days Payables Outstanding", aliases: ["daysPayablesOutstanding"] },
       "cashConversionCycle",
       "operatingCycle",
       "averageInventory",
@@ -3911,18 +3965,20 @@ useEffect(() => {
           return [statement, null];
         })
     );
-    const metricRequest = axios.get(`${API_URL}/api/fundamental-metrics/${symbol}`, {
-      params: {
-        period: fundamentalChartPeriod,
-        limit: periodLimit
-      },
-      timeout: 12000
-    })
-      .then((response) => ["metrics", response.data])
-      .catch((error) => {
-        console.error("Fundamental key metrics failed", symbol, error);
-        return ["metrics", null];
-      });
+    const metricRequest = fundamentalChartPeriod === "quarter"
+      ? Promise.resolve(["metrics", null])
+      : axios.get(`${API_URL}/api/fundamental-metrics/${symbol}`, {
+        params: {
+          period: fundamentalChartPeriod,
+          limit: periodLimit
+        },
+        timeout: 12000
+      })
+        .then((response) => ["metrics", response.data])
+        .catch((error) => {
+          console.error("Fundamental key metrics failed", symbol, error);
+          return ["metrics", null];
+        });
 
     const statementEntries = await Promise.all([...statementRequests, metricRequest]);
     const statements = Object.fromEntries(statementEntries);
@@ -5686,9 +5742,21 @@ const estimateGrowthRows = estimateMetricConfig.map((metric) => ({
   label: `${metric.label} Growth`,
   cells: estimateGrowthCells.filter((cell) => cell.metricKey === metric.key)
 }));
+const isFundamentalIndicatorAvailableForPeriod = (indicator) =>
+  fundamentalChartPeriod !== "quarter" || indicator.source !== "metrics";
+const availableFundamentalIndicatorGroups = FUNDAMENTAL_CHART_INDICATOR_GROUPS
+  .map((group) => ({
+    ...group,
+    indicators: group.indicators.filter(isFundamentalIndicatorAvailableForPeriod)
+  }))
+  .filter((group) => group.indicators.length);
+const activeFundamentalIndicatorGroupDetails =
+  availableFundamentalIndicatorGroups.find((group) => group.id === activeFundamentalIndicatorGroup) ||
+  availableFundamentalIndicatorGroups[0] ||
+  null;
 const selectedFundamentalIndicatorDetails = selectedFundamentalIndicators
   .map((key) => FUNDAMENTAL_CHART_INDICATORS.find((indicator) => indicator.key === key))
-  .filter(Boolean);
+  .filter((indicator) => indicator && isFundamentalIndicatorAvailableForPeriod(indicator));
 const getFundamentalIndicatorValue = (period, indicator, previousPeriod = null) => {
   if (!period || !indicator) return null;
   if (indicator.growthOf) {
@@ -5701,8 +5769,16 @@ const getFundamentalIndicatorValue = (period, indicator, previousPeriod = null) 
     return indicator.calculate(period);
   }
   const value = period[indicator.source]?.[indicator.field] ?? null;
+  if (!isNumber(value) && Array.isArray(indicator.aliases)) {
+    for (const alias of indicator.aliases) {
+      const aliasValue = period[indicator.source]?.[alias];
+      if (isNumber(aliasValue)) {
+        return indicator.scalePercent ? normalizePercentMetric(aliasValue) : aliasValue;
+      }
+    }
+  }
   if (indicator.scalePercent && isNumber(value)) {
-    return Math.abs(value) <= 1 ? value * 100 : value;
+    return normalizePercentMetric(value);
   }
   return value;
 };
@@ -7381,7 +7457,7 @@ const toggleFundamentalIndicator = (indicatorKey) => {
 };
 
 const selectFundamentalIndicatorGroup = (groupId) => {
-  const group = FUNDAMENTAL_CHART_INDICATOR_GROUPS.find((item) => item.id === groupId);
+  const group = availableFundamentalIndicatorGroups.find((item) => item.id === groupId);
   if (!group) return;
   setSelectedFundamentalIndicators((current) => [
     ...new Set([
@@ -8324,11 +8400,11 @@ return (
 
         <div className="fundamental-indicator-panel">
           <div className="fundamental-indicator-sidebar" aria-label="Indicator groups">
-            {FUNDAMENTAL_CHART_INDICATOR_GROUPS.map((group) => (
+            {availableFundamentalIndicatorGroups.map((group) => (
               <button
                 key={group.id}
                 type="button"
-                className={activeFundamentalIndicatorGroup === group.id ? "active" : ""}
+                className={activeFundamentalIndicatorGroupDetails?.id === group.id ? "active" : ""}
                 onClick={() => setActiveFundamentalIndicatorGroup(group.id)}
               >
                 <span>{group.label}</span>
@@ -8342,13 +8418,13 @@ return (
               <div>
                 <span>Indicators</span>
                 <strong>
-                  {FUNDAMENTAL_CHART_INDICATOR_GROUPS.find((group) => group.id === activeFundamentalIndicatorGroup)?.label || "Indicators"}
+                  {activeFundamentalIndicatorGroupDetails?.label || "Indicators"}
                 </strong>
               </div>
               <div className="fundamental-indicator-actions">
                 <button
                   type="button"
-                  onClick={() => selectFundamentalIndicatorGroup(activeFundamentalIndicatorGroup)}
+                  onClick={() => selectFundamentalIndicatorGroup(activeFundamentalIndicatorGroupDetails?.id)}
                 >
                   Select Group
                 </button>
@@ -8362,7 +8438,7 @@ return (
             </div>
 
             <div className="fundamental-indicator-grid">
-              {(FUNDAMENTAL_CHART_INDICATOR_GROUPS.find((group) => group.id === activeFundamentalIndicatorGroup)?.indicators || []).map((indicator) => (
+              {(activeFundamentalIndicatorGroupDetails?.indicators || []).map((indicator) => (
                 <button
                   key={indicator.key}
                   type="button"
