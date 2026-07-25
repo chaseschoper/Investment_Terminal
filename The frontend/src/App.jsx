@@ -2699,7 +2699,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 157;
+const FINANCIAL_HISTORY_VERSION = 158;
 const STOCK_ESTIMATE_VERSION = 23;
 const INTERIM_HISTORY_VERSION = 6;
 const VALUATION_METRICS_VERSION = 23;

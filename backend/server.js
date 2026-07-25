@@ -76,7 +76,7 @@ const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const alphaVantageFundamentalCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 157;
+const FINANCIAL_HISTORY_VERSION = 158;
 const HISTORICAL_PE_VERSION = 3;
 const STOCK_ESTIMATE_VERSION = 23;
 const INTERIM_HISTORY_VERSION = 6;
@@ -12532,6 +12532,8 @@ async function publishFastFinancialHistorySnapshot(ticker) {
       revenue: row.revenue,
       earnings: row.earnings,
       eps: row.eps,
+      epsBasic: row.epsBasic,
+      epsDiluted: row.epsDiluted,
       source: row.source
     }));
   const marginPercent = (numerator, revenue) => {
@@ -12603,6 +12605,8 @@ async function hydrateQuarterlyHistoryForResponse(ticker, previousData = {}, tim
       revenue: row.revenue,
       earnings: row.earnings,
       eps: row.eps,
+      epsBasic: row.epsBasic,
+      epsDiluted: row.epsDiluted,
       source: row.source
     }));
   const marginPercent = (numerator, revenue) => {
