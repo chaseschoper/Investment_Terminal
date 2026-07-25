@@ -5700,6 +5700,9 @@ function mergeHistoricalFinancials(primary = [], fallback = [], limit = Infinity
       revenue: row.revenue ?? existing.revenue ?? null,
       earnings: row.earnings ?? existing.earnings ?? null,
       eps: row.eps ?? existing.eps ?? null,
+      epsBasic: row.epsBasic ?? existing.epsBasic ?? null,
+      epsDiluted: row.epsDiluted ?? existing.epsDiluted ?? row.eps ?? existing.eps ?? null,
+      normalizedEps: row.normalizedEps ?? existing.normalizedEps ?? null,
       grossProfit: row.grossProfit ?? existing.grossProfit ?? null,
       operatingIncome: row.operatingIncome ?? existing.operatingIncome ?? null,
       ebitda: row.ebitda ?? existing.ebitda ?? null,
@@ -5722,6 +5725,9 @@ function mergeHistoricalFinancials(primary = [], fallback = [], limit = Infinity
       row.revenue !== null ||
       row.earnings !== null ||
       row.eps !== null ||
+      row.epsBasic !== null ||
+      row.epsDiluted !== null ||
+      row.normalizedEps !== null ||
       row.grossProfit !== null ||
       row.operatingIncome !== null ||
       row.ebitda !== null ||
@@ -8021,6 +8027,8 @@ async function fetchFmpIncomeStatementHistory(ticker) {
         ebit: toBillions(row.ebit),
         sgaExpense: toBillions(row.sellingGeneralAndAdministrativeExpenses),
         eps: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
+        epsBasic: toNumberOrNull(row.eps),
+        epsDiluted: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
         sharesOutstanding: toNumberOrNull(
           row.weightedAverageShsOutDil ??
           row.weightedAverageShsOutDiluted ??
@@ -8075,18 +8083,81 @@ const fmpQuarterNumber = (row = {}) => {
   return Math.floor(date.getUTCMonth() / 3) + 1;
 };
 
+async function fetchFmpNormalizedEpsRows(ticker, limit = 100) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return [];
+  try {
+    const rows = await getFmpData(symbol, "normalized EPS earnings history", [
+      `/stable/earnings?symbol={ticker}&limit=${limit}`
+    ]);
+    return (Array.isArray(rows) ? rows : rows ? [rows] : [])
+      .filter((row) => String(row.symbol || "").trim().toUpperCase() === symbol)
+      .map((row) => ({
+        date: yahooDateToIso(row.date),
+        normalizedEps: toNumberOrNull(row.epsActual),
+        normalizedEpsEstimate: toNumberOrNull(row.epsEstimated ?? row.epsEstimate)
+      }))
+      .filter((row) => row.date && (row.normalizedEps !== null || row.normalizedEpsEstimate !== null))
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  } catch (err) {
+    setFmpCooldown(err, "normalized EPS history", symbol);
+    console.log("FMP normalized EPS history skipped:", symbol, err.response?.status || err.message);
+    return [];
+  }
+}
+
+function attachNormalizedQuarterlyEps(statementRows = [], normalizedRows = []) {
+  const normalized = [...(normalizedRows || [])].filter((row) => row.normalizedEps !== null);
+  if (!normalized.length) return statementRows;
+  const orderedStatements = [...statementRows].sort((a, b) =>
+    String(b.date || "").localeCompare(String(a.date || ""))
+  );
+  const normalizedByStatementDate = new Map();
+  orderedStatements.forEach((row, index) => {
+    const key = String(row.date || "").slice(0, 10);
+    const normalizedRow = normalized[index];
+    if (key && normalizedRow?.normalizedEps !== null) {
+      normalizedByStatementDate.set(key, normalizedRow.normalizedEps);
+    }
+  });
+  return statementRows.map((row) => {
+    const key = String(row.date || "").slice(0, 10);
+    return normalizedByStatementDate.has(key)
+      ? { ...row, normalizedEps: normalizedByStatementDate.get(key) }
+      : row;
+  });
+}
+
+function attachAnnualNormalizedEpsFromQuarters(annualRows = [], quarterlyRows = []) {
+  const byYear = new Map();
+  quarterlyRows.forEach((row) => {
+    const year = Number(row.year);
+    const value = toNumberOrNull(row.normalizedEps);
+    if (!year || value === null) return;
+    const existing = byYear.get(year) || { count: 0, total: 0 };
+    byYear.set(year, { count: existing.count + 1, total: existing.total + value });
+  });
+  return annualRows.map((row) => {
+    const normalized = byYear.get(Number(row.year));
+    return normalized?.count >= 4
+      ? { ...row, normalizedEps: normalized.total }
+      : row;
+  });
+}
+
 async function fetchFmpQuarterlyFinancialHistory(ticker) {
   if (!process.env.FMP_API_KEY) return [];
   if (!canUseFmp()) return [];
 
   try {
-    const [incomeData, cashFlowData] = await Promise.all([
+    const [incomeData, cashFlowData, normalizedEpsRows] = await Promise.all([
       getFmpData(ticker, "quarterly income statement", [
         "/stable/income-statement?symbol={ticker}&period=quarter&limit=80"
       ]),
       getFmpData(ticker, "quarterly cash flow", [
         "/stable/cash-flow-statement?symbol={ticker}&period=quarter&limit=80"
-      ])
+      ]),
+      fetchFmpNormalizedEpsRows(ticker, 100)
     ]);
     const incomeRows = (Array.isArray(incomeData) ? incomeData : incomeData ? [incomeData] : [])
       .map((row) => ({
@@ -8111,7 +8182,7 @@ async function fetchFmpQuarterlyFinancialHistory(ticker) {
         })
     );
 
-    return incomeRows
+    const financialRows = incomeRows
       .map((row) => {
         const cash = cashByYearQuarter.get(`${row.fiscalYear}:${row.fiscalQuarter}`) || {};
         return {
@@ -8133,6 +8204,8 @@ async function fetchFmpQuarterlyFinancialHistory(ticker) {
           ),
           freeCashflow: toBillions(cash.freeCashFlow ?? cash.freeCashflow),
           eps: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
+          epsBasic: toNumberOrNull(row.eps),
+          epsDiluted: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
           sharesOutstanding: toNumberOrNull(
             row.weightedAverageShsOutDil ??
               row.weightedAverageShsOutDiluted ??
@@ -8154,8 +8227,9 @@ async function fetchFmpQuarterlyFinancialHistory(ticker) {
         row.eps !== null ||
         row.operatingCashflow !== null ||
         row.freeCashflow !== null
-      )
-      .slice(-80);
+      );
+
+    return attachNormalizedQuarterlyEps(financialRows, normalizedEpsRows).slice(-80);
   } catch (err) {
     setFmpCooldown(err, "quarterly financials", ticker);
     console.log("FMP quarterly financials skipped:", ticker, err.response?.status || err.message);
@@ -8187,8 +8261,10 @@ async function fetchFmpFinancialHistory(ticker) {
     .filter((row) => row.year)
     .sort((a, b) => a.year - b.year);
 
+  const annualRowsWithNormalizedEps = attachAnnualNormalizedEpsFromQuarters(annualRows, quarterlyRows);
+
   return mergeHistoricalFinancials(
-    [...annualRows, ...quarterlyRows],
+    [...annualRowsWithNormalizedEps, ...quarterlyRows],
     annualCashRows,
     Infinity
   );
@@ -20304,8 +20380,9 @@ res.status(500).json({ results: [], error: "Stock screener data is not available
 
 const financialStatementLabel = (field) => {
   const overrides = {
-    eps: "EPS",
-    epsDiluted: "Diluted EPS",
+  eps: "EPS",
+  epsDiluted: "Diluted EPS",
+  normalizedEps: "Normalized EPS",
     ebitda: "EBITDA",
     ebitdaratio: "EBITDA Margin",
     grossProfitRatio: "Gross Margin",
@@ -20456,6 +20533,33 @@ const normalizeFundamentalMetricRows = (keyMetricRows, ratioRows, period) => {
 
   return { periods, rows };
 };
+
+async function hydrateIncomeStatementRowsWithNormalizedEps(symbol, rows = [], period = "annual") {
+  if (!Array.isArray(rows) || !rows.length || !symbol || !process.env.FMP_API_KEY || !canUseFmp()) return rows;
+  const normalizedRows = await fetchFmpNormalizedEpsRows(symbol, period === "quarter" ? 100 : 160);
+  if (!normalizedRows.length) return rows;
+
+  if (period === "quarter") {
+    return attachNormalizedQuarterlyEps(rows, normalizedRows);
+  }
+
+  const normalizedByYear = new Map();
+  normalizedRows.forEach((row) => {
+    const year = Number(String(row.date || "").slice(0, 4));
+    const value = toNumberOrNull(row.normalizedEps);
+    if (!year || value === null) return;
+    const existing = normalizedByYear.get(year) || { count: 0, total: 0 };
+    normalizedByYear.set(year, { count: existing.count + 1, total: existing.total + value });
+  });
+
+  return rows.map((row) => {
+    const year = Number(row.calendarYear || row.fiscalYear || String(row.date || "").slice(0, 4));
+    const normalized = normalizedByYear.get(year);
+    return normalized?.count >= 4
+      ? { ...row, normalizedEps: normalized.total }
+      : row;
+  });
+}
 
 const divideNullable = (numerator, denominator) => {
   const top = toNumberOrNull(numerator);
@@ -20700,7 +20804,10 @@ app.get("/api/financial-statements/:ticker", async (req, res) => {
       `/stable/${config.path}?symbol={ticker}&period=${period}&limit=${limit}`
     ]);
     const statementRows = Array.isArray(data) ? data : data ? [data] : [];
-    const normalized = normalizeFinancialStatementRows(statementRows, statementType, period);
+    const hydratedRows = statementType === "income"
+      ? await hydrateIncomeStatementRowsWithNormalizedEps(symbol, statementRows, period)
+      : statementRows;
+    const normalized = normalizeFinancialStatementRows(hydratedRows, statementType, period);
 
     res.json({
       symbol,
