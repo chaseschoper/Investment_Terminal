@@ -5700,6 +5700,8 @@ function mergeHistoricalFinancials(primary = [], fallback = [], limit = Infinity
       revenue: row.revenue ?? existing.revenue ?? null,
       earnings: row.earnings ?? existing.earnings ?? null,
       eps: row.eps ?? existing.eps ?? null,
+      epsBasic: row.epsBasic ?? existing.epsBasic ?? null,
+      epsDiluted: row.epsDiluted ?? existing.epsDiluted ?? row.eps ?? existing.eps ?? null,
       grossProfit: row.grossProfit ?? existing.grossProfit ?? null,
       operatingIncome: row.operatingIncome ?? existing.operatingIncome ?? null,
       ebitda: row.ebitda ?? existing.ebitda ?? null,
@@ -5722,6 +5724,8 @@ function mergeHistoricalFinancials(primary = [], fallback = [], limit = Infinity
       row.revenue !== null ||
       row.earnings !== null ||
       row.eps !== null ||
+      row.epsBasic !== null ||
+      row.epsDiluted !== null ||
       row.grossProfit !== null ||
       row.operatingIncome !== null ||
       row.ebitda !== null ||
@@ -8021,6 +8025,8 @@ async function fetchFmpIncomeStatementHistory(ticker) {
         ebit: toBillions(row.ebit),
         sgaExpense: toBillions(row.sellingGeneralAndAdministrativeExpenses),
         eps: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
+        epsBasic: toNumberOrNull(row.eps),
+        epsDiluted: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
         sharesOutstanding: toNumberOrNull(
           row.weightedAverageShsOutDil ??
           row.weightedAverageShsOutDiluted ??
@@ -8133,6 +8139,8 @@ async function fetchFmpQuarterlyFinancialHistory(ticker) {
           ),
           freeCashflow: toBillions(cash.freeCashFlow ?? cash.freeCashflow),
           eps: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
+          epsBasic: toNumberOrNull(row.eps),
+          epsDiluted: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
           sharesOutstanding: toNumberOrNull(
             row.weightedAverageShsOutDil ??
               row.weightedAverageShsOutDiluted ??
@@ -8800,36 +8808,55 @@ async function fetchFmpEpsSurprises(ticker) {
     return fetchFinnhubEpsSurprises(symbol);
   }
 
-  const cached = readCachedMarketActivity(epsSurpriseCache, `fmp:${symbol}`);
+  const cacheKey = `fmp:${symbol}:gaap-v1`;
+  const cached = readCachedMarketActivity(epsSurpriseCache, cacheKey);
   if (cached) return cached;
 
   try {
-    const rows = await resolveWithin(
-      getFmpData(symbol, "earnings history", [
-        `/stable/earnings?symbol={ticker}&limit=8`
-      ]),
-      2200,
-      []
-    );
+    const [rows, incomeRows] = await Promise.all([
+      resolveWithin(
+        getFmpData(symbol, "earnings history", [
+          `/stable/earnings?symbol={ticker}&limit=8`
+        ]),
+        2200,
+        []
+      ),
+      resolveWithin(
+        getFmpData(symbol, "quarterly income statement for GAAP EPS", [
+          `/stable/income-statement?symbol={ticker}&period=quarter&limit=8`
+        ]),
+        2200,
+        []
+      )
+    ]);
+    const gaapEpsByRecentIndex = (Array.isArray(incomeRows) ? incomeRows : incomeRows ? [incomeRows] : [])
+      .filter(Boolean)
+      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
+      .map((row) => toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps));
     let data = mergeEpsBeatMissRows(
       (Array.isArray(rows) ? rows : rows ? [rows] : [])
         .filter((item) => String(item.symbol || "").trim().toUpperCase() === symbol)
-        .map((item) => {
+        .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
+        .map((item, index) => {
           const estimate = toNumberOrNull(item.epsEstimated ?? item.epsEstimate);
           const actual = toNumberOrNull(item.epsActual);
+          const gaapActual = gaapEpsByRecentIndex[index] ?? null;
           const surprise = actual !== null && estimate !== null ? actual - estimate : null;
+          const gaapSurprise = gaapActual !== null && estimate !== null ? gaapActual - estimate : null;
           return {
             period: yahooDateToIso(item.date),
             estimate,
             actual,
+            gaapActual,
             surprise,
+            gaapSurprise,
             surprisePercent: surprise !== null && estimate
               ? (surprise / Math.abs(estimate)) * 100
               : null,
             source: "FMP earnings history"
           };
         })
-        .filter((item) => item.period && (item.estimate !== null || item.actual !== null))
+        .filter((item) => item.period && (item.estimate !== null || item.actual !== null || item.gaapActual !== null))
     )
       .sort((a, b) => String(a.period).localeCompare(String(b.period)))
       .slice(-5);
@@ -8840,7 +8867,7 @@ async function fetchFmpEpsSurprises(ticker) {
     }
     return writeCachedMarketActivity(
       epsSurpriseCache,
-      `fmp:${symbol}`,
+      cacheKey,
       data,
       data.length ? 6 * 60 * 60 * 1000 : 20 * 60 * 1000
     );
@@ -8848,7 +8875,7 @@ async function fetchFmpEpsSurprises(ticker) {
     setFmpCooldown(err, "EPS surprises", symbol);
     console.log("FMP EPS surprises skipped:", symbol, err.response?.status || err.message);
     const fallback = await resolveWithin(fetchFinnhubEpsSurprises(symbol), 1800, []);
-    return writeCachedMarketActivity(epsSurpriseCache, `fmp:${symbol}`, fallback, fallback.length ? 6 * 60 * 60 * 1000 : 15 * 60 * 1000);
+    return writeCachedMarketActivity(epsSurpriseCache, cacheKey, fallback, fallback.length ? 6 * 60 * 60 * 1000 : 15 * 60 * 1000);
   }
 }
 

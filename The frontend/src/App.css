@@ -5471,6 +5471,12 @@ body {
   font-size: 18px;
 }
 
+.compact-toggle .chart-mode-button {
+  padding: 7px 10px;
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
 .eps-beat-miss-header span {
   color: #d1d5db;
   font-size: 14px;
