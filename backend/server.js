@@ -13289,14 +13289,42 @@ app.get("/api/prices", async (req, res) => {
     if (cached && cachedHasPercent && Date.now() - cached.fetchedAt < 45 * 1000) return;
 
     try {
-      const quickData = await resolveWithin(fetchYahooQuickQuote(symbol), 2500, null) || {};
-      let quote = normalizeQuotePayload(
-        {},
-        quickData || {}
-      );
-      let extendedHours = quickData?.extendedHours || null;
+      const fmpIntraday = wantsLiveQuotes
+        ? await resolveWithin(fetchFmpIntradayPriceHistory(symbol, "1D"), 2200, null)
+        : null;
+      let quote = normalizeQuotePayload({}, {
+        price: fmpIntraday?.latest?.price,
+        change: fmpIntraday?.latest?.change,
+        percentChange: fmpIntraday?.latest?.percentChange,
+        previousClose: fmpIntraday?.latest?.previousClose
+      });
+      let extendedHours = null;
+
       if (!quote || toNumberOrNull(quote.c) === null || toNumberOrNull(quote.dp) === null) {
-        const yahooChartQuote = await resolveWithin(fetchYahooChartQuote(symbol), 2500, null);
+        const fmpQuote = await resolveWithin(fetchFmpStableQuoteProfile(symbol), 1600, null).catch(() => null);
+        quote = normalizeQuotePayload(quote || {}, {
+          price: fmpQuote?.price,
+          change: fmpQuote?.change,
+          percentChange: fmpQuote?.percentChange,
+          previousClose: fmpQuote?.previousClose,
+          high: fmpQuote?.high,
+          low: fmpQuote?.low,
+          open: fmpQuote?.open
+        });
+      }
+
+      const quickData = (!quote || toNumberOrNull(quote.c) === null || toNumberOrNull(quote.dp) === null)
+        ? await resolveWithin(fetchYahooQuickQuote(symbol), 1800, null) || {}
+        : {};
+      if (quickData && Object.keys(quickData).length) {
+        extendedHours = quickData?.extendedHours || null;
+        quote = normalizeQuotePayload(
+          quote || {},
+          quickData || {}
+        );
+      }
+      if (!quote || toNumberOrNull(quote.c) === null || toNumberOrNull(quote.dp) === null) {
+        const yahooChartQuote = await resolveWithin(fetchYahooChartQuote(symbol), 1800, null);
         if (!extendedHours && yahooChartQuote?.extendedHours) {
           extendedHours = yahooChartQuote.extendedHours;
         }
@@ -13313,7 +13341,7 @@ app.get("/api/prices", async (req, res) => {
       if (!quote || toNumberOrNull(quote.c) === null || toNumberOrNull(quote.dp) === null) {
         const finnhubQuote = await resolveWithin(
           getFinnhub(`https://finnhub.io/api/v1/quote?symbol=${symbol}`),
-          2500,
+          1800,
           null
         );
         quote = normalizeQuotePayload(quote || {}, {
@@ -13345,6 +13373,7 @@ app.get("/api/prices", async (req, res) => {
           price,
           change,
           percentChange,
+          previousClose,
           extendedHours,
           fetchedAt: Date.now()
         });

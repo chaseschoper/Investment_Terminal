@@ -3942,16 +3942,16 @@ useEffect(() => {
     const marketIsOpen = getMarketClock(new Date()).tone === "open";
     if (!initialSavedPricesLoaded.current) {
       initialSavedPricesLoaded.current = true;
-      loadSavedPrices(symbols, 0, { live: false });
+      loadSavedPrices(symbols, 0, { live: true });
       window.setTimeout(() => {
         if (isActive) loadSavedPrices(symbols, 0, { live: true });
-      }, 1800);
+      }, 1200);
     } else {
       loadSavedPrices(symbols, 0, { live: true });
     }
     refreshTimer = window.setTimeout(
       refreshPrices,
-      marketIsOpen ? 20 * 1000 : 2 * 60 * 1000
+      marketIsOpen ? 15 * 1000 : 90 * 1000
     );
   };
 
