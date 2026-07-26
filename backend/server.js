@@ -46,6 +46,7 @@ const marketHeatmapCache = new Map();
 const broadMarketMoversCache = new Map();
 const topTradedStocksCache = new Map();
 const priceHistoryCache = new Map();
+const priceHistoryInFlight = new Map();
 const companyDocumentsCache = new Map();
 const companyDocumentsInFlight = new Map();
 const COMPANY_DOCUMENTS_SUCCESS_TTL_MS = 3 * 60 * 60 * 1000;
@@ -818,7 +819,7 @@ async function fetchSp500Constituents() {
 }
 
 const PRICE_HISTORY_RANGES = {
-  "1D": { range: "1d", interval: "5m", ttl: 5 * 1000 },
+  "1D": { range: "1d", interval: "5m", ttl: 15 * 1000 },
   "1W": { range: "5d", interval: "15m", ttl: 60 * 1000 },
   "1M": { range: "1mo", interval: "1d", ttl: 5 * 60 * 1000 },
   "1Y": { range: "1y", interval: "1d", ttl: 5 * 60 * 1000 },
@@ -1012,7 +1013,7 @@ function setYahooAnalysisPageCooldown(err, label, ticker) {
 
 function setFmpCooldown(err, label, ticker) {
   if (!isTooManyRequestsError(err)) return;
-  fmpCooldownUntil = Math.max(fmpCooldownUntil, Date.now() + 10 * 1000);
+  fmpCooldownUntil = Math.max(fmpCooldownUntil, Date.now() + 2 * 1000);
   console.log(`FMP cooldown active after ${label}:`, ticker, err.response?.status || err.message);
 }
 
@@ -1021,20 +1022,34 @@ function isFmpRestrictedStatus(status) {
 }
 
 function getFmpEndpointCooldownMs(status) {
-  if (Number(status) === 429) return 60 * 1000;
+  if (Number(status) === 429) return 2 * 1000;
   if (Number(status) === 402 || Number(status) === 403) return 10 * 60 * 1000;
   return 0;
 }
 
-function setFmpEndpointCooldown(endpointKey, status, label) {
+function getFmpEndpointCooldownKey(endpointKey, status, symbol) {
+  const baseKey = String(endpointKey || "").trim();
+  if (!baseKey) return "";
+  const normalizedSymbol = String(symbol || "").trim().toUpperCase();
+  return Number(status) === 429 && normalizedSymbol
+    ? `${baseKey}:${normalizedSymbol}`
+    : baseKey;
+}
+
+function setFmpEndpointCooldown(endpointKey, status, label, symbol = "") {
   const cooldownMs = getFmpEndpointCooldownMs(status);
-  if (!endpointKey || !cooldownMs) return;
-  fmpEndpointCooldowns.set(endpointKey, Date.now() + cooldownMs);
+  const cooldownKey = getFmpEndpointCooldownKey(endpointKey, status, symbol);
+  if (!cooldownKey || !cooldownMs) return;
+  fmpEndpointCooldowns.set(cooldownKey, Date.now() + cooldownMs);
   console.log(`FMP endpoint cooldown active for ${label || endpointKey}:`, status);
 }
 
-function canUseFmpEndpoint(endpointKey) {
-  return Date.now() >= (fmpEndpointCooldowns.get(endpointKey) || 0);
+function canUseFmpEndpoint(endpointKey, symbol = "") {
+  const baseKey = String(endpointKey || "").trim();
+  const symbolKey = symbol ? `${baseKey}:${String(symbol).trim().toUpperCase()}` : "";
+  const now = Date.now();
+  return now >= (fmpEndpointCooldowns.get(baseKey) || 0) &&
+    (!symbolKey || now >= (fmpEndpointCooldowns.get(symbolKey) || 0));
 }
 
 function setStockAnalysisCooldown(err, label, ticker) {
@@ -2068,7 +2083,7 @@ async function fetchFmpRecentDailyOhlc(ticker) {
       url: `https://financialmodelingprep.com/api/v3/historical-price-full/${encodeURIComponent(symbol)}`,
       params: { from, to, apikey: process.env.FMP_API_KEY }
     }
-  ].filter((endpoint) => canUseFmpEndpoint(endpoint.key));
+  ].filter((endpoint) => canUseFmpEndpoint(endpoint.key, symbol));
 
   const results = await Promise.allSettled(endpoints.map(async (endpoint) => {
     const response = await axios.get(endpoint.url, {
@@ -2076,7 +2091,7 @@ async function fetchFmpRecentDailyOhlc(ticker) {
       timeout: 3500
     }).catch((err) => {
       if (isFmpRestrictedStatus(err.response?.status)) {
-        setFmpEndpointCooldown(endpoint.key, err.response?.status, endpoint.key);
+        setFmpEndpointCooldown(endpoint.key, err.response?.status, endpoint.key, symbol);
       }
       throw err;
     });
@@ -2441,6 +2456,37 @@ async function fetchFmpPriceHistory(ticker, requestedRange) {
   }
 }
 
+function warmPriceHistoryCache(ticker, requestedRange = "1D") {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  const range = String(requestedRange || "1D").trim().toUpperCase();
+  const rangeConfig = PRICE_HISTORY_RANGES[range] || PRICE_HISTORY_RANGES["1D"];
+  if (!symbol || !rangeConfig) return;
+  const cacheKey = `${symbol}:${range}`;
+  const cached = priceHistoryCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < rangeConfig.ttl) return;
+  if (priceHistoryInFlight.has(cacheKey)) return;
+
+  const historyPromise = fetchFmpPriceHistory(symbol, range)
+    .then((history) => {
+      if (history?.points?.length) {
+        priceHistoryCache.set(cacheKey, {
+          fetchedAt: Date.now(),
+          data: history
+        });
+      }
+      return history;
+    })
+    .catch((err) => {
+      console.log("FMP price history warm skipped:", symbol, range, err.response?.status || err.message);
+      return null;
+    })
+    .finally(() => {
+      priceHistoryInFlight.delete(cacheKey);
+    });
+
+  priceHistoryInFlight.set(cacheKey, historyPromise);
+}
+
 async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
   const symbol = String(ticker || "").trim().toUpperCase();
   const interval = FMP_INTRADAY_INTERVAL_BY_RANGE[requestedRange];
@@ -2465,7 +2511,7 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
       url: `https://financialmodelingprep.com/api/v3/historical-chart/${interval}/${encodeURIComponent(symbol)}`,
       params: { from, to, apikey: process.env.FMP_API_KEY }
     }
-  ].filter((endpoint) => canUseFmpEndpoint(endpoint.key));
+  ].filter((endpoint) => canUseFmpEndpoint(endpoint.key, symbol));
 
   const dailyRowsPromise = requestedRange === "1D"
     ? fetchFmpRecentDailyOhlc(symbol).catch((err) => {
@@ -2481,7 +2527,7 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
         timeout: 4500
       }).catch((err) => {
         if (isFmpRestrictedStatus(err.response?.status)) {
-          setFmpEndpointCooldown(endpoint.key, err.response?.status, endpoint.key);
+          setFmpEndpointCooldown(endpoint.key, err.response?.status, endpoint.key, symbol);
         }
         throw err;
       });
@@ -2493,7 +2539,10 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
   const endpointResults = endpointPayloads.map((result) => {
     if (result.status !== "fulfilled") {
       const err = result.reason || {};
-      if (![400, 401, 402, 403, 404].includes(Number(err.response?.status))) {
+      if (
+        !isFmpRestrictedStatus(err.response?.status) &&
+        ![400, 401, 404].includes(Number(err.response?.status))
+      ) {
         setFmpCooldown(err, "intraday price history", symbol);
       }
       console.log("FMP intraday price history skipped:", symbol, requestedRange, err.response?.status || err.message);
@@ -7813,6 +7862,7 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
     const fastPatch = await resolveWithin(buildFastStockSnapshot(ticker, responseData), 2600, null);
     if (fastPatch) responseData = prepareCachedStockResponseData(ticker, fastPatch);
   }
+  return finalizeStockResponseForClient(ticker, responseData);
   responseData = await ensureCompleteNextQuarterEstimateForResponse(ticker, responseData);
   if (!Array.isArray(responseData.analystEstimates?.futureYears) || !responseData.analystEstimates.futureYears.length) {
     const futureYears = await resolveWithin(fetchFmpFutureAnnualEstimateBlocks(ticker), 2200, []);
@@ -13198,30 +13248,37 @@ function startStockFetch(ticker) {
 
   activeStockFetches.add(ticker);
 
-  const chartFastHydration = publishFastFinancialHistorySnapshot(ticker).catch((err) => {
-    console.log("Fast financial history snapshot skipped:", ticker, err.message);
-  });
-  const coreFastHydration = Promise.allSettled([
-    chartFastHydration,
-    publishFastStockSnapshot(ticker).catch((err) => {
-      console.log("Fast stock snapshot skipped:", ticker, err.message);
-    }),
-    publishValuationMetricsSnapshot(ticker).catch((err) => {
-      console.log("Valuation metrics snapshot skipped:", ticker, err.message);
-    }),
-    publishQuarterEstimateSnapshot(ticker).catch((err) => {
-      console.log("Quarter estimate snapshot skipped:", ticker, err.message);
-    }),
-    publishEpsBeatMissSnapshot(ticker).catch((err) => {
-      console.log("EPS beat/miss snapshot skipped:", ticker, err.message);
-    }),
-    publishHistoricalPeSnapshot(ticker).catch((err) => {
-      console.log("Historical PE snapshot skipped:", ticker, err.message);
-    }),
-    publishBalanceSheetSnapshot(ticker).catch((err) => {
-      console.log("Balance sheet snapshot skipped:", ticker, err.message);
-    })
-  ]);
+  const coreFastHydration = (async () => {
+    await Promise.allSettled([
+      publishFastFinancialHistorySnapshot(ticker).catch((err) => {
+        console.log("Fast financial history snapshot skipped:", ticker, err.message);
+      }),
+      publishFastStockSnapshot(ticker).catch((err) => {
+        console.log("Fast stock snapshot skipped:", ticker, err.message);
+      })
+    ]);
+
+    await Promise.allSettled([
+      publishValuationMetricsSnapshot(ticker).catch((err) => {
+        console.log("Valuation metrics snapshot skipped:", ticker, err.message);
+      }),
+      publishQuarterEstimateSnapshot(ticker).catch((err) => {
+        console.log("Quarter estimate snapshot skipped:", ticker, err.message);
+      }),
+      publishBalanceSheetSnapshot(ticker).catch((err) => {
+        console.log("Balance sheet snapshot skipped:", ticker, err.message);
+      })
+    ]);
+
+    await Promise.allSettled([
+      publishEpsBeatMissSnapshot(ticker).catch((err) => {
+        console.log("EPS beat/miss snapshot skipped:", ticker, err.message);
+      }),
+      publishHistoricalPeSnapshot(ticker).catch((err) => {
+        console.log("Historical PE snapshot skipped:", ticker, err.message);
+      })
+    ]);
+  })();
   activeStockFastHydrations.set(ticker, coreFastHydration);
   enqueueMarketActivitySnapshot(ticker);
 
@@ -15247,8 +15304,28 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     if (cached && Date.now() - cached.fetchedAt < rangeConfig.ttl) {
       return res.json(cached.data);
     }
+    if (priceHistoryInFlight.has(cacheKey)) {
+      const inFlightData = await resolveWithin(
+        priceHistoryInFlight.get(cacheKey),
+        requestedRange === "1D" ? 6500 : 5000,
+        null
+      );
+      if (inFlightData?.points?.length) {
+        return res.json({
+          ...inFlightData,
+          symbol: requestedTicker,
+          sourceSymbol: ticker
+        });
+      }
+    }
+
+    const historyPromise = fetchFmpPriceHistory(ticker, requestedRange)
+      .finally(() => {
+        priceHistoryInFlight.delete(cacheKey);
+      });
+    priceHistoryInFlight.set(cacheKey, historyPromise);
     const fmpHistory = await resolveWithin(
-      fetchFmpPriceHistory(ticker, requestedRange),
+      historyPromise,
       requestedRange === "1D" ? 6500 : 5000,
       null
     );
@@ -15385,6 +15462,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
         error: "Invalid ticker"
       });
     }
+    warmPriceHistoryCache(ticker, "1D");
     const wantsQuarterlyHistory = String(req.query.mode || "").trim().toLowerCase() === "quarterly";
 
     let stock = await Stock.findOne({ ticker });

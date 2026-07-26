@@ -4493,13 +4493,15 @@ useEffect(() => {
   const loadPriceHistory = async (showLoading = true, attempt = 0) => {
     if (!ticker || activePage !== "overview") return;
     const cacheKey = `${ticker}:${stockChartRange}`;
-    const cachedChart = stockChartRange === "1D"
-      ? null
-      : stockChartMemoryCacheRef.current.get(cacheKey);
+    const cachedChart = stockChartMemoryCacheRef.current.get(cacheKey);
+    const cachedChartIsFresh = Boolean(
+      cachedChart?.points?.length &&
+      (stockChartRange !== "1D" || Date.now() - (cachedChart.cachedAt || 0) < 15000)
+    );
     if (showLoading) {
       setIsStockChartLoading(true);
       setStockChartError("");
-      if (cachedChart?.points?.length) {
+      if (cachedChartIsFresh) {
         setStockChartData(cachedChart.points);
         setStockChartMeta(cachedChart.latest || null);
       } else {
@@ -4530,7 +4532,7 @@ useEffect(() => {
 
       if (isFallbackHistory) {
         setStockChartMeta(latest);
-        if (cachedChart?.points?.length) {
+        if (cachedChartIsFresh) {
           setStockChartData(cachedChart.points);
           setStockChartError("Chart history is refreshing...");
         } else {
@@ -4546,7 +4548,8 @@ useEffect(() => {
         stockChartMemoryCacheRef.current.set(cacheKey, {
           points,
           latest,
-          updatedAt: response.data.updatedAt
+          updatedAt: response.data.updatedAt,
+          cachedAt: Date.now()
         });
       }
       setStockChartData(points);
@@ -4558,7 +4561,7 @@ useEffect(() => {
     } catch (error) {
       console.error("Price history failed", error);
       if (isActive) {
-        const hasCachedChart = Boolean(cachedChart?.points?.length);
+        const hasCachedChart = cachedChartIsFresh;
         setStockChartError(
           hasCachedChart
             ? "Chart history is refreshing..."
@@ -4566,6 +4569,7 @@ useEffect(() => {
               ? "Chart history is still loading..."
               : "Still trying to load chart history..."
         );
+        keepLoading = !hasCachedChart;
         scheduleRetry(attempt);
       }
     } finally {
