@@ -15,7 +15,6 @@ import {
 
 import {
   useEffect,
-  useMemo,
   useRef,
   useState
 } from "react";
@@ -111,15 +110,11 @@ const EPS_CHART_SHARE_OPTIONS = [
 ];
 
 const EPS_BEAT_MISS_OPTIONS = [
-  { id: "normalized", label: "Normalized EPS" },
-  { id: "gaap", label: "GAAP Diluted EPS" }
+  { id: "normalized", label: "Normalized EPS" }
 ];
 
 const epsChartShareOption = (basis = "diluted") =>
   EPS_CHART_SHARE_OPTIONS.find((option) => option.id === basis) || EPS_CHART_SHARE_OPTIONS[0];
-
-const epsBeatMissOption = (basis = "normalized") =>
-  EPS_BEAT_MISS_OPTIONS.find((option) => option.id === basis) || EPS_BEAT_MISS_OPTIONS[0];
 
 const FUNDAMENTAL_HISTORY_RANGES = [
   { id: "3", label: "3Y", years: 3 },
@@ -2870,22 +2865,6 @@ const financialHistoryFiscalKey = (row = {}) => {
   return Number.isFinite(year) && Number.isFinite(quarter) ? `${year}:Q${quarter}` : null;
 };
 
-const buildGaapDilutedEpsByFiscalKey = (rows = []) => {
-  const byFiscalKey = new Map();
-  (rows || []).forEach((row) => {
-    if (!row?.isInterim) return;
-    const key = financialHistoryFiscalKey(row);
-    const value = firstNumber(row.epsDiluted, row.eps);
-    if (key && isNumber(value)) byFiscalKey.set(key, value);
-  });
-  return byFiscalKey;
-};
-
-const buildGaapDilutedEpsReportedRows = (rows = []) =>
-  (rows || [])
-    .filter((row) => row?.isInterim && isNumber(firstNumber(row.epsDiluted, row.eps)))
-    .sort((a, b) => String(b.date || b.period || "").localeCompare(String(a.date || a.period || "")));
-
 const isReportedEpsBeatMissRow = (row = {}) =>
   isNumber(row.actual) || isNumber(row.gaapActual);
 
@@ -2939,60 +2918,36 @@ const mergeUpcomingEpsBeatMissEstimate = (rows = [], nextQuarter = {}) => {
     .slice(-5);
 };
 
-function EpsBeatMissChart({ rows = [], basis = "normalized", onBasisChange, financialHistory = [] }) {
+function EpsBeatMissChart({ rows = [] }) {
   const [selectedIndex, setSelectedIndex] = useState(null);
-  const activeOption = epsBeatMissOption(basis);
-  const gaapDilutedEpsByFiscalKey = useMemo(
-    () => buildGaapDilutedEpsByFiscalKey(financialHistory),
-    [financialHistory]
-  );
-  const gaapDilutedReportedRows = useMemo(
-    () => buildGaapDilutedEpsReportedRows(financialHistory),
-    [financialHistory]
-  );
-  const reportedBeatRows = useMemo(
-    () => (rows || []).filter(isReportedEpsBeatMissRow),
-    [rows]
-  );
-  const gaapActualForRow = (row) => {
-    const key = financialHistoryFiscalKey(row);
-    const reportedIndex = isReportedEpsBeatMissRow(row)
-      ? reportedBeatRows.findIndex((item) => item === row)
-      : -1;
-    const orderMatchedGaap = reportedIndex >= 0
-      ? firstNumber(gaapDilutedReportedRows[reportedIndex]?.epsDiluted, gaapDilutedReportedRows[reportedIndex]?.eps)
-      : null;
-    return firstNumber(key ? gaapDilutedEpsByFiscalKey.get(key) : null, row?.gaapActual, orderMatchedGaap);
-  };
-  const actualForRow = (row) => {
-    if (basis === "gaap") {
-      return firstNumber(gaapActualForRow(row), row?.actual);
-    }
-    return firstNumber(row?.actual, gaapActualForRow(row));
-  };
-  const surpriseForRow = (row, actualValue) =>
-    basis === "normalized" && isNumber(row?.surprise)
-        ? row.surprise
-        : isNumber(actualValue) && isNumber(row?.estimate)
-          ? actualValue - row.estimate
-          : null;
+  const activeOption = EPS_BEAT_MISS_OPTIONS[0];
+  const actualForRow = (row) => firstNumber(row?.actual);
+  const estimateForRow = (row) => firstNumber(row?.estimate);
+  const surpriseForRow = (row, actualValue, estimateValue) =>
+    isNumber(row?.surprise)
+      ? row.surprise
+      : isNumber(actualValue) && isNumber(estimateValue)
+        ? actualValue - estimateValue
+        : null;
   const chartRows = rows
     .map((row) => {
       const actualValue = actualForRow(row);
+      const estimateValue = estimateForRow(row);
       return {
         ...row,
+        displayEstimate: estimateValue,
         displayActual: actualValue,
-        displaySurprise: surpriseForRow(row, actualValue)
+        displaySurprise: surpriseForRow(row, actualValue, estimateValue)
       };
     })
-    .filter((row) => isNumber(row?.estimate) || isNumber(row?.displayActual))
+    .filter((row) => isNumber(row?.displayEstimate) || isNumber(row?.displayActual))
     .slice(-5);
   if (!chartRows.length) return null;
   const surpriseValueFor = (row) =>
     isNumber(row.displaySurprise) ? row.displaySurprise : null;
 
   const values = chartRows
-    .flatMap((row) => [row.estimate, row.displayActual])
+    .flatMap((row) => [row.displayEstimate, row.displayActual])
     .filter(isNumber);
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -3005,7 +2960,7 @@ function EpsBeatMissChart({ rows = [], basis = "normalized", onBasisChange, fina
   };
   const xFor = (index) =>
     chartRows.length === 1 ? 50 : 8 + (index / (chartRows.length - 1)) * 84;
-  const referenceEstimate = chartRows.at(-1)?.estimate;
+  const referenceEstimate = chartRows.at(-1)?.displayEstimate;
   const selectedRow = chartRows[selectedIndex] || null;
   const selectedSurprise = selectedRow ? surpriseValueFor(selectedRow) : null;
 
@@ -3018,22 +2973,7 @@ function EpsBeatMissChart({ rows = [], basis = "normalized", onBasisChange, fina
             {formatEpsBeatMissLabel(chartRows.at(-1))} estimate {formatEstimateEps(referenceEstimate)}
           </span>
         </div>
-        {typeof onBasisChange === "function" ? (
-          <div className="chart-mode-toggle compact-toggle" aria-label="EPS beat miss basis">
-            {EPS_BEAT_MISS_OPTIONS.map((option) => (
-              <button
-                key={option.id}
-                className={`chart-mode-button ${basis === option.id ? "active" : ""}`}
-                type="button"
-                onClick={() => onBasisChange(option.id)}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <span className="eps-beat-miss-mode">{activeOption.label}</span>
-        )}
+        <span className="eps-beat-miss-mode">{activeOption.label}</span>
       </div>
 
       <svg className="eps-beat-miss-plot" viewBox="0 0 100 62" role="img" aria-label={`${activeOption.label} beat miss chart`}>
@@ -3046,7 +2986,7 @@ function EpsBeatMissChart({ rows = [], basis = "normalized", onBasisChange, fina
         )}
         {chartRows.map((row, index) => {
           const x = xFor(index);
-          const estimateY = yFor(row.estimate);
+          const estimateY = yFor(row.displayEstimate);
           const actualValue = row.displayActual;
           const actualY = yFor(actualValue);
           const surprise = surpriseValueFor(row);
@@ -3054,7 +2994,7 @@ function EpsBeatMissChart({ rows = [], basis = "normalized", onBasisChange, fina
           const isSelected = selectedIndex === index;
           return (
             <g key={`${row.period || index}-${index}`}>
-              {isNumber(row.estimate) && (
+              {isNumber(row.displayEstimate) && (
                 <circle
                   cx={x}
                   cy={estimateY}
@@ -3062,7 +3002,7 @@ function EpsBeatMissChart({ rows = [], basis = "normalized", onBasisChange, fina
                   className="eps-estimate-dot"
                   role="button"
                   tabIndex="0"
-                  aria-label={`${formatEpsBeatMissLabel(row)} EPS estimate ${formatEstimateEps(row.estimate)}`}
+                  aria-label={`${formatEpsBeatMissLabel(row)} EPS estimate ${formatEstimateEps(row.displayEstimate)}`}
                   onClick={() => setSelectedIndex(index)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") setSelectedIndex(index);
@@ -3118,7 +3058,7 @@ function EpsBeatMissChart({ rows = [], basis = "normalized", onBasisChange, fina
         <div className="eps-beat-miss-detail">
           <strong>{formatEpsBeatMissLabel(selectedRow)}</strong>
           <span>Actual {isNumber(selectedRow.displayActual) ? formatEstimateEps(selectedRow.displayActual) : "N/A"}</span>
-          <span>Estimate {isNumber(selectedRow.estimate) ? formatEstimateEps(selectedRow.estimate) : "N/A"}</span>
+          <span>Estimate {isNumber(selectedRow.displayEstimate) ? formatEstimateEps(selectedRow.displayEstimate) : "N/A"}</span>
           <span className={isNumber(selectedSurprise) && selectedSurprise < 0 ? "miss" : "beat"}>
             {isNumber(selectedSurprise)
               ? `${selectedSurprise < 0 ? "Miss" : "Beat"} ${formatSignedEpsSurprise(selectedSurprise)}`
@@ -3516,9 +3456,6 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
 
   const [epsChartShareBasis, setEpsChartShareBasis] =
     useState("diluted");
-
-  const [epsBeatMissBasis, setEpsBeatMissBasis] =
-    useState("normalized");
 
   const [stockChartData, setStockChartData] =
     useState([]);
@@ -9773,9 +9710,6 @@ return (
 
       <EpsBeatMissChart
         rows={epsBeatMissRows}
-        basis={epsBeatMissBasis}
-        onBasisChange={setEpsBeatMissBasis}
-        financialHistory={financialHistory}
       />
 
       {financialChartMode === "annual" && (
