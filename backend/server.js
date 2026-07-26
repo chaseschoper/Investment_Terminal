@@ -1980,11 +1980,72 @@ function latestTradingDateKeyFromPoints(points = []) {
   const sortedKeys = Array.from(
     new Set(
       points
-        .map((point) => point?.date?.slice(0, 10))
+        .map((point) => point?.marketDateKey || point?.date?.slice(0, 10))
         .filter(Boolean)
     )
   ).sort();
   return sortedKeys.at(-1) || null;
+}
+
+function getTimeZoneOffsetMs(date, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const asUtc = Date.UTC(
+    Number(values.year),
+    Number(values.month) - 1,
+    Number(values.day),
+    Number(values.hour),
+    Number(values.minute),
+    Number(values.second)
+  );
+  return asUtc - date.getTime();
+}
+
+function parseFmpMarketDateTime(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(text)) {
+    const parsed = new Date(text);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!match) {
+    const parsed = new Date(text);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  const [, year, month, day, hour, minute, second = "0"] = match;
+  const utcGuess = Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second)
+  );
+  const offset = getTimeZoneOffsetMs(new Date(utcGuess), "America/New_York");
+  return new Date(utcGuess - offset);
+}
+
+function getNewYorkDateKey(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 function getNewYorkClockParts(date = new Date()) {
@@ -2103,6 +2164,8 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
     }
   ];
 
+  let bestHistory = null;
+
   for (const endpoint of endpoints) {
     try {
       const response = await axios.get(endpoint.url, {
@@ -2114,13 +2177,15 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
         .map((row) => {
           const price = firstFiniteNumber(row.close, row.price, row.adjClose);
           const rawDate = firstText(row.date, row.datetime, row.timestamp);
-          const parsed = rawDate
-            ? new Date(String(rawDate).replace(" ", "T"))
-            : null;
+          const parsed = parseFmpMarketDateTime(rawDate);
           if (price === null || !parsed || Number.isNaN(parsed.getTime())) return null;
+          const marketDateKey = /^\d{4}-\d{2}-\d{2}/.test(String(rawDate || ""))
+            ? String(rawDate).slice(0, 10)
+            : getNewYorkDateKey(parsed);
           return {
             time: parsed.getTime(),
             date: parsed.toISOString(),
+            marketDateKey,
             price,
             volume: firstFiniteNumber(row.volume)
           };
@@ -2130,7 +2195,7 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
 
       const latestTradingDateKey = latestTradingDateKeyFromPoints(allPoints);
       const latestSessionPoints = latestTradingDateKey
-        ? allPoints.filter((point) => point.date.slice(0, 10) === latestTradingDateKey)
+        ? allPoints.filter((point) => (point.marketDateKey || point.date.slice(0, 10)) === latestTradingDateKey)
         : [];
       const points = requestedRange === "1D" && latestSessionPoints.length >= 2
         ? latestSessionPoints
@@ -2146,6 +2211,19 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
       ) {
         continue;
       }
+      const latestPointClock = getNewYorkClockParts(new Date(latestPoint.time));
+      const latestPointMinutes =
+        Number.isFinite(latestPointClock.hour) && Number.isFinite(latestPointClock.minute)
+          ? latestPointClock.hour * 60 + latestPointClock.minute
+          : null;
+      if (
+        requestedRange === "1D" &&
+        !isLikelyUsMarketSession() &&
+        latestPointMinutes !== null &&
+        latestPointMinutes < 15 * 60 + 30
+      ) {
+        continue;
+      }
       const firstPoint = points[0];
       const previousPoint = points.at(-2);
       const changeBase = requestedRange === "1D"
@@ -2155,7 +2233,7 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
         ? latestPoint.price - changeBase
         : null;
 
-      return {
+      const candidate = {
         symbol,
         sourceSymbol: symbol,
         range: requestedRange,
@@ -2170,6 +2248,17 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
         },
         updatedAt: new Date().toISOString()
       };
+
+      if (
+        !bestHistory ||
+        latestPoint.time > bestHistory.points.at(-1).time ||
+        (
+          latestPoint.time === bestHistory.points.at(-1).time &&
+          points.length > bestHistory.points.length
+        )
+      ) {
+        bestHistory = candidate;
+      }
     } catch (err) {
       if (![400, 401, 402, 403, 404].includes(Number(err.response?.status))) {
         setFmpCooldown(err, "intraday price history", symbol);
@@ -2178,7 +2267,7 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
     }
   }
 
-  return null;
+  return bestHistory;
 }
 
 async function fetchFmpFiftyTwoWeekRange(ticker) {
