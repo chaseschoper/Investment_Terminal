@@ -8912,6 +8912,8 @@ const parseEpsBeatMissFiscalLabel = (value) => {
 };
 
 const epsBeatMissKey = (row = {}) => {
+  const dateKey = epsBeatMissDateKey(row.period);
+  if (dateKey) return `date:${dateKey}`;
   const fiscalYear = toNumberOrNull(row.fiscalYear);
   const fiscalQuarter = toNumberOrNull(row.fiscalQuarter);
   if (fiscalYear !== null && fiscalQuarter !== null) {
@@ -8935,6 +8937,19 @@ const isGenericUpcomingEpsRow = (row = {}) =>
 
 const isReportedEpsRow = (row = {}) =>
   toNumberOrNull(row.actual) !== null || toNumberOrNull(row.gaapActual) !== null;
+
+const epsBeatMissHasFiscalLabel = (label) =>
+  /\bQ\s*[1-4]\b/i.test(String(label || "")) && /\bFY\s*\d{2,4}\b/i.test(String(label || ""));
+
+const chooseEpsBeatMissLabel = (existing = "", incoming = "") => {
+  const existingText = String(existing || "").trim();
+  const incomingText = String(incoming || "").trim();
+  if (!existingText) return incomingText;
+  if (!incomingText) return existingText;
+  if (epsBeatMissHasFiscalLabel(incomingText) && !epsBeatMissHasFiscalLabel(existingText)) return incomingText;
+  if (isGenericUpcomingEpsRow({ label: incomingText }) && !isGenericUpcomingEpsRow({ label: existingText })) return incomingText;
+  return existingText;
+};
 
 const chooseEpsBeatMissPeriod = (existing = {}, row = {}) => {
   if (!existing.period) return row.period;
@@ -8962,6 +8977,7 @@ const mergeEpsBeatMissRows = (...rowSets) => {
       ...Object.fromEntries(
         Object.entries(hydratedRow).filter(([, value]) => value !== null && value !== undefined && value !== "")
       ),
+      label: chooseEpsBeatMissLabel(existing.label, hydratedRow.label),
       period: chooseEpsBeatMissPeriod(existing, hydratedRow),
       estimate: toNumberOrNull(hydratedRow.estimate) ?? toNumberOrNull(existing.estimate),
       actual: toNumberOrNull(hydratedRow.actual) ?? toNumberOrNull(existing.actual),
@@ -9044,7 +9060,9 @@ const buildEpsBeatMissSeries = (reportedRows = [], nextQuarterEstimate = {}) => 
   const finalReportedRows = sortedRows.filter(isReportedEpsRow);
   const upcomingRows = sortedRows.filter((row) => !isReportedEpsRow(row));
   const bestUpcomingRow = upcomingRows.find((row) => epsBeatMissDateKey(row.period)) || upcomingRows.at(-1);
-  return (bestUpcomingRow ? [...finalReportedRows, bestUpcomingRow] : finalReportedRows).slice(-5);
+  return bestUpcomingRow
+    ? [...finalReportedRows.slice(-4), bestUpcomingRow]
+    : finalReportedRows.slice(-5);
 };
 
 const readCachedMarketActivity = (cache, key) => {

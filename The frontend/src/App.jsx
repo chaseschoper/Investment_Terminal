@@ -2493,8 +2493,8 @@ const stabilizeRefreshingStockData = (previous, incoming) => {
     stable.historicalPeCheckedAt = incoming.historicalPeCheckedAt || stable.historicalPeCheckedAt;
     stable.historicalPeSource = incoming.historicalPeSource || stable.historicalPeSource;
   }
-  if (Array.isArray(previous.epsBeatMiss) && previous.epsBeatMiss.length && (!Array.isArray(incoming.epsBeatMiss) || incoming.epsBeatMiss.length < previous.epsBeatMiss.length)) {
-    stable.epsBeatMiss = previous.epsBeatMiss;
+  if (Array.isArray(incoming.epsBeatMiss)) {
+    stable.epsBeatMiss = incoming.epsBeatMiss;
   }
   ["analystUpdates", "institutionalHolders", "insiderTransactions"].forEach((field) => {
     const previousRows = field === "institutionalHolders"
@@ -2884,9 +2884,6 @@ const financialHistoryFiscalKey = (row = {}) => {
 const isReportedEpsBeatMissRow = (row = {}) =>
   isNumber(row.actual) || isNumber(row.gaapActual);
 
-const epsBeatMissRowKey = (row = {}) =>
-  financialHistoryFiscalKey(row) || (row.period ? String(row.period) : row.label ? `label:${row.label}` : null);
-
 const epsBeatMissDateKey = (value) => {
   const text = String(value || "");
   const match = text.match(/\d{4}-\d{2}-\d{2}/);
@@ -2896,9 +2893,88 @@ const epsBeatMissDateKey = (value) => {
 const isGenericUpcomingEpsRow = (row = {}) =>
   /next quarter|upcoming/i.test(`${row.label || ""} ${row.period || ""}`);
 
+const epsBeatMissRowKey = (row = {}) =>
+  epsBeatMissDateKey(row.period) ||
+  financialHistoryFiscalKey(row) ||
+  (row.label ? `label:${String(row.label).trim().toLowerCase()}` : null);
+
+const epsBeatMissHasFiscalLabel = (label) =>
+  /\bQ\s*[1-4]\b/i.test(String(label || "")) && /\bFY\s*\d{2,4}\b/i.test(String(label || ""));
+
+const chooseEpsBeatMissLabel = (existing = "", incoming = "") => {
+  const existingText = String(existing || "").trim();
+  const incomingText = String(incoming || "").trim();
+  if (!existingText) return incomingText;
+  if (!incomingText) return existingText;
+  if (epsBeatMissHasFiscalLabel(incomingText) && !epsBeatMissHasFiscalLabel(existingText)) return incomingText;
+  if (isGenericUpcomingEpsRow({ label: incomingText }) && !isGenericUpcomingEpsRow({ label: existingText })) return incomingText;
+  return existingText;
+};
+
+const hydrateEpsBeatMissRow = (row = {}) => {
+  const fiscal = parseEpsBeatMissFiscalLabel(row.label || row.period);
+  return {
+    ...row,
+    fiscalYear: firstNumber(row.fiscalYear) ?? fiscal.fiscalYear,
+    fiscalQuarter: firstNumber(row.fiscalQuarter) ?? fiscal.fiscalQuarter,
+    estimate: firstNumber(row.estimate),
+    actual: firstNumber(row.actual),
+    gaapActual: firstNumber(row.gaapActual),
+    surprise: firstNumber(row.surprise),
+    gaapSurprise: firstNumber(row.gaapSurprise),
+    surprisePercent: firstNumber(row.surprisePercent)
+  };
+};
+
+const sortEpsBeatMissRows = (rows = []) =>
+  [...rows].sort((a, b) => {
+    const periodA = String(a.period || "").startsWith("upcoming:") ? "9999-12-31" : String(a.period || "");
+    const periodB = String(b.period || "").startsWith("upcoming:") ? "9999-12-31" : String(b.period || "");
+    return periodA.localeCompare(periodB);
+  });
+
+const normalizeEpsBeatMissRows = (rows = []) => {
+  const byKey = new Map();
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const hydrated = hydrateEpsBeatMissRow(row);
+    if (!isNumber(hydrated.estimate) && !isNumber(hydrated.actual) && !isNumber(hydrated.gaapActual)) return;
+    const key = epsBeatMissRowKey(hydrated);
+    if (!key) return;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, hydrated);
+      return;
+    }
+    const merged = {
+      ...existing,
+      ...Object.fromEntries(
+        Object.entries(hydrated).filter(([, value]) => value !== null && value !== undefined && value !== "")
+      ),
+      label: chooseEpsBeatMissLabel(existing.label, hydrated.label),
+      period: existing.period || hydrated.period,
+      estimate: isNumber(hydrated.estimate) ? hydrated.estimate : existing.estimate,
+      actual: isNumber(hydrated.actual) ? hydrated.actual : existing.actual,
+      gaapActual: isNumber(hydrated.gaapActual) ? hydrated.gaapActual : existing.gaapActual,
+      surprise: isNumber(hydrated.surprise) ? hydrated.surprise : existing.surprise,
+      gaapSurprise: isNumber(hydrated.gaapSurprise) ? hydrated.gaapSurprise : existing.gaapSurprise,
+      surprisePercent: isNumber(hydrated.surprisePercent) ? hydrated.surprisePercent : existing.surprisePercent
+    };
+    byKey.set(key, merged);
+  });
+
+  const sortedRows = sortEpsBeatMissRows([...byKey.values()]);
+  const reportedRows = sortedRows.filter(isReportedEpsBeatMissRow);
+  const upcomingRows = sortedRows.filter((row) => !isReportedEpsBeatMissRow(row));
+  const bestUpcomingRow = upcomingRows.find((row) => epsBeatMissDateKey(row.period)) || upcomingRows.at(-1);
+  return bestUpcomingRow
+    ? [...reportedRows.slice(-4), bestUpcomingRow]
+    : reportedRows.slice(-5);
+};
+
 const mergeUpcomingEpsBeatMissEstimate = (rows = [], nextQuarter = {}) => {
   const estimate = firstNumber(nextQuarter?.eps);
-  if (!isNumber(estimate)) return rows;
+  const baseRows = normalizeEpsBeatMissRows(rows);
+  if (!isNumber(estimate)) return baseRows;
 
   const label = nextQuarter?.fiscalQuarter || "Next Quarter";
   const fiscal = parseEpsBeatMissFiscalLabel(label);
@@ -2917,7 +2993,7 @@ const mergeUpcomingEpsBeatMissEstimate = (rows = [], nextQuarter = {}) => {
   };
   const upcomingKey = epsBeatMissRowKey(upcomingRow);
   const upcomingDateKey = epsBeatMissDateKey(nextQuarter?.date);
-  const merged = [...(Array.isArray(rows) ? rows : [])];
+  const merged = [...baseRows];
   const existingIndex = merged.findIndex((row) => {
     if (isReportedEpsBeatMissRow(row)) return false;
     const rowKey = epsBeatMissRowKey(row);
@@ -2942,20 +3018,7 @@ const mergeUpcomingEpsBeatMissEstimate = (rows = [], nextQuarter = {}) => {
     merged.push(upcomingRow);
   }
 
-  const sortedRows = merged
-    .filter((row) => isNumber(row?.estimate) || isNumber(row?.actual) || isNumber(row?.gaapActual))
-    .sort((a, b) => {
-      const periodA = String(a.period || "").startsWith("upcoming:") ? "9999-12-31" : String(a.period || "");
-      const periodB = String(b.period || "").startsWith("upcoming:") ? "9999-12-31" : String(b.period || "");
-      return periodA.localeCompare(periodB);
-    });
-
-  const reportedRows = sortedRows.filter(isReportedEpsBeatMissRow);
-  const upcomingRows = sortedRows.filter((row) => !isReportedEpsBeatMissRow(row));
-  const bestUpcomingRow = upcomingRows.find((row) => epsBeatMissDateKey(row.period)) || upcomingRows.at(-1);
-  const deduped = bestUpcomingRow ? [...reportedRows, bestUpcomingRow] : reportedRows;
-
-  return deduped.slice(-5);
+  return normalizeEpsBeatMissRows(merged);
 };
 
 function EpsBeatMissChart({ rows = [] }) {
@@ -2969,7 +3032,7 @@ function EpsBeatMissChart({ rows = [] }) {
       : isNumber(actualValue) && isNumber(estimateValue)
         ? actualValue - estimateValue
         : null;
-  const chartRows = rows
+  const chartRows = normalizeEpsBeatMissRows(rows)
     .map((row) => {
       const actualValue = actualForRow(row);
       const estimateValue = estimateForRow(row);
