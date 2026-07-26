@@ -8814,24 +8814,32 @@ async function fetchFmpEpsSurprises(ticker) {
     return fetchFinnhubEpsSurprises(symbol);
   }
 
-  const cacheKey = `fmp:${symbol}:gaap-v3`;
+  const cacheKey = `fmp:${symbol}:gaap-v4-full`;
   const cached = readCachedMarketActivity(epsSurpriseCache, cacheKey);
   if (cached) return cached;
 
   try {
-    const [rows, incomeRows] = await Promise.all([
+    const [rows, surpriseRows, incomeRows] = await Promise.all([
       resolveWithin(
         getFmpData(symbol, "earnings history", [
-          `/stable/earnings?symbol={ticker}&limit=8`
+          `/stable/earnings?symbol={ticker}&limit=24`
         ]),
-        2200,
+        2600,
+        []
+      ),
+      resolveWithin(
+        getFmpData(symbol, "earnings surprises", [
+          `/stable/earnings-surprises?symbol={ticker}&limit=24`,
+          `/api/v3/earnings-surprises/{ticker}?limit=24`
+        ]),
+        2600,
         []
       ),
       resolveWithin(
         getFmpData(symbol, "quarterly income statement for GAAP EPS", [
-          `/stable/income-statement?symbol={ticker}&period=quarter&limit=8`
+          `/stable/income-statement?symbol={ticker}&period=quarter&limit=24`
         ]),
-        2200,
+        2600,
         []
       )
     ]);
@@ -8841,42 +8849,63 @@ async function fetchFmpEpsSurprises(ticker) {
     const gaapEpsByRecentIndex = incomeRowsByRecentIndex
       .map((row) => toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps));
     let reportedIncomeIndex = 0;
-    let data = mergeEpsBeatMissRows(
-      (Array.isArray(rows) ? rows : rows ? [rows] : [])
-        .filter((item) => String(item.symbol || "").trim().toUpperCase() === symbol)
-        .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
-        .map((item) => {
-          const estimate = toNumberOrNull(item.epsEstimated ?? item.epsEstimate);
-          const actual = toNumberOrNull(item.epsActual);
-          const isReportedQuarter = actual !== null;
-          const incomeRow = isReportedQuarter ? incomeRowsByRecentIndex[reportedIncomeIndex++] || {} : {};
-          const fiscalYear = toNumberOrNull(
-            incomeRow.fiscalYear ??
-              incomeRow.calendarYear ??
-              String(incomeRow.date || "").slice(0, 4)
-          );
-          const fiscalQuarter = fmpQuarterNumber(incomeRow);
-          const gaapActual = isReportedQuarter ? gaapEpsByRecentIndex[reportedIncomeIndex - 1] ?? null : null;
-          const surprise = actual !== null && estimate !== null ? actual - estimate : null;
-          const gaapSurprise = gaapActual !== null && estimate !== null ? gaapActual - estimate : null;
-          return {
-            period: yahooDateToIso(item.date),
-            fiscalYear,
-            fiscalQuarter,
-            label: fiscalYear && fiscalQuarter ? `Q${fiscalQuarter} FY${String(fiscalYear).slice(-2)}` : null,
-            estimate,
-            actual,
-            gaapActual,
-            surprise,
-            gaapSurprise,
-            surprisePercent: surprise !== null && estimate
-              ? (surprise / Math.abs(estimate)) * 100
-              : null,
-            source: "FMP earnings history"
-          };
-        })
-        .filter((item) => item.period && (item.estimate !== null || item.actual !== null || item.gaapActual !== null))
-    )
+    const normalizeFmpEpsItem = (item = {}, source = "FMP earnings history") => {
+      const estimate = toNumberOrNull(
+        item.epsEstimated ??
+          item.epsEstimate ??
+          item.estimatedEarning ??
+          item.estimatedEps ??
+          item.consensusEPS
+      );
+      const actual = toNumberOrNull(
+        item.epsActual ??
+          item.actualEarningResult ??
+          item.actualEps ??
+          item.eps
+      );
+      const isReportedQuarter = actual !== null;
+      const incomeRow = isReportedQuarter ? incomeRowsByRecentIndex[reportedIncomeIndex++] || {} : {};
+      const fiscalYear = toNumberOrNull(
+        incomeRow.fiscalYear ??
+          incomeRow.calendarYear ??
+          String(incomeRow.date || "").slice(0, 4)
+      );
+      const fiscalQuarter = fmpQuarterNumber(incomeRow);
+      const gaapActual = isReportedQuarter ? gaapEpsByRecentIndex[reportedIncomeIndex - 1] ?? null : null;
+      const surprise = actual !== null && estimate !== null ? actual - estimate : null;
+      const gaapSurprise = gaapActual !== null && estimate !== null ? gaapActual - estimate : null;
+      return {
+        period: yahooDateToIso(item.date ?? item.period),
+        fiscalYear,
+        fiscalQuarter,
+        label: fiscalYear && fiscalQuarter ? `Q${fiscalQuarter} FY${String(fiscalYear).slice(-2)}` : null,
+        estimate,
+        actual,
+        gaapActual,
+        surprise,
+        gaapSurprise,
+        surprisePercent: toNumberOrNull(item.surprisePercent) ?? (
+          surprise !== null && estimate
+            ? (surprise / Math.abs(estimate)) * 100
+            : null
+        ),
+        source
+      };
+    };
+    const earningsHistoryRows = (Array.isArray(rows) ? rows : rows ? [rows] : [])
+      .filter((item) => String(item.symbol || "").trim().toUpperCase() === symbol)
+      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
+      .map((item) => normalizeFmpEpsItem(item, "FMP earnings history"))
+      .filter((item) => item.period && (item.estimate !== null || item.actual !== null || item.gaapActual !== null));
+
+    reportedIncomeIndex = 0;
+    const earningsSurpriseRows = (Array.isArray(surpriseRows) ? surpriseRows : surpriseRows ? [surpriseRows] : [])
+      .filter((item) => !item.symbol || String(item.symbol || "").trim().toUpperCase() === symbol)
+      .sort((a, b) => String(b.date || b.period || "").localeCompare(String(a.date || a.period || "")))
+      .map((item) => normalizeFmpEpsItem(item, "FMP earnings surprises"))
+      .filter((item) => item.period && (item.estimate !== null || item.actual !== null || item.gaapActual !== null));
+
+    let data = mergeEpsBeatMissRows(earningsHistoryRows, earningsSurpriseRows)
       .sort((a, b) => String(a.period).localeCompare(String(b.period)))
       .slice(-5);
     if (data.length < 4) {
