@@ -379,6 +379,7 @@ const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
 const fmpDailyOhlcCache = new Map();
+const fmpEndpointCooldowns = new Map();
 const activePriceRefreshes = new Set();
 let marketIndexRefreshPromise = null;
 let marketHeatmapRefreshPromise = null;
@@ -646,10 +647,10 @@ const KNOWN_FINANCIAL_INSTITUTIONS = new Set([
 ]);
 
 const MARKET_INDICES = [
-  { key: "sp500", label: "S&P 500", yahooSymbol: "^GSPC", fmpSymbol: "^GSPC", futuresSymbol: "ES=F", fmpFuturesSymbol: "ESUSD", cnbcFuturesSymbol: "@SP.1", investingPath: "us-spx-500", stockAnalysisLabel: "S&P500" },
-  { key: "dow", label: "Dow Jones", yahooSymbol: "^DJI", fmpSymbol: "^DJI", futuresSymbol: "YM=F", fmpFuturesSymbol: "YMUSD", cnbcFuturesSymbol: "@DJ.1", investingPath: "us-30", stockAnalysisLabel: "Dow Jones" },
-  { key: "nasdaq", label: "Nasdaq", yahooSymbol: "^NDX", fmpSymbol: "^IXIC", futuresSymbol: "NQ=F", fmpFuturesSymbol: "NQUSD", cnbcFuturesSymbol: "@ND.1", investingPath: "nq-100", stockAnalysisLabel: "Nasdaq" },
-  { key: "russell2000", label: "Russell 2000", yahooSymbol: "^RUT", fmpSymbol: "^RUT", futuresSymbol: "RTY=F", fmpFuturesSymbol: "RTYUSD", investingPath: "smallcap-2000", stockAnalysisLabel: "Russell 2000" }
+  { key: "sp500", label: "S&P 500", yahooSymbol: "^GSPC", fmpSymbol: "^GSPC", investingPath: "us-spx-500", stockAnalysisLabel: "S&P500" },
+  { key: "dow", label: "Dow Jones", yahooSymbol: "^DJI", fmpSymbol: "^DJI", investingPath: "us-30", stockAnalysisLabel: "Dow Jones" },
+  { key: "nasdaq", label: "Nasdaq", yahooSymbol: "^NDX", fmpSymbol: "^IXIC", investingPath: "nq-100", stockAnalysisLabel: "Nasdaq" },
+  { key: "russell2000", label: "Russell 2000", yahooSymbol: "^RUT", fmpSymbol: "^RUT", investingPath: "smallcap-2000", stockAnalysisLabel: "Russell 2000" }
 ];
 
 const SP500_HEATMAP_COMPANIES = [
@@ -1015,6 +1016,27 @@ function setFmpCooldown(err, label, ticker) {
   console.log(`FMP cooldown active after ${label}:`, ticker, err.response?.status || err.message);
 }
 
+function isFmpRestrictedStatus(status) {
+  return [402, 403, 429].includes(Number(status));
+}
+
+function getFmpEndpointCooldownMs(status) {
+  if (Number(status) === 429) return 60 * 1000;
+  if (Number(status) === 402 || Number(status) === 403) return 10 * 60 * 1000;
+  return 0;
+}
+
+function setFmpEndpointCooldown(endpointKey, status, label) {
+  const cooldownMs = getFmpEndpointCooldownMs(status);
+  if (!endpointKey || !cooldownMs) return;
+  fmpEndpointCooldowns.set(endpointKey, Date.now() + cooldownMs);
+  console.log(`FMP endpoint cooldown active for ${label || endpointKey}:`, status);
+}
+
+function canUseFmpEndpoint(endpointKey) {
+  return Date.now() >= (fmpEndpointCooldowns.get(endpointKey) || 0);
+}
+
 function setStockAnalysisCooldown(err, label, ticker) {
   if (!isTooManyRequestsError(err)) return;
   stockAnalysisCooldownUntil = Math.max(stockAnalysisCooldownUntil, Date.now() + 2 * 60 * 1000);
@@ -1058,9 +1080,10 @@ async function getFmpData(ticker, label, endpoints) {
     const path = endpoint.replace("{ticker}", ticker);
     const separator = path.includes("?") ? "&" : "?";
     const url = `https://financialmodelingprep.com${path}${separator}apikey=${process.env.FMP_API_KEY}`;
-    const cacheKey = `${label}:${path}`;
+    const cacheKey = path;
     const cached = fmpDataCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return cached.data;
+    if (!canUseFmpEndpoint(cacheKey)) continue;
     if (fmpDataInFlight.has(cacheKey)) {
       const inFlightData = await fmpDataInFlight.get(cacheKey);
       if (inFlightData) return inFlightData;
@@ -1082,7 +1105,11 @@ async function getFmpData(ticker, label, endpoints) {
         return data;
       }
     } catch (err) {
-      setFmpCooldown(err, label, ticker);
+      if (isFmpRestrictedStatus(err.response?.status)) {
+        setFmpEndpointCooldown(cacheKey, err.response?.status, label);
+      } else {
+        setFmpCooldown(err, label, ticker);
+      }
       console.log(`FMP ${label} endpoint skipped:`, ticker, err.response?.status || err.message);
       if (!canUseFmp()) return null;
     } finally {
@@ -1921,7 +1948,7 @@ async function fetchFmpMetricCards(ticker) {
 async function fetchFmpBatchQuotes(symbols = []) {
   if (!process.env.FMP_API_KEY || !canUseFmp() || !symbols.length) return [];
 
-  try {
+  if (canUseFmpEndpoint("stable-batch-quote")) try {
     const stableResponse = await axios.get(
       "https://financialmodelingprep.com/stable/batch-quote",
       {
@@ -1934,13 +1961,15 @@ async function fetchFmpBatchQuotes(symbols = []) {
     );
     if (Array.isArray(stableResponse.data) && stableResponse.data.length) return stableResponse.data;
   } catch (err) {
-    if (![402, 403, 404].includes(Number(err.response?.status))) {
+    if (isFmpRestrictedStatus(err.response?.status)) {
+      setFmpEndpointCooldown("stable-batch-quote", err.response?.status, "stable batch quote");
+    } else if (![404].includes(Number(err.response?.status))) {
       setFmpCooldown(err, "stable batch quote", symbols.slice(0, 3).join(","));
       console.log("FMP stable batch quote skipped:", err.response?.status || err.message);
     }
   }
 
-  try {
+  if (canUseFmpEndpoint("v3-batch-quote")) try {
     const legacyResponse = await axios.get(
       `https://financialmodelingprep.com/api/v3/quote/${symbols.map(encodeURIComponent).join(",")}`,
       {
@@ -1950,10 +1979,31 @@ async function fetchFmpBatchQuotes(symbols = []) {
     );
     return Array.isArray(legacyResponse.data) ? legacyResponse.data : [];
   } catch (err) {
-    setFmpCooldown(err, "batch quote", symbols.slice(0, 3).join(","));
+    if (isFmpRestrictedStatus(err.response?.status)) {
+      setFmpEndpointCooldown("v3-batch-quote", err.response?.status, "batch quote");
+    } else {
+      setFmpCooldown(err, "batch quote", symbols.slice(0, 3).join(","));
+    }
     console.log("FMP batch quote skipped:", err.response?.status || err.message);
-    return [];
   }
+
+  const quoteRows = await Promise.all(symbols.slice(0, 20).map(async (symbol) => {
+    try {
+      const response = await axios.get("https://financialmodelingprep.com/stable/quote", {
+        params: { symbol, apikey: process.env.FMP_API_KEY },
+        timeout: 1800
+      });
+      return Array.isArray(response.data) ? response.data[0] : null;
+    } catch (err) {
+      if (isFmpRestrictedStatus(err.response?.status)) {
+        setFmpEndpointCooldown("stable-quote-single", err.response?.status, "stable quote");
+      } else {
+        setFmpCooldown(err, "stable quote", symbol);
+      }
+      return null;
+    }
+  }));
+  return quoteRows.filter(Boolean);
 }
 
 function normalizeFmpDailyOhlcRows(payload) {
@@ -2004,23 +2054,31 @@ async function fetchFmpRecentDailyOhlc(ticker) {
 
   const endpoints = [
     {
+      key: "stable-eod-full",
       url: "https://financialmodelingprep.com/stable/historical-price-eod/full",
       params: { symbol, from, to, apikey: process.env.FMP_API_KEY }
     },
     {
+      key: "stable-eod-light",
       url: "https://financialmodelingprep.com/stable/historical-price-eod/light",
       params: { symbol, from, to, apikey: process.env.FMP_API_KEY }
     },
     {
+      key: "v3-historical-price-full",
       url: `https://financialmodelingprep.com/api/v3/historical-price-full/${encodeURIComponent(symbol)}`,
       params: { from, to, apikey: process.env.FMP_API_KEY }
     }
-  ];
+  ].filter((endpoint) => canUseFmpEndpoint(endpoint.key));
 
   const results = await Promise.allSettled(endpoints.map(async (endpoint) => {
     const response = await axios.get(endpoint.url, {
       params: endpoint.params,
       timeout: 3500
+    }).catch((err) => {
+      if (isFmpRestrictedStatus(err.response?.status)) {
+        setFmpEndpointCooldown(endpoint.key, err.response?.status, endpoint.key);
+      }
+      throw err;
     });
     return normalizeFmpDailyOhlcRows(response.data);
   }));
@@ -2320,6 +2378,7 @@ async function fetchFmpPriceHistory(ticker, requestedRange) {
   if (!range) return null;
 
   try {
+    if (!canUseFmpEndpoint("stable-eod-light")) return null;
     const response = await axios.get("https://financialmodelingprep.com/stable/historical-price-eod/light", {
       params: {
         symbol,
@@ -2372,7 +2431,11 @@ async function fetchFmpPriceHistory(ticker, requestedRange) {
       updatedAt: new Date().toISOString()
     };
   } catch (err) {
-    setFmpCooldown(err, "price history", symbol);
+    if (isFmpRestrictedStatus(err.response?.status)) {
+      setFmpEndpointCooldown("stable-eod-light", err.response?.status, "price history");
+    } else {
+      setFmpCooldown(err, "price history", symbol);
+    }
     console.log("FMP price history skipped:", symbol, requestedRange, err.response?.status || err.message);
     return null;
   }
@@ -2393,14 +2456,16 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
 
   const endpoints = [
     {
+      key: `stable-intraday-${interval}`,
       url: `https://financialmodelingprep.com/stable/historical-chart/${interval}`,
       params: { symbol, from, to, apikey: process.env.FMP_API_KEY }
     },
     {
+      key: `v3-intraday-${interval}`,
       url: `https://financialmodelingprep.com/api/v3/historical-chart/${interval}/${encodeURIComponent(symbol)}`,
       params: { from, to, apikey: process.env.FMP_API_KEY }
     }
-  ];
+  ].filter((endpoint) => canUseFmpEndpoint(endpoint.key));
 
   const dailyRowsPromise = requestedRange === "1D"
     ? fetchFmpRecentDailyOhlc(symbol).catch((err) => {
@@ -2414,6 +2479,11 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
       const response = await axios.get(endpoint.url, {
         params: endpoint.params,
         timeout: 4500
+      }).catch((err) => {
+        if (isFmpRestrictedStatus(err.response?.status)) {
+          setFmpEndpointCooldown(endpoint.key, err.response?.status, endpoint.key);
+        }
+        throw err;
       });
       return Array.isArray(response.data) ? response.data : [];
     })),
@@ -11240,27 +11310,15 @@ async function publishMarketActivitySnapshot(ticker) {
 async function buildFastStockSnapshot(ticker, previousData = {}) {
   const [
     fmpProfile,
-    sparkQuote,
-    yahooData,
-    chartQuote,
     calendarQuarterEstimate,
     fmpValuation,
-    stockAnalysisValuation,
-    stockAnalysisForecast,
-    balanceSheetMetrics,
     fmpFiftyTwoWeekRange,
     fmpSharesFloat,
     fmpExecutives
   ] = await Promise.all([
     resolveWithin(fetchFmpStableQuoteProfile(ticker), 1200, {}),
-    resolveWithin(fetchYahooSparkQuote(ticker), 1200, {}),
-    Promise.resolve({}),
-    resolveWithin(fetchYahooChartQuote(ticker), 1200, {}),
     resolveWithin(fetchCalendarQuarterEstimate(ticker, { fast: true }), 1400, previousData.analystEstimates?.nextQuarter || {}),
     resolveWithin(fetchFmpMetricCards(ticker), 2600, {}),
-    Promise.resolve({}),
-    Promise.resolve({}),
-    Promise.resolve({}),
     resolveWithin(fetchFmpFiftyTwoWeekRange(ticker), 1800, {}),
     resolveWithin(fetchFmpSharesFloat(ticker), 2200, {}),
     resolveWithin(fetchFmpKeyExecutives(ticker), 2200, [])
@@ -11268,18 +11326,17 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
   const definedValues = (data = {}) => Object.fromEntries(
     Object.entries(data).filter(([, value]) => value !== null && value !== undefined)
   );
-  const chartData = chartQuote?.c || sparkQuote?.price
-    ? {
-        price: firstNumber(fmpProfile.price, chartQuote.c, sparkQuote.price),
-        change: firstNumber(fmpProfile.change, chartQuote.d, sparkQuote.change),
-        percentChange: firstNumber(fmpProfile.percentChange, chartQuote.dp, sparkQuote.percentChange),
-        extendedHours: chartQuote.extendedHours || null,
-        previousClose: firstNumber(fmpProfile.previousClose, chartQuote.pc, sparkQuote.previousClose),
-        high: firstNumber(fmpProfile.high, chartQuote.h),
-        low: firstNumber(fmpProfile.low, chartQuote.l),
-        open: firstNumber(fmpProfile.open, chartQuote.o)
-      }
-    : definedValues(fmpProfile);
+  const chartData = definedValues({
+    price: fmpProfile.price,
+    change: fmpProfile.change,
+    percentChange: fmpProfile.percentChange,
+    extendedHours: null,
+    previousClose: fmpProfile.previousClose,
+    high: fmpProfile.high,
+    low: fmpProfile.low,
+    open: fmpProfile.open
+  });
+  const yahooData = {};
   const isFmpAdr = fmpProfile.isAdr === true;
   const fastData = {
     ...chartData,
@@ -15042,35 +15099,6 @@ app.get("/api/market-indices", async (req, res) => {
     return indexQuote;
   };
 
-  const fetchFmpFuture = async (index) => {
-    if (!process.env.FMP_API_KEY || !canUseFmp() || !index.fmpFuturesSymbol) return null;
-    const response = await axios.get("https://financialmodelingprep.com/stable/quote", {
-      params: {
-        symbol: index.fmpFuturesSymbol,
-        apikey: process.env.FMP_API_KEY
-      },
-      timeout: 1600,
-      validateStatus: () => true
-    });
-    if (response.status === 402 || response.status === 403) return null;
-    if (response.status >= 400) {
-      const error = new Error(`FMP futures quote ${response.status}`);
-      error.response = response;
-      throw error;
-    }
-    const quote = Array.isArray(response.data) ? response.data[0] : response.data;
-    const price = toNumberOrNull(quote?.price);
-    if (price === null) return null;
-    return {
-      symbol: index.fmpFuturesSymbol,
-      label: `${index.label} futures`,
-      price,
-      change: toNumberOrNull(quote?.change),
-      percentChange: toNumberOrNull(quote?.changePercentage),
-      source: "FMP Futures"
-    };
-  };
-
   const fetchBestIndexQuote = async (index) => {
     return resolveWithin(Promise.resolve()
       .then(() => fetchFmpIndex(index))
@@ -15088,48 +15116,12 @@ app.get("/api/market-indices", async (req, res) => {
   };
 
   const fetchFreshIndices = async () => {
-    const indexQuotes = await Promise.all(MARKET_INDICES.map(async (index) => {
-      let indexQuote = await fetchBestIndexQuote(index);
-
-      if (!indexQuote) return null;
-
-      return {
-        ...indexQuote,
-        futures: null
-      };
-    }));
-
-    const indices = [];
-    for (const [indexPosition, index] of MARKET_INDICES.entries()) {
-      const indexQuote = indexQuotes[indexPosition];
-      if (!indexQuote) {
-        indices.push(null);
-        continue;
-      }
-      try {
-        if (indexPosition > 0) await wait(175);
-        const futures = await resolveWithin(
-          fetchFmpFuture(index).catch((err) => {
-            if (err?.response?.status !== 402 && err?.response?.status !== 403) {
-              setFmpCooldown(err, "market index futures", index.label);
-              console.log("FMP market index futures skipped:", index.label, err.response?.status || err.message);
-            }
-            return null;
-          }),
-          1600,
-          null
-        );
-        indices.push(futures
-          ? { ...indexQuote, futures }
-          : { ...indexQuote, futures: null });
-      } catch (err) {
-        console.log("Market index futures skipped:", index.label, err.response?.status || err.message);
-        indices.push({ ...indexQuote, futures: null });
-      }
-    }
+    const indexQuotes = await Promise.all(MARKET_INDICES.map(async (index) =>
+      fetchBestIndexQuote(index)
+    ));
 
     const mergedIndices = MARKET_INDICES.map((index) =>
-      indices.find((item) => item?.key === index.key)
+      indexQuotes.find((item) => item?.key === index.key)
     ).filter(Boolean);
     const data = {
       indices: mergedIndices,

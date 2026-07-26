@@ -2600,11 +2600,6 @@ const MARKET_INDEX_ORDER = [
   { key: "russell2000", label: "Russell 2000" }
 ];
 
-const isFmpFuturesQuote = (futures) =>
-  futures &&
-  isNumber(futures.price) &&
-  /^FMP/i.test(String(futures.source || ""));
-
 const normalizeSymbolList = (symbols = []) =>
   [...new Set((Array.isArray(symbols) ? symbols : [])
     .map((symbol) => String(symbol || "").trim().toUpperCase())
@@ -3966,12 +3961,11 @@ useEffect(() => {
               .map((item) => {
                 const freshIndex = indicesByKey.get(item.key);
                 const previousIndex = previousByKey.get(item.key);
-                const freshFutures = freshIndex?.futures;
                 return {
                   ...item,
                   ...(previousIndex || {}),
                   ...(freshIndex || {}),
-                  futures: isFmpFuturesQuote(freshFutures) ? freshFutures : null
+                  futures: null
                 };
               });
             localStorage.setItem(MARKET_INDICES_STORAGE_KEY, JSON.stringify(ordered));
@@ -7070,7 +7064,6 @@ const pauseComputerRead = () => {
 
 const marketSignal = getMarketSignal(marketIndices);
 const marketClock = getMarketClock(marketClockNow);
-const showMarketFuturesData = marketClock.tone !== "open";
 const displayedStockPrice = stockChartMeta?.price ?? stockData?.price;
 const displayedMarketIndices = MARKET_INDEX_ORDER.map((item) => ({
   ...item,
@@ -7318,19 +7311,6 @@ const marketOverviewStrip = (
                 ? `${index.percentChange > 0 ? "+" : ""}${index.percentChange.toFixed(2)}%`
                 : isMarketLoading ? "Loading" : "--"}
             </span>
-            {showMarketFuturesData && isFmpFuturesQuote(index.futures) && (
-              <span className="market-index-futures">
-                <span>Futures</span>
-                <strong>{formatIndexPrice(index.futures.price)}</strong>
-                <em className={
-                  index.futures.percentChange >= 0
-                    ? "positive-text"
-                    : "negative-text"
-                }>
-                  {formatSignedPercent(index.futures.percentChange)}
-                </em>
-              </span>
-            )}
           </div>
         ))}
     </div>
