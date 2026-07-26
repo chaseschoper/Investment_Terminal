@@ -1492,32 +1492,6 @@ const formatIndexPrice = (value) =>
 const formatSignedPercent = (value) =>
   isNumber(value) ? `${value > 0 ? "+" : ""}${value.toFixed(2)}%` : "--";
 
-const getExtendedHoursQuote = (...sources) => {
-  for (const source of sources) {
-    const extendedHours = source?.extendedHours;
-    const quote = extendedHours?.active || extendedHours?.afterHours || extendedHours?.preMarket;
-    if (isNumber(quote?.price)) {
-      const previousClose = isNumber(quote.previousClose)
-        ? quote.previousClose
-        : null;
-      const change = previousClose
-        ? quote.price - previousClose
-        : quote.change;
-      const percentChange = previousClose
-        ? (change / previousClose) * 100
-        : quote.percentChange;
-
-      return {
-        ...quote,
-        change,
-        percentChange,
-      };
-    }
-  }
-
-  return null;
-};
-
 const chunkSymbols = (symbols, size = 10) => {
   const chunks = [];
   for (let index = 0; index < symbols.length; index += size) {
@@ -2625,6 +2599,11 @@ const MARKET_INDEX_ORDER = [
   { key: "nasdaq", label: "Nasdaq 100" },
   { key: "russell2000", label: "Russell 2000" }
 ];
+
+const isFmpFuturesQuote = (futures) =>
+  futures &&
+  isNumber(futures.price) &&
+  /^FMP/i.test(String(futures.source || ""));
 
 const normalizeSymbolList = (symbols = []) =>
   [...new Set((Array.isArray(symbols) ? symbols : [])
@@ -3984,15 +3963,17 @@ useEffect(() => {
             const previousByKey = new Map(previousIndices.map((index) => [index.key, index]));
             const indicesByKey = new Map(indices.map((index) => [index.key, index]));
             const ordered = MARKET_INDEX_ORDER
-              .map((item) => ({
-                ...item,
-                ...(previousByKey.get(item.key) || {}),
-                ...(indicesByKey.get(item.key) || {}),
-                futures:
-                  indicesByKey.get(item.key)?.futures ||
-                  previousByKey.get(item.key)?.futures ||
-                  null
-              }));
+              .map((item) => {
+                const freshIndex = indicesByKey.get(item.key);
+                const previousIndex = previousByKey.get(item.key);
+                const freshFutures = freshIndex?.futures;
+                return {
+                  ...item,
+                  ...(previousIndex || {}),
+                  ...(freshIndex || {}),
+                  futures: isFmpFuturesQuote(freshFutures) ? freshFutures : null
+                };
+              });
             localStorage.setItem(MARKET_INDICES_STORAGE_KEY, JSON.stringify(ordered));
             return ordered;
           });
@@ -7089,11 +7070,7 @@ const pauseComputerRead = () => {
 
 const marketSignal = getMarketSignal(marketIndices);
 const marketClock = getMarketClock(marketClockNow);
-const showExtendedMarketData = marketClock.tone !== "open";
-const activeExtendedHours = getExtendedHoursQuote(
-  stockData,
-  savedSymbolDetails[ticker]
-);
+const showMarketFuturesData = marketClock.tone !== "open";
 const displayedStockPrice = stockChartMeta?.price ?? stockData?.price;
 const displayedMarketIndices = MARKET_INDEX_ORDER.map((item) => ({
   ...item,
@@ -7341,7 +7318,7 @@ const marketOverviewStrip = (
                 ? `${index.percentChange > 0 ? "+" : ""}${index.percentChange.toFixed(2)}%`
                 : isMarketLoading ? "Loading" : "--"}
             </span>
-            {showExtendedMarketData && index.futures && (
+            {showMarketFuturesData && isFmpFuturesQuote(index.futures) && (
               <span className="market-index-futures">
                 <span>Futures</span>
                 <strong>{formatIndexPrice(index.futures.price)}</strong>
@@ -9209,20 +9186,6 @@ return (
                 ? `$${displayedStockPrice.toFixed(2)}`
                 : "--"}
             </div>
-
-            {showExtendedMarketData && activeExtendedHours && (
-              <div className="extended-hours-quote">
-                <span>{activeExtendedHours.label}</span>
-                <strong>{formatPrice(activeExtendedHours.price)}</strong>
-                <em className={
-                  activeExtendedHours.percentChange >= 0
-                    ? "positive-text"
-                    : "negative-text"
-                }>
-                  {formatSignedPercent(activeExtendedHours.percentChange)}
-                </em>
-              </div>
-            )}
 
             <div className="stock-change">
               {stockData.symbol}

@@ -372,12 +372,13 @@ const MR_RALLY_WEB_CONTEXT_TIMEOUT_MS = 6000;
 const MR_RALLY_COMPANY_LOOKUP_TIMEOUT_MS = 2500;
 const STOCK_PROVIDER_TIMEOUT_MS = 8000;
 const STOCK_SLOW_PROVIDER_TIMEOUT_MS = 10000;
-const STOCK_FAST_CHART_HYDRATION_WAIT_MS = 2400;
+const STOCK_FAST_CHART_HYDRATION_WAIT_MS = 1200;
 const STOCK_FINANCIAL_FRESHNESS_MS = 10 * 60 * 1000;
 const STOCK_INITIAL_SEC_TIMEOUT_MS = 9000;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
+const fmpDailyOhlcCache = new Map();
 const activePriceRefreshes = new Set();
 let marketIndexRefreshPromise = null;
 let marketHeatmapRefreshPromise = null;
@@ -1987,6 +1988,11 @@ function normalizeFmpDailyOhlcRows(payload) {
 async function fetchFmpRecentDailyOhlc(ticker) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return [];
+  const cacheKey = symbol;
+  const cached = fmpDailyOhlcCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < 30 * 1000) {
+    return cached.rows;
+  }
 
   const end = new Date();
   end.setUTCHours(23, 59, 59, 999);
@@ -2019,7 +2025,7 @@ async function fetchFmpRecentDailyOhlc(ticker) {
     return normalizeFmpDailyOhlcRows(response.data);
   }));
 
-  return results
+  const rows = results
     .filter((result) => result.status === "fulfilled" && result.value?.length)
     .map((result) => result.value)
     .sort((a, b) => {
@@ -2027,6 +2033,13 @@ async function fetchFmpRecentDailyOhlc(ticker) {
       const bScore = (toNumberOrNull(b.at(-1)?.open) !== null ? 10 : 0) + b.length;
       return bScore - aScore;
     })[0] || [];
+  if (rows.length) {
+    fmpDailyOhlcCache.set(cacheKey, {
+      rows,
+      fetchedAt: Date.now()
+    });
+  }
+  return rows;
 }
 
 function getFmpPriceHistoryDateRange(requestedRange) {
@@ -13436,7 +13449,6 @@ async function fetchSimilarCompanyQuote(symbol) {
   }
 
   let quote = null;
-  let extendedHours = null;
 
   const fmpQuote = await resolveWithin(fetchFmpStableQuoteProfile(symbol), 1200, null).catch(() => null);
   if (fmpQuote && toNumberOrNull(fmpQuote.price) !== null) {
@@ -13448,45 +13460,6 @@ async function fetchSimilarCompanyQuote(symbol) {
       high: fmpQuote.high,
       low: fmpQuote.low,
       open: fmpQuote.open
-    });
-  }
-
-  const quickData = await resolveWithin(fetchYahooQuickQuote(symbol), 1600, null).catch(() => null);
-  if (quickData && (toNumberOrNull(quote?.c) === null || toNumberOrNull(quote?.dp) === null)) {
-    extendedHours = quickData.extendedHours || null;
-    quote = normalizeQuotePayload({}, quickData);
-  }
-
-  if (toNumberOrNull(quote?.c) === null || toNumberOrNull(quote?.dp) === null) {
-    const yahooChartQuote = await resolveWithin(fetchYahooChartQuote(symbol), 1600, null).catch(() => null);
-    if (!extendedHours && yahooChartQuote?.extendedHours) {
-      extendedHours = yahooChartQuote.extendedHours;
-    }
-    quote = normalizeQuotePayload(quote || {}, {
-      price: yahooChartQuote?.c,
-      change: yahooChartQuote?.d,
-      percentChange: yahooChartQuote?.dp,
-      previousClose: yahooChartQuote?.pc,
-      high: yahooChartQuote?.h,
-      low: yahooChartQuote?.l,
-      open: yahooChartQuote?.o
-    });
-  }
-
-  if (toNumberOrNull(quote?.c) === null || toNumberOrNull(quote?.dp) === null) {
-    const finnhubQuote = await resolveWithin(
-      getFinnhub(`https://finnhub.io/api/v1/quote?symbol=${symbol}`),
-      1600,
-      null
-    ).catch(() => null);
-    quote = normalizeQuotePayload(quote || {}, {
-      price: finnhubQuote?.c,
-      change: finnhubQuote?.d,
-      percentChange: finnhubQuote?.dp,
-      previousClose: finnhubQuote?.pc,
-      high: finnhubQuote?.h,
-      low: finnhubQuote?.l,
-      open: finnhubQuote?.o
     });
   }
 
@@ -13511,7 +13484,7 @@ async function fetchSimilarCompanyQuote(symbol) {
       change,
       percentChange,
       previousClose,
-      extendedHours,
+      extendedHours: null,
       fetchedAt: Date.now()
     };
     livePriceCache.set(symbol, nextQuote);
@@ -13527,15 +13500,8 @@ async function fetchSimilarCompanyForwardPe(symbol) {
     return cached.forwardPE;
   }
 
-  const [fmpValuation, metrics] = await Promise.all([
-    resolveWithin(fetchFmpStableValuationMetrics(symbol), 1200, {}),
-    resolveWithin(
-      getFinnhub(`https://finnhub.io/api/v1/stock/metric?symbol=${symbol}&metric=all`),
-      2200,
-      null
-    ).catch(() => null)
-  ]);
-  const forwardPE = firstFiniteNumber(fmpValuation?.forwardPE, metrics?.metric?.forwardPE, metrics?.metric?.peNormalizedAnnual);
+  const fmpValuation = await resolveWithin(fetchFmpStableValuationMetrics(symbol), 1200, {});
+  const forwardPE = firstFiniteNumber(fmpValuation?.forwardPE);
 
   if (forwardPE !== null) {
     similarCompanyMetricCache.set(symbol, {
@@ -13596,7 +13562,7 @@ app.get("/api/prices", async (req, res) => {
   const prices = {};
   const details = {};
   const savedStocks = await Stock.find({ ticker: { $in: symbols } })
-    .select("ticker data.price data.change data.percentChange data.previousClose data.extendedHours data.logo data.name data.sector data.industry data.country data.exchange")
+    .select("ticker data.price data.change data.percentChange data.previousClose data.logo data.name data.sector data.industry data.country data.exchange")
     .lean();
   const savedBySymbol = new Map(savedStocks.map((stock) => [stock.ticker, stock.data || {}]));
 
@@ -13613,7 +13579,7 @@ app.get("/api/prices", async (req, res) => {
       country: savedData.country || null,
       exchange: savedData.exchange || null,
       change: toNumberOrNull(savedData.change),
-      extendedHours: savedData.extendedHours || null,
+      extendedHours: null,
       percentChange: !wantsLiveQuotes && savedPercentChange !== null
         ? savedPercentChange
         : !wantsLiveQuotes && savedPrice !== null && savedPreviousClose > 0
@@ -13628,7 +13594,7 @@ app.get("/api/prices", async (req, res) => {
       details[symbol] = {
         ...details[symbol],
         change: toNumberOrNull(cached.change) ?? details[symbol].change,
-        extendedHours: cached.extendedHours || details[symbol].extendedHours,
+        extendedHours: null,
         percentChange: toNumberOrNull(cached.percentChange) ?? details[symbol].percentChange
       };
     }
@@ -13649,8 +13615,6 @@ app.get("/api/prices", async (req, res) => {
         percentChange: fmpIntraday?.latest?.percentChange,
         previousClose: fmpIntraday?.latest?.previousClose
       });
-      let extendedHours = null;
-
       if (
         wantsLiveQuotes &&
         cachedHasPercent &&
@@ -13691,14 +13655,14 @@ app.get("/api/prices", async (req, res) => {
           change,
           percentChange,
           previousClose,
-          extendedHours,
+          extendedHours: null,
           fetchedAt: Date.now()
         });
       }
       details[symbol] = {
         ...details[symbol],
         change: change ?? details[symbol].change,
-        extendedHours: extendedHours || details[symbol].extendedHours,
+        extendedHours: null,
         percentChange: percentChange ?? details[symbol].percentChange
       };
     } catch (err) {
@@ -14855,7 +14819,7 @@ app.get("/api/market-indices", async (req, res) => {
   const cached = marketIndexCache.get("latest");
   const cachedAge = cached ? Date.now() - cached.fetchedAt : Infinity;
   const freshCacheMs = 8 * 1000;
-  const staleCacheMs = 5 * 60 * 1000;
+  const staleCacheMs = 30 * 1000;
   const cachedByKey = new Map((cached?.data?.indices || []).map((index) => [index.key, index]));
 
   const buildIndexQuote = (index, symbol, price, change, percentChange, source, extra = {}) => {
@@ -15078,74 +15042,6 @@ app.get("/api/market-indices", async (req, res) => {
     return indexQuote;
   };
 
-  const fetchYahooFuture = async (index) => {
-    if (!index.futuresSymbol) return null;
-
-    let price = null;
-    let change = null;
-    let percentChange = null;
-    let marketState = null;
-
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3500);
-      const chartResponse = await fetch(
-        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(index.futuresSymbol)}?interval=5m&range=1d`,
-        {
-          headers: {
-            "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
-            Accept: "application/json,text/plain,*/*"
-          },
-          signal: controller.signal
-        }
-      );
-      clearTimeout(timeout);
-      if (!chartResponse.ok) {
-        const error = new Error(`Yahoo futures chart ${chartResponse.status}`);
-        error.response = { status: chartResponse.status };
-        throw error;
-      }
-      const chartData = await chartResponse.json();
-      const result = chartData?.chart?.result?.[0];
-      const meta = result?.meta || {};
-      const closes = result?.indicators?.quote?.[0]?.close || [];
-      price = firstFiniteNumber(
-        meta.regularMarketPrice,
-        [...closes].reverse().find((value) => toNumberOrNull(value) !== null)
-      );
-      const previousClose = firstFiniteNumber(meta.chartPreviousClose, meta.previousClose);
-      change = price !== null && previousClose !== null ? price - previousClose : null;
-      percentChange = change !== null && previousClose > 0 ? (change / previousClose) * 100 : null;
-      marketState = meta.marketState || marketState;
-    } catch (err) {
-      console.log("Market index futures chart skipped:", index.label, err.response?.status || err.message);
-    }
-
-    if (price === null && canUseYahoo()) {
-      const quote = await resolveWithin(
-        yahooFinance.quote(index.futuresSymbol).catch(() => null),
-        1200,
-        null
-      );
-      price = firstYahooNumber(quote?.regularMarketPrice);
-      change = firstFiniteNumber(quote?.regularMarketChange);
-      percentChange = firstFiniteNumber(quote?.regularMarketChangePercent);
-      marketState = quote?.marketState || marketState;
-    }
-
-    if (price === null) return null;
-
-    return {
-      symbol: index.futuresSymbol,
-      label: `${index.label} futures`,
-      price,
-      change,
-      percentChange,
-      marketState,
-      source: "Yahoo Futures"
-    };
-  };
-
   const fetchFmpFuture = async (index) => {
     if (!process.env.FMP_API_KEY || !canUseFmp() || !index.fmpFuturesSymbol) return null;
     const response = await axios.get("https://financialmodelingprep.com/stable/quote", {
@@ -15175,82 +15071,31 @@ app.get("/api/market-indices", async (req, res) => {
     };
   };
 
-  const fetchCnbcFuture = async (index) => {
-    if (!index.cnbcFuturesSymbol) return null;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 1600);
-    try {
-      const response = await fetch(
-        `https://quote.cnbc.com/quote-html-webservice/quote.htm?symbols=${encodeURIComponent(index.cnbcFuturesSymbol)}&output=json`,
-        {
-          headers: {
-            "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
-            Accept: "application/json,text/plain,*/*"
-          },
-          signal: controller.signal
-        }
-      );
-      if (!response.ok) return null;
-      const data = await response.json();
-      const quote = data?.QuickQuoteResult?.QuickQuote?.[0];
-      const price = toNumberOrNull(quote?.last);
-      if (price === null || quote?.code === "1") return null;
-      return {
-        symbol: index.cnbcFuturesSymbol,
-        label: `${index.label} futures`,
-        price,
-        change: toNumberOrNull(quote?.change),
-        percentChange: toNumberOrNull(quote?.change_pct),
-        source: "CNBC Futures"
-      };
-    } catch (err) {
-      console.log("CNBC market index futures skipped:", index.label, err.message);
-      return null;
-    } finally {
-      clearTimeout(timeout);
-    }
-  };
-
   const fetchBestIndexQuote = async (index) => {
-    const sources = [
-      ["FMP", fetchFmpIndex],
-      ["Yahoo chart", fetchYahooChartIndex],
-      ["Yahoo quote", fetchYahooIndex],
-      ["Investing.com", fetchInvestingIndex]
-    ];
-    for (const [label, fetchIndex] of sources) {
-      const indexQuote = await resolveWithin(Promise.resolve()
-        .then(() => fetchIndex(index))
-        .then((quote) => {
-          if (!quote) throw new Error(`Missing ${index.label} ${label} quote`);
-          return quote;
-        })
-        .catch((err) => {
-          if (/^Yahoo/i.test(label)) {
-            setYahooCooldown(err, `market index ${label}`, index.label);
-          } else if (label === "FMP" && err?.response?.status !== 402 && err?.response?.status !== 403) {
-            setFmpCooldown(err, "market index", index.label);
-          }
-          console.log(`Market index ${label} skipped:`, index.label, err.response?.status || err.message);
-          return null;
-        }), label === "Investing.com" ? 2600 : 1800, null);
-      if (indexQuote) return indexQuote;
-    }
-
-    return null;
+    return resolveWithin(Promise.resolve()
+      .then(() => fetchFmpIndex(index))
+      .then((quote) => {
+        if (!quote) throw new Error(`Missing ${index.label} FMP quote`);
+        return quote;
+      })
+      .catch((err) => {
+        if (err?.response?.status !== 402 && err?.response?.status !== 403) {
+          setFmpCooldown(err, "market index", index.label);
+        }
+        console.log("Market index FMP skipped:", index.label, err.response?.status || err.message);
+        return null;
+      }), 1800, null);
   };
 
   const fetchFreshIndices = async () => {
-    const stockAnalysisMoves = await resolveWithin(fetchStockAnalysisIndexMoves(), 2600, new Map());
     const indexQuotes = await Promise.all(MARKET_INDICES.map(async (index) => {
       let indexQuote = await fetchBestIndexQuote(index);
-      indexQuote = applyStockAnalysisMove(index, indexQuote, stockAnalysisMoves);
 
-      if (!indexQuote) return cachedByKey.get(index.key) || null;
+      if (!indexQuote) return null;
 
       return {
         ...indexQuote,
-        futures: cachedByKey.get(index.key)?.futures || null
+        futures: null
       };
     }));
 
@@ -15258,37 +15103,33 @@ app.get("/api/market-indices", async (req, res) => {
     for (const [indexPosition, index] of MARKET_INDICES.entries()) {
       const indexQuote = indexQuotes[indexPosition];
       if (!indexQuote) {
-        indices.push(cachedByKey.get(index.key) || null);
+        indices.push(null);
         continue;
       }
       try {
         if (indexPosition > 0) await wait(175);
         const futures = await resolveWithin(
-          fetchFmpFuture(index)
-            .catch((err) => {
-              if (err?.response?.status !== 402 && err?.response?.status !== 403) {
-                setFmpCooldown(err, "market index futures", index.label);
-                console.log("FMP market index futures skipped:", index.label, err.response?.status || err.message);
-              }
-              return null;
-            })
-            .then((fmpFuture) => fmpFuture || fetchCnbcFuture(index))
-            .then((future) => future || fetchYahooFuture(index)),
-          2600,
+          fetchFmpFuture(index).catch((err) => {
+            if (err?.response?.status !== 402 && err?.response?.status !== 403) {
+              setFmpCooldown(err, "market index futures", index.label);
+              console.log("FMP market index futures skipped:", index.label, err.response?.status || err.message);
+            }
+            return null;
+          }),
+          1600,
           null
         );
         indices.push(futures
           ? { ...indexQuote, futures }
-          : { ...indexQuote, futures: cachedByKey.get(index.key)?.futures || null });
+          : { ...indexQuote, futures: null });
       } catch (err) {
-        setYahooCooldown(err, "market index futures", index.label);
         console.log("Market index futures skipped:", index.label, err.response?.status || err.message);
-        indices.push({ ...indexQuote, futures: cachedByKey.get(index.key)?.futures || null });
+        indices.push({ ...indexQuote, futures: null });
       }
     }
 
     const mergedIndices = MARKET_INDICES.map((index) =>
-      indices.find((item) => item?.key === index.key) || cachedByKey.get(index.key)
+      indices.find((item) => item?.key === index.key)
     ).filter(Boolean);
     const data = {
       indices: mergedIndices,
