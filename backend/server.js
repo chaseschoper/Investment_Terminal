@@ -816,7 +816,7 @@ async function fetchSp500Constituents() {
 }
 
 const PRICE_HISTORY_RANGES = {
-  "1D": { range: "1d", interval: "5m", ttl: 20 * 1000 },
+  "1D": { range: "1d", interval: "5m", ttl: 5 * 1000 },
   "1W": { range: "5d", interval: "15m", ttl: 60 * 1000 },
   "1M": { range: "1mo", interval: "1d", ttl: 5 * 60 * 1000 },
   "1Y": { range: "1y", interval: "1d", ttl: 5 * 60 * 1000 },
@@ -2063,6 +2063,41 @@ function getNewYorkClockParts(date = new Date()) {
   };
 }
 
+function getNewYorkMarketMinutes(date = new Date()) {
+  const { hour, minute } = getNewYorkClockParts(date);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  return hour * 60 + minute;
+}
+
+function appendFmpRegularClosePoint(points = []) {
+  if (!Array.isArray(points) || points.length < 2) return points;
+  const latestPoint = points.at(-1);
+  const marketDateKey = latestPoint?.marketDateKey || latestPoint?.date?.slice(0, 10);
+  const latestTime = toNumberOrNull(latestPoint?.time);
+  if (!marketDateKey || latestTime === null) return points;
+
+  const latestMinutes = getNewYorkMarketMinutes(new Date(latestTime));
+  if (latestMinutes === null || latestMinutes < 15 * 60 + 55 || latestMinutes >= 16 * 60) {
+    return points;
+  }
+
+  const closeDate = parseFmpMarketDateTime(`${marketDateKey} 16:00:00`);
+  if (!closeDate || Number.isNaN(closeDate.getTime())) return points;
+  const closeTime = closeDate.getTime();
+  if (closeTime <= latestTime || closeTime - latestTime > 10 * 60 * 1000) return points;
+
+  return [
+    ...points,
+    {
+      ...latestPoint,
+      time: closeTime,
+      date: closeDate.toISOString(),
+      volume: null,
+      isSyntheticClose: true
+    }
+  ];
+}
+
 function isLikelyUsMarketSession(date = new Date()) {
   const { weekday, hour, minute } = getNewYorkClockParts(date);
   if (weekday === "Sat" || weekday === "Sun" || !Number.isFinite(hour) || !Number.isFinite(minute)) {
@@ -2164,13 +2199,11 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
     }
   ];
 
-  let bestHistory = null;
-
-  for (const endpoint of endpoints) {
+  const endpointResults = await Promise.allSettled(endpoints.map(async (endpoint) => {
     try {
       const response = await axios.get(endpoint.url, {
         params: endpoint.params,
-        timeout: 2600
+        timeout: 4500
       });
       const rows = Array.isArray(response.data) ? response.data : [];
       const allPoints = rows
@@ -2197,11 +2230,14 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
       const latestSessionPoints = latestTradingDateKey
         ? allPoints.filter((point) => (point.marketDateKey || point.date.slice(0, 10)) === latestTradingDateKey)
         : [];
-      const points = requestedRange === "1D" && latestSessionPoints.length >= 2
+      const sessionPoints = requestedRange === "1D" && latestSessionPoints.length >= 2
         ? latestSessionPoints
         : allPoints;
+      const points = requestedRange === "1D"
+        ? appendFmpRegularClosePoint(sessionPoints)
+        : sessionPoints;
 
-      if (points.length < 2) continue;
+      if (points.length < 2) return null;
 
       const latestPoint = points.at(-1);
       if (
@@ -2209,20 +2245,7 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
         isLikelyUsMarketSession() &&
         Date.now() - latestPoint.time > 45 * 60 * 1000
       ) {
-        continue;
-      }
-      const latestPointClock = getNewYorkClockParts(new Date(latestPoint.time));
-      const latestPointMinutes =
-        Number.isFinite(latestPointClock.hour) && Number.isFinite(latestPointClock.minute)
-          ? latestPointClock.hour * 60 + latestPointClock.minute
-          : null;
-      if (
-        requestedRange === "1D" &&
-        !isLikelyUsMarketSession() &&
-        latestPointMinutes !== null &&
-        latestPointMinutes < 15 * 60 + 30
-      ) {
-        continue;
+        return null;
       }
       const firstPoint = points[0];
       const previousPoint = points.at(-2);
@@ -2233,7 +2256,7 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
         ? latestPoint.price - changeBase
         : null;
 
-      const candidate = {
+      return {
         symbol,
         sourceSymbol: symbol,
         range: requestedRange,
@@ -2248,24 +2271,26 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
         },
         updatedAt: new Date().toISOString()
       };
-
-      if (
-        !bestHistory ||
-        latestPoint.time > bestHistory.points.at(-1).time ||
-        (
-          latestPoint.time === bestHistory.points.at(-1).time &&
-          points.length > bestHistory.points.length
-        )
-      ) {
-        bestHistory = candidate;
-      }
     } catch (err) {
       if (![400, 401, 402, 403, 404].includes(Number(err.response?.status))) {
         setFmpCooldown(err, "intraday price history", symbol);
       }
       console.log("FMP intraday price history skipped:", symbol, requestedRange, err.response?.status || err.message);
+      return null;
     }
-  }
+  }));
+
+  const candidates = endpointResults
+    .filter((result) => result.status === "fulfilled" && result.value?.points?.length)
+    .map((result) => result.value);
+
+  const bestHistory = candidates
+    .sort((a, b) => {
+      const aLatest = a.points.at(-1)?.time || 0;
+      const bLatest = b.points.at(-1)?.time || 0;
+      if (bLatest !== aLatest) return bLatest - aLatest;
+      return (b.points.length || 0) - (a.points.length || 0);
+    })[0] || null;
 
   return bestHistory;
 }
@@ -15149,16 +15174,12 @@ app.get("/api/price-history/:ticker", async (req, res) => {
 
     const cacheKey = `${ticker}:${requestedRange}`;
     const cached = priceHistoryCache.get(cacheKey);
-    const wantsFastHistory = req.query.fast === "1" || req.query.fast === "true";
     if (cached && Date.now() - cached.fetchedAt < rangeConfig.ttl) {
       return res.json(cached.data);
     }
-    if (cached?.data && requestedRange === "1D" && wantsFastHistory) {
-      return res.json({ ...cached.data, stale: true });
-    }
     const fmpHistory = await resolveWithin(
       fetchFmpPriceHistory(ticker, requestedRange),
-      2400,
+      requestedRange === "1D" ? 6500 : 5000,
       null
     );
     if (fmpHistory?.points?.length) {

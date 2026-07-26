@@ -4518,7 +4518,9 @@ useEffect(() => {
   const loadPriceHistory = async (showLoading = true, attempt = 0) => {
     if (!ticker || activePage !== "overview") return;
     const cacheKey = `${ticker}:${stockChartRange}`;
-    const cachedChart = stockChartMemoryCacheRef.current.get(cacheKey);
+    const cachedChart = stockChartRange === "1D"
+      ? null
+      : stockChartMemoryCacheRef.current.get(cacheKey);
     if (showLoading) {
       setIsStockChartLoading(true);
       setStockChartError("");
@@ -4538,10 +4540,9 @@ useEffect(() => {
         `${API_URL}/api/price-history/${ticker}`,
         {
           params: {
-            range: stockChartRange,
-            fast: stockChartRange === "1D" && attempt === 0 ? "1" : undefined
+            range: stockChartRange
           },
-          timeout: stockChartRange === "1D" ? 6500 : 9000
+          timeout: stockChartRange === "1D" ? 9500 : 9000
         }
       );
 
@@ -5433,14 +5434,16 @@ const loadUserData = async () => {
       setSavedSymbolDetails((prev) => {
         const next = { ...prev };
         Object.entries(receivedDetails).forEach(([symbol, detail]) => {
+          const hasPercentChange = Object.prototype.hasOwnProperty.call(detail || {}, "percentChange");
+          const hasChange = Object.prototype.hasOwnProperty.call(detail || {}, "change");
           next[symbol] = {
             ...prev[symbol],
             ...detail,
-            percentChange: isNumber(detail?.percentChange)
-              ? detail.percentChange
+            percentChange: hasPercentChange
+              ? (isNumber(detail?.percentChange) ? detail.percentChange : null)
               : prev[symbol]?.percentChange,
-            change: isNumber(detail?.change)
-              ? detail.change
+            change: hasChange
+              ? (isNumber(detail?.change) ? detail.change : null)
               : prev[symbol]?.change
           };
         });
