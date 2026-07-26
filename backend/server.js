@@ -2523,7 +2523,7 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
   ].filter((endpoint) => canUseFmpEndpoint(endpoint.key, symbol));
 
   const dailyRowsPromise = requestedRange === "1D"
-    ? fetchFmpRecentDailyOhlc(symbol).catch((err) => {
+    ? resolveWithin(fetchFmpRecentDailyOhlc(symbol), 900, []).catch((err) => {
         console.log("FMP daily OHLC skipped:", symbol, err.response?.status || err.message);
         return [];
       })
@@ -11185,6 +11185,18 @@ function hasAnnualEstimateSnapshot(data = {}) {
   );
 }
 
+function hasFutureAnnualEstimateSnapshot(data = {}) {
+  const futureYears = data?.analystEstimates?.futureYears;
+  return Array.isArray(futureYears) && futureYears.some((estimate) =>
+    toNumberOrNull(estimate?.revenue) !== null ||
+    toNumberOrNull(estimate?.earnings) !== null ||
+    toNumberOrNull(estimate?.eps) !== null ||
+    toNumberOrNull(estimate?.ebitda) !== null ||
+    toNumberOrNull(estimate?.ebit) !== null ||
+    toNumberOrNull(estimate?.sgaExpense) !== null
+  );
+}
+
 function hasMarketActivitySnapshot(data = {}) {
   return (
     Array.isArray(data.analystUpdates) && data.analystUpdates.length
@@ -11198,7 +11210,8 @@ function hasMarketActivitySnapshot(data = {}) {
 function needsSupplementalStockData(data = {}) {
   const epsBeatMissRows = Array.isArray(data.epsBeatMiss) ? data.epsBeatMiss : [];
   const reportedEpsRows = epsBeatMissRows.filter((row) => toNumberOrNull(row.actual) !== null);
-  const estimatesChecked = data.estimateDataVersion === STOCK_ESTIMATE_VERSION;
+  const annualEstimatesChecked = Boolean(data.annualEstimatesCheckedAt);
+  const hasFutureAnnualEstimates = hasFutureAnnualEstimateSnapshot(data);
   const hasNextQuarterEstimate = hasCompleteNextQuarterEstimate(data.analystEstimates?.nextQuarter);
   const nextQuarterChecked = Boolean(data.quarterEstimateCheckedAt);
   const epsBeatMissChecked = Boolean(data.epsBeatMissCheckedAt);
@@ -11207,7 +11220,7 @@ function needsSupplementalStockData(data = {}) {
     !epsBeatMissChecked &&
     (hasNextQuarterEstimate || epsBeatMissRows.length > 0);
   return (
-    (!estimatesChecked && !hasAnnualEstimateSnapshot(data)) ||
+    (!annualEstimatesChecked && !hasFutureAnnualEstimates) ||
     (!nextQuarterChecked && !hasNextQuarterEstimate) ||
     shouldWaitForEpsBeatMiss ||
     !hasMarketActivitySnapshot(data)
@@ -11231,11 +11244,10 @@ function maybeEnqueueSupplementalSnapshots(ticker, data = {}) {
   Promise.resolve()
     .then(async () => {
       const tasks = [];
-      if (
-        data.estimateDataVersion !== STOCK_ESTIMATE_VERSION ||
-        !hasAnnualEstimateSnapshot(data) ||
-        !hasCompleteNextQuarterEstimate(data.analystEstimates?.nextQuarter)
-      ) {
+      if (!hasFutureAnnualEstimateSnapshot(data) && !data.annualEstimatesCheckedAt) {
+        tasks.push(publishFutureAnnualEstimateSnapshot(symbol));
+      }
+      if (!hasCompleteNextQuarterEstimate(data.analystEstimates?.nextQuarter) && !data.quarterEstimateCheckedAt) {
         tasks.push(publishQuarterEstimateSnapshot(symbol));
       }
       const epsBeatMissRows = Array.isArray(data.epsBeatMiss) ? data.epsBeatMiss : [];
@@ -11279,6 +11291,56 @@ async function publishValuationMetricsSnapshot(ticker) {
       $set: Object.fromEntries(
         Object.entries(update).map(([key, value]) => [`data.${key}`, value])
       )
+    }
+  );
+}
+
+async function publishFutureAnnualEstimateSnapshot(ticker) {
+  const stock = await Stock.findOne({ ticker }).lean();
+  if (!stock) return;
+
+  const futureYears = await resolveWithin(fetchFmpFutureAnnualEstimateBlocks(ticker), 3600, []);
+  const checkedAt = new Date().toISOString();
+  if (!Array.isArray(futureYears) || !futureYears.length) {
+    await Stock.findOneAndUpdate(
+      { ticker },
+      {
+        $set: {
+          "data.annualEstimatesCheckedAt": checkedAt
+        }
+      }
+    );
+    return;
+  }
+
+  const existingEstimates = stock.data?.analystEstimates || {};
+  const analystEstimates = {
+    ...existingEstimates,
+    currentYear: {
+      ...(existingEstimates.currentYear || {}),
+      ...(futureYears[0] || {})
+    },
+    nextYear: {
+      ...(existingEstimates.nextYear || {}),
+      ...(futureYears[1] || {})
+    },
+    followingYear: {
+      ...(existingEstimates.followingYear || {}),
+      ...(futureYears[2] || {})
+    },
+    futureYears
+  };
+
+  await Stock.findOneAndUpdate(
+    { ticker },
+    {
+      $set: {
+        "data.analystEstimates": analystEstimates,
+        "data.analystEstimatesSource": "FMP",
+        "data.analystEstimatesSources.futureYears": "FMP",
+        "data.annualEstimatesCheckedAt": checkedAt,
+        "data.estimateDataVersion": STOCK_ESTIMATE_VERSION
+      }
     }
   );
 }
@@ -11758,6 +11820,9 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
       followingYear: "FMP"
     },
     analystEstimatesSource: "FMP",
+    annualEstimatesCheckedAt: fmpFutureYearEstimates.length
+      ? new Date().toISOString()
+      : previousData.annualEstimatesCheckedAt,
     estimateDataVersion: STOCK_ESTIMATE_VERSION
   }), fmpValuation);
 }
@@ -13172,6 +13237,9 @@ async function fetchStockData(ticker) {
       futureYears: fmpFutureYearEstimates
     },
     quarterEstimateCheckedAt: new Date().toISOString(),
+    annualEstimatesCheckedAt: fmpFutureYearEstimates.length
+      ? new Date().toISOString()
+      : previousData?.annualEstimatesCheckedAt || null,
     estimateDataVersion: STOCK_ESTIMATE_VERSION,
     financialHistoryVersion: FINANCIAL_HISTORY_VERSION,
     financialHistoryCheckedAt: new Date().toISOString(),
@@ -15451,7 +15519,7 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     if (priceHistoryInFlight.has(cacheKey)) {
       const inFlightData = await resolveWithin(
         priceHistoryInFlight.get(cacheKey),
-        requestedRange === "1D" ? 6500 : 5000,
+        requestedRange === "1D" ? 1800 : 2600,
         null
       );
       if (inFlightData?.points?.length) {
@@ -15470,7 +15538,7 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     priceHistoryInFlight.set(cacheKey, historyPromise);
     const fmpHistory = await resolveWithin(
       historyPromise,
-      requestedRange === "1D" ? 6500 : 5000,
+      requestedRange === "1D" ? 3200 : 4200,
       null
     );
     if (fmpHistory?.points?.length) {
