@@ -2871,6 +2871,15 @@ const isReportedEpsBeatMissRow = (row = {}) =>
 const epsBeatMissRowKey = (row = {}) =>
   financialHistoryFiscalKey(row) || (row.period ? String(row.period) : row.label ? `label:${row.label}` : null);
 
+const epsBeatMissDateKey = (value) => {
+  const text = String(value || "");
+  const match = text.match(/\d{4}-\d{2}-\d{2}/);
+  return match ? match[0] : null;
+};
+
+const isGenericUpcomingEpsRow = (row = {}) =>
+  /next quarter|upcoming/i.test(`${row.label || ""} ${row.period || ""}`);
+
 const mergeUpcomingEpsBeatMissEstimate = (rows = [], nextQuarter = {}) => {
   const estimate = firstNumber(nextQuarter?.eps);
   if (!isNumber(estimate)) return rows;
@@ -2891,12 +2900,21 @@ const mergeUpcomingEpsBeatMissEstimate = (rows = [], nextQuarter = {}) => {
     source: nextQuarter?.source || "Earnings calendar"
   };
   const upcomingKey = epsBeatMissRowKey(upcomingRow);
+  const upcomingDateKey = epsBeatMissDateKey(nextQuarter?.date);
   const merged = [...(Array.isArray(rows) ? rows : [])];
-  const existingIndex = merged.findIndex((row) =>
-    !isReportedEpsBeatMissRow(row) &&
-    ((upcomingKey && epsBeatMissRowKey(row) === upcomingKey) ||
-      (nextQuarter?.date && row.period === nextQuarter.date))
-  );
+  const existingIndex = merged.findIndex((row) => {
+    if (isReportedEpsBeatMissRow(row)) return false;
+    const rowKey = epsBeatMissRowKey(row);
+    const rowDateKey = epsBeatMissDateKey(row.period);
+    const rowEstimate = firstNumber(row.estimate);
+    const sameFiscalKey = upcomingKey && rowKey === upcomingKey;
+    const sameDate = upcomingDateKey && rowDateKey === upcomingDateKey;
+    const sameGenericEstimate =
+      isNumber(rowEstimate) &&
+      Math.abs(rowEstimate - estimate) < 0.0001 &&
+      (isGenericUpcomingEpsRow(row) || isGenericUpcomingEpsRow(upcomingRow));
+    return sameFiscalKey || sameDate || sameGenericEstimate;
+  });
 
   if (existingIndex >= 0) {
     merged[existingIndex] = {
@@ -2908,14 +2926,30 @@ const mergeUpcomingEpsBeatMissEstimate = (rows = [], nextQuarter = {}) => {
     merged.push(upcomingRow);
   }
 
-  return merged
+  const sortedRows = merged
     .filter((row) => isNumber(row?.estimate) || isNumber(row?.actual) || isNumber(row?.gaapActual))
     .sort((a, b) => {
       const periodA = String(a.period || "").startsWith("upcoming:") ? "9999-12-31" : String(a.period || "");
       const periodB = String(b.period || "").startsWith("upcoming:") ? "9999-12-31" : String(b.period || "");
       return periodA.localeCompare(periodB);
-    })
-    .slice(-5);
+    });
+
+  const deduped = [];
+  const seenUpcoming = new Set();
+  sortedRows.forEach((row) => {
+    if (!isReportedEpsBeatMissRow(row)) {
+      const rowEstimate = firstNumber(row.estimate);
+      const upcomingIdentity =
+        epsBeatMissDateKey(row.period) ||
+        epsBeatMissRowKey(row) ||
+        (isNumber(rowEstimate) ? `estimate:${rowEstimate.toFixed(4)}` : null);
+      if (upcomingIdentity && seenUpcoming.has(upcomingIdentity)) return;
+      if (upcomingIdentity) seenUpcoming.add(upcomingIdentity);
+    }
+    deduped.push(row);
+  });
+
+  return deduped.slice(-5);
 };
 
 function EpsBeatMissChart({ rows = [] }) {
