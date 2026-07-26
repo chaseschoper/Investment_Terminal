@@ -1987,6 +1987,48 @@ function latestTradingDateKeyFromPoints(points = []) {
   return sortedKeys.at(-1) || null;
 }
 
+function latestRegularTradingDateKeyFromPoints(points = []) {
+  const sortedKeys = Array.from(
+    new Set(
+      points
+        .map((point) => point?.marketDateKey || point?.date?.slice(0, 10))
+        .filter(Boolean)
+    )
+  ).sort((a, b) => b.localeCompare(a));
+
+  return sortedKeys.find((dateKey) => {
+    const regularCount = points.filter((point) => {
+      const pointDateKey = point?.marketDateKey || point?.date?.slice(0, 10);
+      return pointDateKey === dateKey && isRegularUsMarketPoint(point);
+    }).length;
+    return regularCount >= 2;
+  }) || null;
+}
+
+function previousRegularCloseBeforeDate(points = [], dateKey) {
+  if (!dateKey) return null;
+  const previousDateKeys = Array.from(
+    new Set(
+      points
+        .map((point) => point?.marketDateKey || point?.date?.slice(0, 10))
+        .filter((key) => key && key < dateKey)
+    )
+  ).sort((a, b) => b.localeCompare(a));
+
+  for (const previousDateKey of previousDateKeys) {
+    const regularPoints = points
+      .filter((point) => {
+        const pointDateKey = point?.marketDateKey || point?.date?.slice(0, 10);
+        return pointDateKey === previousDateKey && isRegularUsMarketPoint(point);
+      })
+      .sort((a, b) => a.time - b.time);
+    const closePrice = toNumberOrNull(regularPoints.at(-1)?.close ?? regularPoints.at(-1)?.price);
+    if (closePrice !== null && closePrice > 0) return closePrice;
+  }
+
+  return null;
+}
+
 function getTimeZoneOffsetMs(date, timeZone) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -2069,6 +2111,13 @@ function getNewYorkMarketMinutes(date = new Date()) {
   return hour * 60 + minute;
 }
 
+function isRegularUsMarketPoint(point) {
+  const pointTime = toNumberOrNull(point?.time);
+  if (pointTime === null) return false;
+  const minutes = getNewYorkMarketMinutes(new Date(pointTime));
+  return minutes !== null && minutes >= 9 * 60 + 30 && minutes <= 16 * 60;
+}
+
 function appendFmpRegularClosePoint(points = []) {
   if (!Array.isArray(points) || points.length < 2) return points;
   const latestPoint = points.at(-1);
@@ -2096,6 +2145,22 @@ function appendFmpRegularClosePoint(points = []) {
       isSyntheticClose: true
     }
   ];
+}
+
+function normalizeFmpOneDayRegularSessionPoints(points = []) {
+  if (!Array.isArray(points) || points.length < 2) return points;
+  const regularPoints = points.filter(isRegularUsMarketPoint);
+  if (regularPoints.length < 2) return [];
+
+  const normalizedPoints = regularPoints.map((point, index) => {
+    const sessionOpen = index === 0 ? toNumberOrNull(point.open) : null;
+    return {
+      ...point,
+      price: sessionOpen !== null && sessionOpen > 0 ? sessionOpen : point.price
+    };
+  });
+
+  return appendFmpRegularClosePoint(normalizedPoints);
 }
 
 function isLikelyUsMarketSession(date = new Date()) {
@@ -2208,10 +2273,11 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
       const rows = Array.isArray(response.data) ? response.data : [];
       const allPoints = rows
         .map((row) => {
-          const price = firstFiniteNumber(row.close, row.price, row.adjClose);
+          const closePrice = firstFiniteNumber(row.close, row.price, row.adjClose);
+          const openPrice = firstFiniteNumber(row.open);
           const rawDate = firstText(row.date, row.datetime, row.timestamp);
           const parsed = parseFmpMarketDateTime(rawDate);
-          if (price === null || !parsed || Number.isNaN(parsed.getTime())) return null;
+          if (closePrice === null || !parsed || Number.isNaN(parsed.getTime())) return null;
           const marketDateKey = /^\d{4}-\d{2}-\d{2}/.test(String(rawDate || ""))
             ? String(rawDate).slice(0, 10)
             : getNewYorkDateKey(parsed);
@@ -2219,14 +2285,23 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
             time: parsed.getTime(),
             date: parsed.toISOString(),
             marketDateKey,
-            price,
+            price: closePrice,
+            open: openPrice,
+            close: closePrice,
+            high: firstFiniteNumber(row.high),
+            low: firstFiniteNumber(row.low),
             volume: firstFiniteNumber(row.volume)
           };
         })
         .filter(Boolean)
         .sort((a, b) => a.time - b.time);
 
-      const latestTradingDateKey = latestTradingDateKeyFromPoints(allPoints);
+      const latestTradingDateKey = requestedRange === "1D"
+        ? latestRegularTradingDateKeyFromPoints(allPoints)
+        : latestTradingDateKeyFromPoints(allPoints);
+      const previousRegularClose = requestedRange === "1D"
+        ? previousRegularCloseBeforeDate(allPoints, latestTradingDateKey)
+        : null;
       const latestSessionPoints = latestTradingDateKey
         ? allPoints.filter((point) => (point.marketDateKey || point.date.slice(0, 10)) === latestTradingDateKey)
         : [];
@@ -2234,7 +2309,7 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
         ? latestSessionPoints
         : allPoints;
       const points = requestedRange === "1D"
-        ? appendFmpRegularClosePoint(sessionPoints)
+        ? normalizeFmpOneDayRegularSessionPoints(sessionPoints)
         : sessionPoints;
 
       if (points.length < 2) return null;
@@ -2250,7 +2325,7 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
       const firstPoint = points[0];
       const previousPoint = points.at(-2);
       const changeBase = requestedRange === "1D"
-        ? firstPoint.price
+        ? (previousRegularClose ?? firstPoint.open ?? firstPoint.price)
         : firstPoint.price;
       const change = latestPoint.price !== null && changeBase
         ? latestPoint.price - changeBase
@@ -2267,7 +2342,12 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
           price: latestPoint.price,
           change,
           percentChange: change !== null && changeBase ? (change / changeBase) * 100 : null,
-          previousClose: previousPoint?.price ?? null
+          previousClose: requestedRange === "1D"
+            ? previousRegularClose
+            : previousPoint?.price ?? null,
+          open: requestedRange === "1D"
+            ? firstPoint.open ?? firstPoint.price
+            : null
         },
         updatedAt: new Date().toISOString()
       };
@@ -13404,7 +13484,7 @@ app.get("/api/prices", async (req, res) => {
 
     try {
       const fmpIntraday = wantsLiveQuotes
-        ? await resolveWithin(fetchFmpIntradayPriceHistory(symbol, "1D"), 2200, null)
+        ? await resolveWithin(fetchFmpIntradayPriceHistory(symbol, "1D"), 5600, null)
         : null;
       let quote = normalizeQuotePayload({}, {
         price: fmpIntraday?.latest?.price,
@@ -13504,7 +13584,7 @@ app.get("/api/prices", async (req, res) => {
       const symbol = queue.shift();
       await refreshSymbolQuote(symbol);
     }
-  })), wantsLiveQuotes ? 6500 : 3200, null);
+  })), wantsLiveQuotes ? 9000 : 3200, null);
   symbols.forEach(hydrateSavedSymbol);
 
   const staleSymbols = symbols.filter((symbol) => {
