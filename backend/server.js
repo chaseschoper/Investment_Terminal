@@ -2684,15 +2684,14 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
 }
 
 async function fetchFmpFiftyTwoWeekRange(ticker) {
-  const history = await resolveWithin(fetchFmpPriceHistory(ticker, "1Y"), 1800, null);
-  const prices = (history?.points || [])
-    .map((point) => toNumberOrNull(point.price))
-    .filter((value) => value !== null && value > 0);
-  if (!prices.length) return {};
+  const quoteProfile = await resolveWithin(fetchFmpStableQuoteProfile(ticker), 900, {});
+  const fiftyTwoWeekHigh = toNumberOrNull(quoteProfile?.fiftyTwoWeekHigh);
+  const fiftyTwoWeekLow = toNumberOrNull(quoteProfile?.fiftyTwoWeekLow);
+  if (fiftyTwoWeekHigh === null && fiftyTwoWeekLow === null) return {};
   return {
-    fiftyTwoWeekHigh: Math.max(...prices),
-    fiftyTwoWeekLow: Math.min(...prices),
-    source: "FMP 1Y price history"
+    fiftyTwoWeekHigh,
+    fiftyTwoWeekLow,
+    source: "FMP quote profile"
   };
 }
 
@@ -7788,11 +7787,19 @@ function hasCachedHistoricalPe(responseData = {}) {
   );
 }
 
-async function ensureQuarterlyHistoricalPeForResponse(ticker, data = {}, timeoutMs = 2600) {
+async function ensureQuarterlyHistoricalPeForResponse(ticker, data = {}, timeoutMs = 1200, options = {}) {
   const existingRows = Array.isArray(data.historicalPe) ? data.historicalPe : [];
+  const existingQuarterlyRows = existingRows.filter((row) =>
+    row?.isInterim &&
+    toNumberOrNull(row?.pe) !== null &&
+    /FMP quarter-end price/i.test(String(row?.source || ""))
+  );
   const quarterlySourceRows = Array.isArray(data.revenueData)
     ? data.revenueData.filter((row) => row?.isInterim && toNumberOrNull(row?.eps) !== null)
     : [];
+  if (!options.force && existingQuarterlyRows.length >= Math.min(12, Math.max(4, Math.floor(quarterlySourceRows.length / 3)))) {
+    return data;
+  }
   if (quarterlySourceRows.length < 4) {
     return data;
   }
@@ -7971,8 +7978,10 @@ async function ensureCompleteNextQuarterEstimateForResponse(ticker, data = {}) {
 
 async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {}) {
   let responseData = prepareCachedStockResponseData(ticker, data);
+  const backgroundPatches = [];
   if (!hasFutureAnnualEstimateSnapshot(responseData) && !responseData.annualEstimatesCheckedAt) {
-    const futureYears = await resolveWithin(fetchFmpFutureAnnualEstimateBlocks(ticker), 1600, null);
+    const futurePromise = fetchFmpFutureAnnualEstimateBlocks(ticker);
+    const futureYears = await resolveWithin(futurePromise, 650, null);
     if (Array.isArray(futureYears) && futureYears.length) {
       const analystEstimates = {
         ...(responseData.analystEstimates || {}),
@@ -8021,6 +8030,19 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {
       ).catch((err) => {
         console.log("Fast future annual estimate cache skipped:", ticker, err.message);
       });
+    } else {
+      backgroundPatches.push(
+        futurePromise
+          .then((futureYears) => {
+            if (Array.isArray(futureYears) && futureYears.length) {
+              return publishFutureAnnualEstimateSnapshot(ticker, responseData, futureYears);
+            }
+            return null;
+          })
+          .catch((err) => {
+            console.log("Future annual estimate background patch skipped:", ticker, err.message);
+          })
+      );
     }
   }
   const hasBalanceSheetValues =
@@ -8042,13 +8064,33 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {
   if (needsFmpFastPatch) {
     const lastFastPatchAt = fastStockSnapshotPatchCooldowns.get(ticker) || 0;
     if (Date.now() - lastFastPatchAt > 2000) {
-      const fastPatch = await resolveWithin(buildFastStockSnapshot(ticker, responseData), 1200, null);
+      const fastPatchPromise = buildFastStockSnapshot(ticker, responseData);
+      const fastPatch = await resolveWithin(fastPatchPromise, 650, null);
       fastStockSnapshotPatchCooldowns.set(ticker, Date.now());
       if (fastPatch) responseData = prepareCachedStockResponseData(ticker, fastPatch);
+      else {
+        backgroundPatches.push(
+          fastPatchPromise
+            .then((patch) => {
+              if (patch) return Stock.findOneAndUpdate({ ticker }, { $set: { data: patch, status: "ready", updatedAt: new Date() } });
+              return null;
+            })
+            .catch((err) => {
+              console.log("Fast stock snapshot background patch skipped:", ticker, err.message);
+            })
+        );
+      }
     }
   }
-  if (Array.isArray(responseData.revenueData) && responseData.revenueData.some((row) => row?.isInterim)) {
-    responseData = await ensureQuarterlyHistoricalPeForResponse(ticker, responseData, 2600);
+  if (
+    options.wantsQuarterlyHistory &&
+    Array.isArray(responseData.revenueData) &&
+    responseData.revenueData.some((row) => row?.isInterim)
+  ) {
+    responseData = await ensureQuarterlyHistoricalPeForResponse(ticker, responseData, 650);
+  }
+  if (backgroundPatches.length) {
+    Promise.allSettled(backgroundPatches).catch(() => {});
   }
   return finalizeStockResponseForClient(ticker, responseData);
 }
@@ -10982,12 +11024,24 @@ function needsSupplementalStockData(data = {}) {
   );
 }
 
+function needsVisibleStockRefreshData(data = {}) {
+  const epsBeatMissRows = Array.isArray(data.epsBeatMiss) ? data.epsBeatMiss : [];
+  const reportedEpsRows = epsBeatMissRows.filter((row) => toNumberOrNull(row.actual) !== null);
+  const hasFutureAnnualEstimates = hasFutureAnnualEstimateSnapshot(data);
+  const hasNextQuarterEstimate = hasCompleteNextQuarterEstimate(data.analystEstimates?.nextQuarter);
+  return (
+    (!data.annualEstimatesCheckedAt && !hasFutureAnnualEstimates) ||
+    (!data.quarterEstimateCheckedAt && !hasNextQuarterEstimate) ||
+    (reportedEpsRows.length < 3 && !data.epsBeatMissCheckedAt && (hasNextQuarterEstimate || epsBeatMissRows.length > 0))
+  );
+}
+
 function shouldStockResponseRefresh(data = {}, wantsQuarterlyHistory = false, coreRefreshing = false) {
   return Boolean(
     coreRefreshing ||
     !hasFastRenderableOverview(data) ||
     !hasRequestedCoreChartHistory(data, wantsQuarterlyHistory) ||
-    needsSupplementalStockData(data)
+    needsVisibleStockRefreshData(data)
   );
 }
 
@@ -10998,21 +11052,26 @@ function maybeEnqueueSupplementalSnapshots(ticker, data = {}) {
 
   Promise.resolve()
     .then(async () => {
-      const tasks = [];
       if (!hasFutureAnnualEstimateSnapshot(data) && !data.annualEstimatesCheckedAt) {
-        tasks.push(publishFutureAnnualEstimateSnapshot(symbol));
+        await publishFutureAnnualEstimateSnapshot(symbol);
+        await wait(200);
       }
       if (!hasCompleteNextQuarterEstimate(data.analystEstimates?.nextQuarter) && !data.quarterEstimateCheckedAt) {
-        tasks.push(publishQuarterEstimateSnapshot(symbol));
+        await publishQuarterEstimateSnapshot(symbol);
+        await wait(200);
       }
       const epsBeatMissRows = Array.isArray(data.epsBeatMiss) ? data.epsBeatMiss : [];
-      if (epsBeatMissRows.filter((row) => toNumberOrNull(row.actual) !== null).length < 3) {
-        tasks.push(publishEpsBeatMissSnapshot(symbol));
+      if (
+        epsBeatMissRows.length > 0 &&
+        epsBeatMissRows.filter((row) => toNumberOrNull(row.actual) !== null).length < 3 &&
+        !data.epsBeatMissCheckedAt
+      ) {
+        await publishEpsBeatMissSnapshot(symbol);
+        await wait(200);
       }
       if (!hasMarketActivitySnapshot(data)) {
-        enqueueMarketActivitySnapshot(symbol, true);
+        enqueueMarketActivitySnapshot(symbol, false);
       }
-      await Promise.allSettled(tasks);
     })
     .catch((err) => {
       console.log("Supplemental stock warmup skipped:", symbol, err.message);
@@ -11320,16 +11379,14 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     fmpProfile,
     calendarQuarterEstimate,
     fmpValuation,
-    fmpFiftyTwoWeekRange,
     fmpSharesFloat,
     fmpExecutives
   ] = await Promise.all([
-    resolveWithin(fetchFmpStableQuoteProfile(ticker), 1200, {}),
-    resolveWithin(fetchCalendarQuarterEstimate(ticker, { fast: true }), 1400, previousData.analystEstimates?.nextQuarter || {}),
-    resolveWithin(fetchFmpMetricCards(ticker), 2600, {}),
-    resolveWithin(fetchFmpFiftyTwoWeekRange(ticker), 1800, {}),
-    resolveWithin(fetchFmpSharesFloat(ticker), 2200, {}),
-    resolveWithin(fetchFmpKeyExecutives(ticker), 2200, [])
+    resolveWithin(fetchFmpStableQuoteProfile(ticker), 900, {}),
+    resolveWithin(fetchCalendarQuarterEstimate(ticker, { fast: true }), 900, previousData.analystEstimates?.nextQuarter || {}),
+    resolveWithin(fetchFmpMetricCards(ticker), 1400, {}),
+    resolveWithin(fetchFmpSharesFloat(ticker), 1000, {}),
+    resolveWithin(fetchFmpKeyExecutives(ticker), 1000, [])
   ]);
   const definedValues = (data = {}) => Object.fromEntries(
     Object.entries(data).filter(([, value]) => value !== null && value !== undefined)
@@ -11373,8 +11430,8 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     freeFloatPercent: firstNumber(fmpSharesFloat.freeFloatPercent),
     floatSharesUpdatedAt: firstText(fmpSharesFloat.floatSharesUpdatedAt),
     sharesFloatSource: firstText(fmpSharesFloat.sharesFloatSource),
-    fiftyTwoWeekHigh: firstNumber(fmpProfile.fiftyTwoWeekHigh, fmpFiftyTwoWeekRange.fiftyTwoWeekHigh),
-    fiftyTwoWeekLow: firstNumber(fmpProfile.fiftyTwoWeekLow, fmpFiftyTwoWeekRange.fiftyTwoWeekLow),
+    fiftyTwoWeekHigh: firstNumber(fmpProfile.fiftyTwoWeekHigh, previousData.fiftyTwoWeekHigh),
+    fiftyTwoWeekLow: firstNumber(fmpProfile.fiftyTwoWeekLow, previousData.fiftyTwoWeekLow),
     priceAvg50: firstNumber(fmpProfile.priceAvg50, fmpValuation.priceAvg50),
     priceAvg200: firstNumber(fmpProfile.priceAvg200, fmpValuation.priceAvg200),
     pe: firstNumber(fmpValuation.pe),
@@ -11608,14 +11665,14 @@ const getImmediateStockSnapshot = async (ticker, previousData = {}) => {
     const needsCompanyProfile = !hasCompleteCompanyProfileSnapshot(previousData);
     if (!needsMetricCards && !needsCompanyProfile) return buildMinimalStockSnapshot(ticker, previousData);
     const fastPatch = needsCompanyProfile
-      ? await resolveWithin(buildFastStockSnapshot(ticker, previousData), 3200, null)
+      ? await resolveWithin(buildFastStockSnapshot(ticker, previousData), 1400, null)
       : null;
     if (fastPatch) return buildMinimalStockSnapshot(ticker, fastPatch);
-    const metricCards = needsMetricCards ? await resolveWithin(fetchFmpMetricCards(ticker), 2600, {}) : {};
+    const metricCards = needsMetricCards ? await resolveWithin(fetchFmpMetricCards(ticker), 1200, {}) : {};
     return applyFmpMetricCards(buildMinimalStockSnapshot(ticker, previousData), metricCards);
   }
 
-  return (await resolveWithin(buildFastStockSnapshot(ticker, previousData), 3200, null)) ||
+  return (await resolveWithin(buildFastStockSnapshot(ticker, previousData), 1600, null)) ||
     buildMinimalStockSnapshot(ticker, previousData);
 };
 
@@ -13213,38 +13270,15 @@ function startStockFetch(ticker) {
   activeStockFetches.add(ticker);
 
   const coreFastHydration = (async () => {
-    await Promise.allSettled([
-      publishFastFinancialHistorySnapshot(ticker).catch((err) => {
-        console.log("Fast financial history snapshot skipped:", ticker, err.message);
-      }),
-      publishFastStockSnapshot(ticker).catch((err) => {
-        console.log("Fast stock snapshot skipped:", ticker, err.message);
-      })
-    ]);
-
-    await Promise.allSettled([
-      publishValuationMetricsSnapshot(ticker).catch((err) => {
-        console.log("Valuation metrics snapshot skipped:", ticker, err.message);
-      }),
-      publishQuarterEstimateSnapshot(ticker).catch((err) => {
-        console.log("Quarter estimate snapshot skipped:", ticker, err.message);
-      }),
-      publishBalanceSheetSnapshot(ticker).catch((err) => {
-        console.log("Balance sheet snapshot skipped:", ticker, err.message);
-      })
-    ]);
-
-    await Promise.allSettled([
-      publishEpsBeatMissSnapshot(ticker).catch((err) => {
-        console.log("EPS beat/miss snapshot skipped:", ticker, err.message);
-      }),
-      publishHistoricalPeSnapshot(ticker).catch((err) => {
-        console.log("Historical PE snapshot skipped:", ticker, err.message);
-      })
-    ]);
+    await publishFastFinancialHistorySnapshot(ticker).catch((err) => {
+      console.log("Fast financial history snapshot skipped:", ticker, err.message);
+    });
+    await wait(120);
+    await publishFastStockSnapshot(ticker).catch((err) => {
+      console.log("Fast stock snapshot skipped:", ticker, err.message);
+    });
   })();
   activeStockFastHydrations.set(ticker, coreFastHydration);
-  enqueueMarketActivitySnapshot(ticker);
 
   coreFastHydration.finally(() => {
     setTimeout(() => {
@@ -13261,7 +13295,7 @@ function startStockFetch(ticker) {
     })
     .finally(() => {
       activeStockFetches.delete(ticker);
-      setTimeout(() => startFullStockRefresh(ticker), 1200);
+      setTimeout(() => startFullStockRefresh(ticker), 5 * 60 * 1000);
     });
 }
 
@@ -13311,7 +13345,7 @@ async function runMarketActivityQueue() {
       await publishMarketActivitySnapshot(ticker).catch((err) => {
         console.log("Market activity snapshot skipped:", ticker, err.message);
       });
-      await wait(150);
+      await wait(650);
     }
   } finally {
     marketActivityWorkerRunning = false;
@@ -15563,22 +15597,23 @@ app.get("/api/stock/:ticker", async (req, res) => {
       const isCoreIncomplete =
         !requestedChartHistoryReady ||
         (wantsQuarterlyHistory && needsInterimHistoryRefresh);
-      let hasNewerQuarter = false;
       if (!isFinancialHistoryFreshnessRecent(stock.data || {})) {
-        const newerQuarterResult = await resolveWithin(
-          hasNewerFmpQuarterThanCached(ticker, stock.data || {}),
-          1600,
-          null
-        );
-        hasNewerQuarter = newerQuarterResult === true;
-        if (newerQuarterResult === false) {
-          markFinancialHistoryFreshnessChecked(ticker);
-        }
+        Promise.resolve()
+          .then(() => hasNewerFmpQuarterThanCached(ticker, stock.data || {}))
+          .then((hasNewerQuarter) => {
+            if (hasNewerQuarter) {
+              startStockFetch(ticker);
+            } else {
+              markFinancialHistoryFreshnessChecked(ticker);
+            }
+          })
+          .catch((err) => {
+            console.log("Financial history freshness check skipped:", ticker, err.message);
+          });
       }
       const isStale =
         isOutdated ||
         isCoreIncomplete ||
-        hasNewerQuarter ||
         !updatedAt ||
         Date.now() - updatedAt.getTime() > STOCK_FULL_REFRESH_MS;
       if (isStale) {
@@ -15586,20 +15621,9 @@ app.get("/api/stock/:ticker", async (req, res) => {
         const needsFastHydration =
           isOutdated ||
           isCoreIncomplete ||
-          hasNewerQuarter ||
           (wantsQuarterlyHistory && !hasUsableInterimHistory(stock.data || {}));
         const hydrated = needsFastHydration
-          ? hasNewerQuarter
-            ? {
-                stock,
-                data: await hydrateQuarterlyHistoryForResponse(
-                  ticker,
-                  stock.data || {},
-                  STOCK_FAST_CHART_HYDRATION_WAIT_MS,
-                  { forceRefresh: true }
-                )
-              }
-            : await getHydratedStockDataForFirstResponse(
+          ? await getHydratedStockDataForFirstResponse(
                 ticker,
                 stock.data || {},
                 STOCK_FAST_CHART_HYDRATION_WAIT_MS,
@@ -15610,7 +15634,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
         maybeEnqueueMarketActivitySnapshot(ticker, responseData);
         maybeEnqueueSupplementalSnapshots(ticker, responseData);
         const responseCoreStillIncomplete =
-          (isCoreIncomplete || hasNewerQuarter) &&
+          isCoreIncomplete &&
           !hasRequestedCoreChartHistory(responseData, wantsQuarterlyHistory);
         const isStillRefreshing = shouldStockResponseRefresh(responseData, wantsQuarterlyHistory, responseCoreStillIncomplete);
 
