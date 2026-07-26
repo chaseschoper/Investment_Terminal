@@ -1955,6 +1955,80 @@ async function fetchFmpBatchQuotes(symbols = []) {
   }
 }
 
+function normalizeFmpDailyOhlcRows(payload) {
+  const rows = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.historical)
+      ? payload.historical
+      : Array.isArray(payload?.data)
+        ? payload.data
+        : [];
+
+  return rows
+    .map((row) => {
+      const date = firstText(row.date);
+      const close = firstFiniteNumber(row.close, row.price, row.adjClose);
+      if (!date || close === null) return null;
+      return {
+        date,
+        open: firstFiniteNumber(row.open),
+        close,
+        high: firstFiniteNumber(row.high, row.dayHigh),
+        low: firstFiniteNumber(row.low, row.dayLow),
+        volume: firstFiniteNumber(row.volume),
+        change: firstFiniteNumber(row.change),
+        percentChange: firstFiniteNumber(row.changePercent, row.changePercentage, row.changesPercentage)
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+async function fetchFmpRecentDailyOhlc(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return [];
+
+  const end = new Date();
+  end.setUTCHours(23, 59, 59, 999);
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - 14);
+  start.setUTCHours(0, 0, 0, 0);
+  const from = start.toISOString().slice(0, 10);
+  const to = end.toISOString().slice(0, 10);
+
+  const endpoints = [
+    {
+      url: "https://financialmodelingprep.com/stable/historical-price-eod/full",
+      params: { symbol, from, to, apikey: process.env.FMP_API_KEY }
+    },
+    {
+      url: "https://financialmodelingprep.com/stable/historical-price-eod/light",
+      params: { symbol, from, to, apikey: process.env.FMP_API_KEY }
+    },
+    {
+      url: `https://financialmodelingprep.com/api/v3/historical-price-full/${encodeURIComponent(symbol)}`,
+      params: { from, to, apikey: process.env.FMP_API_KEY }
+    }
+  ];
+
+  const results = await Promise.allSettled(endpoints.map(async (endpoint) => {
+    const response = await axios.get(endpoint.url, {
+      params: endpoint.params,
+      timeout: 3500
+    });
+    return normalizeFmpDailyOhlcRows(response.data);
+  }));
+
+  return results
+    .filter((result) => result.status === "fulfilled" && result.value?.length)
+    .map((result) => result.value)
+    .sort((a, b) => {
+      const aScore = (toNumberOrNull(a.at(-1)?.open) !== null ? 10 : 0) + a.length;
+      const bScore = (toNumberOrNull(b.at(-1)?.open) !== null ? 10 : 0) + b.length;
+      return bScore - aScore;
+    })[0] || [];
+}
+
 function getFmpPriceHistoryDateRange(requestedRange) {
   const end = new Date();
   end.setUTCHours(23, 59, 59, 999);
@@ -2163,6 +2237,57 @@ function normalizeFmpOneDayRegularSessionPoints(points = []) {
   return appendFmpRegularClosePoint(normalizedPoints);
 }
 
+function applyFmpDailyOhlcAnchors(points = [], dailyRow) {
+  if (!Array.isArray(points) || points.length < 2 || !dailyRow?.date) return points;
+  const officialOpen = toNumberOrNull(dailyRow.open);
+  const officialClose = toNumberOrNull(dailyRow.close);
+  if (officialOpen === null && officialClose === null) return points;
+
+  const sessionOpenDate = parseFmpMarketDateTime(`${dailyRow.date} 09:30:00`);
+  const sessionCloseDate = parseFmpMarketDateTime(`${dailyRow.date} 16:00:00`);
+  if (!sessionOpenDate || !sessionCloseDate) return points;
+
+  const sessionOpenTime = sessionOpenDate.getTime();
+  const sessionCloseTime = sessionCloseDate.getTime();
+  const middlePoints = points.filter((point) => {
+    const pointTime = toNumberOrNull(point.time);
+    return pointTime !== null && pointTime > sessionOpenTime && pointTime < sessionCloseTime;
+  });
+
+  const firstPoint = points[0] || {};
+  const lastPoint = points.at(-1) || {};
+  const anchoredPoints = [];
+
+  anchoredPoints.push({
+    ...firstPoint,
+    time: sessionOpenTime,
+    date: sessionOpenDate.toISOString(),
+    marketDateKey: dailyRow.date,
+    open: officialOpen ?? firstPoint.open ?? firstPoint.price,
+    price: officialOpen ?? firstPoint.price,
+    close: officialOpen ?? firstPoint.price,
+    volume: null,
+    isOfficialOpen: true
+  });
+
+  anchoredPoints.push(...middlePoints);
+
+  anchoredPoints.push({
+    ...lastPoint,
+    time: sessionCloseTime,
+    date: sessionCloseDate.toISOString(),
+    marketDateKey: dailyRow.date,
+    price: officialClose ?? lastPoint.price,
+    close: officialClose ?? lastPoint.close ?? lastPoint.price,
+    volume: null,
+    isOfficialClose: true
+  });
+
+  return anchoredPoints
+    .filter((point, index, list) => index === 0 || point.time !== list[index - 1]?.time)
+    .sort((a, b) => a.time - b.time);
+}
+
 function isLikelyUsMarketSession(date = new Date()) {
   const { weekday, hour, minute } = getNewYorkClockParts(date);
   if (weekday === "Sat" || weekday === "Sun" || !Number.isFinite(hour) || !Number.isFinite(minute)) {
@@ -2264,13 +2389,36 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
     }
   ];
 
-  const endpointResults = await Promise.allSettled(endpoints.map(async (endpoint) => {
-    try {
+  const dailyRowsPromise = requestedRange === "1D"
+    ? fetchFmpRecentDailyOhlc(symbol).catch((err) => {
+        console.log("FMP daily OHLC skipped:", symbol, err.response?.status || err.message);
+        return [];
+      })
+    : Promise.resolve([]);
+
+  const [endpointPayloads, dailyRows] = await Promise.all([
+    Promise.allSettled(endpoints.map(async (endpoint) => {
       const response = await axios.get(endpoint.url, {
         params: endpoint.params,
         timeout: 4500
       });
-      const rows = Array.isArray(response.data) ? response.data : [];
+      return Array.isArray(response.data) ? response.data : [];
+    })),
+    dailyRowsPromise
+  ]);
+
+  const endpointResults = endpointPayloads.map((result) => {
+    if (result.status !== "fulfilled") {
+      const err = result.reason || {};
+      if (![400, 401, 402, 403, 404].includes(Number(err.response?.status))) {
+        setFmpCooldown(err, "intraday price history", symbol);
+      }
+      console.log("FMP intraday price history skipped:", symbol, requestedRange, err.response?.status || err.message);
+      return { status: "fulfilled", value: null };
+    }
+
+    try {
+      const rows = result.value;
       const allPoints = rows
         .map((row) => {
           const closePrice = firstFiniteNumber(row.close, row.price, row.adjClose);
@@ -2302,6 +2450,12 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
       const previousRegularClose = requestedRange === "1D"
         ? previousRegularCloseBeforeDate(allPoints, latestTradingDateKey)
         : null;
+      const latestDailyRow = requestedRange === "1D"
+        ? dailyRows.find((row) => row.date === latestTradingDateKey) || null
+        : null;
+      const previousDailyClose = requestedRange === "1D" && latestDailyRow
+        ? toNumberOrNull(dailyRows.filter((row) => row.date < latestDailyRow.date).at(-1)?.close)
+        : null;
       const latestSessionPoints = latestTradingDateKey
         ? allPoints.filter((point) => (point.marketDateKey || point.date.slice(0, 10)) === latestTradingDateKey)
         : [];
@@ -2309,10 +2463,13 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
         ? latestSessionPoints
         : allPoints;
       const points = requestedRange === "1D"
-        ? normalizeFmpOneDayRegularSessionPoints(sessionPoints)
+        ? applyFmpDailyOhlcAnchors(
+            normalizeFmpOneDayRegularSessionPoints(sessionPoints),
+            latestDailyRow
+          )
         : sessionPoints;
 
-      if (points.length < 2) return null;
+      if (points.length < 2) return { status: "fulfilled", value: null };
 
       const latestPoint = points.at(-1);
       if (
@@ -2320,45 +2477,45 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
         isLikelyUsMarketSession() &&
         Date.now() - latestPoint.time > 45 * 60 * 1000
       ) {
-        return null;
+        return { status: "fulfilled", value: null };
       }
       const firstPoint = points[0];
       const previousPoint = points.at(-2);
       const changeBase = requestedRange === "1D"
-        ? (previousRegularClose ?? firstPoint.open ?? firstPoint.price)
+        ? (previousDailyClose ?? previousRegularClose ?? firstPoint.open ?? firstPoint.price)
         : firstPoint.price;
       const change = latestPoint.price !== null && changeBase
         ? latestPoint.price - changeBase
         : null;
 
       return {
-        symbol,
-        sourceSymbol: symbol,
-        range: requestedRange,
-        interval,
-        source: "FMP intraday price",
-        points,
-        latest: {
-          price: latestPoint.price,
-          change,
-          percentChange: change !== null && changeBase ? (change / changeBase) * 100 : null,
-          previousClose: requestedRange === "1D"
-            ? previousRegularClose
-            : previousPoint?.price ?? null,
-          open: requestedRange === "1D"
-            ? firstPoint.open ?? firstPoint.price
-            : null
-        },
-        updatedAt: new Date().toISOString()
+        status: "fulfilled",
+        value: {
+          symbol,
+          sourceSymbol: symbol,
+          range: requestedRange,
+          interval,
+          source: "FMP intraday price",
+          points,
+          latest: {
+            price: latestPoint.price,
+            change,
+            percentChange: change !== null && changeBase ? (change / changeBase) * 100 : null,
+            previousClose: requestedRange === "1D"
+              ? previousDailyClose ?? previousRegularClose
+              : previousPoint?.price ?? null,
+            open: requestedRange === "1D"
+              ? latestDailyRow?.open ?? firstPoint.open ?? firstPoint.price
+              : null
+          },
+          updatedAt: new Date().toISOString()
+        }
       };
     } catch (err) {
-      if (![400, 401, 402, 403, 404].includes(Number(err.response?.status))) {
-        setFmpCooldown(err, "intraday price history", symbol);
-      }
-      console.log("FMP intraday price history skipped:", symbol, requestedRange, err.response?.status || err.message);
-      return null;
+      console.log("FMP intraday price history parse skipped:", symbol, requestedRange, err.message);
+      return { status: "fulfilled", value: null };
     }
-  }));
+  });
 
   const candidates = endpointResults
     .filter((result) => result.status === "fulfilled" && result.value?.points?.length)
