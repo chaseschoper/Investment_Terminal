@@ -33,6 +33,8 @@ const groqApiKey = process.env.GROQ_API_KEY || "";
 const activeStockFetches = new Set();
 const activeFullStockFetches = new Set();
 const activeStockFastHydrations = new Map();
+const activeSupplementalFetches = new Set();
+const fastStockSnapshotPatchCooldowns = new Map();
 const marketActivityQueue = [];
 const queuedMarketActivityFetches = new Set();
 let marketActivityWorkerRunning = false;
@@ -1013,7 +1015,7 @@ function setYahooAnalysisPageCooldown(err, label, ticker) {
 
 function setFmpCooldown(err, label, ticker) {
   if (!isTooManyRequestsError(err)) return;
-  fmpCooldownUntil = Math.max(fmpCooldownUntil, Date.now() + 2 * 1000);
+  fmpCooldownUntil = Math.max(fmpCooldownUntil, Date.now() + 400);
   console.log(`FMP cooldown active after ${label}:`, ticker, err.response?.status || err.message);
 }
 
@@ -2085,18 +2087,25 @@ async function fetchFmpRecentDailyOhlc(ticker) {
     }
   ].filter((endpoint) => canUseFmpEndpoint(endpoint.key, symbol));
 
-  const results = await Promise.allSettled(endpoints.map(async (endpoint) => {
-    const response = await axios.get(endpoint.url, {
-      params: endpoint.params,
-      timeout: 3500
-    }).catch((err) => {
+  const results = [];
+  for (const endpoint of endpoints) {
+    try {
+      const response = await axios.get(endpoint.url, {
+        params: endpoint.params,
+        timeout: 1800
+      });
+      const rows = normalizeFmpDailyOhlcRows(response.data);
+      if (rows.length) {
+        results.push({ status: "fulfilled", value: rows });
+        break;
+      }
+    } catch (err) {
       if (isFmpRestrictedStatus(err.response?.status)) {
         setFmpEndpointCooldown(endpoint.key, err.response?.status, endpoint.key, symbol);
       }
-      throw err;
-    });
-    return normalizeFmpDailyOhlcRows(response.data);
-  }));
+      results.push({ status: "rejected", reason: err });
+    }
+  }
 
   const rows = results
     .filter((result) => result.status === "fulfilled" && result.value?.length)
@@ -2521,18 +2530,28 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
     : Promise.resolve([]);
 
   const [endpointPayloads, dailyRows] = await Promise.all([
-    Promise.allSettled(endpoints.map(async (endpoint) => {
-      const response = await axios.get(endpoint.url, {
-        params: endpoint.params,
-        timeout: 4500
-      }).catch((err) => {
+    (async () => {
+      const payloads = [];
+      for (const endpoint of endpoints) {
+        try {
+          const response = await axios.get(endpoint.url, {
+            params: endpoint.params,
+            timeout: 2600
+          });
+          const rows = Array.isArray(response.data) ? response.data : [];
+          if (rows.length) {
+            payloads.push({ status: "fulfilled", value: rows });
+            break;
+          }
+        } catch (err) {
         if (isFmpRestrictedStatus(err.response?.status)) {
           setFmpEndpointCooldown(endpoint.key, err.response?.status, endpoint.key, symbol);
         }
-        throw err;
-      });
-      return Array.isArray(response.data) ? response.data : [];
-    })),
+          payloads.push({ status: "rejected", reason: err });
+        }
+      }
+      return payloads;
+    })(),
     dailyRowsPromise
   ]);
 
@@ -7859,8 +7878,12 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
     !responseData.analystEstimates.futureYears.length ||
     !hasCompleteNextQuarterEstimate(responseData.analystEstimates?.nextQuarter);
   if (needsFmpFastPatch) {
-    const fastPatch = await resolveWithin(buildFastStockSnapshot(ticker, responseData), 2600, null);
-    if (fastPatch) responseData = prepareCachedStockResponseData(ticker, fastPatch);
+    const lastFastPatchAt = fastStockSnapshotPatchCooldowns.get(ticker) || 0;
+    if (Date.now() - lastFastPatchAt > 8000) {
+      fastStockSnapshotPatchCooldowns.set(ticker, Date.now());
+      const fastPatch = await resolveWithin(buildFastStockSnapshot(ticker, responseData), 1800, null);
+      if (fastPatch) responseData = prepareCachedStockResponseData(ticker, fastPatch);
+    }
   }
   return finalizeStockResponseForClient(ticker, responseData);
   responseData = await ensureCompleteNextQuarterEstimateForResponse(ticker, responseData);
@@ -11150,6 +11173,88 @@ function hasFastRenderableOverview(stock) {
   return hasCoreCharts && (hasOverviewMetrics || hasEstimates);
 }
 
+function hasAnnualEstimateSnapshot(data = {}) {
+  const estimates = data.analystEstimates || {};
+  return (
+    Array.isArray(estimates.futureYears) && estimates.futureYears.length
+  ) || (
+    (toNumberOrNull(estimates.currentYear?.revenue) !== null ||
+      toNumberOrNull(estimates.currentYear?.eps) !== null) &&
+    (toNumberOrNull(estimates.nextYear?.revenue) !== null ||
+      toNumberOrNull(estimates.nextYear?.eps) !== null)
+  );
+}
+
+function hasMarketActivitySnapshot(data = {}) {
+  return (
+    Array.isArray(data.analystUpdates) && data.analystUpdates.length
+  ) || (
+    Array.isArray(data.insiderTransactions) && data.insiderTransactions.length
+  ) || (
+    Boolean(data.analystUpdatesCheckedAt) && Boolean(data.insiderTransactionsCheckedAt)
+  );
+}
+
+function needsSupplementalStockData(data = {}) {
+  const epsBeatMissRows = Array.isArray(data.epsBeatMiss) ? data.epsBeatMiss : [];
+  const reportedEpsRows = epsBeatMissRows.filter((row) => toNumberOrNull(row.actual) !== null);
+  const estimatesChecked = data.estimateDataVersion === STOCK_ESTIMATE_VERSION;
+  const hasNextQuarterEstimate = hasCompleteNextQuarterEstimate(data.analystEstimates?.nextQuarter);
+  const nextQuarterChecked = Boolean(data.quarterEstimateCheckedAt);
+  const epsBeatMissChecked = Boolean(data.epsBeatMissCheckedAt);
+  const shouldWaitForEpsBeatMiss =
+    reportedEpsRows.length < 3 &&
+    !epsBeatMissChecked &&
+    (hasNextQuarterEstimate || epsBeatMissRows.length > 0);
+  return (
+    (!estimatesChecked && !hasAnnualEstimateSnapshot(data)) ||
+    (!nextQuarterChecked && !hasNextQuarterEstimate) ||
+    shouldWaitForEpsBeatMiss ||
+    !hasMarketActivitySnapshot(data)
+  );
+}
+
+function shouldStockResponseRefresh(data = {}, wantsQuarterlyHistory = false, coreRefreshing = false) {
+  return Boolean(
+    coreRefreshing ||
+    !hasFastRenderableOverview(data) ||
+    !hasRequestedCoreChartHistory(data, wantsQuarterlyHistory) ||
+    needsSupplementalStockData(data)
+  );
+}
+
+function maybeEnqueueSupplementalSnapshots(ticker, data = {}) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || activeSupplementalFetches.has(symbol) || !needsSupplementalStockData(data)) return;
+  activeSupplementalFetches.add(symbol);
+
+  Promise.resolve()
+    .then(async () => {
+      const tasks = [];
+      if (
+        data.estimateDataVersion !== STOCK_ESTIMATE_VERSION ||
+        !hasAnnualEstimateSnapshot(data) ||
+        !hasCompleteNextQuarterEstimate(data.analystEstimates?.nextQuarter)
+      ) {
+        tasks.push(publishQuarterEstimateSnapshot(symbol));
+      }
+      const epsBeatMissRows = Array.isArray(data.epsBeatMiss) ? data.epsBeatMiss : [];
+      if (epsBeatMissRows.filter((row) => toNumberOrNull(row.actual) !== null).length < 3) {
+        tasks.push(publishEpsBeatMissSnapshot(symbol));
+      }
+      if (!hasMarketActivitySnapshot(data)) {
+        enqueueMarketActivitySnapshot(symbol, true);
+      }
+      await Promise.allSettled(tasks);
+    })
+    .catch((err) => {
+      console.log("Supplemental stock warmup skipped:", symbol, err.message);
+    })
+    .finally(() => {
+      activeSupplementalFetches.delete(symbol);
+    });
+}
+
 async function markFastOverviewReady(ticker) {
   const stock = await Stock.findOne({ ticker }).lean().catch(() => null);
   if (!stock || stock.status === "ready" || !hasFastRenderableOverview(stock)) return;
@@ -11190,7 +11295,19 @@ async function publishQuarterEstimateSnapshot(ticker) {
     toNumberOrNull(estimate?.revenue) !== null ||
     toNumberOrNull(estimate?.eps) !== null ||
     Boolean(estimate?.date);
-  if (!hasEstimate) return;
+  if (!hasEstimate) {
+    await Stock.findOneAndUpdate(
+      { ticker },
+      {
+        $set: {
+          "data.quarterEstimateCheckedAt": new Date().toISOString(),
+          "data.epsBeatMissCheckedAt": stock.data?.epsBeatMissCheckedAt || new Date().toISOString(),
+          "data.estimateDataVersion": STOCK_ESTIMATE_VERSION
+        }
+      }
+    );
+    return;
+  }
 
   const nextQuarter = {
     revenue: normalizeStatementDollars(estimate.revenue),
@@ -11226,7 +11343,17 @@ async function publishEpsBeatMissSnapshot(ticker) {
   ]);
   const reportedRows = mergeEpsBeatMissRows(stock.data?.epsBeatMiss || [], fmpRows || []);
   const epsBeatMiss = buildEpsBeatMissSeries(reportedRows, calendarQuarterEstimate);
-  if (!Array.isArray(epsBeatMiss) || !epsBeatMiss.length) return;
+  if (!Array.isArray(epsBeatMiss) || !epsBeatMiss.length) {
+    await Stock.findOneAndUpdate(
+      { ticker },
+      {
+        $set: {
+          "data.epsBeatMissCheckedAt": new Date().toISOString()
+        }
+      }
+    );
+    return;
+  }
 
   await Stock.findOneAndUpdate(
     { ticker },
@@ -11336,8 +11463,21 @@ async function publishMarketActivitySnapshot(ticker) {
       (Array.isArray(data.analystUpdates) && data.analystUpdates.length) ||
       (Array.isArray(data.institutionalHolders) && data.institutionalHolders.length) ||
       (Array.isArray(data.insiderTransactions) && data.insiderTransactions.length);
-    if (!hasFetchedMarketActivity) return;
     const now = new Date().toISOString();
+    if (!hasFetchedMarketActivity) {
+      await Stock.findOneAndUpdate(
+        { ticker },
+        {
+          $set: {
+            "data.analystUpdatesCheckedAt": now,
+            "data.institutionalHoldersCheckedAt": now,
+            "data.insiderTransactionsCheckedAt": now,
+            "data.marketActivityUpdatedAt": now
+          }
+        }
+      );
+      return;
+    }
     const $set = {
       "data.analystUpdates": Array.isArray(data.analystUpdates) && data.analystUpdates.length
         ? data.analystUpdates
@@ -13301,13 +13441,17 @@ function startStockFetch(ticker) {
     });
 }
 
-function enqueueMarketActivitySnapshot(ticker) {
+function enqueueMarketActivitySnapshot(ticker, priority = false) {
   if (!ticker || queuedMarketActivityFetches.has(ticker)) return;
   if (marketActivityQueue.length >= 30) {
     const droppedTicker = marketActivityQueue.shift();
     if (droppedTicker) queuedMarketActivityFetches.delete(droppedTicker);
   }
-  marketActivityQueue.push(ticker);
+  if (priority) {
+    marketActivityQueue.unshift(ticker);
+  } else {
+    marketActivityQueue.push(ticker);
+  }
   queuedMarketActivityFetches.add(ticker);
   runMarketActivityQueue().catch((err) => {
     console.log("Market activity queue skipped:", err.message);
@@ -13328,7 +13472,7 @@ function maybeEnqueueMarketActivitySnapshot(ticker, data = {}) {
     Date.now() - lastCheckedAt < (hasRows ? 15 * 60 * 1000 : 90 * 1000);
 
   if (!checkedRecently) {
-    enqueueMarketActivitySnapshot(ticker);
+    enqueueMarketActivitySnapshot(ticker, true);
   }
 }
 
@@ -13343,7 +13487,7 @@ async function runMarketActivityQueue() {
       await publishMarketActivitySnapshot(ticker).catch((err) => {
         console.log("Market activity snapshot skipped:", ticker, err.message);
       });
-      await wait(500);
+      await wait(150);
     }
   } finally {
     marketActivityWorkerRunning = false;
@@ -15491,9 +15635,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
       );
       const responseData = await prepareCachedStockResponseDataFast(ticker, hydrated.data || initialData);
       maybeEnqueueMarketActivitySnapshot(ticker, responseData);
-      const isStillRefreshing =
-        !hasFastRenderableOverview(responseData) ||
-        !hasRequestedCoreChartHistory(responseData, wantsQuarterlyHistory);
+      maybeEnqueueSupplementalSnapshots(ticker, responseData);
+      const isStillRefreshing = shouldStockResponseRefresh(responseData, wantsQuarterlyHistory);
 
       return res.json({
         ticker,
@@ -15542,9 +15685,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
           : { stock, data: stock.data };
         const responseData = await prepareCachedStockResponseDataFast(ticker, hydrated.data || stock.data);
         maybeEnqueueMarketActivitySnapshot(ticker, responseData);
-        const isStillRefreshing =
-          !hasFastRenderableOverview(responseData) ||
-          !hasRequestedCoreChartHistory(responseData, wantsQuarterlyHistory);
+        maybeEnqueueSupplementalSnapshots(ticker, responseData);
+        const isStillRefreshing = shouldStockResponseRefresh(responseData, wantsQuarterlyHistory);
 
         return res.json({
           ticker: stock.ticker,
@@ -15558,9 +15700,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
 
       const responseData = await prepareCachedStockResponseDataFast(ticker, buildMinimalStockSnapshot(ticker));
       maybeEnqueueMarketActivitySnapshot(ticker, responseData);
-      const isStillRefreshing =
-        !hasFastRenderableOverview(responseData) ||
-        !hasRequestedCoreChartHistory(responseData, wantsQuarterlyHistory);
+      maybeEnqueueSupplementalSnapshots(ticker, responseData);
+      const isStillRefreshing = shouldStockResponseRefresh(responseData, wantsQuarterlyHistory);
 
       return res.json({
         ticker: stock.ticker,
@@ -15636,10 +15777,11 @@ app.get("/api/stock/:ticker", async (req, res) => {
           : { stock, data: stock.data || {} };
         const responseData = await prepareCachedStockResponseDataFast(ticker, hydrated.data || stock.data || {});
         maybeEnqueueMarketActivitySnapshot(ticker, responseData);
-        const isStillRefreshing =
-          isCoreIncomplete ||
-          hasNewerQuarter ||
+        maybeEnqueueSupplementalSnapshots(ticker, responseData);
+        const responseCoreStillIncomplete =
+          (isCoreIncomplete || hasNewerQuarter) &&
           !hasRequestedCoreChartHistory(responseData, wantsQuarterlyHistory);
+        const isStillRefreshing = shouldStockResponseRefresh(responseData, wantsQuarterlyHistory, responseCoreStillIncomplete);
 
         return res.json({
           ticker: stock.ticker,
@@ -15677,6 +15819,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           );
           startStockFetch(ticker);
           maybeEnqueueMarketActivitySnapshot(ticker, responseData);
+          maybeEnqueueSupplementalSnapshots(ticker, responseData);
 
           return res.json({
             ticker: stock.ticker,
@@ -15688,10 +15831,10 @@ app.get("/api/stock/:ticker", async (req, res) => {
         }
 
         const responseData = await prepareCachedStockResponseDataFast(ticker, fallbackData);
-        const shouldKeepPolling =
-          !hasRequestedCoreChartHistory(responseData, wantsQuarterlyHistory);
+        const shouldKeepPolling = shouldStockResponseRefresh(responseData, wantsQuarterlyHistory);
 
         maybeEnqueueMarketActivitySnapshot(ticker, responseData);
+        maybeEnqueueSupplementalSnapshots(ticker, responseData);
 
         return res.json({
           ticker: stock.ticker,
@@ -15717,6 +15860,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       if (stock.data && Object.keys(stock.data).length) {
         const responseData = await prepareCachedStockResponseDataFast(ticker, stock.data);
         maybeEnqueueMarketActivitySnapshot(ticker, responseData);
+        maybeEnqueueSupplementalSnapshots(ticker, responseData);
 
         return res.json({
           ticker: stock.ticker,
@@ -15730,6 +15874,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
 
       const responseData = await prepareCachedStockResponseDataFast(ticker, buildMinimalStockSnapshot(ticker));
       maybeEnqueueMarketActivitySnapshot(ticker, responseData);
+      maybeEnqueueSupplementalSnapshots(ticker, responseData);
 
       return res.json({
         ticker,
@@ -15742,7 +15887,8 @@ app.get("/api/stock/:ticker", async (req, res) => {
 
     const responseData = await prepareCachedStockResponseDataFast(ticker, stock.data);
     maybeEnqueueMarketActivitySnapshot(ticker, responseData);
-    const isStillRefreshing = !hasRequestedCoreChartHistory(responseData, wantsQuarterlyHistory);
+    maybeEnqueueSupplementalSnapshots(ticker, responseData);
+    const isStillRefreshing = shouldStockResponseRefresh(responseData, wantsQuarterlyHistory);
 
     return res.json({
       ticker: stock.ticker,

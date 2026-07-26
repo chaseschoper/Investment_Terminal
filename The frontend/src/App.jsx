@@ -2389,9 +2389,62 @@ const hasNextQuarterData = (stock = {}) => {
 const hasAnnualEstimateData = (stock = {}) => {
   const estimates = stock.analystEstimates || {};
   return (
+    Array.isArray(estimates.futureYears) && estimates.futureYears.length
+  ) || (
     (isNumber(estimates.currentYear?.revenue) || isNumber(estimates.currentYear?.eps)) &&
     (isNumber(estimates.nextYear?.revenue) || isNumber(estimates.nextYear?.eps))
   );
+};
+
+const estimateFieldScore = (estimate = {}) =>
+  ["revenue", "earnings", "eps", "ebitdaAvg", "ebitAvg", "sgaExpenseAvg", "date", "fiscalYear", "fiscalQuarter"]
+    .filter((field) => estimate?.[field] !== null && estimate?.[field] !== undefined && estimate?.[field] !== "")
+    .length;
+
+const chooseRicherEstimate = (previousEstimate, incomingEstimate) => {
+  if (!previousEstimate || !Object.keys(previousEstimate).length) return incomingEstimate;
+  if (!incomingEstimate || !Object.keys(incomingEstimate).length) return previousEstimate;
+  if (estimateFieldScore(incomingEstimate) >= estimateFieldScore(previousEstimate)) {
+    return { ...previousEstimate, ...incomingEstimate };
+  }
+  return { ...incomingEstimate, ...previousEstimate };
+};
+
+const chooseRicherFutureYears = (previousYears, incomingYears) => {
+  if (!Array.isArray(previousYears) || !previousYears.length) return incomingYears;
+  if (!Array.isArray(incomingYears) || !incomingYears.length) return previousYears;
+  const score = (rows) =>
+    rows.reduce((total, row) => total + estimateFieldScore(row), 0) + rows.length * 4;
+  return score(incomingYears) >= score(previousYears) ? incomingYears : previousYears;
+};
+
+const chooseRicherAnalystEstimates = (previousEstimates = {}, incomingEstimates = {}) => {
+  if (!previousEstimates || !Object.keys(previousEstimates).length) return incomingEstimates;
+  if (!incomingEstimates || !Object.keys(incomingEstimates).length) return previousEstimates;
+  return {
+    ...incomingEstimates,
+    nextQuarter: chooseRicherEstimate(previousEstimates.nextQuarter, incomingEstimates.nextQuarter),
+    currentYear: chooseRicherEstimate(previousEstimates.currentYear, incomingEstimates.currentYear),
+    nextYear: chooseRicherEstimate(previousEstimates.nextYear, incomingEstimates.nextYear),
+    followingYear: chooseRicherEstimate(previousEstimates.followingYear, incomingEstimates.followingYear),
+    futureYears: chooseRicherFutureYears(previousEstimates.futureYears, incomingEstimates.futureYears)
+  };
+};
+
+const epsBeatMissScore = (rows = []) =>
+  (Array.isArray(rows) ? rows : []).reduce((total, row) =>
+    total +
+    (isNumber(row?.actual) ? 4 : 0) +
+    (isNumber(row?.estimate) ? 3 : 0) +
+    (row?.date ? 2 : 0) +
+    (row?.period || row?.fiscalQuarter ? 1 : 0), 0);
+
+const chooseRicherEpsBeatMissRows = (previousRows, incomingRows) => {
+  if (!Array.isArray(previousRows) || !previousRows.length) return incomingRows;
+  if (!Array.isArray(incomingRows) || !incomingRows.length) return previousRows;
+  return epsBeatMissScore(incomingRows) >= epsBeatMissScore(previousRows)
+    ? incomingRows
+    : previousRows;
 };
 
 const historicalFieldCount = (rows = [], field) =>
@@ -2426,20 +2479,20 @@ const shouldKeepWarmingNewStock = (stock = {}) =>
 const stabilizeRefreshingStockData = (previous, incoming) => {
   if (
     !previous ||
-    !incoming?.refreshing ||
     String(previous.ticker || previous.symbol || "").toUpperCase() !==
-      String(incoming.ticker || incoming.symbol || "").toUpperCase() ||
-    !hasStableChartData(previous)
+      String(incoming.ticker || incoming.symbol || "").toUpperCase()
   ) {
     return incoming;
   }
 
   const stable = { ...incoming };
-  CHART_STABLE_FIELDS.forEach((field) => {
-    if (previous[field] !== undefined && previous[field] !== null) {
-      stable[field] = previous[field];
-    }
-  });
+  if (incoming?.refreshing && hasStableChartData(previous)) {
+    CHART_STABLE_FIELDS.forEach((field) => {
+      if (previous[field] !== undefined && previous[field] !== null) {
+        stable[field] = previous[field];
+      }
+    });
+  }
   stable.revenueData = chooseRicherRows(previous.revenueData, incoming.revenueData, [
     "revenue",
     "earnings",
@@ -2467,17 +2520,22 @@ const stabilizeRefreshingStockData = (previous, incoming) => {
     stable.historicalPeCheckedAt = incoming.historicalPeCheckedAt || stable.historicalPeCheckedAt;
     stable.historicalPeSource = incoming.historicalPeSource || stable.historicalPeSource;
   }
-  if (Array.isArray(incoming.epsBeatMiss)) {
-    stable.epsBeatMiss = incoming.epsBeatMiss;
-  }
+  stable.analystEstimates = chooseRicherAnalystEstimates(
+    previous.analystEstimates,
+    incoming.analystEstimates
+  );
+  stable.epsBeatMiss = chooseRicherEpsBeatMissRows(previous.epsBeatMiss, incoming.epsBeatMiss);
   ["analystUpdates", "institutionalHolders", "insiderTransactions"].forEach((field) => {
     const previousRows = field === "institutionalHolders"
       ? getCurrentInstitutionalHolderRows(previous[field])
       : previous[field];
+    const incomingRows = field === "institutionalHolders"
+      ? getCurrentInstitutionalHolderRows(incoming[field])
+      : incoming[field];
     if (
       Array.isArray(previousRows) &&
       previousRows.length &&
-      (!Array.isArray(incoming[field]) || !incoming[field].length)
+      (!Array.isArray(incomingRows) || incomingRows.length < previousRows.length)
     ) {
       stable[field] = previousRows;
     }
@@ -2499,6 +2557,14 @@ const stabilizeRefreshingStockData = (previous, incoming) => {
     incoming.hasInterimHistory ?? previous.hasInterimHistory;
   stable.latestInterimPeriod =
     incoming.latestInterimPeriod ?? previous.latestInterimPeriod;
+  stable.estimateDataVersion =
+    incoming.estimateDataVersion ?? previous.estimateDataVersion;
+  stable.quarterEstimateCheckedAt =
+    incoming.quarterEstimateCheckedAt ?? previous.quarterEstimateCheckedAt;
+  stable.epsBeatMissCheckedAt =
+    incoming.epsBeatMissCheckedAt ?? previous.epsBeatMissCheckedAt;
+  stable.marketActivityUpdatedAt =
+    incoming.marketActivityUpdatedAt ?? previous.marketActivityUpdatedAt;
   return stable;
 };
 
@@ -5107,11 +5173,10 @@ useEffect(() => {
         attempt < 20 &&
         !hasMarketActivityLoaded(stableResponse);
       const needsAnnualEstimates =
-        attempt < 20 &&
-        stableResponse.estimateDataVersion !== STOCK_ESTIMATE_VERSION &&
+        attempt < 30 &&
         !hasAnnualEstimateData(stableResponse);
-const needsQuarterEstimate =
-        attempt < 20 &&
+      const needsQuarterEstimate =
+        attempt < 30 &&
         !hasNextQuarterData(stableResponse);
       const needsBalanceSheetMetrics =
         attempt < 20 &&
@@ -5119,7 +5184,11 @@ const needsQuarterEstimate =
           !hasCurrentBalanceSheetMetrics ||
           !stableResponse.balanceSheetCheckedAt
         );
+      const needsBackendRefresh =
+        attempt < 30 &&
+        Boolean(response.data?.refreshing);
       const shouldContinueStockWarmup =
+        needsBackendRefresh ||
         needsNewStockWarmup ||
         needsFreshHistory ||
         needsInterimHistory ||
@@ -5143,12 +5212,14 @@ const needsQuarterEstimate =
           needsQuarterEstimate ||
           needsMarketActivity ||
           needsBalanceSheetMetrics ||
-          needsNewStockWarmup
+          needsNewStockWarmup ||
+          needsBackendRefresh
         ) &&
         attempt < 90
       ) {
         const onlySlowMarketActivity =
           needsMarketActivity &&
+          !needsBackendRefresh &&
           !needsNewStockWarmup &&
           !needsFreshHistory &&
           !needsInterimHistory &&
@@ -5162,9 +5233,9 @@ const needsQuarterEstimate =
           onlySlowMarketActivity
             ? 2500
             : attempt < 10
-            ? 300
+            ? 900
             : attempt < 24
-              ? 700
+              ? 1200
               : 1400;
         scheduleRetry(retryDelay);
       }
