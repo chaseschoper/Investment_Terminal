@@ -1064,7 +1064,7 @@ const canUseYahoo = () => Date.now() >= yahooCooldownUntil;
 const canUseYahooQuoteSummary = () => Date.now() >= yahooQuoteSummaryCooldownUntil;
 const canUseYahooEarningsTrend = () => Date.now() >= yahooEarningsTrendCooldownUntil;
 const canUseYahooAnalysisPage = () => Date.now() >= yahooAnalysisPageCooldownUntil;
-const canUseFmp = () => Date.now() >= fmpCooldownUntil;
+const canUseFmp = () => Boolean(process.env.FMP_API_KEY);
 const canUseStockAnalysis = () => Date.now() >= stockAnalysisCooldownUntil;
 
 async function getFinnhub(url) {
@@ -4757,36 +4757,14 @@ async function fetchFmpDailyPricesForDates(ticker, dates = []) {
   const maxDate = new Date(Math.max(...cleanDates.map((date) => date.getTime())));
   minDate.setUTCDate(minDate.getUTCDate() - 8);
   maxDate.setUTCDate(maxDate.getUTCDate() + 2);
-  const priceRanges = [];
-  let rangeStart = new Date(minDate);
-  while (rangeStart <= maxDate) {
-    const rangeEnd = new Date(rangeStart);
-    rangeEnd.setUTCFullYear(rangeEnd.getUTCFullYear() + 4);
-    rangeEnd.setUTCDate(rangeEnd.getUTCDate() - 1);
-    if (rangeEnd > maxDate) rangeEnd.setTime(maxDate.getTime());
-    priceRanges.push([new Date(rangeStart), new Date(rangeEnd)]);
-    rangeStart = new Date(rangeEnd);
-    rangeStart.setUTCDate(rangeStart.getUTCDate() + 1);
-  }
 
   try {
-    const rangeRows = [];
-    for (const [fromDate, toDate] of priceRanges) {
-      const from = isoDateOnly(fromDate);
-      const to = isoDateOnly(toDate);
-      const cacheLabel = `historical PE prices:${from}:${to}`;
-      try {
-        const rows = await getFmpData(symbol, cacheLabel, [
-          `/stable/historical-price-eod/light?symbol={ticker}&from=${from}&to=${to}`
-        ]);
-        rangeRows.push(Array.isArray(rows) ? rows : []);
-      } catch (err) {
-        setFmpCooldown(err, "historical PE prices", symbol);
-        console.log("FMP historical PE price range skipped:", symbol, from, to, err.response?.status || err.message);
-        rangeRows.push([]);
-      }
-    }
-    const rows = rangeRows.flatMap((items) => Array.isArray(items) ? items : []);
+    const from = isoDateOnly(minDate);
+    const to = isoDateOnly(maxDate);
+    const rowsPayload = await getFmpData(symbol, `historical PE prices:${from}:${to}`, [
+      `/stable/historical-price-eod/light?symbol={ticker}&from=${from}&to=${to}`
+    ]);
+    const rows = Array.isArray(rowsPayload) ? rowsPayload : [];
     const prices = rows
       .map((row) => ({
         date: String(row.date || "").slice(0, 10),
@@ -5747,18 +5725,31 @@ const normalizeFmpAnnualEstimateBlocks = (rows = []) =>
 
 async function fetchFmpFutureAnnualEstimateBlocks(ticker) {
   const symbol = String(ticker || "").trim().toUpperCase();
-  if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return [];
+  if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return null;
   try {
-    const rows = await getFmpData(symbol, "future annual analyst estimates", [
-      "/stable/analyst-estimates?symbol={ticker}&period=annual&limit=10"
-    ]);
+    const endpointKey = "stable-annual-analyst-estimates";
+    if (!canUseFmpEndpoint(endpointKey, symbol)) return null;
+    const response = await axios.get("https://financialmodelingprep.com/stable/analyst-estimates", {
+      params: {
+        symbol,
+        period: "annual",
+        limit: 10,
+        apikey: process.env.FMP_API_KEY
+      },
+      timeout: 2400
+    });
+    const rows = response.data;
     return normalizeFmpAnnualEstimateBlocks(
       normalizeFmpAnnualEstimateRows(rows, { symbol, maxFutureYears: 6 })
     );
   } catch (err) {
-    setFmpCooldown(err, "future annual analyst estimates", symbol);
+    if (isFmpRestrictedStatus(err.response?.status)) {
+      setFmpEndpointCooldown("stable-annual-analyst-estimates", err.response?.status, "future annual analyst estimates", symbol);
+    } else {
+      setFmpCooldown(err, "future annual analyst estimates", symbol);
+    }
     console.log("FMP future annual estimates skipped:", symbol, err.response?.status || err.message);
-    return [];
+    return null;
   }
 }
 
@@ -7797,6 +7788,129 @@ function hasCachedHistoricalPe(responseData = {}) {
   );
 }
 
+async function ensureQuarterlyHistoricalPeForResponse(ticker, data = {}, timeoutMs = 2600) {
+  const existingRows = Array.isArray(data.historicalPe) ? data.historicalPe : [];
+  const quarterlySourceRows = Array.isArray(data.revenueData)
+    ? data.revenueData.filter((row) => row?.isInterim && toNumberOrNull(row?.eps) !== null)
+    : [];
+  if (quarterlySourceRows.length < 4) {
+    return data;
+  }
+
+  const sortedSourceRows = quarterlySourceRows
+    .filter((row) =>
+      row?.isInterim &&
+      !row?.isCurrent &&
+      toNumberOrNull(row.eps) !== null &&
+      String(row.period || "").match(/Q[1-4]/i)
+    )
+    .sort((a, b) => {
+      const yearDiff = Number(a.year) - Number(b.year);
+      if (yearDiff !== 0) return yearDiff;
+      return String(a.period || "").localeCompare(String(b.period || ""));
+    });
+  const directQuarterlyRowsPromise = (async () => {
+    const datedRows = sortedSourceRows.filter((row) =>
+      row.date || row.reportDate || row.fillingDate || row.acceptedDate
+    );
+    if (datedRows.length < 4) return [];
+    const dateValues = datedRows
+      .map((row) => row.date || row.reportDate || row.fillingDate || row.acceptedDate)
+      .filter(Boolean)
+      .map((date) => new Date(`${String(date).slice(0, 10)}T00:00:00Z`))
+      .filter((date) => !Number.isNaN(date.getTime()));
+    if (!dateValues.length || !process.env.FMP_API_KEY) return [];
+    const minDate = new Date(Math.min(...dateValues.map((date) => date.getTime())));
+    const maxDate = new Date(Math.max(...dateValues.map((date) => date.getTime())));
+    minDate.setUTCDate(minDate.getUTCDate() - 8);
+    maxDate.setUTCDate(maxDate.getUTCDate() + 2);
+    const priceResponse = await axios.get("https://financialmodelingprep.com/stable/historical-price-eod/light", {
+      params: {
+        symbol: ticker,
+        from: isoDateOnly(minDate),
+        to: isoDateOnly(maxDate),
+        apikey: process.env.FMP_API_KEY
+      },
+      timeout: Math.max(timeoutMs, 3200)
+    });
+    const prices = (Array.isArray(priceResponse.data) ? priceResponse.data : [])
+      .map((row) => ({
+        date: String(row.date || "").slice(0, 10),
+        time: new Date(`${String(row.date || "").slice(0, 10)}T00:00:00Z`).getTime(),
+        price: firstFiniteNumber(row.price, row.close, row.adjClose)
+      }))
+      .filter((row) => row.date && !Number.isNaN(row.time) && row.price !== null)
+      .sort((a, b) => a.time - b.time);
+    if (!prices.length) return [];
+    const findPriceForDate = (date) => {
+      const targetTime = new Date(`${String(date || "").slice(0, 10)}T00:00:00Z`).getTime();
+      if (Number.isNaN(targetTime)) return null;
+      return [...prices].filter((row) => row.time <= targetTime).at(-1) ||
+        prices.find((row) => row.time > targetTime) ||
+        null;
+    };
+    return datedRows
+      .map((row, index) => {
+        if (index < 3) return null;
+        const trailingRows = datedRows.slice(index - 3, index + 1);
+        const trailingEps = trailingRows.reduce((sum, item) => sum + (toNumberOrNull(item.eps) || 0), 0);
+        const targetDate = isoDateOnly(
+          new Date(`${String(row.date || row.reportDate || row.fillingDate || row.acceptedDate || "").slice(0, 10)}T00:00:00Z`)
+        );
+        const price = findPriceForDate(targetDate)?.price ?? null;
+        const pe = price !== null && trailingEps > 0 ? price / trailingEps : null;
+        return {
+          year: row.year,
+          period: row.period || String(row.year),
+          date: row.date || row.reportDate || row.fillingDate || row.acceptedDate || null,
+          isInterim: true,
+          pe,
+          price,
+          eps: trailingEps,
+          source: "FMP quarter-end price / trailing four-quarter EPS"
+        };
+      })
+      .filter((row) => row && toNumberOrNull(row.pe) !== null && Number.isFinite(row.pe) && Math.abs(row.pe) < 1000)
+      .slice(-80);
+  })();
+  let quarterlyRows = await resolveWithin(directQuarterlyRowsPromise, timeoutMs, []);
+  if (!Array.isArray(quarterlyRows) || !quarterlyRows.length) {
+    quarterlyRows = await resolveWithin(
+      calculateFmpQuarterlyHistoricalPe(ticker, data.revenueData),
+      Math.max(timeoutMs, 3200),
+      []
+    );
+  }
+  if (!Array.isArray(quarterlyRows) || !quarterlyRows.length) return data;
+
+  const annualRows = existingRows.filter((row) => !row?.isInterim && !row?.isCurrent);
+  const historicalPe = mergeHistoricalPeRows(annualRows, quarterlyRows);
+  const historicalPeCheckedAt = new Date().toISOString();
+  const patchedData = {
+    ...data,
+    historicalPe,
+    historicalPeSource: "FMP annual ratios / FMP quarter-end price",
+    historicalPeVersion: HISTORICAL_PE_VERSION,
+    historicalPeCheckedAt
+  };
+
+  Stock.findOneAndUpdate(
+    { ticker },
+    {
+      $set: {
+        "data.historicalPe": historicalPe,
+        "data.historicalPeSource": patchedData.historicalPeSource,
+        "data.historicalPeVersion": HISTORICAL_PE_VERSION,
+        "data.historicalPeCheckedAt": historicalPeCheckedAt
+      }
+    }
+  ).catch((err) => {
+    console.log("Quarterly historical PE cache skipped:", ticker, err.message);
+  });
+
+  return patchedData;
+}
+
 async function ensureCompleteNextQuarterEstimateForResponse(ticker, data = {}) {
   if (hasCompleteNextQuarterEstimate(data.analystEstimates?.nextQuarter)) {
     return data;
@@ -7855,9 +7969,62 @@ async function ensureCompleteNextQuarterEstimateForResponse(ticker, data = {}) {
   return patchedData;
 }
 
-async function prepareCachedStockResponseDataFast(ticker, data = {}) {
+async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {}) {
   let responseData = prepareCachedStockResponseData(ticker, data);
+  if (!hasFutureAnnualEstimateSnapshot(responseData) && !responseData.annualEstimatesCheckedAt) {
+    const futureYears = await resolveWithin(fetchFmpFutureAnnualEstimateBlocks(ticker), 1600, null);
+    if (Array.isArray(futureYears) && futureYears.length) {
+      const analystEstimates = {
+        ...(responseData.analystEstimates || {}),
+        currentYear: {
+          ...(responseData.analystEstimates?.currentYear || {}),
+          ...(futureYears[0] || {})
+        },
+        nextYear: {
+          ...(responseData.analystEstimates?.nextYear || {}),
+          ...(futureYears[1] || {})
+        },
+        followingYear: {
+          ...(responseData.analystEstimates?.followingYear || {}),
+          ...(futureYears[2] || {})
+        },
+        futureYears
+      };
+      responseData = prepareCachedStockResponseData(ticker, {
+        ...responseData,
+        analystEstimates,
+        analystEstimatesSource: "FMP",
+        analystEstimatesSources: {
+          ...(responseData.analystEstimatesSources || {}),
+          currentYear: "FMP",
+          nextYear: "FMP",
+          followingYear: "FMP",
+          futureYears: "FMP"
+        },
+        annualEstimatesCheckedAt: new Date().toISOString(),
+        estimateDataVersion: STOCK_ESTIMATE_VERSION
+      });
+      Stock.findOneAndUpdate(
+        { ticker },
+        {
+          $set: {
+            "data.analystEstimates": analystEstimates,
+            "data.analystEstimatesSource": "FMP",
+            "data.analystEstimatesSources.currentYear": "FMP",
+            "data.analystEstimatesSources.nextYear": "FMP",
+            "data.analystEstimatesSources.followingYear": "FMP",
+            "data.analystEstimatesSources.futureYears": "FMP",
+            "data.annualEstimatesCheckedAt": responseData.annualEstimatesCheckedAt,
+            "data.estimateDataVersion": STOCK_ESTIMATE_VERSION
+          }
+        }
+      ).catch((err) => {
+        console.log("Fast future annual estimate cache skipped:", ticker, err.message);
+      });
+    }
+  }
   const hasBalanceSheetValues =
+    responseData.isAdr === true ||
     toNumberOrNull(responseData.totalCash) !== null ||
     toNumberOrNull(responseData.totalDebt) !== null ||
     toNumberOrNull(responseData.cashAndCashEquivalents) !== null ||
@@ -7871,430 +8038,18 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}) {
     toNumberOrNull(responseData.beta) === null ||
     toNumberOrNull(responseData.volume) === null ||
     responseData.lastDividend === undefined ||
-    !hasCompleteCompanyProfileSnapshot(responseData) ||
-    responseData.estimateDataVersion !== STOCK_ESTIMATE_VERSION ||
-    responseData.analystEstimatesSource !== "FMP" ||
-    !Array.isArray(responseData.analystEstimates?.futureYears) ||
-    !responseData.analystEstimates.futureYears.length ||
-    !hasCompleteNextQuarterEstimate(responseData.analystEstimates?.nextQuarter);
+    !hasCompleteCompanyProfileSnapshot(responseData);
   if (needsFmpFastPatch) {
     const lastFastPatchAt = fastStockSnapshotPatchCooldowns.get(ticker) || 0;
-    if (Date.now() - lastFastPatchAt > 8000) {
+    if (Date.now() - lastFastPatchAt > 2000) {
+      const fastPatch = await resolveWithin(buildFastStockSnapshot(ticker, responseData), 1200, null);
       fastStockSnapshotPatchCooldowns.set(ticker, Date.now());
-      const fastPatch = await resolveWithin(buildFastStockSnapshot(ticker, responseData), 1800, null);
       if (fastPatch) responseData = prepareCachedStockResponseData(ticker, fastPatch);
     }
   }
-  return finalizeStockResponseForClient(ticker, responseData);
-  responseData = await ensureCompleteNextQuarterEstimateForResponse(ticker, responseData);
-  if (!Array.isArray(responseData.analystEstimates?.futureYears) || !responseData.analystEstimates.futureYears.length) {
-    const futureYears = await resolveWithin(fetchFmpFutureAnnualEstimateBlocks(ticker), 2200, []);
-    if (futureYears.length) {
-      const analystEstimates = {
-        ...(responseData.analystEstimates || {}),
-        currentYear: {
-          ...(responseData.analystEstimates?.currentYear || {}),
-          ...(futureYears[0] || {}),
-          ebitda: futureYears[0]?.ebitda ?? responseData.analystEstimates?.currentYear?.ebitda ?? null,
-          ebit: futureYears[0]?.ebit ?? responseData.analystEstimates?.currentYear?.ebit ?? null,
-          sgaExpense: futureYears[0]?.sgaExpense ?? responseData.analystEstimates?.currentYear?.sgaExpense ?? null,
-          fiscalYear: futureYears[0]?.fiscalYear ?? responseData.analystEstimates?.currentYear?.fiscalYear ?? null,
-          numAnalystsRevenue: futureYears[0]?.numAnalystsRevenue ?? responseData.analystEstimates?.currentYear?.numAnalystsRevenue ?? null,
-          numAnalystsEps: futureYears[0]?.numAnalystsEps ?? responseData.analystEstimates?.currentYear?.numAnalystsEps ?? null
-        },
-        nextYear: {
-          ...(responseData.analystEstimates?.nextYear || {}),
-          ...(futureYears[1] || {}),
-          ebitda: futureYears[1]?.ebitda ?? responseData.analystEstimates?.nextYear?.ebitda ?? null,
-          ebit: futureYears[1]?.ebit ?? responseData.analystEstimates?.nextYear?.ebit ?? null,
-          sgaExpense: futureYears[1]?.sgaExpense ?? responseData.analystEstimates?.nextYear?.sgaExpense ?? null,
-          fiscalYear: futureYears[1]?.fiscalYear ?? responseData.analystEstimates?.nextYear?.fiscalYear ?? null,
-          numAnalystsRevenue: futureYears[1]?.numAnalystsRevenue ?? responseData.analystEstimates?.nextYear?.numAnalystsRevenue ?? null,
-          numAnalystsEps: futureYears[1]?.numAnalystsEps ?? responseData.analystEstimates?.nextYear?.numAnalystsEps ?? null
-        },
-        followingYear: {
-          ...(responseData.analystEstimates?.followingYear || {}),
-          ...(futureYears[2] || {})
-        },
-        futureYears
-      };
-      responseData = {
-        ...responseData,
-        analystEstimates,
-        analystEstimatesSource: "FMP",
-        estimateDataVersion: STOCK_ESTIMATE_VERSION
-      };
-      Stock.findOneAndUpdate(
-        { ticker },
-        {
-          $set: {
-            "data.analystEstimates": analystEstimates,
-            "data.analystEstimatesSource": "FMP",
-            "data.estimateDataVersion": STOCK_ESTIMATE_VERSION
-          }
-        }
-      ).catch((err) => {
-        console.log("Future annual estimate response cache skipped:", ticker, err.message);
-      });
-    }
+  if (Array.isArray(responseData.revenueData) && responseData.revenueData.some((row) => row?.isInterim)) {
+    responseData = await ensureQuarterlyHistoricalPeForResponse(ticker, responseData, 2600);
   }
-  const latestAnnualRow = (responseData.revenueData || [])
-    .filter((row) => !row?.isInterim && !row?.isCurrent && Number.isFinite(Number(row?.year)))
-    .sort((a, b) => Number(a.year) - Number(b.year))
-    .at(-1);
-  if (
-    latestAnnualRow &&
-    (
-      toNumberOrNull(latestAnnualRow.ebitda) === null ||
-      toNumberOrNull(latestAnnualRow.ebit) === null ||
-      toNumberOrNull(latestAnnualRow.sgaExpense) === null
-    )
-  ) {
-    const incomeRows = await resolveWithin(fetchFmpIncomeStatementHistory(ticker), 2200, []);
-    if (incomeRows.length) {
-      const revenueData = mergeSupplementalHistoricalFields(responseData.revenueData || [], incomeRows, 9);
-      responseData = {
-        ...responseData,
-        revenueData
-      };
-      Stock.findOneAndUpdate(
-        { ticker },
-        {
-          $set: {
-            "data.revenueData": revenueData,
-            "data.financialHistoryVersion": FINANCIAL_HISTORY_VERSION,
-            "data.financialHistoryCheckedAt": new Date().toISOString()
-          }
-        }
-      ).catch((err) => {
-        console.log("Latest income statement field cache skipped:", ticker, err.message);
-      });
-    }
-  }
-  if (responseData.valuationMetricsVersion !== VALUATION_METRICS_VERSION) {
-    const valuationPatch = await resolveWithin(fetchFmpStableValuationMetrics(ticker), 2600, {});
-    const valuationFields = {};
-    if (Object.keys(valuationPatch || {}).length) {
-      STOCK_ANALYSIS_VALUATION_FIELDS.forEach((field) => {
-        valuationFields[field] = toNumberOrNull(valuationPatch[field]);
-      });
-      FMP_TEXT_METRIC_FIELDS.forEach((field) => {
-        valuationFields[field] = firstText(valuationPatch[field]) || null;
-      });
-      if (valuationPatch.isAdr === true) {
-        Object.assign(valuationFields, {
-          isAdr: true,
-          totalCash: null,
-          totalDebt: null,
-          cashAndCashEquivalents: null,
-          netCash: null,
-          netCashPerShare: null,
-          equityBookValue: null,
-          bookValuePerShare: null,
-          workingCapital: null,
-          balanceSheetAsOf: null,
-          balanceSheetSource: null,
-          balanceSheetCheckedAt: new Date().toISOString(),
-          balanceSheetMetricsVersion: BALANCE_SHEET_METRICS_VERSION
-        });
-      }
-      responseData = prepareCachedStockResponseData(ticker, {
-        ...responseData,
-        ...valuationFields,
-        valuationMetricsCheckedAt: new Date().toISOString(),
-        valuationMetricsVersion: VALUATION_METRICS_VERSION
-      });
-      Stock.findOneAndUpdate(
-        { ticker },
-        {
-          $set: Object.fromEntries(
-            Object.entries({
-              ...valuationFields,
-              valuationMetricsCheckedAt: responseData.valuationMetricsCheckedAt,
-              valuationMetricsVersion: VALUATION_METRICS_VERSION
-            }).map(([key, value]) => [`data.${key}`, value])
-          )
-        }
-      ).catch((err) => {
-        console.log("Cached valuation repair skipped:", ticker, err.message);
-      });
-    }
-  }
-  const repairedHasBalanceSheetValues =
-    toNumberOrNull(responseData.totalCash) !== null ||
-    toNumberOrNull(responseData.totalDebt) !== null ||
-    toNumberOrNull(responseData.cashAndCashEquivalents) !== null ||
-    toNumberOrNull(responseData.netCash) !== null ||
-    toNumberOrNull(responseData.equityBookValue) !== null ||
-    toNumberOrNull(responseData.workingCapital) !== null;
-  if (responseData.isAdr === true) {
-    responseData = prepareCachedStockResponseData(ticker, {
-      ...responseData,
-      totalCash: null,
-      totalDebt: null,
-      cashAndCashEquivalents: null,
-      netCash: null,
-      netCashPerShare: null,
-      equityBookValue: null,
-      bookValuePerShare: null,
-      workingCapital: null,
-      balanceSheetAsOf: null,
-      balanceSheetSource: null,
-      balanceSheetCheckedAt: responseData.balanceSheetCheckedAt || new Date().toISOString(),
-      balanceSheetMetricsVersion: BALANCE_SHEET_METRICS_VERSION
-    });
-  } else if (responseData.balanceSheetMetricsVersion !== BALANCE_SHEET_METRICS_VERSION || !repairedHasBalanceSheetValues) {
-    const balanceSheetPatch = await resolveWithin(fetchLatestBalanceSheetMetrics(ticker, { fast: true }), 2600, {});
-    const balanceFields = [
-      "totalCash",
-      "totalDebt",
-      "cashAndCashEquivalents",
-      "netCash",
-      "netCashPerShare",
-      "equityBookValue",
-      "bookValuePerShare",
-      "workingCapital"
-    ];
-    const balanceValues = {};
-    balanceFields.forEach((field) => {
-      const value = toNumberOrNull(balanceSheetPatch[field]);
-      if (value !== null) balanceValues[field] = value;
-    });
-    if (Object.keys(balanceValues).length) {
-      responseData = prepareCachedStockResponseData(ticker, {
-        ...responseData,
-        ...balanceValues,
-        balanceSheetAsOf: balanceSheetPatch.balanceSheetAsOf || responseData.balanceSheetAsOf || null,
-        balanceSheetSource: balanceSheetPatch.balanceSheetSource || responseData.balanceSheetSource || null,
-        balanceSheetCheckedAt: balanceSheetPatch.balanceSheetCheckedAt || new Date().toISOString(),
-        balanceSheetMetricsVersion: BALANCE_SHEET_METRICS_VERSION
-      });
-      Stock.findOneAndUpdate(
-        { ticker },
-        {
-          $set: Object.fromEntries(
-            Object.entries({
-              ...balanceValues,
-              balanceSheetAsOf: responseData.balanceSheetAsOf || null,
-              balanceSheetSource: responseData.balanceSheetSource || null,
-              balanceSheetCheckedAt: responseData.balanceSheetCheckedAt,
-              balanceSheetMetricsVersion: BALANCE_SHEET_METRICS_VERSION
-            }).map(([key, value]) => [`data.${key}`, value])
-          )
-        }
-      ).catch((err) => {
-        console.log("Cached balance sheet repair skipped:", ticker, err.message);
-      });
-    }
-  }
-  const epsBeatMissRows = Array.isArray(responseData.epsBeatMiss) ? responseData.epsBeatMiss : [];
-  const reportedEpsBeatMissRows = epsBeatMissRows.filter((row) => toNumberOrNull(row.actual) !== null);
-  const hasNonFmpEpsBeatMissRows = epsBeatMissRows.some((row) =>
-    row?.source && !/FMP/i.test(String(row.source))
-  );
-  const hasThinEpsBeatMissRows = epsBeatMissRows.length < 4 || reportedEpsBeatMissRows.length < 2;
-  if (hasNonFmpEpsBeatMissRows || hasThinEpsBeatMissRows) {
-    const fmpEpsBeatMissRows = await resolveWithin(fetchFmpEpsSurprises(ticker), 1400, []);
-    if (Array.isArray(fmpEpsBeatMissRows) && fmpEpsBeatMissRows.length) {
-      const epsBeatMiss = buildEpsBeatMissSeries(
-        fmpEpsBeatMissRows,
-        responseData.analystEstimates?.nextQuarter || {}
-      );
-      responseData = {
-        ...responseData,
-        epsBeatMiss,
-        epsBeatMissCheckedAt: new Date().toISOString()
-      };
-      Stock.findOneAndUpdate(
-        { ticker },
-        {
-          $set: {
-            "data.epsBeatMiss": epsBeatMiss,
-            "data.epsBeatMissCheckedAt": responseData.epsBeatMissCheckedAt
-          }
-        }
-      ).catch((err) => {
-        console.log("Fast EPS beat/miss response cache skipped:", ticker, err.message);
-      });
-    }
-  }
-  const hasNonFmpAnalystRows = (responseData.analystUpdates || [])
-    .some((row) => row?.source && !/FMP/i.test(String(row.source)));
-  const hasNonFmpInsiderRows = (responseData.insiderTransactions || [])
-    .some((row) => row?.source && !/FMP/i.test(String(row.source)));
-  const hasMarketBeatHolderRows = (responseData.institutionalHolders || []).some((row) =>
-    /MarketBeat/i.test(String(row?.source || ""))
-  );
-  const hasIncompleteHolderRows = (responseData.institutionalHolders || []).some((row) =>
-    row?.institution && (toNumberOrNull(row.shares) === null || toNumberOrNull(row.percentHeld) === null)
-  );
-  const hasIncompleteInsiderRows = (responseData.insiderTransactions || []).some((row) =>
-    (row.owner || row.filerName) && !(row.transaction || row.transactionType)
-  );
-  if (
-    hasNonFmpAnalystRows ||
-    hasNonFmpInsiderRows ||
-    hasMarketBeatHolderRows ||
-    hasIncompleteHolderRows ||
-    hasIncompleteInsiderRows
-  ) {
-    const fmpMarketActivity = await resolveWithin(fetchFmpMarketActivity(ticker), 1800, {
-      analystUpdates: [],
-      institutionalHolders: [],
-      insiderTransactions: []
-    });
-    const hasFetchedMarketActivity =
-      (Array.isArray(fmpMarketActivity.analystUpdates) && fmpMarketActivity.analystUpdates.length) ||
-      (Array.isArray(fmpMarketActivity.institutionalHolders) && fmpMarketActivity.institutionalHolders.length) ||
-      (Array.isArray(fmpMarketActivity.insiderTransactions) && fmpMarketActivity.insiderTransactions.length);
-    if (!hasFetchedMarketActivity) {
-      responseData = {
-        ...responseData,
-        institutionalHolders: hasMarketBeatHolderRows ? [] : responseData.institutionalHolders || [],
-        institutionalHoldersCheckedAt: hasMarketBeatHolderRows ? null : responseData.institutionalHoldersCheckedAt,
-        marketActivityUpdatedAt: responseData.marketActivityUpdatedAt || new Date().toISOString()
-      };
-    } else {
-    const marketActivityUpdatedAt = new Date().toISOString();
-    const nextAnalystUpdates = fmpMarketActivity.analystUpdates?.length
-      ? fmpMarketActivity.analystUpdates
-      : responseData.analystUpdates || [];
-    const nextInstitutionalHolders = fmpMarketActivity.institutionalHolders?.length
-      ? fmpMarketActivity.institutionalHolders
-      : hasMarketBeatHolderRows
-        ? []
-        : responseData.institutionalHolders || [];
-    const nextInsiderTransactions = fmpMarketActivity.insiderTransactions?.length
-      ? fmpMarketActivity.insiderTransactions
-      : responseData.insiderTransactions || [];
-    responseData = {
-      ...responseData,
-      analystUpdates: nextAnalystUpdates,
-      institutionalHolders: nextInstitutionalHolders,
-      insiderTransactions: nextInsiderTransactions,
-      analystUpdatesCheckedAt: marketActivityUpdatedAt,
-      institutionalHoldersCheckedAt: marketActivityUpdatedAt,
-      insiderTransactionsCheckedAt: marketActivityUpdatedAt,
-      marketActivityUpdatedAt
-    };
-    Stock.findOneAndUpdate(
-      { ticker },
-      {
-        $set: {
-          "data.analystUpdates": responseData.analystUpdates,
-          "data.institutionalHolders": responseData.institutionalHolders,
-          "data.insiderTransactions": responseData.insiderTransactions,
-          "data.analystUpdatesCheckedAt": marketActivityUpdatedAt,
-          "data.institutionalHoldersCheckedAt": marketActivityUpdatedAt,
-          "data.insiderTransactionsCheckedAt": marketActivityUpdatedAt,
-          "data.marketActivityUpdatedAt": marketActivityUpdatedAt
-        }
-      }
-    ).catch((err) => {
-      console.log("Fast FMP market activity response cache skipped:", ticker, err.message);
-    });
-    }
-  }
-  const fmpMetricCards = await resolveWithin(fetchFmpMetricCards(ticker), 3200, {});
-  responseData = applyFmpMetricCards(prepareCachedStockResponseData(ticker, responseData), fmpMetricCards);
-  persistFmpMetricCards(ticker, fmpMetricCards);
-  const cachedQuarterlyPeRows = Array.isArray(responseData.historicalPe)
-    ? responseData.historicalPe.filter((row) => row?.isInterim && toNumberOrNull(row?.pe) !== null)
-    : [];
-  if (cachedQuarterlyPeRows.length < 60) {
-    const quarterlyPeRows = await resolveWithin(
-      calculateFmpQuarterlyHistoricalPe(ticker, responseData.revenueData),
-      7000,
-      []
-    );
-    if (quarterlyPeRows.length > cachedQuarterlyPeRows.length) {
-      let annualRows = Array.isArray(responseData.historicalPe)
-        ? responseData.historicalPe.filter((row) => !row?.isInterim && !row?.isCurrent)
-        : [];
-      if (annualRows.length < 3) {
-        annualRows = await resolveWithin(fetchFmpHistoricalPe(ticker), 1800, []);
-      }
-      responseData = {
-        ...responseData,
-        historicalPe: mergeHistoricalPeRows(annualRows, quarterlyPeRows),
-        historicalPeSource: "FMP annual ratios / FMP quarter-end price",
-        historicalPeVersion: HISTORICAL_PE_VERSION,
-        historicalPeCheckedAt: new Date().toISOString()
-      };
-      Stock.findOneAndUpdate(
-        { ticker },
-        {
-          $set: {
-            "data.historicalPe": responseData.historicalPe,
-            "data.historicalPeSource": responseData.historicalPeSource,
-            "data.historicalPeVersion": HISTORICAL_PE_VERSION,
-            "data.historicalPeCheckedAt": responseData.historicalPeCheckedAt
-          }
-        }
-      ).catch((err) => {
-        console.log("Fast quarterly historical PE repair cache skipped:", ticker, err.message);
-      });
-    }
-  }
-  if (hasCachedHistoricalPe(responseData)) {
-    const existingQuarterlyPeRows = Array.isArray(responseData.historicalPe)
-      ? responseData.historicalPe.filter((row) => row?.isInterim && toNumberOrNull(row?.pe) !== null)
-      : [];
-    if (existingQuarterlyPeRows.length < 60 && Array.isArray(responseData.revenueData)) {
-      const quarterlyPeRows = await resolveWithin(
-        calculateFmpQuarterlyHistoricalPe(ticker, responseData.revenueData),
-        7000,
-        []
-      );
-      if (quarterlyPeRows.length) {
-        const annualRows = responseData.historicalPe.filter((row) => !row?.isInterim && !row?.isCurrent);
-        responseData = {
-          ...responseData,
-          historicalPe: mergeHistoricalPeRows(annualRows, quarterlyPeRows),
-          historicalPeSource: "FMP annual ratios / FMP quarter-end price",
-          historicalPeVersion: HISTORICAL_PE_VERSION
-        };
-      }
-    }
-    return finalizeStockResponseForClient(ticker, responseData);
-  }
-
-  const fmpPeRows = await resolveWithin(fetchFmpHistoricalPe(ticker), 1000, []);
-  if (!Array.isArray(fmpPeRows) || !fmpPeRows.length) {
-    return finalizeStockResponseForClient(ticker, responseData);
-  }
-
-  const quarterlyPeRows = await resolveWithin(
-    calculateFmpQuarterlyHistoricalPe(ticker, responseData.revenueData),
-    7000,
-    []
-  );
-  const historicalPe = mergeHistoricalPeRows(fmpPeRows, quarterlyPeRows);
-  const historicalPeCheckedAt = new Date().toISOString();
-  responseData = {
-    ...responseData,
-    historicalPe,
-    historicalPeSource: quarterlyPeRows.length
-      ? "FMP annual ratios / FMP quarter-end price"
-      : "FMP annual ratios",
-    historicalPeVersion: HISTORICAL_PE_VERSION,
-    historicalPeCheckedAt
-  };
-
-  Stock.findOneAndUpdate(
-    { ticker },
-    {
-      $set: {
-        "data.historicalPe": historicalPe,
-        "data.historicalPeSource": responseData.historicalPeSource,
-        "data.historicalPeVersion": HISTORICAL_PE_VERSION,
-        "data.historicalPeCheckedAt": historicalPeCheckedAt
-      }
-    }
-  ).catch((err) => {
-    console.log("Fast historical PE response cache skipped:", ticker, err.message);
-  });
-
   return finalizeStockResponseForClient(ticker, responseData);
 }
 
@@ -11299,8 +11054,9 @@ async function publishFutureAnnualEstimateSnapshot(ticker) {
   const stock = await Stock.findOne({ ticker }).lean();
   if (!stock) return;
 
-  const futureYears = await resolveWithin(fetchFmpFutureAnnualEstimateBlocks(ticker), 3600, []);
+  const futureYears = await resolveWithin(fetchFmpFutureAnnualEstimateBlocks(ticker), 3600, null);
   const checkedAt = new Date().toISOString();
+  if (futureYears === null) return;
   if (!Array.isArray(futureYears) || !futureYears.length) {
     await Stock.findOneAndUpdate(
       { ticker },
@@ -15675,7 +15431,14 @@ app.get("/api/stock/:ticker", async (req, res) => {
       });
     }
     warmPriceHistoryCache(ticker, "1D");
-    const wantsQuarterlyHistory = String(req.query.mode || "").trim().toLowerCase() === "quarterly";
+    const requestedHistoryMode = String(
+      req.query.mode ||
+      req.query.historyMode ||
+      req.query.period ||
+      req.query.frequency ||
+      ""
+    ).trim().toLowerCase();
+    const wantsQuarterlyHistory = ["quarter", "quarterly", "q"].includes(requestedHistoryMode);
 
     let stock = await Stock.findOne({ ticker });
     if (!stock) {
@@ -15701,7 +15464,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
         STOCK_FAST_CHART_HYDRATION_WAIT_MS,
         { waitForInterimHistory: wantsQuarterlyHistory }
       );
-      const responseData = await prepareCachedStockResponseDataFast(ticker, hydrated.data || initialData);
+      const responseData = await prepareCachedStockResponseDataFast(ticker, hydrated.data || initialData, { wantsQuarterlyHistory });
       maybeEnqueueMarketActivitySnapshot(ticker, responseData);
       maybeEnqueueSupplementalSnapshots(ticker, responseData);
       const isStillRefreshing = shouldStockResponseRefresh(responseData, wantsQuarterlyHistory);
@@ -15751,7 +15514,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
               { waitForInterimHistory: wantsQuarterlyHistory }
             )
           : { stock, data: stock.data };
-        const responseData = await prepareCachedStockResponseDataFast(ticker, hydrated.data || stock.data);
+        const responseData = await prepareCachedStockResponseDataFast(ticker, hydrated.data || stock.data, { wantsQuarterlyHistory });
         maybeEnqueueMarketActivitySnapshot(ticker, responseData);
         maybeEnqueueSupplementalSnapshots(ticker, responseData);
         const isStillRefreshing = shouldStockResponseRefresh(responseData, wantsQuarterlyHistory);
@@ -15766,7 +15529,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
         });
       }
 
-      const responseData = await prepareCachedStockResponseDataFast(ticker, buildMinimalStockSnapshot(ticker));
+      const responseData = await prepareCachedStockResponseDataFast(ticker, buildMinimalStockSnapshot(ticker), { wantsQuarterlyHistory });
       maybeEnqueueMarketActivitySnapshot(ticker, responseData);
       maybeEnqueueSupplementalSnapshots(ticker, responseData);
       const isStillRefreshing = shouldStockResponseRefresh(responseData, wantsQuarterlyHistory);
@@ -15843,7 +15606,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
                 { waitForInterimHistory: wantsQuarterlyHistory }
               )
           : { stock, data: stock.data || {} };
-        const responseData = await prepareCachedStockResponseDataFast(ticker, hydrated.data || stock.data || {});
+        const responseData = await prepareCachedStockResponseDataFast(ticker, hydrated.data || stock.data || {}, { wantsQuarterlyHistory });
         maybeEnqueueMarketActivitySnapshot(ticker, responseData);
         maybeEnqueueSupplementalSnapshots(ticker, responseData);
         const responseCoreStillIncomplete =
@@ -15875,7 +15638,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           toNumberOrNull(fallbackData.price) === null;
 
         if (shouldRetryFailedSnapshot) {
-          const responseData = await prepareCachedStockResponseDataFast(ticker, fallbackData);
+          const responseData = await prepareCachedStockResponseDataFast(ticker, fallbackData, { wantsQuarterlyHistory });
           await Stock.findOneAndUpdate(
             { ticker },
             {
@@ -15898,7 +15661,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           });
         }
 
-        const responseData = await prepareCachedStockResponseDataFast(ticker, fallbackData);
+        const responseData = await prepareCachedStockResponseDataFast(ticker, fallbackData, { wantsQuarterlyHistory });
         const shouldKeepPolling = shouldStockResponseRefresh(responseData, wantsQuarterlyHistory);
 
         maybeEnqueueMarketActivitySnapshot(ticker, responseData);
@@ -15926,7 +15689,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       startStockFetch(ticker);
 
       if (stock.data && Object.keys(stock.data).length) {
-        const responseData = await prepareCachedStockResponseDataFast(ticker, stock.data);
+        const responseData = await prepareCachedStockResponseDataFast(ticker, stock.data, { wantsQuarterlyHistory });
         maybeEnqueueMarketActivitySnapshot(ticker, responseData);
         maybeEnqueueSupplementalSnapshots(ticker, responseData);
 
@@ -15940,7 +15703,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
         });
       }
 
-      const responseData = await prepareCachedStockResponseDataFast(ticker, buildMinimalStockSnapshot(ticker));
+      const responseData = await prepareCachedStockResponseDataFast(ticker, buildMinimalStockSnapshot(ticker), { wantsQuarterlyHistory });
       maybeEnqueueMarketActivitySnapshot(ticker, responseData);
       maybeEnqueueSupplementalSnapshots(ticker, responseData);
 
@@ -15953,7 +15716,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
       });
     }
 
-    const responseData = await prepareCachedStockResponseDataFast(ticker, stock.data);
+    const responseData = await prepareCachedStockResponseDataFast(ticker, stock.data, { wantsQuarterlyHistory });
     maybeEnqueueMarketActivitySnapshot(ticker, responseData);
     maybeEnqueueSupplementalSnapshots(ticker, responseData);
     const isStillRefreshing = shouldStockResponseRefresh(responseData, wantsQuarterlyHistory);
