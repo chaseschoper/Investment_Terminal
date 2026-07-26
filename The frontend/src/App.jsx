@@ -2839,6 +2839,22 @@ const formatEpsBeatMissLabel = (row) => {
   return row?.period ? formatEpsBeatMissDate(row.period) : "Quarter";
 };
 
+const formatEpsBeatMissPrimaryLabel = (row) => {
+  if (isGenericUpcomingEpsRow(row)) return "Next Quarter";
+  if (isNumber(row?.fiscalQuarter) && isNumber(row?.fiscalYear)) {
+    return `Q${row.fiscalQuarter} FY${String(row.fiscalYear).slice(-2)}`;
+  }
+  const label = String(row?.label || "").trim();
+  if (label && label !== formatEpsBeatMissDate(row.period)) return label;
+  return row?.period ? formatEpsBeatMissDate(row.period) : "Quarter";
+};
+
+const formatEpsBeatMissSecondaryLabel = (row) => {
+  const dateLabel = formatEpsBeatMissDate(row?.period);
+  if (!dateLabel || dateLabel === formatEpsBeatMissPrimaryLabel(row)) return "";
+  return dateLabel;
+};
+
 const formatSignedEpsSurprise = (value) => {
   if (!isNumber(value)) return "-";
   const sign = value < 0 ? "-" : "+";
@@ -2934,20 +2950,10 @@ const mergeUpcomingEpsBeatMissEstimate = (rows = [], nextQuarter = {}) => {
       return periodA.localeCompare(periodB);
     });
 
-  const deduped = [];
-  const seenUpcoming = new Set();
-  sortedRows.forEach((row) => {
-    if (!isReportedEpsBeatMissRow(row)) {
-      const rowEstimate = firstNumber(row.estimate);
-      const upcomingIdentity =
-        epsBeatMissDateKey(row.period) ||
-        epsBeatMissRowKey(row) ||
-        (isNumber(rowEstimate) ? `estimate:${rowEstimate.toFixed(4)}` : null);
-      if (upcomingIdentity && seenUpcoming.has(upcomingIdentity)) return;
-      if (upcomingIdentity) seenUpcoming.add(upcomingIdentity);
-    }
-    deduped.push(row);
-  });
+  const reportedRows = sortedRows.filter(isReportedEpsBeatMissRow);
+  const upcomingRows = sortedRows.filter((row) => !isReportedEpsBeatMissRow(row));
+  const bestUpcomingRow = upcomingRows.find((row) => epsBeatMissDateKey(row.period)) || upcomingRows.at(-1);
+  const deduped = bestUpcomingRow ? [...reportedRows, bestUpcomingRow] : reportedRows;
 
   return deduped.slice(-5);
 };
@@ -3004,7 +3010,7 @@ function EpsBeatMissChart({ rows = [] }) {
         <div>
           <h3>EPS Beat / Miss</h3>
           <span>
-            {formatEpsBeatMissLabel(chartRows.at(-1))} estimate {formatEstimateEps(referenceEstimate)}
+            {formatEpsBeatMissPrimaryLabel(chartRows.at(-1))} estimate {formatEstimateEps(referenceEstimate)}
           </span>
         </div>
         <span className="eps-beat-miss-mode">{activeOption.label}</span>
@@ -3036,7 +3042,7 @@ function EpsBeatMissChart({ rows = [] }) {
                   className="eps-estimate-dot"
                   role="button"
                   tabIndex="0"
-                  aria-label={`${formatEpsBeatMissLabel(row)} EPS estimate ${formatEstimateEps(row.displayEstimate)}`}
+                  aria-label={`${formatEpsBeatMissPrimaryLabel(row)} EPS estimate ${formatEstimateEps(row.displayEstimate)}`}
                   onClick={() => setSelectedIndex(index)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") setSelectedIndex(index);
@@ -3054,7 +3060,7 @@ function EpsBeatMissChart({ rows = [] }) {
                   className={missed ? "eps-miss-dot" : "eps-beat-dot"}
                   role="button"
                   tabIndex="0"
-                  aria-label={`${formatEpsBeatMissLabel(row)} actual EPS ${formatEstimateEps(actualValue)}`}
+                  aria-label={`${formatEpsBeatMissPrimaryLabel(row)} actual EPS ${formatEstimateEps(actualValue)}`}
                   onClick={() => setSelectedIndex(index)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") setSelectedIndex(index);
@@ -3073,9 +3079,10 @@ function EpsBeatMissChart({ rows = [] }) {
         {chartRows.map((row, index) => {
           const surprise = surpriseValueFor(row);
           const isMiss = isNumber(surprise) && surprise < 0;
+          const secondaryLabel = formatEpsBeatMissSecondaryLabel(row);
           return (
             <div key={`${row.period || index}-label`} className="eps-beat-miss-label">
-              <span>{formatEpsBeatMissLabel(row)}</span>
+              <span>{formatEpsBeatMissPrimaryLabel(row)}</span>
               {isNumber(surprise) ? (
                 <strong className={isMiss ? "miss" : "beat"}>
                   {isMiss ? "Missed" : "Beat"} {formatSignedEpsSurprise(surprise)}
@@ -3083,14 +3090,14 @@ function EpsBeatMissChart({ rows = [] }) {
               ) : (
                 <strong className="upcoming">-</strong>
               )}
-              <small>{formatEpsBeatMissDate(row.period)}</small>
+              {secondaryLabel && <small>{secondaryLabel}</small>}
             </div>
           );
         })}
       </div>
       {selectedRow && (
         <div className="eps-beat-miss-detail">
-          <strong>{formatEpsBeatMissLabel(selectedRow)}</strong>
+          <strong>{formatEpsBeatMissPrimaryLabel(selectedRow)}</strong>
           <span>Actual {isNumber(selectedRow.displayActual) ? formatEstimateEps(selectedRow.displayActual) : "N/A"}</span>
           <span>Estimate {isNumber(selectedRow.displayEstimate) ? formatEstimateEps(selectedRow.displayEstimate) : "N/A"}</span>
           <span className={isNumber(selectedSurprise) && selectedSurprise < 0 ? "miss" : "beat"}>
@@ -3761,6 +3768,9 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
 
   const [earnings, setEarnings] =
   useState({ days: [] });
+
+  const [calendarDataCache, setCalendarDataCache] =
+    useState({});
 
   const [isEarningsLoading, setIsEarningsLoading] =
   useState(false);
@@ -5306,6 +5316,11 @@ const loadUserData = async () => {
   const loadEarnings = async (weekStart, mode = calendarMode) => {
 
     try {
+      const cacheKey = `${mode}:${weekStart}`;
+      const cachedCalendar = calendarDataCache[cacheKey];
+      if (cachedCalendar?.days?.length) {
+        setEarnings(cachedCalendar);
+      }
       setIsEarningsLoading(true);
       setSelectedEarningsDate(weekStart);
 
@@ -5318,6 +5333,10 @@ const loadUserData = async () => {
 
       const calendar = earningsRes.data || { days: [] };
       setEarnings(calendar);
+      setCalendarDataCache((cache) => ({
+        ...cache,
+        [cacheKey]: calendar
+      }));
       const availableDates = (calendar.days || []).map((day) => day.date);
       setSelectedEarningsDate((current) => {
         const today = toLocalIsoDate(new Date());
@@ -6817,6 +6836,80 @@ const totalPortfolioValue = portfolioAllocationData.reduce(
   (total, position) => total + position.value,
   0
 );
+const buildPortfolioExposureData = (field, fallbackLabel) => {
+  const exposureMap = new Map();
+  portfolio.forEach((position) => {
+    const symbol = String(position.symbol || "").toUpperCase();
+    const details = savedSymbolDetails[symbol] || {};
+    const currentPrice = portfolioPrices[symbol];
+    const allocationPrice = isNumber(currentPrice) && currentPrice > 0
+      ? currentPrice
+      : Number(position.avgCost) || 0;
+    const value = allocationPrice * Number(position.shares || 0);
+    if (value <= 0) return;
+    const label = String(details[field] || "").trim() || fallbackLabel;
+    exposureMap.set(label, (exposureMap.get(label) || 0) + value);
+  });
+  return [...exposureMap.entries()]
+    .map(([name, value], index) => ({
+      key: `${field}-${name}-${index}`,
+      name,
+      value
+    }))
+    .sort((a, b) => b.value - a.value);
+};
+const portfolioCountryData = buildPortfolioExposureData("country", "Unknown Country");
+const portfolioIndustryData = buildPortfolioExposureData("industry", "Unknown Industry");
+const renderPortfolioPiePanel = (title, data, emptyText) => (
+  <div className="portfolio-visual-panel">
+    <h3>{title}</h3>
+    {data.length ? (
+      <>
+        <ResponsiveContainer width="100%" height={280}>
+          <PieChart>
+            <Pie
+              data={data}
+              dataKey="value"
+              nameKey="name"
+              cx="50%"
+              cy="50%"
+              innerRadius={56}
+              outerRadius={98}
+              paddingAngle={2}
+              stroke="none"
+            >
+              {data.map((item, index) => (
+                <Cell
+                  key={item.key}
+                  fill={PORTFOLIO_COLORS[index % PORTFOLIO_COLORS.length]}
+                />
+              ))}
+            </Pie>
+            <Tooltip formatter={(value) => formatPortfolioCurrency(Number(value))} />
+          </PieChart>
+        </ResponsiveContainer>
+        <div className="allocation-legend">
+          {data.map((item, index) => (
+            <div className="allocation-legend-row" key={item.key}>
+              <span
+                className="allocation-swatch"
+                style={{ background: PORTFOLIO_COLORS[index % PORTFOLIO_COLORS.length] }}
+              />
+              <strong>{item.name}</strong>
+              <span>
+                {totalPortfolioValue > 0
+                  ? `${((item.value / totalPortfolioValue) * 100).toFixed(1)}%`
+                  : "0.0%"}
+              </span>
+            </div>
+          ))}
+        </div>
+      </>
+    ) : (
+      <div className="portfolio-visual-empty">{emptyText}</div>
+    )}
+  </div>
+);
 const primaryResultDocuments = companyDocuments?.resultDocuments || [];
 const resultDocumentCards = (
   primaryResultDocuments.length
@@ -7304,172 +7397,210 @@ const mrRallySection = (
   </section>
 );
 
-const comparisonMetricsForStock = (stock = {}) => [
-  { label: "Market Cap", value: formatBillions(stock.marketCap) },
-  { label: "Beta", value: formatPlain(stock.beta) },
-  { label: "Volume", value: formatLargeNumber(stock.volume) },
-  { label: "Last Dividend", value: formatPrice(stock.lastDividend) },
-  { label: "50-Day Avg", value: formatPrice(stock.priceAvg50) },
-  { label: "200-Day Avg", value: formatPrice(stock.priceAvg200) },
-  { label: "Cash & Equivalents", value: formatBillions(stock.cashAndCashEquivalents ?? stock.totalCash) },
-  { label: "Total Debt", value: formatBillions(stock.totalDebt) },
-  { label: "Net Cash", value: formatBillions(stock.netCash) },
-  { label: "Net Cash / Share", value: formatPrice(stock.netCashPerShare) },
-  { label: "Equity Book Value", value: formatBillions(stock.equityBookValue) },
-  { label: "Book Value / Share", value: formatPrice(stock.bookValuePerShare) },
-  { label: "Working Capital", value: formatBillions(stock.workingCapital) },
-  { label: "TTM P/E", value: formatPlain(stock.pe) },
-  { label: "Forward P/E", value: formatPlain(stock.forwardPE) },
-  { label: "Forward P/S", value: formatPlain(stock.forwardPS) },
-  { label: "PEG Ratio TTM", value: formatPlain(stock.pegRatio) },
-  { label: "Forward PEG", value: formatPlain(stock.forwardPegRatio) },
-  { label: "Price-to-Sales", value: formatPlain(stock.priceToSales) },
-  { label: "Price-to-Book", value: formatPlain(stock.priceToBook) },
-  { label: "Price / Fair Value", value: formatPlain(stock.priceToFairValue) },
-  { label: "P/TBV Ratio", value: formatPlain(stock.priceToTangibleBook) },
-  { label: "P/FCF Ratio", value: formatPlain(stock.priceToFreeCashflow) },
-  { label: "P/OCF Ratio", value: formatPlain(stock.priceToOperatingCashflow) },
-  { label: "Enterprise Value", value: formatBillions(stock.enterpriseValue) },
-  { label: "EV / Sales", value: formatPlain(stock.evToSales) },
-  { label: "EV / EBITDA", value: formatPlain(stock.evToEbitda) },
-  { label: "EV / OCF", value: formatPlain(stock.evToOperatingCashflow) },
-  { label: "EV / FCF", value: formatPlain(stock.evToFreeCashflow) },
-  { label: "Net Debt / EBITDA", value: formatPlain(stock.netDebtToEbitda) },
-  { label: "FCF Yield", value: formatPercent(stock.fcfYield) },
-  { label: "Earnings Yield", value: formatPercent(stock.earningsYield) },
-  { label: "Graham Number", value: formatPrice(stock.grahamNumber) },
-  { label: "Graham Net-Net", value: formatPrice(stock.grahamNetNet) },
-  { label: "Previous Year Revenue Growth", value: formatPercent(stock.revenueGrowth) },
-  { label: "Previous Year Earnings Growth", value: formatPercent(stock.earningsGrowth) },
-  { label: "Previous Year FCF Growth", value: formatPercent(stock.freeCashflowGrowth) },
-  { label: "Previous Year OCF Growth", value: formatPercent(stock.operatingCashflowGrowth) },
-  { label: "Previous Year EBITDA Growth", value: formatPercent(stock.ebitdaGrowth) },
-  { label: "Previous Year Debt Growth", value: formatPercent(stock.debtGrowth) },
-  { label: "3Y Revenue / Share Growth", value: formatPercent(stock.threeYearRevenueGrowthPerShare) },
-  { label: "5Y Revenue / Share Growth", value: formatPercent(stock.fiveYearRevenueGrowthPerShare) },
-  { label: "3Y Net Income / Share Growth", value: formatPercent(stock.threeYearNetIncomeGrowthPerShare) },
-  { label: "5Y Net Income / Share Growth", value: formatPercent(stock.fiveYearNetIncomeGrowthPerShare) },
+const comparisonMetricGroupsForStock = (stock = {}) => [
   {
-    label: "Shares Outstanding",
-    value: isNumber(stock.sharesOutstanding) ? `${(stock.sharesOutstanding / 1000).toFixed(2)}B` : "N/A"
-  },
-  { label: "Float Shares", value: formatSharesCount(stock.floatShares) },
-  { label: "Free Float Shares", value: formatSharesCount(stock.freeFloatShares) },
-  { label: "Employee Count", value: formatSharesCount(stock.employeeCount) },
-  { label: "Revenue / Share", value: formatPrice(stock.revenuePerShare) },
-  { label: "Net Income / Share", value: formatPrice(stock.netIncomePerShare) },
-  { label: "Cash / Share", value: formatPrice(stock.cashPerShare) },
-  { label: "FCF / Share", value: formatPrice(stock.freeCashflowPerShare) },
-  { label: "OCF / Share", value: formatPrice(stock.operatingCashflowPerShare) },
-  { label: "Tangible Book / Share", value: formatPrice(stock.tangibleBookValuePerShare) },
-  { label: "Revenue / Employee", value: formatLargeDollars(stock.revenuePerEmployee) },
-  { label: "Profit / Employee", value: formatLargeDollars(stock.profitsPerEmployee) },
-  {
-    label: stock.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin",
-    value: formatPercent(stock.isFinancialCompany ? stock.bankMetrics?.netInterestRevenueMix : stock.grossMargins)
+    title: "Snapshot",
+    metrics: [
+      { label: "Market Cap", value: formatBillions(stock.marketCap) },
+      { label: "Beta", value: formatPlain(stock.beta) },
+      { label: "Volume", value: formatLargeNumber(stock.volume) },
+      { label: "Last Dividend", value: formatPrice(stock.lastDividend) },
+      { label: "50-Day Avg", value: formatPrice(stock.priceAvg50) },
+      { label: "200-Day Avg", value: formatPrice(stock.priceAvg200) },
+      { label: "Price Target", value: formatPrice(stock.targetMean) },
+      { label: "Analyst Rating", value: stock.analystRatingText || stock.recommendationKey || "N/A" },
+      { label: "Dividend Yield", value: formatDividendYield(stock.dividendYield) },
+      {
+        label: "52-Week Range",
+        value: isNumber(stock.fiftyTwoWeekLow) && isNumber(stock.fiftyTwoWeekHigh)
+          ? `${formatPrice(stock.fiftyTwoWeekLow)} to ${formatPrice(stock.fiftyTwoWeekHigh)}`
+          : "N/A"
+      }
+    ]
   },
   {
-    label: stock.isFinancialCompany ? "Pre-Tax Margin" : "Operating Margin",
-    value: formatPercent(stock.isFinancialCompany ? stock.bankMetrics?.preTaxMargin : stock.operatingMargins)
+    title: "Valuation",
+    metrics: [
+      { label: "TTM P/E", value: formatPlain(stock.pe) },
+      { label: "Forward P/E", value: formatPlain(stock.forwardPE) },
+      { label: "Forward P/S", value: formatPlain(stock.forwardPS) },
+      { label: "PEG Ratio TTM", value: formatPlain(stock.pegRatio) },
+      { label: "Forward PEG", value: formatPlain(stock.forwardPegRatio) },
+      { label: "Price-to-Sales", value: formatPlain(stock.priceToSales) },
+      { label: "Price-to-Book", value: formatPlain(stock.priceToBook) },
+      { label: "Price / Fair Value", value: formatPlain(stock.priceToFairValue) },
+      { label: "P/TBV Ratio", value: formatPlain(stock.priceToTangibleBook) },
+      { label: "P/FCF Ratio", value: formatPlain(stock.priceToFreeCashflow) },
+      { label: "P/OCF Ratio", value: formatPlain(stock.priceToOperatingCashflow) },
+      { label: "Enterprise Value", value: formatBillions(stock.enterpriseValue) },
+      { label: "EV / Sales", value: formatPlain(stock.evToSales) },
+      { label: "EV / EBITDA", value: formatPlain(stock.evToEbitda) },
+      { label: "EV / OCF", value: formatPlain(stock.evToOperatingCashflow) },
+      { label: "EV / FCF", value: formatPlain(stock.evToFreeCashflow) },
+      { label: "Net Debt / EBITDA", value: formatPlain(stock.netDebtToEbitda) },
+      { label: "FCF Yield", value: formatPercent(stock.fcfYield) },
+      { label: "Earnings Yield", value: formatPercent(stock.earningsYield) },
+      { label: "Graham Number", value: formatPrice(stock.grahamNumber) },
+      { label: "Graham Net-Net", value: formatPrice(stock.grahamNetNet) }
+    ]
   },
-  { label: "Profit Margin", value: formatPercent(stock.profitMargins) },
-  { label: "Pretax Margin", value: formatPercent(stock.pretaxMargin) },
-  { label: "EBITDA Margin", value: formatPercent(stock.ebitdaMargin) },
-  { label: "EBIT Margin", value: formatPercent(stock.ebitMargin) },
-  { label: "FCF Margin", value: formatPercent(stock.fcfMargin) },
-  { label: "Bottom Line Margin", value: formatPercent(stock.bottomLineProfitMargin) },
-  { label: "Continuing Ops Margin", value: formatPercent(stock.continuousOperationsProfitMargin) },
-  { label: "OCF / Sales", value: formatPercent(stock.operatingCashflowSalesRatio) },
-  { label: "FCF / OCF", value: formatPercent(stock.freeCashflowOperatingCashflowRatio) },
-  { label: "ROE", value: formatPercent(stock.returnOnEquity) },
-  { label: "ROA", value: formatPercent(stock.returnOnAssets) },
-  { label: "Operating ROA", value: formatPercent(stock.operatingReturnOnAssets) },
-  { label: "ROIC", value: formatPercent(stock.returnOnInvestedCapital) },
-  { label: "ROCE", value: formatPercent(stock.returnOnCapitalEmployed) },
-  { label: "Return on Tangible Assets", value: formatPercent(stock.returnOnTangibleAssets) },
-  { label: "Current Ratio", value: formatPlain(stock.currentRatio) },
-  { label: "Quick Ratio", value: formatPlain(stock.quickRatio) },
-  { label: "Cash Ratio", value: formatPlain(stock.cashRatio) },
-  { label: "Debt / Equity", value: formatPlain(stock.debtToEquity) },
-  { label: "Debt / Assets", value: formatPercent(stock.debtToAssets) },
-  { label: "Debt / Capital", value: formatPercent(stock.debtToCapital) },
-  { label: "Debt / Market Cap", value: formatPercent(stock.debtToMarketCap) },
-  { label: "LT Debt / Capital", value: formatPercent(stock.longTermDebtToCapital) },
-  { label: "Financial Leverage", value: formatPlain(stock.financialLeverage) },
-  { label: "Interest Coverage", value: formatPlain(stock.interestCoverage) },
-  { label: "Debt Service Coverage", value: formatPlain(stock.debtServiceCoverage) },
-  { label: "OCF Coverage", value: formatPlain(stock.operatingCashflowCoverage) },
-  { label: "Short-Term OCF Coverage", value: formatPlain(stock.shortTermOperatingCashflowCoverage) },
-  { label: "OCF Ratio", value: formatPlain(stock.operatingCashflowRatio) },
-  { label: "Solvency Ratio", value: formatPlain(stock.solvencyRatio) },
-  { label: "Interest Debt / Share", value: formatPrice(stock.interestDebtPerShare) },
-  { label: "Dividend Yield TTM", value: formatPercent(stock.dividendYieldTtm) },
-  { label: "Dividend Payout Ratio", value: formatPercent(stock.dividendPayoutRatio) },
-  { label: "Dividend / Share", value: formatPrice(stock.dividendPerShare) },
-  { label: "Income Quality", value: formatPlain(stock.incomeQuality) },
-  { label: "Asset Turnover", value: formatPlain(stock.assetTurnover) },
-  { label: "Fixed Asset Turnover", value: formatPlain(stock.fixedAssetTurnover) },
-  { label: "Inventory Turnover", value: formatPlain(stock.inventoryTurnover) },
-  { label: "Receivables Turnover", value: formatPlain(stock.receivablesTurnover) },
-  { label: "Payables Turnover", value: formatPlain(stock.payablesTurnover) },
-  { label: "Working Capital Turnover", value: formatPlain(stock.workingCapitalTurnover) },
-  { label: "Cash Conversion Cycle", value: formatPlain(stock.cashConversionCycle) },
-  { label: "Days Sales Outstanding", value: formatPlain(stock.daysSalesOutstanding) },
-  { label: "Days Payables Outstanding", value: formatPlain(stock.daysPayablesOutstanding) },
-  { label: "Days Inventory Outstanding", value: formatPlain(stock.daysInventoryOutstanding) },
-  { label: "Operating Cycle", value: formatPlain(stock.operatingCycle) },
-  { label: "Average Inventory", value: formatLargeDollars(stock.averageInventory) },
-  { label: "Average Payables", value: formatLargeDollars(stock.averagePayables) },
-  { label: "Average Receivables", value: formatLargeDollars(stock.averageReceivables) },
-  { label: "R&D / Revenue", value: formatPercent(stock.rdToRevenue) },
-  { label: "SG&A / Revenue", value: formatPercent(stock.sgaToRevenue) },
-  { label: "Stock Comp / Revenue", value: formatPercent(stock.stockBasedCompToRevenue) },
-  { label: "Capex / Revenue", value: formatPercent(stock.capexToRevenue) },
-  { label: "Capex / OCF", value: formatPercent(stock.capexToOperatingCashflow) },
-  { label: "Capex / Depreciation", value: formatPercent(stock.capexToDepreciation) },
-  { label: "Capex / Share", value: formatPrice(stock.capexPerShare) },
-  { label: "Capex Coverage", value: formatPlain(stock.capitalExpenditureCoverage) },
-  { label: "Dividend + Capex Coverage", value: formatPlain(stock.dividendPaidAndCapexCoverage) },
-  { label: "Effective Tax Rate", value: formatPercent(stock.effectiveTaxRate) },
-  { label: "Tax Burden", value: formatPlain(stock.taxBurden) },
-  { label: "Interest Burden", value: formatPlain(stock.interestBurden) },
-  { label: "EBT / EBIT", value: formatPlain(stock.ebtPerEbit) },
-  { label: "Net Income / EBT", value: formatPlain(stock.netIncomePerEbt) },
-  { label: "WACC", value: formatPercent(stock.weightedAverageCostOfCapital) },
   {
-    label: stock.isFinancialCompany ? "Annual Cash Change" : "Free Cash Flow",
-    value: formatBillions(stock.isFinancialCompany ? stock.bankMetrics?.annualCashChange : stock.freeCashflow)
+    title: "Growth",
+    metrics: [
+      { label: "Previous Year Revenue Growth", value: formatPercent(stock.revenueGrowth) },
+      { label: "Previous Year Earnings Growth", value: formatPercent(stock.earningsGrowth) },
+      { label: "Previous Year FCF Growth", value: formatPercent(stock.freeCashflowGrowth) },
+      { label: "Previous Year OCF Growth", value: formatPercent(stock.operatingCashflowGrowth) },
+      { label: "Previous Year EBITDA Growth", value: formatPercent(stock.ebitdaGrowth) },
+      { label: "Previous Year Debt Growth", value: formatPercent(stock.debtGrowth) },
+      { label: "3Y Revenue / Share Growth", value: formatPercent(stock.threeYearRevenueGrowthPerShare) },
+      { label: "5Y Revenue / Share Growth", value: formatPercent(stock.fiveYearRevenueGrowthPerShare) },
+      { label: "3Y Net Income / Share Growth", value: formatPercent(stock.threeYearNetIncomeGrowthPerShare) },
+      { label: "5Y Net Income / Share Growth", value: formatPercent(stock.fiveYearNetIncomeGrowthPerShare) }
+    ]
   },
-  ...(!stock.isFinancialCompany
-    ? [{ label: "Operating Cash Flow", value: formatBillions(stock.operatingCashflow) }]
-    : []),
-  { label: "FCF to Equity", value: formatLargeDollars(stock.freeCashflowToEquity) },
-  { label: "FCF to Firm", value: formatLargeDollars(stock.freeCashflowToFirm) },
-  { label: "Invested Capital", value: formatLargeDollars(stock.investedCapital) },
-  { label: "Tangible Asset Value", value: formatLargeDollars(stock.tangibleAssetValue) },
-  { label: "Net Current Asset Value", value: formatLargeDollars(stock.netCurrentAssetValue) },
-  { label: "Intangibles / Assets", value: formatPercent(stock.intangiblesToTotalAssets) },
-  { label: "Price Target", value: formatPrice(stock.targetMean) },
-  { label: "Analyst Rating", value: stock.analystRatingText || stock.recommendationKey || "N/A" },
-  { label: "Dividend Yield", value: formatDividendYield(stock.dividendYield) },
   {
-    label: "52-Week Range",
-    value: isNumber(stock.fiftyTwoWeekLow) && isNumber(stock.fiftyTwoWeekHigh)
-      ? `${formatPrice(stock.fiftyTwoWeekLow)} to ${formatPrice(stock.fiftyTwoWeekHigh)}`
-      : "N/A"
+    title: "Balance Sheet",
+    metrics: [
+      { label: "Cash & Equivalents", value: formatBillions(stock.cashAndCashEquivalents ?? stock.totalCash) },
+      { label: "Total Debt", value: formatBillions(stock.totalDebt) },
+      { label: "Net Cash", value: formatBillions(stock.netCash) },
+      { label: "Net Cash / Share", value: formatPrice(stock.netCashPerShare) },
+      { label: "Equity Book Value", value: formatBillions(stock.equityBookValue) },
+      { label: "Book Value / Share", value: formatPrice(stock.bookValuePerShare) },
+      { label: "Working Capital", value: formatBillions(stock.workingCapital) },
+      { label: "Invested Capital", value: formatLargeDollars(stock.investedCapital) },
+      { label: "Tangible Asset Value", value: formatLargeDollars(stock.tangibleAssetValue) },
+      { label: "Net Current Asset Value", value: formatLargeDollars(stock.netCurrentAssetValue) },
+      { label: "Intangibles / Assets", value: formatPercent(stock.intangiblesToTotalAssets) }
+    ]
   },
-  { label: "Industry", value: stock.industry || "N/A" },
-  { label: "CEO", value: stock.ceo || "N/A" },
-  { label: "Country", value: stock.country || "N/A" },
-  { label: "Exchange", value: stock.exchange || "N/A" }
+  {
+    title: "Per Share & Scale",
+    metrics: [
+      { label: "Shares Outstanding", value: isNumber(stock.sharesOutstanding) ? `${(stock.sharesOutstanding / 1000).toFixed(2)}B` : "N/A" },
+      { label: "Float Shares", value: formatSharesCount(stock.floatShares) },
+      { label: "Free Float Shares", value: formatSharesCount(stock.freeFloatShares) },
+      { label: "Employee Count", value: formatSharesCount(stock.employeeCount) },
+      { label: "Revenue / Share", value: formatPrice(stock.revenuePerShare) },
+      { label: "Net Income / Share", value: formatPrice(stock.netIncomePerShare) },
+      { label: "Cash / Share", value: formatPrice(stock.cashPerShare) },
+      { label: "FCF / Share", value: formatPrice(stock.freeCashflowPerShare) },
+      { label: "OCF / Share", value: formatPrice(stock.operatingCashflowPerShare) },
+      { label: "Tangible Book / Share", value: formatPrice(stock.tangibleBookValuePerShare) },
+      { label: "Revenue / Employee", value: formatLargeDollars(stock.revenuePerEmployee) },
+      { label: "Profit / Employee", value: formatLargeDollars(stock.profitsPerEmployee) }
+    ]
+  },
+  {
+    title: "Profitability",
+    metrics: [
+      { label: stock.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin", value: formatPercent(stock.isFinancialCompany ? stock.bankMetrics?.netInterestRevenueMix : stock.grossMargins) },
+      { label: stock.isFinancialCompany ? "Pre-Tax Margin" : "Operating Margin", value: formatPercent(stock.isFinancialCompany ? stock.bankMetrics?.preTaxMargin : stock.operatingMargins) },
+      { label: "Profit Margin", value: formatPercent(stock.profitMargins) },
+      { label: "Pretax Margin", value: formatPercent(stock.pretaxMargin) },
+      { label: "EBITDA Margin", value: formatPercent(stock.ebitdaMargin) },
+      { label: "EBIT Margin", value: formatPercent(stock.ebitMargin) },
+      { label: "FCF Margin", value: formatPercent(stock.fcfMargin) },
+      { label: "Bottom Line Margin", value: formatPercent(stock.bottomLineProfitMargin) },
+      { label: "Continuing Ops Margin", value: formatPercent(stock.continuousOperationsProfitMargin) },
+      { label: "OCF / Sales", value: formatPercent(stock.operatingCashflowSalesRatio) },
+      { label: "FCF / OCF", value: formatPercent(stock.freeCashflowOperatingCashflowRatio) },
+      { label: "ROE", value: formatPercent(stock.returnOnEquity) },
+      { label: "ROA", value: formatPercent(stock.returnOnAssets) },
+      { label: "Operating ROA", value: formatPercent(stock.operatingReturnOnAssets) },
+      { label: "ROIC", value: formatPercent(stock.returnOnInvestedCapital) },
+      { label: "ROCE", value: formatPercent(stock.returnOnCapitalEmployed) },
+      { label: "Return on Tangible Assets", value: formatPercent(stock.returnOnTangibleAssets) },
+      { label: "WACC", value: formatPercent(stock.weightedAverageCostOfCapital) }
+    ]
+  },
+  {
+    title: "Liquidity & Efficiency",
+    metrics: [
+      { label: "Current Ratio", value: formatPlain(stock.currentRatio) },
+      { label: "Quick Ratio", value: formatPlain(stock.quickRatio) },
+      { label: "Cash Ratio", value: formatPlain(stock.cashRatio) },
+      { label: "Debt / Equity", value: formatPlain(stock.debtToEquity) },
+      { label: "Debt / Assets", value: formatPercent(stock.debtToAssets) },
+      { label: "Debt / Capital", value: formatPercent(stock.debtToCapital) },
+      { label: "Debt / Market Cap", value: formatPercent(stock.debtToMarketCap) },
+      { label: "LT Debt / Capital", value: formatPercent(stock.longTermDebtToCapital) },
+      { label: "Financial Leverage", value: formatPlain(stock.financialLeverage) },
+      { label: "Interest Coverage", value: formatPlain(stock.interestCoverage) },
+      { label: "Debt Service Coverage", value: formatPlain(stock.debtServiceCoverage) },
+      { label: "OCF Coverage", value: formatPlain(stock.operatingCashflowCoverage) },
+      { label: "Short-Term OCF Coverage", value: formatPlain(stock.shortTermOperatingCashflowCoverage) },
+      { label: "OCF Ratio", value: formatPlain(stock.operatingCashflowRatio) },
+      { label: "Solvency Ratio", value: formatPlain(stock.solvencyRatio) },
+      { label: "Interest Debt / Share", value: formatPrice(stock.interestDebtPerShare) },
+      { label: "Income Quality", value: formatPlain(stock.incomeQuality) },
+      { label: "Asset Turnover", value: formatPlain(stock.assetTurnover) },
+      { label: "Fixed Asset Turnover", value: formatPlain(stock.fixedAssetTurnover) },
+      { label: "Inventory Turnover", value: formatPlain(stock.inventoryTurnover) },
+      { label: "Receivables Turnover", value: formatPlain(stock.receivablesTurnover) },
+      { label: "Payables Turnover", value: formatPlain(stock.payablesTurnover) },
+      { label: "Working Capital Turnover", value: formatPlain(stock.workingCapitalTurnover) },
+      { label: "Cash Conversion Cycle", value: formatPlain(stock.cashConversionCycle) },
+      { label: "Days Sales Outstanding", value: formatPlain(stock.daysSalesOutstanding) },
+      { label: "Days Payables Outstanding", value: formatPlain(stock.daysPayablesOutstanding) },
+      { label: "Days Inventory Outstanding", value: formatPlain(stock.daysInventoryOutstanding) },
+      { label: "Operating Cycle", value: formatPlain(stock.operatingCycle) }
+    ]
+  },
+  {
+    title: "Cash Flow & Capital",
+    metrics: [
+      { label: stock.isFinancialCompany ? "Annual Cash Change" : "Free Cash Flow", value: formatBillions(stock.isFinancialCompany ? stock.bankMetrics?.annualCashChange : stock.freeCashflow) },
+      ...(!stock.isFinancialCompany ? [{ label: "Operating Cash Flow", value: formatBillions(stock.operatingCashflow) }] : []),
+      { label: "FCF to Equity", value: formatLargeDollars(stock.freeCashflowToEquity) },
+      { label: "FCF to Firm", value: formatLargeDollars(stock.freeCashflowToFirm) },
+      { label: "Average Inventory", value: formatLargeDollars(stock.averageInventory) },
+      { label: "Average Payables", value: formatLargeDollars(stock.averagePayables) },
+      { label: "Average Receivables", value: formatLargeDollars(stock.averageReceivables) },
+      { label: "R&D / Revenue", value: formatPercent(stock.rdToRevenue) },
+      { label: "SG&A / Revenue", value: formatPercent(stock.sgaToRevenue) },
+      { label: "Stock Comp / Revenue", value: formatPercent(stock.stockBasedCompToRevenue) },
+      { label: "Capex / Revenue", value: formatPercent(stock.capexToRevenue) },
+      { label: "Capex / OCF", value: formatPercent(stock.capexToOperatingCashflow) },
+      { label: "Capex / Depreciation", value: formatPercent(stock.capexToDepreciation) },
+      { label: "Capex / Share", value: formatPrice(stock.capexPerShare) },
+      { label: "Capex Coverage", value: formatPlain(stock.capitalExpenditureCoverage) },
+      { label: "Dividend + Capex Coverage", value: formatPlain(stock.dividendPaidAndCapexCoverage) },
+      { label: "Dividend Yield TTM", value: formatPercent(stock.dividendYieldTtm) },
+      { label: "Dividend Payout Ratio", value: formatPercent(stock.dividendPayoutRatio) },
+      { label: "Dividend / Share", value: formatPrice(stock.dividendPerShare) },
+      { label: "Effective Tax Rate", value: formatPercent(stock.effectiveTaxRate) },
+      { label: "Tax Burden", value: formatPlain(stock.taxBurden) },
+      { label: "Interest Burden", value: formatPlain(stock.interestBurden) },
+      { label: "EBT / EBIT", value: formatPlain(stock.ebtPerEbit) },
+      { label: "Net Income / EBT", value: formatPlain(stock.netIncomePerEbt) }
+    ]
+  },
+  {
+    title: "Profile",
+    metrics: [
+      { label: "Industry", value: stock.industry || "N/A" },
+      { label: "CEO", value: stock.ceo || "N/A" },
+      { label: "Country", value: stock.country || "N/A" },
+      { label: "Exchange", value: stock.exchange || "N/A" }
+    ]
+  }
 ];
 
 const comparisonSection = (
-  <div className="chart-section" id="comparison">
+  <section className="comparison-page" id="comparison">
+    <div className="financial-statement-hero comparison-hero">
+      <div>
+        <span className="home-feature-label">Side-by-Side Research</span>
+        <h2>Compare</h2>
+        <p>Line companies up across valuation, growth, profitability, balance sheet strength, cash flow, and profile data in one organized view.</p>
+      </div>
+      <span className="market-overview-updated">
+        {compareData.length} selected
+      </span>
+    </div>
 
-    <h2 className="section-title">
-      Multi-Stock Comparison
-    </h2>
   <div className="comparison-controls">
 
     <input
@@ -7517,10 +7648,17 @@ const comparisonSection = (
         {formatPrice(stock.price)}
       </div>
 
-      {comparisonMetricsForStock(stock).map((metric) => (
-        <div className="comparison-stat" key={metric.label}>
-          <span>{metric.label}</span>
-          <strong>{metric.value}</strong>
+      {comparisonMetricGroupsForStock(stock).map((group) => (
+        <div className="comparison-metric-group" key={group.title}>
+          <h4>{group.title}</h4>
+          <div className="comparison-stat-grid">
+            {group.metrics.map((metric) => (
+              <div className="comparison-stat" key={metric.label}>
+                <span>{metric.label}</span>
+                <strong>{metric.value}</strong>
+              </div>
+            ))}
+          </div>
         </div>
       ))}
 
@@ -7530,7 +7668,7 @@ const comparisonSection = (
 
     </div>
 
-  </div>
+  </section>
 );
 
 const selectStockSearchSuggestion = (item, destinationPage = "overview") => {
@@ -10967,6 +11105,17 @@ return (
 
 {activePage === "portfolio" && (
 <>
+<div className="financial-statement-hero portfolio-hero">
+  <div>
+    <span className="home-feature-label">Portfolio Control Room</span>
+    <h2>Portfolio</h2>
+    <p>Track positions, value, profit and loss, allocation, country exposure, and industry mix from one portfolio workspace.</p>
+  </div>
+  <span className="market-overview-updated">
+    {portfolio.length} positions
+  </span>
+</div>
+
 <div className="portfolio-section" id="portfolio">
 
   <div className="portfolio-heading-row">
@@ -11362,6 +11511,18 @@ return (
         <div className="portfolio-visual-empty">Add a position to see performance.</div>
       )}
     </div>
+
+    {renderPortfolioPiePanel(
+      "Country Breakdown",
+      portfolioCountryData,
+      "Add a position to see country exposure."
+    )}
+
+    {renderPortfolioPiePanel(
+      "Industry Breakdown",
+      portfolioIndustryData,
+      "Add a position to see industry exposure."
+    )}
   </div>
 
 </div>
@@ -11370,7 +11531,18 @@ return (
     )}
 
 {activePage === "watchlists" && (
-<section className="chart-section named-watchlists-section" id="watchlists">
+<section className="named-watchlists-page" id="watchlists">
+  <div className="financial-statement-hero watchlists-hero">
+    <div>
+      <span className="home-feature-label">Research Radar</span>
+      <h2>Watchlists</h2>
+      <p>Build focused lists of companies, monitor live prices, and jump back into research when a ticker starts moving.</p>
+    </div>
+    <span className="market-overview-updated">
+      {namedWatchlists.length} lists
+    </span>
+  </div>
+  <div className="chart-section named-watchlists-section">
   <div className="named-watchlists-heading">
     <h2 className="section-title">Watchlists</h2>
     <form
@@ -11538,18 +11710,34 @@ return (
   ) : (
     <div className="named-watchlists-empty">Create a watchlist to organize stocks.</div>
   )}
+  </div>
 </section>
 )}
 
 {/* LIVE EARNINGS CALENDAR */}
 
 {activePage === "earnings-calendar" && (
-<div className="chart-section calendar-bottom-section" id="earnings-calendar">
+<section className="calendar-page" id="earnings-calendar">
+  <div className="financial-statement-hero calendar-hero">
+    <div>
+      <span className="home-feature-label">Market Schedule</span>
+      <h2>Calendar</h2>
+      <p>Track upcoming earnings, dividends, and IPOs by week with estimates, payout details, report timing, and company context.</p>
+    </div>
+    <span className="market-overview-updated">
+      {isEarningsLoading ? "Refreshing" : `Updated ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`}
+    </span>
+  </div>
+
+<div className="chart-section calendar-bottom-section">
 
   <div className="calendar-heading-row">
-    <h2 className="section-title">
-      Market Calendar
-    </h2>
+    <div>
+      <span className="home-feature-label">{activeCalendarConfig.label}</span>
+      <h2 className="section-title">
+        {activeCalendarConfig.label} Calendar
+      </h2>
+    </div>
     <div className="calendar-week-controls">
       <button
         type="button"
@@ -11577,7 +11765,7 @@ return (
     </div>
   </div>
 
-  <div className="earnings-calendar">
+  <div className={`earnings-calendar calendar-mode-${calendarMode}`}>
     <div className="calendar-mode-toggle" role="tablist" aria-label="Calendar type">
       {CALENDAR_MODES.map((mode) => (
         <button
@@ -11611,7 +11799,11 @@ return (
       })}
     </div>
 
-    {isEarningsLoading ? (
+    {isEarningsLoading && selectedEarningsDay.events?.length ? (
+      <div className="calendar-refreshing-pill">Refreshing latest {activeCalendarConfig.label.toLowerCase()} data...</div>
+    ) : null}
+
+    {isEarningsLoading && !selectedEarningsDay.events?.length ? (
       <div className="calendar-empty">Loading {activeCalendarConfig.label.toLowerCase()} calendar...</div>
     ) : selectedEarningsDay.events?.length ? (
       <div className="calendar-company-list" key={selectedEarningsDate}>
@@ -11712,6 +11904,7 @@ return (
 
 
 </div>
+</section>
 )}
 
 

@@ -8924,6 +8924,15 @@ const epsBeatMissKey = (row = {}) => {
   return row.period ? `date:${row.period}` : null;
 };
 
+const epsBeatMissDateKey = (value) => {
+  const text = String(value || "");
+  const match = text.match(/\d{4}-\d{2}-\d{2}/);
+  return match ? match[0] : null;
+};
+
+const isGenericUpcomingEpsRow = (row = {}) =>
+  /next quarter|upcoming/i.test(`${row.label || ""} ${row.period || ""}`);
+
 const isReportedEpsRow = (row = {}) =>
   toNumberOrNull(row.actual) !== null || toNumberOrNull(row.gaapActual) !== null;
 
@@ -8980,8 +8989,19 @@ const buildEpsBeatMissSeries = (reportedRows = [], nextQuarterEstimate = {}) => 
     fiscalQuarter: nextFiscal.fiscalQuarter
   });
   const nextRowIndex = rows.findIndex((row) =>
-    (nextKey && epsBeatMissKey(row) === nextKey) ||
-    (nextDate && row.period === nextDate)
+    {
+      const rowEstimate = toNumberOrNull(row.estimate);
+      const sameGenericEstimate =
+        rowEstimate !== null &&
+        nextEstimate !== null &&
+        Math.abs(rowEstimate - nextEstimate) < 0.0001 &&
+        (isGenericUpcomingEpsRow(row) || isGenericUpcomingEpsRow({ period: nextPeriod, label: nextLabel }));
+      return !isReportedEpsRow(row) && (
+        (nextKey && epsBeatMissKey(row) === nextKey) ||
+        (nextDate && epsBeatMissDateKey(row.period) === nextDate) ||
+        sameGenericEstimate
+      );
+    }
   );
   if (nextEstimate !== null && nextRowIndex >= 0 && !isReportedEpsRow(rows[nextRowIndex])) {
     rows[nextRowIndex] = {
@@ -9014,14 +9034,17 @@ const buildEpsBeatMissSeries = (reportedRows = [], nextQuarterEstimate = {}) => 
     });
   }
 
-  return rows
+  const sortedRows = rows
     .filter((row) => row.estimate !== null || row.actual !== null || row.gaapActual !== null)
     .sort((a, b) => {
       const periodA = String(a.period || "").startsWith("upcoming:") ? "9999-12-31" : String(a.period || "");
       const periodB = String(b.period || "").startsWith("upcoming:") ? "9999-12-31" : String(b.period || "");
       return periodA.localeCompare(periodB);
-    })
-    .slice(-5);
+    });
+  const finalReportedRows = sortedRows.filter(isReportedEpsRow);
+  const upcomingRows = sortedRows.filter((row) => !isReportedEpsRow(row));
+  const bestUpcomingRow = upcomingRows.find((row) => epsBeatMissDateKey(row.period)) || upcomingRows.at(-1);
+  return (bestUpcomingRow ? [...finalReportedRows, bestUpcomingRow] : finalReportedRows).slice(-5);
 };
 
 const readCachedMarketActivity = (cache, key) => {
@@ -13175,7 +13198,7 @@ app.get("/api/prices", async (req, res) => {
   const prices = {};
   const details = {};
   const savedStocks = await Stock.find({ ticker: { $in: symbols } })
-    .select("ticker data.price data.change data.percentChange data.previousClose data.extendedHours data.logo data.name")
+    .select("ticker data.price data.change data.percentChange data.previousClose data.extendedHours data.logo data.name data.sector data.industry data.country data.exchange")
     .lean();
   const savedBySymbol = new Map(savedStocks.map((stock) => [stock.ticker, stock.data || {}]));
 
@@ -13187,6 +13210,10 @@ app.get("/api/prices", async (req, res) => {
     details[symbol] = {
       name: savedData.name || symbol,
       logo: savedData.logo || getFinnhubLogoUrl(symbol),
+      sector: savedData.sector || null,
+      industry: savedData.industry || null,
+      country: savedData.country || null,
+      exchange: savedData.exchange || null,
       change: toNumberOrNull(savedData.change),
       extendedHours: savedData.extendedHours || null,
       percentChange: !wantsLiveQuotes && savedPercentChange !== null
