@@ -13389,6 +13389,14 @@ app.get("/api/prices", async (req, res) => {
       });
       let extendedHours = null;
 
+      if (
+        wantsLiveQuotes &&
+        cachedHasPercent &&
+        (toNumberOrNull(quote?.c) === null || toNumberOrNull(quote?.dp) === null)
+      ) {
+        return;
+      }
+
       if (!quote || toNumberOrNull(quote.c) === null || toNumberOrNull(quote.dp) === null) {
         const fmpQuote = await resolveWithin(fetchFmpStableQuoteProfile(symbol), 1600, null).catch(() => null);
         quote = normalizeQuotePayload(quote || {}, {
@@ -13399,48 +13407,6 @@ app.get("/api/prices", async (req, res) => {
           high: fmpQuote?.high,
           low: fmpQuote?.low,
           open: fmpQuote?.open
-        });
-      }
-
-      const quickData = (!quote || toNumberOrNull(quote.c) === null || toNumberOrNull(quote.dp) === null)
-        ? await resolveWithin(fetchYahooQuickQuote(symbol), 1800, null) || {}
-        : {};
-      if (quickData && Object.keys(quickData).length) {
-        extendedHours = quickData?.extendedHours || null;
-        quote = normalizeQuotePayload(
-          quote || {},
-          quickData || {}
-        );
-      }
-      if (!quote || toNumberOrNull(quote.c) === null || toNumberOrNull(quote.dp) === null) {
-        const yahooChartQuote = await resolveWithin(fetchYahooChartQuote(symbol), 1800, null);
-        if (!extendedHours && yahooChartQuote?.extendedHours) {
-          extendedHours = yahooChartQuote.extendedHours;
-        }
-        quote = normalizeQuotePayload(quote || {}, {
-          price: yahooChartQuote?.c,
-          change: yahooChartQuote?.d,
-          percentChange: yahooChartQuote?.dp,
-          previousClose: yahooChartQuote?.pc,
-          high: yahooChartQuote?.h,
-          low: yahooChartQuote?.l,
-          open: yahooChartQuote?.o
-        });
-      }
-      if (!quote || toNumberOrNull(quote.c) === null || toNumberOrNull(quote.dp) === null) {
-        const finnhubQuote = await resolveWithin(
-          getFinnhub(`https://finnhub.io/api/v1/quote?symbol=${symbol}`),
-          1800,
-          null
-        );
-        quote = normalizeQuotePayload(quote || {}, {
-          price: finnhubQuote?.c,
-          change: finnhubQuote?.d,
-          percentChange: finnhubQuote?.dp,
-          previousClose: finnhubQuote?.pc,
-          high: finnhubQuote?.h,
-          low: finnhubQuote?.l,
-          open: finnhubQuote?.o
         });
       }
       const price = toNumberOrNull(quote?.c);
@@ -15190,9 +15156,6 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     if (cached?.data && requestedRange === "1D" && wantsFastHistory) {
       return res.json({ ...cached.data, stale: true });
     }
-    if (!canUseYahoo() && cached?.data) {
-      return res.json({ ...cached.data, stale: true });
-    }
     const fmpHistory = await resolveWithin(
       fetchFmpPriceHistory(ticker, requestedRange),
       2400,
@@ -15211,120 +15174,20 @@ app.get("/api/price-history/:ticker", async (req, res) => {
       return res.json(data);
     }
 
-    if (requestedRange === "1D" && wantsFastHistory) {
-      const fallbackHistory = await buildFallbackPriceHistory(requestedTicker, ticker, requestedRange);
-      if (fallbackHistory) {
-        return res.json(fallbackHistory);
-      }
+    if (cached?.data) {
+      return res.json({ ...cached.data, stale: true, refreshing: true });
     }
 
-    const params = {
-      interval: rangeConfig.interval
-    };
-    if (requestedRange === "1D") {
-      params.includePrePost = "true";
-    }
+    return res.status(502).json({ error: "FMP price history unavailable" });
 
-    if (requestedRange === "YTD") {
-      const now = new Date();
-      const startOfYear = Date.UTC(now.getUTCFullYear(), 0, 1, 0, 0, 0);
-      params.period1 = Math.floor(startOfYear / 1000);
-      params.period2 = Math.floor(Date.now() / 1000);
-    } else {
-      params.range = rangeConfig.range;
-    }
-
-    const response = await axios.get(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}`,
-      {
-        params,
-        timeout: requestedRange === "1D" ? 5500 : 8000,
-        headers: YAHOO_CHART_HEADERS
-      }
-    );
-
-    const result = response.data?.chart?.result?.[0];
-    if (!result) {
-      return res.status(404).json({ error: "Price history unavailable" });
-    }
-
-    const timestamps = result.timestamp || [];
-    const quote = result.indicators?.quote?.[0] || {};
-    const adjustedCloses = result.indicators?.adjclose?.[0]?.adjclose || [];
-    const meta = result.meta || {};
-
-    const points = timestamps
-      .map((timestamp, index) => {
-        const price = firstYahooNumber(quote.close?.[index], adjustedCloses[index]);
-        if (price === null) return null;
-        const date = new Date(timestamp * 1000);
-        if (Number.isNaN(date.getTime())) return null;
-        return {
-          time: timestamp * 1000,
-          date: date.toISOString(),
-          price,
-          volume: firstYahooNumber(quote.volume?.[index])
-        };
-      })
-      .filter(Boolean);
-
-    if (!points.length) {
-      return res.status(404).json({ error: "Price history unavailable" });
-    }
-
-    const latestPoint = points[points.length - 1];
-    const latestPrice = firstYahooNumber(meta.regularMarketPrice, latestPoint.price);
-    const rangeStartPrice = points[0]?.price;
-    const previousClose = firstYahooNumber(
-      meta.chartPreviousClose,
-      meta.previousClose,
-      requestedRange === "1D" && points.length > 1 ? points[points.length - 2].price : null,
-      rangeStartPrice
-    );
-    const changeBase = requestedRange === "1D" ? previousClose : rangeStartPrice;
-    const change = latestPrice !== null && changeBase
-      ? latestPrice - changeBase
-      : null;
-    const percentChange = change !== null && changeBase
-      ? (change / changeBase) * 100
-      : null;
-
-    const data = {
-      symbol: requestedTicker,
-      sourceSymbol: ticker,
-      range: requestedRange,
-      interval: rangeConfig.interval,
-      points,
-      latest: {
-        price: latestPrice,
-        change,
-        percentChange,
-        previousClose
-      },
-      updatedAt: new Date().toISOString()
-    };
-
-    priceHistoryCache.set(cacheKey, {
-      fetchedAt: Date.now(),
-      data
-    });
-
-    return res.json(data);
   } catch (err) {
-    setYahooCooldown(err, "price history", req.params.ticker);
+    setFmpCooldown(err, "price history", req.params.ticker);
     const cached = priceHistoryCache.get(`${req.params.ticker.trim().toUpperCase()}:${String(req.query.range || "1D").trim().toUpperCase()}`);
     if (cached?.data) {
       return res.json({ ...cached.data, stale: true });
     }
-    const requestedTicker = req.params.ticker.trim().toUpperCase();
-    const ticker = TICKER_ALIASES[requestedTicker] || requestedTicker;
-    const requestedRange = String(req.query.range || "1D").trim().toUpperCase();
-    const fallbackHistory = await buildFallbackPriceHistory(requestedTicker, ticker, requestedRange);
-    if (fallbackHistory) {
-      return res.json(fallbackHistory);
-    }
-    console.log("Price history failed:", req.params.ticker, err.response?.status || err.message);
-    return res.status(502).json({ error: "Price history unavailable" });
+    console.log("FMP price history failed:", req.params.ticker, err.response?.status || err.message);
+    return res.status(502).json({ error: "FMP price history unavailable" });
   }
 });
 
