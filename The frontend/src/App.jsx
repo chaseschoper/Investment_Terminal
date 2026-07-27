@@ -4756,7 +4756,7 @@ useEffect(() => {
     if (activePage !== "overview" || !symbol || isStockLoading) return;
     const currentSymbol = String(stockData?.symbol || loadedStockSymbol || "").trim().toUpperCase();
     if (currentSymbol && currentSymbol !== symbol) return;
-    const requestKey = symbol;
+    const requestKey = `${symbol}:${financialChartMode}`;
     if (stockSidecarRequestRef.current === requestKey) return;
     stockSidecarRequestRef.current = requestKey;
     let isActive = true;
@@ -4799,13 +4799,13 @@ useEffect(() => {
       } catch (error) {
         console.error("Stock sidecars failed", error);
       }
-    }, 200);
+    }, 0);
 
     return () => {
       isActive = false;
       window.clearTimeout(timer);
     };
-  }, [ticker, loadedStockSymbol, activePage, isStockLoading, stockData?.symbol]);
+  }, [ticker, loadedStockSymbol, activePage, isStockLoading, stockData?.symbol, financialChartMode]);
 
   useEffect(() => () => {
     window.speechSynthesis?.cancel();
@@ -5552,7 +5552,8 @@ const loadUserData = async () => {
     try {
       const cacheKey = `${mode}:${weekStart}`;
       const cachedCalendar = calendarDataCache[cacheKey];
-      if (cachedCalendar?.days?.length) {
+      const cachedCalendarHasEvents = cachedCalendar?.days?.some((day) => day.events?.length);
+      if (cachedCalendarHasEvents) {
         setEarnings(cachedCalendar);
       }
       setIsEarningsLoading(true);
@@ -5567,10 +5568,12 @@ const loadUserData = async () => {
 
       const calendar = earningsRes.data || { days: [] };
       setEarnings(calendar);
-      setCalendarDataCache((cache) => ({
-        ...cache,
-        [cacheKey]: calendar
-      }));
+      if ((calendar.days || []).some((day) => day.events?.length)) {
+        setCalendarDataCache((cache) => ({
+          ...cache,
+          [cacheKey]: calendar
+        }));
+      }
       const availableDates = (calendar.days || []).map((day) => day.date);
       setSelectedEarningsDate((current) => {
         const today = toLocalIsoDate(new Date());

@@ -2657,51 +2657,46 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
   const from = start.toISOString().slice(0, 10);
   const to = end.toISOString().slice(0, 10);
 
-  const endpoints = [
+  const stableParams = requestedRange === "1D"
+    ? { symbol, apikey: process.env.FMP_API_KEY }
+    : { symbol, from, to, apikey: process.env.FMP_API_KEY };
+  const legacyParams = requestedRange === "1D"
+    ? { apikey: process.env.FMP_API_KEY }
+    : { from, to, apikey: process.env.FMP_API_KEY };
+  const endpointCandidates = [
     {
       key: `stable-intraday-${interval}`,
       url: `https://financialmodelingprep.com/stable/historical-chart/${interval}`,
-      params: { symbol, from, to, apikey: process.env.FMP_API_KEY }
+      params: stableParams
     },
     {
       key: `v3-intraday-${interval}`,
       url: `https://financialmodelingprep.com/api/v3/historical-chart/${interval}/${encodeURIComponent(symbol)}`,
-      params: { from, to, apikey: process.env.FMP_API_KEY }
+      params: legacyParams
     }
-  ].filter((endpoint) => canUseFmpEndpoint(endpoint.key, symbol));
+  ];
+  const endpoints = (requestedRange === "1D" ? endpointCandidates.slice(0, 1) : endpointCandidates)
+    .filter((endpoint) => canUseFmpEndpoint(endpoint.key, symbol));
 
-  const dailyRowsPromise = requestedRange === "1D"
-    ? resolveWithin(fetchFmpRecentDailyOhlc(symbol), 350, []).catch((err) => {
-        console.log("FMP daily OHLC skipped:", symbol, err.response?.status || err.message);
-        return [];
-      })
-    : Promise.resolve([]);
-
-  const [endpointPayloads, dailyRows] = await Promise.all([
-    (async () => {
-      const payloads = [];
-      for (const endpoint of endpoints) {
-        try {
-          const response = await axios.get(endpoint.url, {
-            params: endpoint.params,
-            timeout: requestedRange === "1D" ? 1600 : 2200
-          });
-          const rows = Array.isArray(response.data) ? response.data : [];
-          if (rows.length) {
-            payloads.push({ status: "fulfilled", value: rows });
-            break;
-          }
-        } catch (err) {
-        if (isFmpRestrictedStatus(err.response?.status)) {
-          setFmpEndpointCooldown(endpoint.key, err.response?.status, endpoint.key, symbol);
-        }
-          payloads.push({ status: "rejected", reason: err });
-        }
+  const endpointPayloads = [];
+  for (const endpoint of endpoints) {
+    try {
+      const response = await axios.get(endpoint.url, {
+        params: endpoint.params,
+        timeout: requestedRange === "1D" ? 3200 : 2600
+      });
+      const rows = Array.isArray(response.data) ? response.data : [];
+      if (rows.length) {
+        endpointPayloads.push({ status: "fulfilled", value: rows });
+        break;
       }
-      return payloads;
-    })(),
-    dailyRowsPromise
-  ]);
+    } catch (err) {
+      if (isFmpRestrictedStatus(err.response?.status)) {
+        setFmpEndpointCooldown(endpoint.key, err.response?.status, endpoint.key, symbol);
+      }
+      endpointPayloads.push({ status: "rejected", reason: err });
+    }
+  }
 
   const endpointResults = endpointPayloads.map((result) => {
     if (result.status !== "fulfilled") {
@@ -2749,12 +2744,6 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
       const previousRegularClose = requestedRange === "1D"
         ? previousRegularCloseBeforeDate(allPoints, latestTradingDateKey)
         : null;
-      const latestDailyRow = requestedRange === "1D"
-        ? dailyRows.find((row) => row.date === latestTradingDateKey) || null
-        : null;
-      const previousDailyClose = requestedRange === "1D" && latestDailyRow
-        ? toNumberOrNull(dailyRows.filter((row) => row.date < latestDailyRow.date).at(-1)?.close)
-        : null;
       const latestSessionPoints = latestTradingDateKey
         ? allPoints.filter((point) => (point.marketDateKey || point.date.slice(0, 10)) === latestTradingDateKey)
         : [];
@@ -2763,10 +2752,7 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
         : allPoints;
       const points = requestedRange === "1D"
         ? trimOneDayPointsToCurrentRegularSession(
-            applyFmpDailyOhlcAnchors(
-              normalizeFmpOneDayRegularSessionPoints(sessionPoints),
-              latestDailyRow
-            ),
+            normalizeFmpOneDayRegularSessionPoints(sessionPoints),
             latestTradingDateKey
           )
         : sessionPoints;
@@ -2777,7 +2763,7 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
       const firstPoint = points[0];
       const previousPoint = points.at(-2);
       const changeBase = requestedRange === "1D"
-        ? (previousDailyClose ?? previousRegularClose ?? firstPoint.open ?? firstPoint.price)
+        ? (previousRegularClose ?? firstPoint.open ?? firstPoint.price)
         : firstPoint.price;
       const change = latestPoint.price !== null && changeBase
         ? latestPoint.price - changeBase
@@ -2797,10 +2783,10 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
             change,
             percentChange: change !== null && changeBase ? (change / changeBase) * 100 : null,
             previousClose: requestedRange === "1D"
-              ? previousDailyClose ?? previousRegularClose
+              ? previousRegularClose
               : previousPoint?.price ?? null,
             open: requestedRange === "1D"
-              ? latestDailyRow?.open ?? firstPoint.open ?? firstPoint.price
+              ? firstPoint.open ?? firstPoint.price
               : null
           },
           updatedAt: new Date().toISOString()
@@ -8241,56 +8227,6 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {
       ...responseData,
       epsBeatMiss: buildEpsBeatMissSeries(responseData.epsBeatMiss || [], visibleNextQuarterEstimate)
     };
-  }
-  const visibleReportedBeatMissRows = Array.isArray(responseData.epsBeatMiss)
-    ? responseData.epsBeatMiss.filter(isReportedEpsRow)
-    : [];
-  const visibleAnnualPeRows = Array.isArray(responseData.historicalPe)
-    ? responseData.historicalPe.filter((row) => !row?.isInterim && !row?.isCurrent && toNumberOrNull(row?.pe) !== null)
-    : [];
-  const visibleQuarterlyPeRows = Array.isArray(responseData.historicalPe)
-    ? responseData.historicalPe.filter((row) => row?.isInterim && toNumberOrNull(row?.pe) !== null)
-    : [];
-  if (visibleReportedBeatMissRows.length < 4 || visibleAnnualPeRows.length < 3 || (options.wantsQuarterlyHistory && visibleQuarterlyPeRows.length < 4)) {
-    const [fastEpsRows, fastAnnualPeRows, fastQuarterlyPeRows] = await Promise.all([
-      visibleReportedBeatMissRows.length < 4
-        ? resolveWithin(fetchFmpEpsSurprisesFast(ticker), 1100, [])
-        : Promise.resolve([]),
-      visibleAnnualPeRows.length < 3
-        ? resolveWithin(fetchFmpHistoricalPe(ticker), 1100, [])
-        : Promise.resolve([]),
-      options.wantsQuarterlyHistory && visibleQuarterlyPeRows.length < 4
-        ? resolveWithin(calculateFmpQuarterlyHistoricalPe(ticker, responseData.revenueData || [], { skipDirectRatio: true }), 1800, [])
-        : Promise.resolve([])
-    ]);
-
-    if (Array.isArray(fastEpsRows) && fastEpsRows.length) {
-      responseData = {
-        ...responseData,
-        epsBeatMiss: buildEpsBeatMissSeries(
-          mergeEpsBeatMissRows(responseData.epsBeatMiss || [], fastEpsRows),
-          responseData.analystEstimates?.nextQuarter || {}
-        ),
-        epsBeatMissCheckedAt: responseData.epsBeatMissCheckedAt || new Date().toISOString()
-      };
-    }
-    if ((Array.isArray(fastAnnualPeRows) && fastAnnualPeRows.length) || (Array.isArray(fastQuarterlyPeRows) && fastQuarterlyPeRows.length)) {
-      const annualPeRows = Array.isArray(fastAnnualPeRows) && fastAnnualPeRows.length
-        ? fastAnnualPeRows
-        : visibleAnnualPeRows;
-      const interimPeRows = Array.isArray(fastQuarterlyPeRows) && fastQuarterlyPeRows.length
-        ? fastQuarterlyPeRows
-        : visibleQuarterlyPeRows;
-      responseData = {
-        ...responseData,
-        historicalPe: mergeHistoricalPeRows(annualPeRows, interimPeRows),
-        historicalPeSource: interimPeRows.length
-          ? "FMP annual ratios / FMP calculated quarterly PE"
-          : responseData.historicalPeSource || "FMP annual ratios",
-        historicalPeVersion: HISTORICAL_PE_VERSION,
-        historicalPeCheckedAt: responseData.historicalPeCheckedAt || new Date().toISOString()
-      };
-    }
   }
   const existingReportedBeatMissRows = Array.isArray(responseData.epsBeatMiss)
     ? responseData.epsBeatMiss.filter(isReportedEpsRow)
