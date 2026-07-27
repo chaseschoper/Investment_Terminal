@@ -384,6 +384,7 @@ const livePriceCache = new Map();
 const fmpDailyOhlcCache = new Map();
 const fmpEndpointCooldowns = new Map();
 const activePriceRefreshes = new Set();
+const activeQuarterlyHistoricalPeFetches = new Set();
 let marketIndexRefreshPromise = null;
 let marketHeatmapRefreshPromise = null;
 let yahooCooldownUntil = 0;
@@ -1652,6 +1653,30 @@ function hasFmpMetricCardPayload(metricCards = {}) {
   );
 }
 
+function countFmpMetricValues(metricCards = {}, fields = FMP_METRIC_CARD_FIELDS) {
+  return (Array.isArray(fields) ? fields : [])
+    .filter((field) => toNumberOrNull(metricCards[field]) !== null)
+    .length;
+}
+
+function hasUsableFmpValuationPayload(metricCards = {}) {
+  return countFmpMetricValues(metricCards, FMP_VALUATION_METRIC_FIELDS) >= 12 ||
+    (
+      toNumberOrNull(metricCards.pe) !== null &&
+      toNumberOrNull(metricCards.priceToSales) !== null &&
+      toNumberOrNull(metricCards.returnOnEquity) !== null
+    );
+}
+
+function hasUsableFmpBalancePayload(metricCards = {}) {
+  return metricCards.isAdr === true ||
+    countFmpMetricValues(metricCards, FMP_BALANCE_SHEET_METRIC_FIELDS) >= 4 ||
+    (
+      toNumberOrNull(metricCards.totalDebt) !== null &&
+      toNumberOrNull(metricCards.cashAndCashEquivalents ?? metricCards.totalCash) !== null
+    );
+}
+
 function buildFmpMetricCardUpdate(metricCards = {}) {
   const clean = emptyFmpMetricCardFields();
   FMP_VALUATION_METRIC_FIELDS.forEach((field) => {
@@ -1674,10 +1699,10 @@ function buildFmpMetricCardUpdate(metricCards = {}) {
   clean.metricCardsSource = "FMP metric cards v22";
   clean.valuationMetricsCheckedAt = new Date().toISOString();
   clean.balanceSheetCheckedAt = new Date().toISOString();
-  clean.valuationMetricsVersion = metricCards._valuationMetricsComplete === false
+  clean.valuationMetricsVersion = metricCards._valuationMetricsComplete === false || !hasUsableFmpValuationPayload(clean)
     ? null
     : VALUATION_METRICS_VERSION;
-  clean.balanceSheetMetricsVersion = metricCards._balanceSheetMetricsComplete === false
+  clean.balanceSheetMetricsVersion = metricCards._balanceSheetMetricsComplete === false || !hasUsableFmpBalancePayload(clean)
     ? null
     : BALANCE_SHEET_METRICS_VERSION;
   return clean;
@@ -1685,7 +1710,9 @@ function buildFmpMetricCardUpdate(metricCards = {}) {
 
 function isCompleteFmpMetricCardPayload(metricCards = {}) {
   return metricCards._valuationMetricsComplete !== false &&
-    metricCards._balanceSheetMetricsComplete !== false;
+    metricCards._balanceSheetMetricsComplete !== false &&
+    hasUsableFmpValuationPayload(metricCards) &&
+    hasUsableFmpBalancePayload(metricCards);
 }
 
 function buildNonNullFmpMetricCardUpdate(metricCards = {}) {
@@ -1728,6 +1755,8 @@ async function fetchFmpMetricCards(ticker) {
   if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return {};
 
   try {
+    const metricCardsGet = (label, endpoints, timeoutMs = 1200, fallback = null) =>
+      resolveWithin(getFmpData(symbol, label, endpoints), timeoutMs, fallback);
     const [
       quoteData,
       profileData,
@@ -1741,17 +1770,17 @@ async function fetchFmpMetricCards(ticker) {
       ratingData,
       priceTargetData
     ] = await Promise.all([
-      getFmpData(symbol, "metric cards quote", ["/stable/quote?symbol={ticker}"]),
-      getFmpData(symbol, "metric cards profile", ["/stable/profile?symbol={ticker}"]),
-      getFmpData(symbol, "metric cards ratios ttm", ["/stable/ratios-ttm?symbol={ticker}"]),
-      getFmpData(symbol, "metric cards key metrics ttm", ["/stable/key-metrics-ttm?symbol={ticker}"]),
-      getFmpData(symbol, "metric cards balance sheet quarter", ["/stable/balance-sheet-statement?symbol={ticker}&period=quarter&limit=1"]),
-      getFmpData(symbol, "metric cards cash flow quarter", ["/stable/cash-flow-statement?symbol={ticker}&period=quarter&limit=4"]),
-      getFmpData(symbol, "metric cards income quarter", ["/stable/income-statement?symbol={ticker}&period=quarter&limit=4"]),
-      getFmpData(symbol, "metric cards annual growth", ["/stable/financial-growth?symbol={ticker}&period=annual&limit=2"]),
-      getFmpData(symbol, "metric cards analyst estimates", ["/stable/analyst-estimates?symbol={ticker}&period=annual&limit=10"]),
-      getFmpData(symbol, "metric cards rating snapshot", ["/stable/ratings-snapshot?symbol={ticker}"]),
-      getFmpData(symbol, "metric cards price target summary", ["/stable/price-target-summary?symbol={ticker}"])
+      metricCardsGet("metric cards quote", ["/stable/quote?symbol={ticker}"], 900),
+      metricCardsGet("metric cards profile", ["/stable/profile?symbol={ticker}"], 900),
+      metricCardsGet("metric cards ratios ttm", ["/stable/ratios-ttm?symbol={ticker}"], 1500),
+      metricCardsGet("metric cards key metrics ttm", ["/stable/key-metrics-ttm?symbol={ticker}"], 1500),
+      metricCardsGet("metric cards balance sheet quarter", ["/stable/balance-sheet-statement?symbol={ticker}&period=quarter&limit=1"], 1500),
+      metricCardsGet("metric cards cash flow quarter", ["/stable/cash-flow-statement?symbol={ticker}&period=quarter&limit=4"], 1500),
+      metricCardsGet("metric cards income quarter", ["/stable/income-statement?symbol={ticker}&period=quarter&limit=4"], 1500),
+      metricCardsGet("metric cards annual growth", ["/stable/financial-growth?symbol={ticker}&period=annual&limit=2"], 900),
+      metricCardsGet("metric cards analyst estimates", ["/stable/analyst-estimates?symbol={ticker}&period=annual&limit=10"], 1500),
+      metricCardsGet("metric cards rating snapshot", ["/stable/ratings-snapshot?symbol={ticker}"], 700),
+      metricCardsGet("metric cards price target summary", ["/stable/price-target-summary?symbol={ticker}"], 700)
     ]);
 
     const quote = Array.isArray(quoteData) ? quoteData[0] || {} : quoteData || {};
@@ -8057,7 +8086,28 @@ async function ensureQuarterlyHistoricalPeForResponse(ticker, data = {}, timeout
       []
     );
   }
-  if (!Array.isArray(quarterlyRows) || !quarterlyRows.length) return data;
+  if (!Array.isArray(quarterlyRows) || !quarterlyRows.length) {
+    const historicalPeCheckedAt = new Date().toISOString();
+    const patchedData = {
+      ...data,
+      historicalPeVersion: HISTORICAL_PE_VERSION,
+      historicalPeCheckedAt,
+      historicalPeSource: data.historicalPeSource || "FMP annual ratios"
+    };
+    Stock.findOneAndUpdate(
+      { ticker },
+      {
+        $set: {
+          "data.historicalPeVersion": HISTORICAL_PE_VERSION,
+          "data.historicalPeCheckedAt": historicalPeCheckedAt,
+          "data.historicalPeSource": patchedData.historicalPeSource
+        }
+      }
+    ).catch((err) => {
+      console.log("Quarterly historical PE checked cache skipped:", ticker, err.message);
+    });
+    return patchedData;
+  }
 
   const annualRows = existingRows.filter((row) => !row?.isInterim && !row?.isCurrent);
   const historicalPe = mergeHistoricalPeRows(annualRows, quarterlyRows);
@@ -8303,7 +8353,25 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {
     Array.isArray(responseData.revenueData) &&
     responseData.revenueData.some((row) => row?.isInterim)
   ) {
-    responseData = await ensureQuarterlyHistoricalPeForResponse(ticker, responseData, 650);
+    const maybeHistoricalPe = await resolveWithin(
+      ensureQuarterlyHistoricalPeForResponse(ticker, responseData, 450),
+      500,
+      null
+    );
+    if (maybeHistoricalPe) {
+      responseData = maybeHistoricalPe;
+    } else if (!activeQuarterlyHistoricalPeFetches.has(ticker)) {
+      activeQuarterlyHistoricalPeFetches.add(ticker);
+      backgroundPatches.push(
+        ensureQuarterlyHistoricalPeForResponse(ticker, responseData, 3200, { force: true })
+          .catch((err) => {
+            console.log("Quarterly historical PE background repair skipped:", ticker, err.message);
+          })
+          .finally(() => {
+            activeQuarterlyHistoricalPeFetches.delete(ticker);
+          })
+      );
+    }
   }
   if (backgroundPatches.length) {
     Promise.allSettled(backgroundPatches).catch(() => {});
@@ -11866,6 +11934,8 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     toNumberOrNull(fastData.netCash) !== null ||
     toNumberOrNull(fastData.equityBookValue) !== null ||
     toNumberOrNull(fastData.workingCapital) !== null;
+  const hasUsableValuationSnapshot = hasUsableFmpValuationPayload(fastData);
+  const hasUsableBalanceSnapshot = hasBalanceSnapshotValue && hasUsableFmpBalancePayload(fastData);
   const fmpMetricCardValues = Object.keys(fmpValuation || {}).length
     ? {
         ...Object.fromEntries(
@@ -11896,11 +11966,13 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     ...fmpMetricCardValues,
     ...fmpBalanceCardValues,
     valuationMetricsCheckedAt: new Date().toISOString(),
-    valuationMetricsVersion: VALUATION_METRICS_VERSION,
-    balanceSheetCheckedAt: hasBalanceSnapshotValue
+    valuationMetricsVersion: hasUsableValuationSnapshot
+      ? VALUATION_METRICS_VERSION
+      : previousData.valuationMetricsVersion,
+    balanceSheetCheckedAt: hasUsableBalanceSnapshot
       ? new Date().toISOString()
       : previousData.balanceSheetCheckedAt,
-    balanceSheetMetricsVersion: hasBalanceSnapshotValue
+    balanceSheetMetricsVersion: hasUsableBalanceSnapshot
       ? BALANCE_SHEET_METRICS_VERSION
       : previousData.balanceSheetMetricsVersion,
     forwardPE: firstNumber(

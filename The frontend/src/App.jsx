@@ -5184,9 +5184,18 @@ useEffect(() => {
         stableResponse.valuationMetricsVersion === VALUATION_METRICS_VERSION;
       const hasCurrentBalanceSheetMetrics =
         stableResponse.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION;
+      const hasUsableMetricCards = getMetricSnapshotScore(stableResponse) >= 18;
+      const hasUsableBalanceSheetMetrics = Boolean(
+        isNumber(stableResponse.cashAndCashEquivalents ?? stableResponse.totalCash) ||
+        isNumber(stableResponse.totalDebt) ||
+        isNumber(stableResponse.netCash) ||
+        isNumber(stableResponse.equityBookValue) ||
+        isNumber(stableResponse.workingCapital)
+      );
       const needsMoreMetricCards =
         attempt < 20 &&
-        !hasCurrentValuationMetrics;
+        !hasCurrentValuationMetrics &&
+        !hasUsableMetricCards;
       const needsNewStockWarmup =
         (!hadCachedStock || attempt < 30) &&
         shouldKeepWarmingNewStock(stableResponse);
@@ -5201,6 +5210,7 @@ useEffect(() => {
         !hasNextQuarterData(stableResponse);
       const needsBalanceSheetMetrics =
         attempt < 20 &&
+        !hasUsableBalanceSheetMetrics &&
         (
           !hasCurrentBalanceSheetMetrics ||
           !stableResponse.balanceSheetCheckedAt
@@ -6528,8 +6538,10 @@ const shouldRenderMetricCard = (value) =>
   hasMetricCardValue(value) || areMetricsRefreshing || isBalanceSheetMetricsRefreshing;
 const hasCurrentFmpValuationMetrics = stockData?.valuationMetricsVersion === VALUATION_METRICS_VERSION;
 const hasCurrentFmpBalanceMetrics = stockData?.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION;
-const fmpMetricValue = (value) => hasCurrentFmpValuationMetrics ? value : null;
-const fmpBalanceValue = (value) => hasCurrentFmpBalanceMetrics ? value : null;
+const fmpMetricValue = (value) =>
+  hasCurrentFmpValuationMetrics || hasMetricCardValue(value) ? value : null;
+const fmpBalanceValue = (value) =>
+  hasCurrentFmpBalanceMetrics || hasMetricCardValue(value) ? value : null;
 const metricCardItems = [
   { label: "Market Cap", raw: stockData.marketCap, value: metricValue(formatBillions(stockData.marketCap)) },
   { label: "Beta", raw: stockData.beta, value: metricValue(formatPlain(stockData.beta)) },
