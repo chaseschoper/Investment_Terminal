@@ -132,10 +132,31 @@ const rangeLimitForPeriod = (rangeId, period) => {
   return isQuarterly ? range.years * 4 : range.years;
 };
 
+const historyRowSortValue = (row = {}) => {
+  const dateValue = row.date || row.reportDate || row.fillingDate || row.acceptedDate;
+  if (dateValue) {
+    const time = new Date(`${String(dateValue).slice(0, 10)}T12:00:00`).getTime();
+    if (!Number.isNaN(time)) return time;
+  }
+
+  const year = Number(row.year);
+  if (!Number.isFinite(year)) return null;
+  const periodText = String(row.period || row.fiscalQuarter || "").toUpperCase();
+  const quarterMatch = periodText.match(/Q([1-4])/);
+  const quarter = quarterMatch ? Number(quarterMatch[1]) : 0;
+  return year * 10 + quarter;
+};
+
 const filterRowsByHistoryRange = (rows = [], rangeId = "5", mode = "annual") => {
+  if (!Array.isArray(rows)) return [];
   if (rangeId === "max") return rows;
   const limit = rangeLimitForPeriod(rangeId, mode);
-  return Array.isArray(rows) ? rows.slice(-limit) : [];
+  if (!Number.isFinite(limit) || rows.length <= limit) return rows;
+
+  const firstValue = historyRowSortValue(rows[0]);
+  const lastValue = historyRowSortValue(rows.at(-1));
+  const newestFirst = firstValue !== null && lastValue !== null && firstValue > lastValue;
+  return newestFirst ? rows.slice(0, limit).reverse() : rows.slice(-limit);
 };
 
 const filterFinancialStatementByHistoryRange = (statementData, rangeId = "5", period = "annual") => {
