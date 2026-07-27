@@ -2768,13 +2768,6 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
       if (points.length < 2) return { status: "fulfilled", value: null };
 
       const latestPoint = points.at(-1);
-      if (
-        requestedRange === "1D" &&
-        isLikelyUsMarketSession() &&
-        Date.now() - latestPoint.time > 45 * 60 * 1000
-      ) {
-        return { status: "fulfilled", value: null };
-      }
       const firstPoint = points[0];
       const previousPoint = points.at(-2);
       const changeBase = requestedRange === "1D"
@@ -8023,7 +8016,9 @@ async function ensureQuarterlyHistoricalPeForResponse(ticker, data = {}, timeout
     return data;
   }
 
-  const ratioQuarterlyRows = await resolveWithin(fetchFmpQuarterlyHistoricalPe(ticker), timeoutMs, []);
+  const ratioQuarterlyRows = options.force
+    ? []
+    : await resolveWithin(fetchFmpQuarterlyHistoricalPe(ticker), timeoutMs, []);
   if (Array.isArray(ratioQuarterlyRows) && ratioQuarterlyRows.length >= 4) {
     const annualRows = existingRows.filter((row) => !row?.isInterim && !row?.isCurrent);
     const historicalPe = mergeHistoricalPeRows(annualRows, ratioQuarterlyRows);
@@ -8297,56 +8292,42 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {
     toNumberOrNull(visibleNextQuarterEstimate.revenue) !== null ||
     visibleNextQuarterEstimate.date
   ) {
-    const existingReportedBeatMissRows = Array.isArray(responseData.epsBeatMiss)
-      ? responseData.epsBeatMiss.filter(isReportedEpsRow)
-      : [];
-    const hasOnlyFmpReportedBeatMissRows =
-      existingReportedBeatMissRows.every(isFmpEpsBeatMissRow);
-    if (existingReportedBeatMissRows.length < 4 || !responseData.epsBeatMissCheckedAt || !hasOnlyFmpReportedBeatMissRows) {
-      const fastBeatMissRows = await resolveWithin(fetchFmpEpsSurprisesFast(ticker), 900, []);
-      if (Array.isArray(fastBeatMissRows) && fastBeatMissRows.length) {
-        responseData = {
-          ...responseData,
-          epsBeatMiss: buildEpsBeatMissSeries(
-            mergeEpsBeatMissRows(responseData.epsBeatMiss || [], fastBeatMissRows),
-            visibleNextQuarterEstimate
-          )
-        };
-      }
-      if (!activeEpsBeatMissFetches.has(ticker)) {
-        activeEpsBeatMissFetches.add(ticker);
-        backgroundPatches.push(
-          publishEpsBeatMissSnapshot(ticker)
-            .catch((err) => {
-              console.log("EPS beat/miss background repair skipped:", ticker, err.message);
-            })
-            .finally(() => {
-              activeEpsBeatMissFetches.delete(ticker);
-            })
-        );
-      }
-    }
     responseData = {
       ...responseData,
       epsBeatMiss: buildEpsBeatMissSeries(responseData.epsBeatMiss || [], visibleNextQuarterEstimate)
     };
+  }
+  const existingReportedBeatMissRows = Array.isArray(responseData.epsBeatMiss)
+    ? responseData.epsBeatMiss.filter(isReportedEpsRow)
+    : [];
+  const hasOnlyFmpReportedBeatMissRows =
+    existingReportedBeatMissRows.every(isFmpEpsBeatMissRow);
+  if (
+    (existingReportedBeatMissRows.length < 4 || !responseData.epsBeatMissCheckedAt || !hasOnlyFmpReportedBeatMissRows) &&
+    !activeEpsBeatMissFetches.has(ticker)
+  ) {
+    activeEpsBeatMissFetches.add(ticker);
+    backgroundPatches.push(
+      wait(2500)
+        .then(() => publishEpsBeatMissSnapshot(ticker))
+        .catch((err) => {
+          console.log("EPS beat/miss background repair skipped:", ticker, err.message);
+        })
+        .finally(() => {
+          activeEpsBeatMissFetches.delete(ticker);
+        })
+    );
   }
   if (
     options.wantsQuarterlyHistory &&
     Array.isArray(responseData.revenueData) &&
     responseData.revenueData.some((row) => row?.isInterim)
   ) {
-    const maybeHistoricalPe = await resolveWithin(
-      ensureQuarterlyHistoricalPeForResponse(ticker, responseData, 450),
-      500,
-      null
-    );
-    if (maybeHistoricalPe) {
-      responseData = maybeHistoricalPe;
-    } else if (!activeQuarterlyHistoricalPeFetches.has(ticker)) {
+    if (!activeQuarterlyHistoricalPeFetches.has(ticker)) {
       activeQuarterlyHistoricalPeFetches.add(ticker);
       backgroundPatches.push(
-        ensureQuarterlyHistoricalPeForResponse(ticker, responseData, 3200, { force: true })
+        wait(4000)
+          .then(() => ensureQuarterlyHistoricalPeForResponse(ticker, responseData, 3200, { force: true }))
           .catch((err) => {
             console.log("Quarterly historical PE background repair skipped:", ticker, err.message);
           })
@@ -8369,6 +8350,109 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {
       clientData.analystEstimates?.nextQuarter || {}
     )
   };
+}
+
+async function buildFastStockSidecars(ticker, data = {}) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol) return {};
+  const existingHistoricalPe = Array.isArray(data.historicalPe) ? data.historicalPe : [];
+  const existingAnnualPeRows = existingHistoricalPe.filter((row) => !row?.isInterim && !row?.isCurrent);
+  const existingQuarterlyPeRows = existingHistoricalPe.filter((row) =>
+    row?.isInterim &&
+    toNumberOrNull(row?.pe) !== null
+  );
+  const existingEpsRows = Array.isArray(data.epsBeatMiss) ? data.epsBeatMiss : [];
+  const reportedEpsRows = existingEpsRows.filter(isReportedEpsRow);
+  const currentNextQuarter = data.analystEstimates?.nextQuarter || {};
+  const needsQuarterEstimate = !hasCompleteNextQuarterEstimate(currentNextQuarter);
+  const needsEpsRows = reportedEpsRows.length < 4 || !data.epsBeatMissCheckedAt;
+  const needsAnnualPe = existingAnnualPeRows.length < 3;
+  const needsQuarterlyPe = false;
+
+  const [quarterEstimate, epsRows, annualPeRows, quarterlyPeRows] = await Promise.all([
+    needsQuarterEstimate
+      ? resolveWithin(fetchCalendarQuarterEstimate(symbol, { fast: true }), 1600, currentNextQuarter)
+      : Promise.resolve(currentNextQuarter),
+    needsEpsRows
+      ? resolveWithin(fetchFmpEpsSurprises(symbol), 2400, [])
+      : Promise.resolve([]),
+    needsAnnualPe
+      ? resolveWithin(fetchFmpHistoricalPe(symbol), 1600, [])
+      : Promise.resolve([]),
+    needsQuarterlyPe
+      ? resolveWithin(fetchFmpQuarterlyHistoricalPe(symbol), 1600, [])
+      : Promise.resolve([])
+  ]);
+
+  const hasQuarterEstimate =
+    toNumberOrNull(quarterEstimate?.eps) !== null ||
+    toNumberOrNull(quarterEstimate?.revenue) !== null ||
+    Boolean(quarterEstimate?.date);
+  const nextQuarter = hasQuarterEstimate
+    ? {
+        revenue: normalizeStatementDollars(quarterEstimate.revenue),
+        earnings: null,
+        eps: toNumberOrNull(quarterEstimate.eps),
+        date: quarterEstimate.date || null,
+        fiscalQuarter: quarterEstimate.fiscalQuarter || null,
+        source: quarterEstimate.source || "FMP earnings calendar"
+      }
+    : data.analystEstimates?.nextQuarter || {};
+  const checkedAt = new Date().toISOString();
+  const epsBeatMiss = needsEpsRows
+    ? buildEpsBeatMissSeries(
+        mergeEpsBeatMissRows(data.epsBeatMiss || [], epsRows || []),
+        nextQuarter
+      )
+    : buildEpsBeatMissSeries(data.epsBeatMiss || [], nextQuarter);
+  const baseAnnualPeRows = Array.isArray(annualPeRows) && annualPeRows.length
+    ? annualPeRows
+    : existingAnnualPeRows;
+  const historicalPe = Array.isArray(quarterlyPeRows) && quarterlyPeRows.length
+    ? mergeHistoricalPeRows(baseAnnualPeRows, quarterlyPeRows)
+    : mergeHistoricalPeRows(baseAnnualPeRows, existingHistoricalPe.filter((row) => row?.isInterim || row?.isCurrent));
+  const patch = {
+    analystEstimates: {
+      ...(data.analystEstimates || {}),
+      ...(hasQuarterEstimate ? { nextQuarter } : {})
+    },
+    analystEstimatesSources: {
+      ...(data.analystEstimatesSources || {}),
+      ...(hasQuarterEstimate ? { nextQuarter: nextQuarter.source } : {})
+    },
+    quarterEstimateCheckedAt: hasQuarterEstimate ? checkedAt : data.quarterEstimateCheckedAt,
+    estimateDataVersion: hasQuarterEstimate ? STOCK_ESTIMATE_VERSION : data.estimateDataVersion,
+    epsBeatMiss,
+    epsBeatMissCheckedAt: needsEpsRows ? checkedAt : data.epsBeatMissCheckedAt,
+    historicalPe,
+    historicalPeSource: quarterlyPeRows?.length
+      ? "FMP annual ratios / FMP quarterly ratios"
+      : data.historicalPeSource || "FMP annual ratios",
+    historicalPeVersion: HISTORICAL_PE_VERSION,
+    historicalPeCheckedAt: checkedAt
+  };
+
+  const set = {
+    "data.epsBeatMiss": patch.epsBeatMiss,
+    ...(needsEpsRows ? { "data.epsBeatMissCheckedAt": patch.epsBeatMissCheckedAt } : {}),
+    ...(historicalPe.length ? {
+      "data.historicalPe": patch.historicalPe,
+      "data.historicalPeSource": patch.historicalPeSource,
+      "data.historicalPeVersion": patch.historicalPeVersion,
+      "data.historicalPeCheckedAt": patch.historicalPeCheckedAt
+    } : {})
+  };
+  if (hasQuarterEstimate) {
+    set["data.analystEstimates.nextQuarter"] = nextQuarter;
+    set["data.analystEstimatesSources.nextQuarter"] = nextQuarter.source;
+    set["data.quarterEstimateCheckedAt"] = patch.quarterEstimateCheckedAt;
+    set["data.estimateDataVersion"] = STOCK_ESTIMATE_VERSION;
+  }
+  Stock.findOneAndUpdate({ ticker: symbol }, { $set: set }).catch((err) => {
+    console.log("Fast stock sidecar cache skipped:", symbol, err.message);
+  });
+
+  return patch;
 }
 
 async function fetchYahooTimeSeriesFinancials(ticker) {
@@ -9466,7 +9550,7 @@ async function fetchFmpEpsSurprises(ticker) {
       .filter((item) => String(item.symbol || "").trim().toUpperCase() === symbol)
       .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
       .map((item) => normalizeFmpEpsItem(item, "FMP earnings history"))
-      .filter((item) => item.period && (item.estimate !== null || item.actual !== null || item.gaapActual !== null));
+      .filter((item) => item.period && (item.actual !== null || item.gaapActual !== null));
 
     const data = mergeEpsBeatMissRows(earningsHistoryRows)
       .sort((a, b) => String(a.period).localeCompare(String(b.period)))
@@ -9531,7 +9615,7 @@ async function fetchFmpEpsSurprisesFast(ticker) {
     const result = (Array.isArray(rows) ? rows : rows ? [rows] : [])
       .filter((item) => !item.symbol || String(item.symbol || "").trim().toUpperCase() === symbol)
       .map((item) => normalizeRow(item))
-      .filter((item) => item.period && (item.estimate !== null || item.actual !== null))
+      .filter((item) => item.period && item.actual !== null)
       .sort((a, b) => String(a.period).localeCompare(String(b.period)))
       .slice(-5);
     return writeCachedMarketActivity(
@@ -13612,6 +13696,14 @@ function startStockFetch(ticker) {
     });
 }
 
+function deferStockFetch(ticker, delayMs = 1800) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || activeStockFetches.has(symbol)) return;
+  setTimeout(() => {
+    if (!activeStockFetches.has(symbol)) startStockFetch(symbol);
+  }, delayMs);
+}
+
 function enqueueMarketActivitySnapshot(ticker, priority = false) {
   if (!ticker || queuedMarketActivityFetches.has(ticker)) return;
   if (marketActivityQueue.length >= 30) {
@@ -15672,6 +15764,64 @@ app.get("/api/price-history/:ticker", async (req, res) => {
       return res.json(data);
     }
 
+    const dailyRows = requestedRange === "1D"
+      ? await resolveWithin(fetchFmpRecentDailyOhlc(ticker), 900, [])
+      : [];
+    if (Array.isArray(dailyRows) && dailyRows.length >= 2) {
+      const latestDailyRow = dailyRows.at(-1);
+      const previousDailyRow = dailyRows.at(-2);
+      const openPrice = toNumberOrNull(latestDailyRow.open);
+      const closePrice = toNumberOrNull(latestDailyRow.close);
+      const previousClose = toNumberOrNull(previousDailyRow.close);
+      const sessionOpenDate = parseFmpMarketDateTime(`${latestDailyRow.date} 09:30:00`);
+      const sessionCloseDate = parseFmpMarketDateTime(`${latestDailyRow.date} 16:00:00`);
+      if (openPrice !== null && closePrice !== null && sessionOpenDate && sessionCloseDate) {
+        const change = previousClose ? closePrice - previousClose : closePrice - openPrice;
+        const data = {
+          symbol: requestedTicker,
+          sourceSymbol: ticker,
+          range: requestedRange,
+          interval: "1d",
+          stale: true,
+          refreshing: true,
+          source: "FMP daily price",
+          points: [
+            {
+              time: sessionOpenDate.getTime(),
+              date: sessionOpenDate.toISOString(),
+              marketDateKey: latestDailyRow.date,
+              price: openPrice,
+              open: openPrice,
+              close: openPrice,
+              volume: null
+            },
+            {
+              time: sessionCloseDate.getTime(),
+              date: sessionCloseDate.toISOString(),
+              marketDateKey: latestDailyRow.date,
+              price: closePrice,
+              open: openPrice,
+              close: closePrice,
+              volume: toNumberOrNull(latestDailyRow.volume)
+            }
+          ],
+          latest: {
+            price: closePrice,
+            change,
+            percentChange: change !== null && previousClose ? (change / previousClose) * 100 : null,
+            previousClose,
+            open: openPrice
+          },
+          updatedAt: new Date().toISOString()
+        };
+      priceHistoryCache.set(cacheKey, {
+        fetchedAt: Date.now(),
+        data
+      });
+      return res.json(data);
+      }
+    }
+
     if (cached?.data) {
       return res.json({ ...cached.data, stale: true, refreshing: true });
     }
@@ -15782,6 +15932,30 @@ app.get("/api/etf/:ticker", async (req, res) => {
   }
 });
 
+app.get("/api/stock-sidecars/:ticker", async (req, res) => {
+  try {
+    const requestedTicker = req.params.ticker.trim().toUpperCase();
+    const ticker = TICKER_ALIASES[requestedTicker] || requestedTicker;
+
+    if (!ticker || ticker.length > 10) {
+      return res.status(400).json({ error: "Invalid ticker" });
+    }
+
+    const stock = await Stock.findOne({ ticker }).lean().catch(() => null);
+    const data = stock?.data || buildMinimalStockSnapshot(ticker);
+    const patch = await buildFastStockSidecars(ticker, data);
+    return res.json({
+      ticker: requestedTicker,
+      sourceSymbol: ticker,
+      ...patch,
+      updatedAt: new Date().toISOString()
+    });
+  } catch (err) {
+    console.log("Stock sidecars failed:", req.params.ticker, err.response?.status || err.message);
+    return res.status(502).json({ error: "Stock sidecars unavailable" });
+  }
+});
+
 app.get("/api/stock/:ticker", async (req, res) => {
   try {
     const requestedTicker = req.params.ticker.trim().toUpperCase();
@@ -15818,7 +15992,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
         }
       );
 
-      startStockFetch(ticker);
+      deferStockFetch(ticker);
       const hydrated = await getHydratedStockDataForFirstResponse(
         ticker,
         initialData,
@@ -15857,7 +16031,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           );
         }
 
-        startStockFetch(ticker);
+        deferStockFetch(ticker);
       }
 
       if (stock.data && Object.keys(stock.data).length) {
@@ -15933,7 +16107,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           .then(() => hasNewerFmpQuarterThanCached(ticker, stock.data || {}))
           .then((hasNewerQuarter) => {
             if (hasNewerQuarter) {
-              startStockFetch(ticker);
+              deferStockFetch(ticker);
             } else {
               markFinancialHistoryFreshnessChecked(ticker);
             }
@@ -15952,7 +16126,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
           isCoreIncomplete ||
           stock.data?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION;
         if (needsImmediateFastRefresh) {
-          startStockFetch(ticker);
+          deferStockFetch(ticker);
         } else {
           startFullStockRefresh(ticker);
         }
@@ -16009,7 +16183,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
               updatedAt: new Date()
             }
           );
-          startStockFetch(ticker);
+          deferStockFetch(ticker);
           maybeEnqueueMarketActivitySnapshot(ticker, responseData);
           maybeEnqueueSupplementalSnapshots(ticker, responseData);
 
@@ -16047,7 +16221,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
         }
       );
 
-      startStockFetch(ticker);
+      deferStockFetch(ticker);
 
       if (stock.data && Object.keys(stock.data).length) {
         const responseData = await prepareCachedStockResponseDataFast(ticker, stock.data, { wantsQuarterlyHistory });
@@ -20061,25 +20235,28 @@ app.get("/api/earnings", async (req, res) => {
     date.setUTCDate(date.getUTCDate() + index);
     return toIsoDate(date);
   });
-  const cacheKey = `fmp:v10:${dates[0]}`;
+  const cacheKey = `fmp:v11:${dates[0]}`;
   const cached = earningsCalendarCache.get(cacheKey);
   if (cached && Date.now() - cached.cachedAt < 60 * 60 * 1000 && cached.data?.days?.some((day) => day.events?.length)) {
     return res.json(cached.data);
   }
 
   try {
-    const [fmpRows, stockAnalysisRows] = await Promise.all([
-      process.env.FMP_API_KEY && canUseFmp()
-        ? resolveWithin(
-          getFmpData("calendar", "earnings calendar page", [
-            `/stable/earnings-calendar?from=${dates[0]}&to=${dates[6]}`
-          ]),
-          3500,
-          []
-        )
-        : Promise.resolve([]),
-      resolveWithin(fetchStockAnalysisEarningsCalendarRows(dates), 3500, [])
-    ]);
+    const fmpRows = process.env.FMP_API_KEY
+      ? await resolveWithin(
+        axios.get("https://financialmodelingprep.com/stable/earnings-calendar", {
+          params: {
+            from: dates[0],
+            to: dates[6],
+            apikey: process.env.FMP_API_KEY
+          },
+          timeout: 4500
+        }).then((response) => response.data),
+        4500,
+        []
+      )
+      : [];
+    const stockAnalysisRows = [];
     const timeLabels = {
       bmo: "Before open",
       amc: "After close",
@@ -20110,8 +20287,7 @@ app.get("/api/earnings", async (req, res) => {
       if (symbol && !stockAnalysisBySymbol.has(symbol)) stockAnalysisBySymbol.set(symbol, row);
     });
     const rawFmpList = Array.isArray(fmpRows) ? fmpRows : fmpRows ? [fmpRows] : [];
-    const fallbackStockAnalysisList = Array.isArray(stockAnalysisRows) ? stockAnalysisRows : [];
-    const fmpList = rawFmpList.length ? rawFmpList : fallbackStockAnalysisList;
+    const fmpList = rawFmpList;
     const calendarSymbols = [...new Set(fmpList
       .map((row) => String(row.symbol || "").trim().toUpperCase())
       .filter(Boolean))];
@@ -20139,24 +20315,9 @@ app.get("/api/earnings", async (req, res) => {
         if (symbol && marketCap !== null) savedMarketCapBySymbol.set(symbol, marketCap);
       });
     }
-    const missingQuoteSymbols = quoteCandidateSymbols
-      .filter((symbol) => !savedMarketCapBySymbol.has(symbol))
-      .slice(0, 220);
-    const quoteMarketCapRows = [];
-    if (process.env.FMP_API_KEY && canUseFmp() && missingQuoteSymbols.length) {
-      const quoteRows = await resolveWithin(
-        fetchFmpBatchQuotes(missingQuoteSymbols, { skipSingleFallback: true }),
-        3200,
-        []
-      );
-      quoteMarketCapRows.push(...quoteRows);
-    }
     const fmpMarketCapBySymbol = new Map(
-      quoteMarketCapRows
-        .map((quoteData) => {
-          const quote = Array.isArray(quoteData) ? quoteData[0] || {} : quoteData || {};
-          return [String(quote.symbol || "").trim().toUpperCase(), toNumberOrNull(quote.marketCap)];
-        })
+      rawFmpList
+        .map((row) => [String(row.symbol || "").trim().toUpperCase(), toNumberOrNull(row.marketCap)])
         .filter(([symbol, marketCap]) => symbol && marketCap !== null)
     );
     savedMarketCapBySymbol.forEach((marketCap, symbol) => {

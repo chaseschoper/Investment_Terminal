@@ -4713,6 +4713,45 @@ useEffect(() => {
     }
   }, []);
 
+  useEffect(() => {
+    if (activePage !== "overview" || !ticker || loadedStockSymbol !== ticker) return;
+    let isActive = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await axios.get(`${API_URL}/api/stock-sidecars/${ticker}`, {
+          timeout: 4200
+        });
+        if (!isActive) return;
+        const patch = response.data || {};
+        setStockData((current) => {
+          if (!current || (current.symbol && current.symbol !== ticker)) return current;
+          const merged = stabilizeRefreshingStockData(current, {
+            ...current,
+            ...patch,
+            analystEstimates: {
+              ...(current.analystEstimates || {}),
+              ...(patch.analystEstimates || {})
+            },
+            analystEstimatesSources: {
+              ...(current.analystEstimatesSources || {}),
+              ...(patch.analystEstimatesSources || {})
+            },
+            refreshing: current.refreshing
+          });
+          stockMemoryCacheRef.current.set(ticker, merged);
+          return merged;
+        });
+      } catch (error) {
+        console.error("Stock sidecars failed", error);
+      }
+    }, 200);
+
+    return () => {
+      isActive = false;
+      window.clearTimeout(timer);
+    };
+  }, [ticker, loadedStockSymbol, activePage]);
+
   useEffect(() => () => {
     window.speechSynthesis?.cancel();
   }, []);
@@ -5203,14 +5242,6 @@ useEffect(() => {
       const needsQuarterEstimate =
         attempt < 30 &&
         !hasNextQuarterData(stableResponse);
-      const reportedEpsBeatMissRows = Array.isArray(stableResponse.epsBeatMiss)
-        ? stableResponse.epsBeatMiss.filter((row) => isNumber(row?.actual) || isNumber(row?.gaapActual))
-        : [];
-      const needsEpsBeatMiss =
-        attempt < 8 &&
-        hasNextQuarterData(stableResponse) &&
-        reportedEpsBeatMissRows.length < 4 &&
-        !stableResponse.epsBeatMissCheckedAt;
       const needsBalanceSheetMetrics =
         attempt < 20 &&
         !hasUsableBalanceSheetMetrics &&
@@ -5232,7 +5263,6 @@ useEffect(() => {
         needsMarketActivity ||
         needsAnnualEstimates ||
         needsQuarterEstimate ||
-        needsEpsBeatMiss ||
         needsBalanceSheetMetrics;
 
       if (
@@ -5245,7 +5275,6 @@ useEffect(() => {
           needsMoreMetricCards ||
           needsAnnualEstimates ||
           needsQuarterEstimate ||
-          needsEpsBeatMiss ||
           needsMarketActivity ||
           needsBalanceSheetMetrics ||
           needsNewStockWarmup ||
@@ -5264,7 +5293,6 @@ useEffect(() => {
             !needsMoreMetricCards &&
             !needsAnnualEstimates &&
             !needsQuarterEstimate &&
-            !needsEpsBeatMiss &&
             !needsBalanceSheetMetrics;
         const retryDelay =
           onlySlowMarketActivity
