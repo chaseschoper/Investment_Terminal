@@ -4601,7 +4601,7 @@ useEffect(() => {
           params: {
             range: stockChartRange
           },
-          timeout: stockChartRange === "1D" ? 9500 : 9000
+          timeout: stockChartRange === "1D" ? 4500 : 5500
         }
       );
 
@@ -4647,11 +4647,11 @@ useEffect(() => {
         setStockChartError(
           hasCachedChart
             ? "Chart history is refreshing..."
-            : attempt < 6
+            : attempt < 4
               ? "Chart history is still loading..."
               : "Still trying to load chart history..."
         );
-        keepLoading = !hasCachedChart;
+        keepLoading = !hasCachedChart && attempt < 4;
         scheduleRetry(attempt);
       }
     } finally {
@@ -5491,11 +5491,16 @@ const loadUserData = async () => {
       const availableDates = (calendar.days || []).map((day) => day.date);
       setSelectedEarningsDate((current) => {
         const today = toLocalIsoDate(new Date());
+        const firstEventDate = availableDates.find((date) =>
+          calendar.days.find((day) => day.date === date)?.events?.length
+        );
+        const currentDay = calendar.days.find((day) => day.date === current);
+        if (mode !== "earnings" && currentDay && !currentDay.events?.length && firstEventDate) {
+          return firstEventDate;
+        }
         if (availableDates.includes(current)) return current;
         if (availableDates.includes(today)) return today;
-        return availableDates.find((date) =>
-          calendar.days.find((day) => day.date === date)?.events?.length
-        ) || availableDates[0] || weekStart;
+        return firstEventDate || availableDates[0] || weekStart;
       });
 
     } catch (err) {

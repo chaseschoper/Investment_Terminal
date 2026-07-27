@@ -991,6 +991,11 @@ const isTooManyRequestsError = (err) =>
   /too many requests|rate limit/i.test(String(err?.message || "")) ||
   /too many requests|rate limit/i.test(String(err?.response?.data || ""));
 
+const isIsoTimestampWithin = (value, ttlMs) => {
+  const time = new Date(value || "").getTime();
+  return Number.isFinite(time) && Date.now() - time < ttlMs;
+};
+
 function setYahooCooldown(err, label, ticker) {
   if (!isTooManyRequestsError(err)) return;
   yahooCooldownUntil = Math.max(yahooCooldownUntil, Date.now() + 2 * 60 * 1000);
@@ -2059,7 +2064,7 @@ async function fetchFmpMetricCards(ticker) {
   }
 }
 
-async function fetchFmpBatchQuotes(symbols = []) {
+async function fetchFmpBatchQuotes(symbols = [], options = {}) {
   if (!process.env.FMP_API_KEY || !canUseFmp() || !symbols.length) return [];
 
   if (canUseFmpEndpoint("stable-batch-quote")) try {
@@ -2100,6 +2105,8 @@ async function fetchFmpBatchQuotes(symbols = []) {
     }
     console.log("FMP batch quote skipped:", err.response?.status || err.message);
   }
+
+  if (options.skipSingleFallback) return [];
 
   const quoteRows = await Promise.all(symbols.slice(0, 20).map(async (symbol) => {
     try {
@@ -2671,7 +2678,7 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
         try {
           const response = await axios.get(endpoint.url, {
             params: endpoint.params,
-            timeout: 2600
+            timeout: requestedRange === "1D" ? 1600 : 2200
           });
           const rows = Array.isArray(response.data) ? response.data : [];
           if (rows.length) {
@@ -5050,10 +5057,12 @@ async function fetchFmpQuarterlyPeSourceRows(ticker) {
   }
 }
 
-async function calculateFmpQuarterlyHistoricalPe(ticker, revenueRows = []) {
-  const ratioRows = await resolveWithin(fetchFmpQuarterlyHistoricalPe(ticker), 1800, []);
-  if (Array.isArray(ratioRows) && ratioRows.length >= 4) {
-    return ratioRows.slice(-80);
+async function calculateFmpQuarterlyHistoricalPe(ticker, revenueRows = [], options = {}) {
+  if (!options.skipDirectRatio) {
+    const ratioRows = await resolveWithin(fetchFmpQuarterlyHistoricalPe(ticker), 1000, []);
+    if (Array.isArray(ratioRows) && ratioRows.length >= 4) {
+      return ratioRows.slice(-80);
+    }
   }
 
   let sourceRows = Array.isArray(revenueRows) ? revenueRows : [];
@@ -8044,6 +8053,44 @@ async function ensureQuarterlyHistoricalPeForResponse(ticker, data = {}, timeout
     return patchedData;
   }
 
+  if (options.force) {
+    const calculatedQuarterlyRows = await resolveWithin(
+      calculateFmpQuarterlyHistoricalPe(ticker, data.revenueData || [], { skipDirectRatio: true }),
+      Math.max(timeoutMs, 3200),
+      []
+    );
+    if (Array.isArray(calculatedQuarterlyRows) && calculatedQuarterlyRows.length >= 4) {
+      const annualRows = existingRows.filter((row) => !row?.isInterim && !row?.isCurrent);
+      const historicalPe = mergeHistoricalPeRows(annualRows, calculatedQuarterlyRows);
+      const historicalPeCheckedAt = new Date().toISOString();
+      const patchedData = {
+        ...data,
+        historicalPe,
+        historicalPeSource: "FMP annual ratios / FMP calculated quarterly PE",
+        historicalPeVersion: HISTORICAL_PE_VERSION,
+        historicalPeCheckedAt
+      };
+
+      Stock.findOneAndUpdate(
+        { ticker },
+        {
+          $set: {
+            "data.historicalPe": historicalPe,
+            "data.historicalPeSource": patchedData.historicalPeSource,
+            "data.historicalPeVersion": HISTORICAL_PE_VERSION,
+            "data.historicalPeCheckedAt": historicalPeCheckedAt
+          }
+        }
+      ).catch((err) => {
+        console.log("Calculated quarterly historical PE cache skipped:", ticker, err.message);
+      });
+
+      return patchedData;
+    }
+  } else {
+    return null;
+  }
+
   const historicalPeCheckedAt = new Date().toISOString();
   const patchedData = {
     ...data,
@@ -8128,9 +8175,12 @@ async function ensureCompleteNextQuarterEstimateForResponse(ticker, data = {}) {
 async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {}) {
   let responseData = prepareCachedStockResponseData(ticker, data);
   const backgroundPatches = [];
-  if (!hasFutureAnnualEstimateSnapshot(responseData) && !responseData.annualEstimatesCheckedAt) {
+  const recentlyCheckedEmptyFutureEstimates =
+    !hasFutureAnnualEstimateSnapshot(responseData) &&
+    isIsoTimestampWithin(responseData.annualEstimatesCheckedAt, 15 * 60 * 1000);
+  if (!hasFutureAnnualEstimateSnapshot(responseData) && !recentlyCheckedEmptyFutureEstimates) {
     const futurePromise = fetchFmpFutureAnnualEstimateBlocks(ticker);
-    const futureYears = await resolveWithin(futurePromise, 1400, null);
+    const futureYears = await resolveWithin(futurePromise, 1000, null);
     if (Array.isArray(futureYears) && futureYears.length) {
       const analystEstimates = {
         ...(responseData.analystEstimates || {}),
@@ -8253,6 +8303,16 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {
     const hasOnlyFmpReportedBeatMissRows =
       existingReportedBeatMissRows.every(isFmpEpsBeatMissRow);
     if (existingReportedBeatMissRows.length < 4 || !responseData.epsBeatMissCheckedAt || !hasOnlyFmpReportedBeatMissRows) {
+      const fastBeatMissRows = await resolveWithin(fetchFmpEpsSurprisesFast(ticker), 900, []);
+      if (Array.isArray(fastBeatMissRows) && fastBeatMissRows.length) {
+        responseData = {
+          ...responseData,
+          epsBeatMiss: buildEpsBeatMissSeries(
+            mergeEpsBeatMissRows(responseData.epsBeatMiss || [], fastBeatMissRows),
+            visibleNextQuarterEstimate
+          )
+        };
+      }
       if (!activeEpsBeatMissFetches.has(ticker)) {
         activeEpsBeatMissFetches.add(ticker);
         backgroundPatches.push(
@@ -9337,18 +9397,10 @@ async function fetchFmpEpsSurprises(ticker) {
   if (cached) return cached;
 
   try {
-    const [rows, surpriseRows, incomeRows] = await Promise.all([
+    const [rows, incomeRows] = await Promise.all([
       resolveWithin(
         getFmpData(symbol, "earnings history", [
           `/stable/earnings?symbol={ticker}&limit=24`
-        ]),
-        2600,
-        []
-      ),
-      resolveWithin(
-        getFmpData(symbol, "earnings surprises", [
-          `/stable/earnings-surprises?symbol={ticker}&limit=24`,
-          `/api/v3/earnings-surprises/{ticker}?limit=24`
         ]),
         2600,
         []
@@ -9416,14 +9468,7 @@ async function fetchFmpEpsSurprises(ticker) {
       .map((item) => normalizeFmpEpsItem(item, "FMP earnings history"))
       .filter((item) => item.period && (item.estimate !== null || item.actual !== null || item.gaapActual !== null));
 
-    reportedIncomeIndex = 0;
-    const earningsSurpriseRows = (Array.isArray(surpriseRows) ? surpriseRows : surpriseRows ? [surpriseRows] : [])
-      .filter((item) => !item.symbol || String(item.symbol || "").trim().toUpperCase() === symbol)
-      .sort((a, b) => String(b.date || b.period || "").localeCompare(String(a.date || a.period || "")))
-      .map((item) => normalizeFmpEpsItem(item, "FMP earnings surprises"))
-      .filter((item) => item.period && (item.estimate !== null || item.actual !== null || item.gaapActual !== null));
-
-    const data = mergeEpsBeatMissRows(earningsHistoryRows, earningsSurpriseRows)
+    const data = mergeEpsBeatMissRows(earningsHistoryRows)
       .sort((a, b) => String(a.period).localeCompare(String(b.period)))
       .slice(-5);
     return writeCachedMarketActivity(
@@ -9478,8 +9523,6 @@ async function fetchFmpEpsSurprisesFast(ticker) {
   try {
     const rows = await resolveWithin(
       getFmpData(symbol, "fast EPS surprises", [
-        "/stable/earnings-surprises?symbol={ticker}&limit=8",
-        "/api/v3/earnings-surprises/{ticker}?limit=8",
         "/stable/earnings?symbol={ticker}&limit=8"
       ]),
       1600,
@@ -11318,7 +11361,10 @@ function maybeEnqueueSupplementalSnapshots(ticker, data = {}) {
 
   Promise.resolve()
     .then(async () => {
-      if (!hasFutureAnnualEstimateSnapshot(data) && !data.annualEstimatesCheckedAt) {
+      const recentlyCheckedEmptyFutureEstimates =
+        !hasFutureAnnualEstimateSnapshot(data) &&
+        isIsoTimestampWithin(data.annualEstimatesCheckedAt, 15 * 60 * 1000);
+      if (!hasFutureAnnualEstimateSnapshot(data) && !recentlyCheckedEmptyFutureEstimates) {
         await publishFutureAnnualEstimateSnapshot(symbol);
         await wait(200);
       }
@@ -15585,7 +15631,7 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     if (priceHistoryInFlight.has(cacheKey)) {
       const inFlightData = await resolveWithin(
         priceHistoryInFlight.get(cacheKey),
-        requestedRange === "1D" ? 3600 : 4200,
+        requestedRange === "1D" ? 1700 : 3200,
         null
       );
       if (inFlightData?.points?.length) {
@@ -15608,7 +15654,7 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     priceHistoryInFlight.set(cacheKey, historyPromise);
     const fmpHistory = await resolveWithin(
       historyPromise,
-      requestedRange === "1D" ? 3200 : 4200,
+      requestedRange === "1D" ? 1900 : 3200,
       null
     );
     const resolvedHistory = fmpHistory;
@@ -20098,12 +20144,10 @@ app.get("/api/earnings", async (req, res) => {
       .slice(0, 220);
     const quoteMarketCapRows = [];
     if (process.env.FMP_API_KEY && canUseFmp() && missingQuoteSymbols.length) {
-      const quoteRows = await Promise.all(
-        missingQuoteSymbols.map((symbol) =>
-          resolveWithin(getFmpData(symbol, "calendar quote market cap", [
-            "/stable/quote?symbol={ticker}"
-          ]), 2200, null)
-        )
+      const quoteRows = await resolveWithin(
+        fetchFmpBatchQuotes(missingQuoteSymbols, { skipSingleFallback: true }),
+        3200,
+        []
       );
       quoteMarketCapRows.push(...quoteRows);
     }
@@ -20301,7 +20345,10 @@ app.get("/api/calendar-events", async (req, res) => {
       updatedAt: new Date().toISOString(),
       source: type === "dividends" ? "FMP dividends calendar" : "FMP IPO calendar"
     };
-    fmpCalendarCache.set(cacheKey, { data: responseData, expiresAt: Date.now() + 15 * 60 * 1000 });
+    fmpCalendarCache.set(cacheKey, {
+      data: responseData,
+      expiresAt: Date.now() + (rawRows.length ? 15 * 60 * 1000 : 2 * 60 * 1000)
+    });
     return res.json(responseData);
   } catch (err) {
     setFmpCooldown(err, `${type} calendar`, "calendar");
@@ -20359,7 +20406,10 @@ app.get("/api/treasury-rates", async (req, res) => {
       updatedAt: new Date().toISOString(),
       source: "FMP treasury rates"
     };
-    treasuryRatesCache.set(cacheKey, { data: responseData, expiresAt: Date.now() + 30 * 60 * 1000 });
+    treasuryRatesCache.set(cacheKey, {
+      data: responseData,
+      expiresAt: Date.now() + (rows.length ? 30 * 60 * 1000 : 2 * 60 * 1000)
+    });
     return res.json(responseData);
   } catch (err) {
     setFmpCooldown(err, "treasury rates", "treasury");
