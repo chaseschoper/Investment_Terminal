@@ -3050,6 +3050,35 @@ const mergeUpcomingEpsBeatMissEstimate = (rows = [], nextQuarter = {}) => {
   const upcomingKey = epsBeatMissRowKey(upcomingRow);
   const upcomingDateKey = epsBeatMissDateKey(nextQuarter?.date);
   const merged = [...baseRows];
+  const reportedDuplicateIndex = merged.findIndex((row) => {
+    if (!isReportedEpsBeatMissRow(row)) return false;
+    const rowKey = epsBeatMissRowKey(row);
+    const rowDateKey = epsBeatMissDateKey(row.period);
+    return (
+      (upcomingKey && rowKey === upcomingKey) ||
+      (upcomingDateKey && rowDateKey === upcomingDateKey)
+    );
+  });
+  if (reportedDuplicateIndex >= 0) {
+    merged[reportedDuplicateIndex] = {
+      ...merged[reportedDuplicateIndex],
+      estimate: isNumber(merged[reportedDuplicateIndex].estimate)
+        ? merged[reportedDuplicateIndex].estimate
+        : estimate
+    };
+    return normalizeEpsBeatMissRows(merged);
+  }
+
+  const latestReportedDate = merged
+    .filter(isReportedEpsBeatMissRow)
+    .map((row) => epsBeatMissDateKey(row.period))
+    .filter(Boolean)
+    .sort()
+    .at(-1);
+  if (upcomingDateKey && latestReportedDate && upcomingDateKey <= latestReportedDate) {
+    return normalizeEpsBeatMissRows(merged);
+  }
+
   const existingIndex = merged.findIndex((row) => {
     if (isReportedEpsBeatMissRow(row)) return false;
     const rowKey = epsBeatMissRowKey(row);
@@ -3290,6 +3319,7 @@ function App() {
   const stockRetryTimerRef = useRef(null);
   const stockMemoryCacheRef = useRef(new Map());
   const stockChartMemoryCacheRef = useRef(new Map());
+  const stockSidecarRequestRef = useRef("");
   const stockSearchBlurTimerRef = useRef(null);
   const latestComparisonRequest = useRef(0);
   const latestAiRequest = useRef(0);
@@ -4688,6 +4718,7 @@ useEffect(() => {
     const cachedStock = stockMemoryCacheRef.current.get(ticker) || null;
     latestAiRequest.current += 1;
     latestEarningsCallRequest.current += 1;
+    stockSidecarRequestRef.current = "";
     setStockData(cachedStock);
     if (cachedStock) firstStockLoadSettled.current = true;
     setAiAnalysis(null);
@@ -4714,17 +4745,23 @@ useEffect(() => {
   }, []);
 
   useEffect(() => {
-    if (activePage !== "overview" || !ticker || loadedStockSymbol !== ticker) return;
+    const symbol = String(ticker || "").trim().toUpperCase();
+    if (activePage !== "overview" || !symbol || isStockLoading) return;
+    const currentSymbol = String(stockData?.symbol || loadedStockSymbol || "").trim().toUpperCase();
+    if (currentSymbol && currentSymbol !== symbol) return;
+    const requestKey = symbol;
+    if (stockSidecarRequestRef.current === requestKey) return;
+    stockSidecarRequestRef.current = requestKey;
     let isActive = true;
     const timer = window.setTimeout(async () => {
       try {
-        const response = await axios.get(`${API_URL}/api/stock-sidecars/${ticker}`, {
-          timeout: 4200
+        const response = await axios.get(`${API_URL}/api/stock-sidecars/${symbol}`, {
+          timeout: 5200
         });
         if (!isActive) return;
         const patch = response.data || {};
         setStockData((current) => {
-          if (!current || (current.symbol && current.symbol !== ticker)) return current;
+          if (!current || (current.symbol && String(current.symbol).toUpperCase() !== symbol)) return current;
           const merged = stabilizeRefreshingStockData(current, {
             ...current,
             ...patch,
@@ -4738,7 +4775,7 @@ useEffect(() => {
             },
             refreshing: current.refreshing
           });
-          stockMemoryCacheRef.current.set(ticker, merged);
+          stockMemoryCacheRef.current.set(symbol, merged);
           return merged;
         });
       } catch (error) {
@@ -4750,7 +4787,7 @@ useEffect(() => {
       isActive = false;
       window.clearTimeout(timer);
     };
-  }, [ticker, loadedStockSymbol, activePage]);
+  }, [ticker, loadedStockSymbol, activePage, isStockLoading, stockData?.symbol]);
 
   useEffect(() => () => {
     window.speechSynthesis?.cancel();
