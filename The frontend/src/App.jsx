@@ -2476,7 +2476,6 @@ const historicalFieldCount = (rows = [], field) =>
 const hasExtendedHistoricalChartData = (stock = {}) => {
   const revenueData = stock.revenueData || [];
   const marginHistory = stock.marginHistory || [];
-  const historicalPe = stock.historicalPe || [];
   const hasCashFlowHistory =
     historicalFieldCount(revenueData, "operatingCashflow") >= 2 ||
     historicalFieldCount(revenueData, "freeCashflow") >= 2;
@@ -2486,11 +2485,7 @@ const hasExtendedHistoricalChartData = (stock = {}) => {
     historicalFieldCount(marginHistory, "profitMargin") >= 2 ||
     stock.isFinancialCompany;
 
-  return (
-    historicalFieldCount(historicalPe, "pe") >= 2 &&
-    hasCashFlowHistory &&
-    hasMarginHistory
-  );
+  return hasCashFlowHistory && hasMarginHistory;
 };
 
 const shouldKeepWarmingNewStock = (stock = {}) =>
@@ -5208,6 +5203,14 @@ useEffect(() => {
       const needsQuarterEstimate =
         attempt < 30 &&
         !hasNextQuarterData(stableResponse);
+      const reportedEpsBeatMissRows = Array.isArray(stableResponse.epsBeatMiss)
+        ? stableResponse.epsBeatMiss.filter((row) => isNumber(row?.actual) || isNumber(row?.gaapActual))
+        : [];
+      const needsEpsBeatMiss =
+        attempt < 8 &&
+        hasNextQuarterData(stableResponse) &&
+        reportedEpsBeatMissRows.length < 4 &&
+        !stableResponse.epsBeatMissCheckedAt;
       const needsBalanceSheetMetrics =
         attempt < 20 &&
         !hasUsableBalanceSheetMetrics &&
@@ -5229,6 +5232,7 @@ useEffect(() => {
         needsMarketActivity ||
         needsAnnualEstimates ||
         needsQuarterEstimate ||
+        needsEpsBeatMiss ||
         needsBalanceSheetMetrics;
 
       if (
@@ -5241,6 +5245,7 @@ useEffect(() => {
           needsMoreMetricCards ||
           needsAnnualEstimates ||
           needsQuarterEstimate ||
+          needsEpsBeatMiss ||
           needsMarketActivity ||
           needsBalanceSheetMetrics ||
           needsNewStockWarmup ||
@@ -5256,10 +5261,11 @@ useEffect(() => {
           !needsInterimHistory &&
           !needsQuarterlyHistory &&
           !needsExtendedHistory &&
-          !needsMoreMetricCards &&
-          !needsAnnualEstimates &&
-          !needsQuarterEstimate &&
-          !needsBalanceSheetMetrics;
+            !needsMoreMetricCards &&
+            !needsAnnualEstimates &&
+            !needsQuarterEstimate &&
+            !needsEpsBeatMiss &&
+            !needsBalanceSheetMetrics;
         const retryDelay =
           onlySlowMarketActivity
             ? 2500
@@ -5864,11 +5870,7 @@ const quarterlyHistoricalPeHistoryBase = filterChartRowsByMode(historicalPeHisto
 const historicalPeHistory =
   financialChartMode === "quarterly"
     ? filterRowsByHistoryRange(quarterlyHistoricalPeHistoryBase, financialChartRange, financialChartMode)
-    : chartRowsWithCurrentFallback(
-        filterRowsByHistoryRange(annualHistoricalPeHistoryBase, financialChartRange, financialChartMode),
-        "pe",
-        stockData?.pe
-      );
+    : filterRowsByHistoryRange(annualHistoricalPeHistoryBase, financialChartRange, financialChartMode);
 const allMarginHistory = (stockData?.marginHistory || [])
   .map((row) => ({ ...row, period: row.period || String(row.year) }))
   .filter((row) =>

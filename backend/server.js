@@ -385,6 +385,7 @@ const fmpDailyOhlcCache = new Map();
 const fmpEndpointCooldowns = new Map();
 const activePriceRefreshes = new Set();
 const activeQuarterlyHistoricalPeFetches = new Set();
+const activeEpsBeatMissFetches = new Set();
 let marketIndexRefreshPromise = null;
 let marketHeatmapRefreshPromise = null;
 let yahooCooldownUntil = 0;
@@ -2386,6 +2387,7 @@ function isRegularUsMarketPoint(point) {
 function appendFmpRegularClosePoint(points = []) {
   if (!Array.isArray(points) || points.length < 2) return points;
   const latestPoint = points.at(-1);
+  if (latestPoint?.isSyntheticClose || latestPoint?.isOfficialClose) return points;
   const marketDateKey = latestPoint?.marketDateKey || latestPoint?.date?.slice(0, 10);
   const latestTime = toNumberOrNull(latestPoint?.time);
   if (!marketDateKey || latestTime === null) return points;
@@ -2410,6 +2412,34 @@ function appendFmpRegularClosePoint(points = []) {
       isSyntheticClose: true
     }
   ];
+}
+
+function trimOneDayPointsToCurrentRegularSession(points = [], dateKey = null) {
+  if (!Array.isArray(points) || !points.length) return [];
+  const sessionDateKey = dateKey || latestRegularTradingDateKeyFromPoints(points);
+  if (!sessionDateKey) return points;
+  const sessionPoints = points
+    .filter((point) => {
+      const pointDateKey = point?.marketDateKey || point?.date?.slice(0, 10);
+      return pointDateKey === sessionDateKey && isRegularUsMarketPoint(point);
+    })
+    .sort((a, b) => a.time - b.time);
+  if (sessionPoints.length < 2) return sessionPoints;
+  const latestRealTime = Math.max(
+    ...sessionPoints
+      .filter((point) => !point?.isSyntheticClose && !point?.isOfficialClose)
+      .map((point) => toNumberOrNull(point.time))
+      .filter((time) => time !== null)
+  );
+  if (!Number.isFinite(latestRealTime)) return sessionPoints;
+  return sessionPoints.filter((point) => {
+    const pointTime = toNumberOrNull(point.time);
+    if (pointTime === null) return false;
+    if (point?.isSyntheticClose || point?.isOfficialClose) {
+      return pointTime <= latestRealTime || !isLikelyUsMarketSession();
+    }
+    return pointTime <= latestRealTime;
+  });
 }
 
 function normalizeFmpOneDayRegularSessionPoints(points = []) {
@@ -2440,6 +2470,13 @@ function applyFmpDailyOhlcAnchors(points = [], dailyRow) {
 
   const sessionOpenTime = sessionOpenDate.getTime();
   const sessionCloseTime = sessionCloseDate.getTime();
+  const latestRealPointTime = Math.max(
+    ...points
+      .filter((point) => !point?.isSyntheticClose && !point?.isOfficialClose)
+      .map((point) => toNumberOrNull(point.time))
+      .filter((time) => time !== null)
+  );
+  const includeOfficialClose = !isLikelyUsMarketSession() || latestRealPointTime >= sessionCloseTime - 10 * 60 * 1000;
   const middlePoints = points.filter((point) => {
     const pointTime = toNumberOrNull(point.time);
     return pointTime !== null && pointTime > sessionOpenTime && pointTime < sessionCloseTime;
@@ -2463,16 +2500,18 @@ function applyFmpDailyOhlcAnchors(points = [], dailyRow) {
 
   anchoredPoints.push(...middlePoints);
 
-  anchoredPoints.push({
-    ...lastPoint,
-    time: sessionCloseTime,
-    date: sessionCloseDate.toISOString(),
-    marketDateKey: dailyRow.date,
-    price: officialClose ?? lastPoint.price,
-    close: officialClose ?? lastPoint.close ?? lastPoint.price,
-    volume: null,
-    isOfficialClose: true
-  });
+  if (includeOfficialClose) {
+    anchoredPoints.push({
+      ...lastPoint,
+      time: sessionCloseTime,
+      date: sessionCloseDate.toISOString(),
+      marketDateKey: dailyRow.date,
+      price: officialClose ?? lastPoint.price,
+      close: officialClose ?? lastPoint.close ?? lastPoint.price,
+      volume: null,
+      isOfficialClose: true
+    });
+  }
 
   return anchoredPoints
     .filter((point, index, list) => index === 0 || point.time !== list[index - 1]?.time)
@@ -2619,7 +2658,7 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
   ].filter((endpoint) => canUseFmpEndpoint(endpoint.key, symbol));
 
   const dailyRowsPromise = requestedRange === "1D"
-    ? resolveWithin(fetchFmpRecentDailyOhlc(symbol), 900, []).catch((err) => {
+    ? resolveWithin(fetchFmpRecentDailyOhlc(symbol), 350, []).catch((err) => {
         console.log("FMP daily OHLC skipped:", symbol, err.response?.status || err.message);
         return [];
       })
@@ -2710,9 +2749,12 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
         ? latestSessionPoints
         : allPoints;
       const points = requestedRange === "1D"
-        ? applyFmpDailyOhlcAnchors(
-            normalizeFmpOneDayRegularSessionPoints(sessionPoints),
-            latestDailyRow
+        ? trimOneDayPointsToCurrentRegularSession(
+            applyFmpDailyOhlcAnchors(
+              normalizeFmpOneDayRegularSessionPoints(sessionPoints),
+              latestDailyRow
+            ),
+            latestTradingDateKey
           )
         : sessionPoints;
 
@@ -8002,139 +8044,27 @@ async function ensureQuarterlyHistoricalPeForResponse(ticker, data = {}, timeout
     return patchedData;
   }
 
-  const sortedSourceRows = quarterlySourceRows
-    .filter((row) =>
-      row?.isInterim &&
-      !row?.isCurrent &&
-      toNumberOrNull(row.eps) !== null &&
-      String(row.period || "").match(/Q[1-4]/i)
-    )
-    .sort((a, b) => {
-      const yearDiff = Number(a.year) - Number(b.year);
-      if (yearDiff !== 0) return yearDiff;
-      return String(a.period || "").localeCompare(String(b.period || ""));
-    });
-  const directQuarterlyRowsPromise = (async () => {
-    const datedRows = sortedSourceRows.filter((row) =>
-      row.date || row.reportDate || row.fillingDate || row.acceptedDate
-    );
-    if (datedRows.length < 4) return [];
-    const dateValues = datedRows
-      .map((row) => row.date || row.reportDate || row.fillingDate || row.acceptedDate)
-      .filter(Boolean)
-      .map((date) => new Date(`${String(date).slice(0, 10)}T00:00:00Z`))
-      .filter((date) => !Number.isNaN(date.getTime()));
-    if (!dateValues.length || !process.env.FMP_API_KEY) return [];
-    const minDate = new Date(Math.min(...dateValues.map((date) => date.getTime())));
-    const maxDate = new Date(Math.max(...dateValues.map((date) => date.getTime())));
-    minDate.setUTCDate(minDate.getUTCDate() - 8);
-    maxDate.setUTCDate(maxDate.getUTCDate() + 2);
-    const priceResponse = await axios.get("https://financialmodelingprep.com/stable/historical-price-eod/light", {
-      params: {
-        symbol: ticker,
-        from: isoDateOnly(minDate),
-        to: isoDateOnly(maxDate),
-        apikey: process.env.FMP_API_KEY
-      },
-      timeout: Math.max(timeoutMs, 3200)
-    });
-    const prices = (Array.isArray(priceResponse.data) ? priceResponse.data : [])
-      .map((row) => ({
-        date: String(row.date || "").slice(0, 10),
-        time: new Date(`${String(row.date || "").slice(0, 10)}T00:00:00Z`).getTime(),
-        price: firstFiniteNumber(row.price, row.close, row.adjClose)
-      }))
-      .filter((row) => row.date && !Number.isNaN(row.time) && row.price !== null)
-      .sort((a, b) => a.time - b.time);
-    if (!prices.length) return [];
-    const findPriceForDate = (date) => {
-      const targetTime = new Date(`${String(date || "").slice(0, 10)}T00:00:00Z`).getTime();
-      if (Number.isNaN(targetTime)) return null;
-      return [...prices].filter((row) => row.time <= targetTime).at(-1) ||
-        prices.find((row) => row.time > targetTime) ||
-        null;
-    };
-    return datedRows
-      .map((row, index) => {
-        if (index < 3) return null;
-        const trailingRows = datedRows.slice(index - 3, index + 1);
-        const trailingEps = trailingRows.reduce((sum, item) => sum + (toNumberOrNull(item.eps) || 0), 0);
-        const targetDate = isoDateOnly(
-          new Date(`${String(row.date || row.reportDate || row.fillingDate || row.acceptedDate || "").slice(0, 10)}T00:00:00Z`)
-        );
-        const price = findPriceForDate(targetDate)?.price ?? null;
-        const pe = price !== null && trailingEps > 0 ? price / trailingEps : null;
-        return {
-          year: row.year,
-          period: row.period || String(row.year),
-          date: row.date || row.reportDate || row.fillingDate || row.acceptedDate || null,
-          isInterim: true,
-          pe,
-          price,
-          eps: trailingEps,
-          source: "FMP quarter-end price / trailing four-quarter EPS"
-        };
-      })
-      .filter((row) => row && toNumberOrNull(row.pe) !== null && Number.isFinite(row.pe) && Math.abs(row.pe) < 1000)
-      .slice(-80);
-  })();
-  let quarterlyRows = await resolveWithin(directQuarterlyRowsPromise, timeoutMs, []);
-  if (!Array.isArray(quarterlyRows) || !quarterlyRows.length) {
-    quarterlyRows = await resolveWithin(
-      calculateFmpQuarterlyHistoricalPe(ticker, data.revenueData),
-      Math.max(timeoutMs, 3200),
-      []
-    );
-  }
-  if (!Array.isArray(quarterlyRows) || !quarterlyRows.length) {
-    const historicalPeCheckedAt = new Date().toISOString();
-    const patchedData = {
-      ...data,
-      historicalPeVersion: HISTORICAL_PE_VERSION,
-      historicalPeCheckedAt,
-      historicalPeSource: data.historicalPeSource || "FMP annual ratios"
-    };
-    Stock.findOneAndUpdate(
-      { ticker },
-      {
-        $set: {
-          "data.historicalPeVersion": HISTORICAL_PE_VERSION,
-          "data.historicalPeCheckedAt": historicalPeCheckedAt,
-          "data.historicalPeSource": patchedData.historicalPeSource
-        }
-      }
-    ).catch((err) => {
-      console.log("Quarterly historical PE checked cache skipped:", ticker, err.message);
-    });
-    return patchedData;
-  }
-
-  const annualRows = existingRows.filter((row) => !row?.isInterim && !row?.isCurrent);
-  const historicalPe = mergeHistoricalPeRows(annualRows, quarterlyRows);
   const historicalPeCheckedAt = new Date().toISOString();
   const patchedData = {
     ...data,
-    historicalPe,
-    historicalPeSource: "FMP annual ratios / FMP quarter-end price",
     historicalPeVersion: HISTORICAL_PE_VERSION,
-    historicalPeCheckedAt
+    historicalPeCheckedAt,
+    historicalPeSource: data.historicalPeSource || "FMP annual ratios"
   };
-
   Stock.findOneAndUpdate(
     { ticker },
     {
       $set: {
-        "data.historicalPe": historicalPe,
-        "data.historicalPeSource": patchedData.historicalPeSource,
         "data.historicalPeVersion": HISTORICAL_PE_VERSION,
-        "data.historicalPeCheckedAt": historicalPeCheckedAt
+        "data.historicalPeCheckedAt": historicalPeCheckedAt,
+        "data.historicalPeSource": patchedData.historicalPeSource
       }
     }
   ).catch((err) => {
-    console.log("Quarterly historical PE cache skipped:", ticker, err.message);
+    console.log("Quarterly historical PE checked cache skipped:", ticker, err.message);
   });
-
   return patchedData;
+
 }
 
 async function ensureCompleteNextQuarterEstimateForResponse(ticker, data = {}) {
@@ -8323,24 +8253,17 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {
     const hasOnlyFmpReportedBeatMissRows =
       existingReportedBeatMissRows.every(isFmpEpsBeatMissRow);
     if (existingReportedBeatMissRows.length < 4 || !responseData.epsBeatMissCheckedAt || !hasOnlyFmpReportedBeatMissRows) {
-      const fastBeatMissRows = await resolveWithin(fetchFmpEpsSurprisesFast(ticker), 1600, []);
-      if (Array.isArray(fastBeatMissRows) && fastBeatMissRows.length) {
-        responseData = {
-          ...responseData,
-          epsBeatMiss: mergeEpsBeatMissRows(responseData.epsBeatMiss || [], fastBeatMissRows),
-          epsBeatMissCheckedAt: new Date().toISOString()
-        };
-        Stock.findOneAndUpdate(
-          { ticker },
-          {
-            $set: {
-              "data.epsBeatMiss": responseData.epsBeatMiss,
-              "data.epsBeatMissCheckedAt": responseData.epsBeatMissCheckedAt
-            }
-          }
-        ).catch((err) => {
-          console.log("Fast EPS beat/miss cache skipped:", ticker, err.message);
-        });
+      if (!activeEpsBeatMissFetches.has(ticker)) {
+        activeEpsBeatMissFetches.add(ticker);
+        backgroundPatches.push(
+          publishEpsBeatMissSnapshot(ticker)
+            .catch((err) => {
+              console.log("EPS beat/miss background repair skipped:", ticker, err.message);
+            })
+            .finally(() => {
+              activeEpsBeatMissFetches.delete(ticker);
+            })
+        );
       }
     }
     responseData = {
@@ -11359,21 +11282,13 @@ function hasMarketActivitySnapshot(data = {}) {
 }
 
 function needsSupplementalStockData(data = {}) {
-  const epsBeatMissRows = Array.isArray(data.epsBeatMiss) ? data.epsBeatMiss : [];
-  const reportedEpsRows = epsBeatMissRows.filter((row) => toNumberOrNull(row.actual) !== null);
   const annualEstimatesChecked = Boolean(data.annualEstimatesCheckedAt);
   const hasFutureAnnualEstimates = hasFutureAnnualEstimateSnapshot(data);
   const hasNextQuarterEstimate = hasCompleteNextQuarterEstimate(data.analystEstimates?.nextQuarter);
   const nextQuarterChecked = Boolean(data.quarterEstimateCheckedAt);
-  const epsBeatMissChecked = Boolean(data.epsBeatMissCheckedAt);
-  const shouldWaitForEpsBeatMiss =
-    reportedEpsRows.length < 3 &&
-    !epsBeatMissChecked &&
-    (hasNextQuarterEstimate || epsBeatMissRows.length > 0);
   return (
     (!annualEstimatesChecked && !hasFutureAnnualEstimates) ||
     (!nextQuarterChecked && !hasNextQuarterEstimate) ||
-    shouldWaitForEpsBeatMiss ||
     !hasMarketActivitySnapshot(data)
   );
 }
@@ -20320,20 +20235,18 @@ app.get("/api/calendar-events", async (req, res) => {
     }
 
     const endpoint = type === "dividends" ? "dividends-calendar" : "ipos-calendar";
-    const queryFrom = type === "dividends"
-      ? shiftCalendarIsoDate(dates[0], -120)
-      : dates[0];
     const rows = await getFmpData("calendar", `${type} calendar page`, [
-      `/stable/${endpoint}?from=${queryFrom}&to=${dates[6]}`
+      `/stable/${endpoint}?from=${dates[0]}&to=${dates[6]}`
     ]);
     const rawRows = Array.isArray(rows) ? rows : rows ? [rows] : [];
     const eventsByDate = new Map();
 
     rawRows.forEach((row) => {
-      const exDividendDate = String(row.exDividendDate || row.date || "").slice(0, 10);
+      const exDividendDate = String(row.date || row.exDividendDate || "").slice(0, 10);
       const paymentDate = String(row.paymentDate || "").slice(0, 10);
+      const recordDate = String(row.recordDate || "").slice(0, 10);
       const ipoDate = String(row.date || row.daa || "").slice(0, 10);
-      const date = type === "dividends" ? paymentDate : ipoDate;
+      const date = type === "dividends" ? exDividendDate : ipoDate;
       if (!dates.includes(date)) return;
       const symbol = String(row.symbol || "").trim().toUpperCase();
       if (!symbol) return;
@@ -20347,7 +20260,7 @@ app.get("/api/calendar-events", async (req, res) => {
             yield: firstFiniteNumber(row.yield),
             frequency: firstText(row.frequency) || "N/A",
             exDividendDate,
-            recordDate: firstText(row.recordDate),
+            recordDate,
             paymentDate,
             declarationDate: firstText(row.declarationDate),
             source: "FMP dividends calendar"
