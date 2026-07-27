@@ -375,7 +375,7 @@ const MR_RALLY_WEB_CONTEXT_TIMEOUT_MS = 6000;
 const MR_RALLY_COMPANY_LOOKUP_TIMEOUT_MS = 2500;
 const STOCK_PROVIDER_TIMEOUT_MS = 8000;
 const STOCK_SLOW_PROVIDER_TIMEOUT_MS = 10000;
-const STOCK_FAST_CHART_HYDRATION_WAIT_MS = 1200;
+const STOCK_FAST_CHART_HYDRATION_WAIT_MS = 1800;
 const STOCK_FINANCIAL_FRESHNESS_MS = 10 * 60 * 1000;
 const STOCK_INITIAL_SEC_TIMEOUT_MS = 9000;
 const secMarginCache = new Map();
@@ -2747,7 +2747,70 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
       return (b.points.length || 0) - (a.points.length || 0);
     })[0] || null;
 
-  return bestHistory;
+  if (bestHistory) return bestHistory;
+
+  if (requestedRange === "1D" && Array.isArray(dailyRows) && dailyRows.length >= 2) {
+    const latestDailyRow = dailyRows.at(-1);
+    const previousDailyRow = dailyRows.at(-2);
+    const officialOpen = toNumberOrNull(latestDailyRow.open);
+    const officialClose = toNumberOrNull(latestDailyRow.close);
+    const previousClose = toNumberOrNull(previousDailyRow.close);
+    const sessionOpenDate = parseFmpMarketDateTime(`${latestDailyRow.date} 09:30:00`);
+    const sessionCloseDate = parseFmpMarketDateTime(`${latestDailyRow.date} 16:00:00`);
+
+    if (
+      latestDailyRow?.date &&
+      officialOpen !== null &&
+      officialClose !== null &&
+      sessionOpenDate &&
+      sessionCloseDate
+    ) {
+      const change = previousClose ? officialClose - previousClose : officialClose - officialOpen;
+      return {
+        symbol,
+        sourceSymbol: symbol,
+        range: requestedRange,
+        interval: "1d",
+        source: "FMP daily price",
+        points: [
+          {
+            time: sessionOpenDate.getTime(),
+            date: sessionOpenDate.toISOString(),
+            marketDateKey: latestDailyRow.date,
+            price: officialOpen,
+            open: officialOpen,
+            close: officialOpen,
+            high: toNumberOrNull(latestDailyRow.high),
+            low: toNumberOrNull(latestDailyRow.low),
+            volume: null,
+            isOfficialOpen: true
+          },
+          {
+            time: sessionCloseDate.getTime(),
+            date: sessionCloseDate.toISOString(),
+            marketDateKey: latestDailyRow.date,
+            price: officialClose,
+            open: officialOpen,
+            close: officialClose,
+            high: toNumberOrNull(latestDailyRow.high),
+            low: toNumberOrNull(latestDailyRow.low),
+            volume: toNumberOrNull(latestDailyRow.volume),
+            isOfficialClose: true
+          }
+        ],
+        latest: {
+          price: officialClose,
+          change,
+          percentChange: change !== null && previousClose ? (change / previousClose) * 100 : null,
+          previousClose,
+          open: officialOpen
+        },
+        updatedAt: new Date().toISOString()
+      };
+    }
+  }
+
+  return null;
 }
 
 async function fetchFmpFiftyTwoWeekRange(ticker) {
@@ -5065,7 +5128,17 @@ const finalizeStockMetricCardResponse = (ticker, data = {}) =>
 async function finalizeStockResponseForClient(ticker, data = {}) {
   const adrNormalized = await normalizeForeignAdrStockData(ticker, data);
   const currencyNormalized = await normalizeForeignFinancialCurrencyStockData(ticker, adrNormalized);
-  return finalizeStockMetricCardResponse(ticker, currencyNormalized);
+  const nextQuarter = currencyNormalized?.analystEstimates?.nextQuarter || {};
+  const sanitizedEpsBeatMiss = buildEpsBeatMissSeries(
+    Array.isArray(currencyNormalized.epsBeatMiss)
+      ? currencyNormalized.epsBeatMiss.filter((row) => !row?.source || /^FMP/i.test(String(row.source || "")))
+      : [],
+    nextQuarter
+  );
+  return finalizeStockMetricCardResponse(ticker, {
+    ...currencyNormalized,
+    epsBeatMiss: sanitizedEpsBeatMiss
+  });
 }
 
 function latestAnnualRevenueMagnitude(data = {}) {
@@ -7806,9 +7879,14 @@ async function prepareStockResponseData(ticker, data = {}, options = {}) {
 }
 
 function prepareCachedStockResponseData(ticker, data = {}) {
+  const nextQuarter = data?.analystEstimates?.nextQuarter || {};
+  const cleanEpsBeatMiss = buildEpsBeatMissSeries(data.epsBeatMiss || [], nextQuarter);
   return {
     ...withDerivedQuarterlyHistoricalPe(
-      withGuaranteedAnalystSection(applyStockEarningsDateOverrides(ticker, data || {}))
+      withGuaranteedAnalystSection(applyStockEarningsDateOverrides(ticker, {
+        ...(data || {}),
+        epsBeatMiss: cleanEpsBeatMiss
+      }))
     ),
     institutionalHolders: [],
     institutionalHoldersCheckedAt: null
@@ -8072,7 +8150,7 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {
   const backgroundPatches = [];
   if (!hasFutureAnnualEstimateSnapshot(responseData) && !responseData.annualEstimatesCheckedAt) {
     const futurePromise = fetchFmpFutureAnnualEstimateBlocks(ticker);
-    const futureYears = await resolveWithin(futurePromise, 650, null);
+    const futureYears = await resolveWithin(futurePromise, 1400, null);
     if (Array.isArray(futureYears) && futureYears.length) {
       const analystEstimates = {
         ...(responseData.analystEstimates || {}),
@@ -8166,7 +8244,7 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {
     const lastFastPatchAt = fastStockSnapshotPatchCooldowns.get(ticker) || 0;
     if (Date.now() - lastFastPatchAt > 5 * 60 * 1000) {
       const fastPatchPromise = buildFastStockSnapshot(ticker, responseData);
-      const fastPatch = await resolveWithin(fastPatchPromise, 650, null);
+      const fastPatch = await resolveWithin(fastPatchPromise, 1800, null);
       fastStockSnapshotPatchCooldowns.set(ticker, Date.now());
       if (fastPatch) responseData = prepareCachedStockResponseData(ticker, fastPatch);
       else {
@@ -8192,8 +8270,10 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {
     const existingReportedBeatMissRows = Array.isArray(responseData.epsBeatMiss)
       ? responseData.epsBeatMiss.filter(isReportedEpsRow)
       : [];
-    if (existingReportedBeatMissRows.length < 4 && !responseData.epsBeatMissCheckedAt) {
-      const fastBeatMissRows = await resolveWithin(fetchFmpEpsSurprisesFast(ticker), 850, []);
+    const hasOnlyFmpReportedBeatMissRows =
+      existingReportedBeatMissRows.every(isFmpEpsBeatMissRow);
+    if (existingReportedBeatMissRows.length < 4 || !responseData.epsBeatMissCheckedAt || !hasOnlyFmpReportedBeatMissRows) {
+      const fastBeatMissRows = await resolveWithin(fetchFmpEpsSurprisesFast(ticker), 1600, []);
       if (Array.isArray(fastBeatMissRows) && fastBeatMissRows.length) {
         responseData = {
           ...responseData,
@@ -8228,7 +8308,16 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {
   if (backgroundPatches.length) {
     Promise.allSettled(backgroundPatches).catch(() => {});
   }
-  return finalizeStockResponseForClient(ticker, responseData);
+  const clientData = await finalizeStockResponseForClient(ticker, responseData);
+  return {
+    ...clientData,
+    epsBeatMiss: buildEpsBeatMissSeries(
+      Array.isArray(clientData.epsBeatMiss)
+        ? clientData.epsBeatMiss.filter((row) => !row?.source || /^FMP/i.test(String(row.source || "")))
+        : [],
+      clientData.analystEstimates?.nextQuarter || {}
+    )
+  };
 }
 
 async function fetchYahooTimeSeriesFinancials(ticker) {
@@ -9250,11 +9339,9 @@ async function fetchFinnhubEpsSurprises(ticker) {
 async function fetchFmpEpsSurprises(ticker) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol) return [];
-  if (!process.env.FMP_API_KEY || !canUseFmp()) {
-    return fetchFinnhubEpsSurprises(symbol);
-  }
+  if (!process.env.FMP_API_KEY || !canUseFmp()) return [];
 
-  const cacheKey = `fmp:${symbol}:gaap-v4-full`;
+  const cacheKey = `fmp:${symbol}:gaap-v5-fmp-only`;
   const cached = readCachedMarketActivity(epsSurpriseCache, cacheKey);
   if (cached) return cached;
 
@@ -9345,14 +9432,9 @@ async function fetchFmpEpsSurprises(ticker) {
       .map((item) => normalizeFmpEpsItem(item, "FMP earnings surprises"))
       .filter((item) => item.period && (item.estimate !== null || item.actual !== null || item.gaapActual !== null));
 
-    let data = mergeEpsBeatMissRows(earningsHistoryRows, earningsSurpriseRows)
+    const data = mergeEpsBeatMissRows(earningsHistoryRows, earningsSurpriseRows)
       .sort((a, b) => String(a.period).localeCompare(String(b.period)))
       .slice(-5);
-    if (data.length < 4) {
-      data = mergeEpsBeatMissRows(data, await resolveWithin(fetchFinnhubEpsSurprises(symbol), 1800, []))
-        .sort((a, b) => String(a.period).localeCompare(String(b.period)))
-        .slice(-5);
-    }
     return writeCachedMarketActivity(
       epsSurpriseCache,
       cacheKey,
@@ -9362,15 +9444,14 @@ async function fetchFmpEpsSurprises(ticker) {
   } catch (err) {
     setFmpCooldown(err, "EPS surprises", symbol);
     console.log("FMP EPS surprises skipped:", symbol, err.response?.status || err.message);
-    const fallback = await resolveWithin(fetchFinnhubEpsSurprises(symbol), 1800, []);
-    return writeCachedMarketActivity(epsSurpriseCache, cacheKey, fallback, fallback.length ? 6 * 60 * 60 * 1000 : 15 * 60 * 1000);
+    return writeCachedMarketActivity(epsSurpriseCache, cacheKey, [], 15 * 60 * 1000);
   }
 }
 
 async function fetchFmpEpsSurprisesFast(ticker) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return [];
-  const cacheKey = `fmp:${symbol}:eps-fast-v1`;
+  const cacheKey = `fmp:${symbol}:eps-fast-v2`;
   const cached = readCachedMarketActivity(epsSurpriseCache, cacheKey);
   if (cached) return cached;
 
@@ -9472,6 +9553,9 @@ const isGenericUpcomingEpsRow = (row = {}) =>
 const isReportedEpsRow = (row = {}) =>
   toNumberOrNull(row.actual) !== null || toNumberOrNull(row.gaapActual) !== null;
 
+const isFmpEpsBeatMissRow = (row = {}) =>
+  !row?.source || /^FMP/i.test(String(row.source || ""));
+
 const epsBeatMissHasFiscalLabel = (label) =>
   /\bQ\s*[1-4]\b/i.test(String(label || "")) && /\bFY\s*\d{2,4}\b/i.test(String(label || ""));
 
@@ -9497,6 +9581,7 @@ const mergeEpsBeatMissRows = (...rowSets) => {
   const byPeriod = new Map();
   rowSets.flat().forEach((row) => {
     if (!row?.period) return;
+    if (!isFmpEpsBeatMissRow(row)) return;
     const labelFiscal = parseEpsBeatMissFiscalLabel(row.label);
     const hydratedRow = {
       ...row,
@@ -9526,7 +9611,7 @@ const mergeEpsBeatMissRows = (...rowSets) => {
 };
 
 const buildEpsBeatMissSeries = (reportedRows = [], nextQuarterEstimate = {}) => {
-  const rows = mergeEpsBeatMissRows(reportedRows || []);
+  const rows = mergeEpsBeatMissRows((reportedRows || []).filter(isFmpEpsBeatMissRow));
   const nextEstimate = toNumberOrNull(nextQuarterEstimate?.eps);
   const nextDate = yahooDateToIso(nextQuarterEstimate?.date);
   const nextLabel = firstText(nextQuarterEstimate?.fiscalQuarter, "Next Quarter");
@@ -11583,7 +11668,7 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
   ] = await Promise.all([
     resolveWithin(fetchFmpStableQuoteProfile(ticker), 900, {}),
     resolveWithin(fetchCalendarQuarterEstimate(ticker, { fast: true }), 900, previousData.analystEstimates?.nextQuarter || {}),
-    resolveWithin(fetchFmpMetricCards(ticker), 1400, {}),
+    resolveWithin(fetchFmpMetricCards(ticker), 2400, {}),
     resolveWithin(fetchFmpSharesFloat(ticker), 1000, {}),
     resolveWithin(fetchFmpKeyExecutives(ticker), 1000, [])
   ]);
@@ -11862,11 +11947,11 @@ const getImmediateStockSnapshot = async (ticker, previousData = {}) => {
       previousData.valuationMetricsVersion !== VALUATION_METRICS_VERSION ||
       previousData.balanceSheetMetricsVersion !== BALANCE_SHEET_METRICS_VERSION;
     if (!needsMetricCards) return buildMinimalStockSnapshot(ticker, previousData);
-    const metricCards = needsMetricCards ? await resolveWithin(fetchFmpMetricCards(ticker), 1200, {}) : {};
+    const metricCards = needsMetricCards ? await resolveWithin(fetchFmpMetricCards(ticker), 2000, {}) : {};
     return applyFmpMetricCards(buildMinimalStockSnapshot(ticker, previousData), metricCards);
   }
 
-  return (await resolveWithin(buildFastStockSnapshot(ticker, previousData), 1600, null)) ||
+  return (await resolveWithin(buildFastStockSnapshot(ticker, previousData), 2600, null)) ||
     buildMinimalStockSnapshot(ticker, previousData);
 };
 
@@ -13464,13 +13549,14 @@ function startStockFetch(ticker) {
   activeStockFetches.add(ticker);
 
   const coreFastHydration = (async () => {
-    await publishFastFinancialHistorySnapshot(ticker).catch((err) => {
-      console.log("Fast financial history snapshot skipped:", ticker, err.message);
-    });
-    await wait(120);
-    await publishFastStockSnapshot(ticker).catch((err) => {
-      console.log("Fast stock snapshot skipped:", ticker, err.message);
-    });
+    await Promise.allSettled([
+      publishFastFinancialHistorySnapshot(ticker).catch((err) => {
+        console.log("Fast financial history snapshot skipped:", ticker, err.message);
+      }),
+      publishFastStockSnapshot(ticker).catch((err) => {
+        console.log("Fast stock snapshot skipped:", ticker, err.message);
+      })
+    ]);
   })();
   activeStockFastHydrations.set(ticker, coreFastHydration);
 
@@ -15538,11 +15624,7 @@ app.get("/api/price-history/:ticker", async (req, res) => {
       requestedRange === "1D" ? 3200 : 4200,
       null
     );
-    let resolvedHistory = fmpHistory;
-    if (!resolvedHistory?.points?.length && requestedRange === "1D") {
-      await wait(350);
-      resolvedHistory = await resolveWithin(fetchFmpPriceHistory(ticker, requestedRange), 2800, null);
-    }
+    const resolvedHistory = fmpHistory;
 
     if (resolvedHistory?.points?.length) {
       const data = {
