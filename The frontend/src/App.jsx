@@ -4640,7 +4640,14 @@ useEffect(() => {
       const points = response.data.points || [];
       const latest = response.data.latest || null;
       const isFallbackHistory =
-        response.data.stale && response.data.interval === "fallback";
+        response.data.stale && (
+          response.data.interval === "fallback" ||
+          (
+            stockChartRange === "1D" &&
+            response.data.source === "FMP daily price" &&
+            points.length <= 2
+          )
+        );
 
       if (isFallbackHistory) {
         setStockChartMeta(latest);
@@ -4753,31 +4760,42 @@ useEffect(() => {
     if (stockSidecarRequestRef.current === requestKey) return;
     stockSidecarRequestRef.current = requestKey;
     let isActive = true;
+    const mergeSidecarPatch = (patch = {}) => {
+      if (!isActive || !patch || typeof patch !== "object") return;
+      setStockData((current) => {
+        if (!current || (current.symbol && String(current.symbol).toUpperCase() !== symbol)) return current;
+        const merged = stabilizeRefreshingStockData(current, {
+          ...current,
+          ...patch,
+          analystEstimates: {
+            ...(current.analystEstimates || {}),
+            ...(patch.analystEstimates || {})
+          },
+          analystEstimatesSources: {
+            ...(current.analystEstimatesSources || {}),
+            ...(patch.analystEstimatesSources || {})
+          },
+          refreshing: current.refreshing
+        });
+        stockMemoryCacheRef.current.set(symbol, merged);
+        return merged;
+      });
+    };
     const timer = window.setTimeout(async () => {
       try {
+        axios.get(`${API_URL}/api/stock-sidecars/${symbol}`, {
+          params: { scope: "eps" },
+          timeout: 1800
+        })
+          .then((response) => mergeSidecarPatch(response.data || {}))
+          .catch((error) => {
+            console.error("EPS sidecar failed", error);
+          });
+
         const response = await axios.get(`${API_URL}/api/stock-sidecars/${symbol}`, {
           timeout: 5200
         });
-        if (!isActive) return;
-        const patch = response.data || {};
-        setStockData((current) => {
-          if (!current || (current.symbol && String(current.symbol).toUpperCase() !== symbol)) return current;
-          const merged = stabilizeRefreshingStockData(current, {
-            ...current,
-            ...patch,
-            analystEstimates: {
-              ...(current.analystEstimates || {}),
-              ...(patch.analystEstimates || {})
-            },
-            analystEstimatesSources: {
-              ...(current.analystEstimatesSources || {}),
-              ...(patch.analystEstimatesSources || {})
-            },
-            refreshing: current.refreshing
-          });
-          stockMemoryCacheRef.current.set(symbol, merged);
-          return merged;
-        });
+        mergeSidecarPatch(response.data || {});
       } catch (error) {
         console.error("Stock sidecars failed", error);
       }

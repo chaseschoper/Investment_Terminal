@@ -2826,67 +2826,6 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
 
   if (bestHistory) return bestHistory;
 
-  if (requestedRange === "1D" && Array.isArray(dailyRows) && dailyRows.length >= 2) {
-    const latestDailyRow = dailyRows.at(-1);
-    const previousDailyRow = dailyRows.at(-2);
-    const officialOpen = toNumberOrNull(latestDailyRow.open);
-    const officialClose = toNumberOrNull(latestDailyRow.close);
-    const previousClose = toNumberOrNull(previousDailyRow.close);
-    const sessionOpenDate = parseFmpMarketDateTime(`${latestDailyRow.date} 09:30:00`);
-    const sessionCloseDate = parseFmpMarketDateTime(`${latestDailyRow.date} 16:00:00`);
-
-    if (
-      latestDailyRow?.date &&
-      officialOpen !== null &&
-      officialClose !== null &&
-      sessionOpenDate &&
-      sessionCloseDate
-    ) {
-      const change = previousClose ? officialClose - previousClose : officialClose - officialOpen;
-      return {
-        symbol,
-        sourceSymbol: symbol,
-        range: requestedRange,
-        interval: "1d",
-        source: "FMP daily price",
-        points: [
-          {
-            time: sessionOpenDate.getTime(),
-            date: sessionOpenDate.toISOString(),
-            marketDateKey: latestDailyRow.date,
-            price: officialOpen,
-            open: officialOpen,
-            close: officialOpen,
-            high: toNumberOrNull(latestDailyRow.high),
-            low: toNumberOrNull(latestDailyRow.low),
-            volume: null,
-            isOfficialOpen: true
-          },
-          {
-            time: sessionCloseDate.getTime(),
-            date: sessionCloseDate.toISOString(),
-            marketDateKey: latestDailyRow.date,
-            price: officialClose,
-            open: officialOpen,
-            close: officialClose,
-            high: toNumberOrNull(latestDailyRow.high),
-            low: toNumberOrNull(latestDailyRow.low),
-            volume: toNumberOrNull(latestDailyRow.volume),
-            isOfficialClose: true
-          }
-        ],
-        latest: {
-          price: officialClose,
-          change,
-          percentChange: change !== null && previousClose ? (change / previousClose) * 100 : null,
-          previousClose,
-          open: officialOpen
-        },
-        updatedAt: new Date().toISOString()
-      };
-    }
-  }
-
   return null;
 }
 
@@ -8408,9 +8347,11 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {
   };
 }
 
-async function buildFastStockSidecars(ticker, data = {}) {
+async function buildFastStockSidecars(ticker, data = {}, options = {}) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol) return {};
+  const scope = String(options.scope || "all").trim().toLowerCase();
+  const epsOnly = scope === "eps";
   const existingHistoricalPe = Array.isArray(data.historicalPe) ? data.historicalPe : [];
   const existingAnnualPeRows = existingHistoricalPe.filter((row) => !row?.isInterim && !row?.isCurrent);
   const existingQuarterlyPeRows = existingHistoricalPe.filter((row) =>
@@ -8430,15 +8371,15 @@ async function buildFastStockSidecars(ticker, data = {}) {
 
   const [quarterEstimate, epsRows, annualPeRows, quarterlyPeRows] = await Promise.all([
     needsQuarterEstimate
-      ? resolveWithin(fetchCalendarQuarterEstimate(symbol, { fast: true }), 1600, currentNextQuarter)
+      ? resolveWithin(fetchCalendarQuarterEstimate(symbol, { fast: true }), epsOnly ? 900 : 1600, currentNextQuarter)
       : Promise.resolve(currentNextQuarter),
     needsEpsRows
-      ? resolveWithin(fetchFmpEpsSurprisesFast(symbol), 1200, [])
+      ? resolveWithin(fetchFmpEpsSurprisesFast(symbol), epsOnly ? 900 : 1200, [])
       : Promise.resolve([]),
-    needsAnnualPe
+    !epsOnly && needsAnnualPe
       ? resolveWithin(fetchFmpHistoricalPe(symbol), 1600, [])
       : Promise.resolve([]),
-    needsQuarterlyPe
+    !epsOnly && needsQuarterlyPe
       ? resolveWithin(calculateFmpQuarterlyHistoricalPe(symbol, data.revenueData || [], { skipDirectRatio: true }), 2600, [])
       : Promise.resolve([])
   ]);
@@ -8467,7 +8408,9 @@ async function buildFastStockSidecars(ticker, data = {}) {
   const baseAnnualPeRows = Array.isArray(annualPeRows) && annualPeRows.length
     ? annualPeRows
     : existingAnnualPeRows;
-  const historicalPe = Array.isArray(quarterlyPeRows) && quarterlyPeRows.length
+  const historicalPe = epsOnly
+    ? existingHistoricalPe
+    : Array.isArray(quarterlyPeRows) && quarterlyPeRows.length
     ? mergeHistoricalPeRows(baseAnnualPeRows, quarterlyPeRows)
     : mergeHistoricalPeRows(baseAnnualPeRows, existingHistoricalPe.filter((row) => row?.isInterim || row?.isCurrent));
   const patch = {
@@ -15713,65 +15656,6 @@ app.get("/api/market-indices", async (req, res) => {
 });
 
 app.get("/api/price-history/:ticker", async (req, res) => {
-  const buildFallbackPriceHistory = async (requestedTicker, ticker, requestedRange) => {
-    if (requestedRange !== "1D") return null;
-
-    const cachedQuote = livePriceCache.get(ticker);
-    const savedStock = await resolveWithin(
-      Stock.findOne({ ticker })
-        .select("ticker data.price data.previousClose data.change data.percentChange")
-        .lean(),
-      1200,
-      null
-    );
-    const savedData = savedStock?.data || {};
-    const price = firstFiniteNumber(cachedQuote?.price, savedData.price);
-    const previousClose = firstFiniteNumber(savedData.previousClose);
-    const change = firstFiniteNumber(
-      cachedQuote?.change,
-      savedData.change,
-      price !== null && previousClose > 0 ? price - previousClose : null
-    );
-    const percentChange = firstFiniteNumber(
-      cachedQuote?.percentChange,
-      savedData.percentChange,
-      change !== null && previousClose > 0 ? (change / previousClose) * 100 : null
-    );
-
-    if (price === null || price <= 0) return null;
-
-    const now = Date.now();
-    const basePrice = previousClose && previousClose > 0 ? previousClose : price;
-    return {
-      symbol: requestedTicker,
-      sourceSymbol: ticker,
-      range: requestedRange,
-      interval: "fallback",
-      stale: true,
-      points: [
-        {
-          time: now - 6 * 60 * 60 * 1000,
-          date: new Date(now - 6 * 60 * 60 * 1000).toISOString(),
-          price: basePrice,
-          volume: null
-        },
-        {
-          time: now,
-          date: new Date(now).toISOString(),
-          price,
-          volume: null
-        }
-      ],
-      latest: {
-        price,
-        change,
-        percentChange,
-        previousClose: basePrice
-      },
-      updatedAt: new Date(now).toISOString()
-    };
-  };
-
   try {
     const requestedTicker = req.params.ticker.trim().toUpperCase();
     const ticker = TICKER_ALIASES[requestedTicker] || requestedTicker;
@@ -15838,64 +15722,6 @@ app.get("/api/price-history/:ticker", async (req, res) => {
         data
       });
       return res.json(data);
-    }
-
-    const dailyRows = requestedRange === "1D"
-      ? await resolveWithin(fetchFmpRecentDailyOhlc(ticker), 900, [])
-      : [];
-    if (Array.isArray(dailyRows) && dailyRows.length >= 2) {
-      const latestDailyRow = dailyRows.at(-1);
-      const previousDailyRow = dailyRows.at(-2);
-      const openPrice = toNumberOrNull(latestDailyRow.open);
-      const closePrice = toNumberOrNull(latestDailyRow.close);
-      const previousClose = toNumberOrNull(previousDailyRow.close);
-      const sessionOpenDate = parseFmpMarketDateTime(`${latestDailyRow.date} 09:30:00`);
-      const sessionCloseDate = parseFmpMarketDateTime(`${latestDailyRow.date} 16:00:00`);
-      if (openPrice !== null && closePrice !== null && sessionOpenDate && sessionCloseDate) {
-        const change = previousClose ? closePrice - previousClose : closePrice - openPrice;
-        const data = {
-          symbol: requestedTicker,
-          sourceSymbol: ticker,
-          range: requestedRange,
-          interval: "1d",
-          stale: true,
-          refreshing: true,
-          source: "FMP daily price",
-          points: [
-            {
-              time: sessionOpenDate.getTime(),
-              date: sessionOpenDate.toISOString(),
-              marketDateKey: latestDailyRow.date,
-              price: openPrice,
-              open: openPrice,
-              close: openPrice,
-              volume: null
-            },
-            {
-              time: sessionCloseDate.getTime(),
-              date: sessionCloseDate.toISOString(),
-              marketDateKey: latestDailyRow.date,
-              price: closePrice,
-              open: openPrice,
-              close: closePrice,
-              volume: toNumberOrNull(latestDailyRow.volume)
-            }
-          ],
-          latest: {
-            price: closePrice,
-            change,
-            percentChange: change !== null && previousClose ? (change / previousClose) * 100 : null,
-            previousClose,
-            open: openPrice
-          },
-          updatedAt: new Date().toISOString()
-        };
-      priceHistoryCache.set(cacheKey, {
-        fetchedAt: Date.now(),
-        data
-      });
-      return res.json(data);
-      }
     }
 
     if (cached?.data) {
@@ -16019,7 +15845,7 @@ app.get("/api/stock-sidecars/:ticker", async (req, res) => {
 
     const stock = await Stock.findOne({ ticker }).lean().catch(() => null);
     const data = stock?.data || buildMinimalStockSnapshot(ticker);
-    const patch = await buildFastStockSidecars(ticker, data);
+    const patch = await buildFastStockSidecars(ticker, data, { scope: req.query.scope });
     return res.json({
       ticker: requestedTicker,
       sourceSymbol: ticker,
