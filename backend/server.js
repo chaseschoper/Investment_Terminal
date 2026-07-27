@@ -1500,17 +1500,22 @@ async function fetchFmpHistoricalPe(ticker) {
       "/stable/ratios?symbol={ticker}&period=annual&limit=40"
     ]);
     return (Array.isArray(rows) ? rows : [])
-      .map((row) => ({
-        year: Number(row.fiscalYear || String(row.date || "").slice(0, 4)),
-        period: String(row.fiscalYear || String(row.date || "").slice(0, 4)),
-        isInterim: false,
-        pe: toNumberOrNull(row.priceToEarningsRatio),
-        price: null,
-        eps: null,
-        source: "FMP annual ratios"
-      }))
+      .map((row) => {
+        const fiscalYear = Number(row.fiscalYear || String(row.date || "").slice(0, 4));
+        return {
+          year: fiscalYear,
+          period: String(fiscalYear || String(row.date || "").slice(0, 4)),
+          date: row.date || null,
+          reportDate: row.date || null,
+          isInterim: false,
+          pe: toNumberOrNull(row.priceToEarningsRatio),
+          price: null,
+          eps: null,
+          source: "FMP annual ratios"
+        };
+      })
       .filter((row) => row.year && row.pe !== null && Number.isFinite(row.pe) && Math.abs(row.pe) < 1000)
-      .sort((a, b) => a.year - b.year);
+      .sort(sortFinancialRowsByDate);
   } catch (err) {
     setFmpCooldown(err, "historical PE", symbol);
     console.log("FMP historical PE skipped:", symbol, err.response?.status || err.message);
@@ -1547,11 +1552,7 @@ async function fetchFmpQuarterlyHistoricalPe(ticker) {
         Number.isFinite(row.pe) &&
         Math.abs(row.pe) < 1000
       )
-      .sort((a, b) => {
-        const yearDiff = Number(a.year) - Number(b.year);
-        if (yearDiff !== 0) return yearDiff;
-        return String(a.period || "").localeCompare(String(b.period || ""));
-      });
+      .sort(sortFinancialRowsByDate);
   } catch (err) {
     setFmpCooldown(err, "quarterly historical PE", symbol);
     console.log("FMP quarterly historical PE skipped:", symbol, err.response?.status || err.message);
@@ -1673,23 +1674,43 @@ function buildFmpMetricCardUpdate(metricCards = {}) {
   clean.metricCardsSource = "FMP metric cards v22";
   clean.valuationMetricsCheckedAt = new Date().toISOString();
   clean.balanceSheetCheckedAt = new Date().toISOString();
-  clean.valuationMetricsVersion = VALUATION_METRICS_VERSION;
-  clean.balanceSheetMetricsVersion = BALANCE_SHEET_METRICS_VERSION;
+  clean.valuationMetricsVersion = metricCards._valuationMetricsComplete === false
+    ? null
+    : VALUATION_METRICS_VERSION;
+  clean.balanceSheetMetricsVersion = metricCards._balanceSheetMetricsComplete === false
+    ? null
+    : BALANCE_SHEET_METRICS_VERSION;
   return clean;
+}
+
+function isCompleteFmpMetricCardPayload(metricCards = {}) {
+  return metricCards._valuationMetricsComplete !== false &&
+    metricCards._balanceSheetMetricsComplete !== false;
+}
+
+function buildNonNullFmpMetricCardUpdate(metricCards = {}) {
+  return Object.fromEntries(
+    Object.entries(buildFmpMetricCardUpdate(metricCards))
+      .filter(([, value]) => value !== null && value !== undefined && value !== "")
+  );
 }
 
 function applyFmpMetricCards(data = {}, metricCards = {}) {
   if (!hasFmpMetricCardPayload(metricCards)) return data;
   return {
     ...data,
-    ...buildFmpMetricCardUpdate(metricCards)
+    ...(isCompleteFmpMetricCardPayload(metricCards)
+      ? buildFmpMetricCardUpdate(metricCards)
+      : buildNonNullFmpMetricCardUpdate(metricCards))
   };
 }
 
 function persistFmpMetricCards(ticker, metricCards = {}) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol || !hasFmpMetricCardPayload(metricCards)) return;
-  const update = buildFmpMetricCardUpdate(metricCards);
+  const update = isCompleteFmpMetricCardPayload(metricCards)
+    ? buildFmpMetricCardUpdate(metricCards)
+    : buildNonNullFmpMetricCardUpdate(metricCards);
   Stock.findOneAndUpdate(
     { ticker: symbol },
     {
@@ -1747,6 +1768,8 @@ async function fetchFmpMetricCards(ticker) {
     const priceTarget = Array.isArray(priceTargetData) ? priceTargetData[0] || {} : priceTargetData || {};
     const estimates = normalizeFmpAnnualEstimateRows(estimatesData, { symbol, maxFutureYears: 6 });
     const currentYearEstimate = estimates[0] || {};
+    const hasQuotePayload = Boolean(Object.keys(quote).length || Object.keys(profile).length);
+    const hasValuationPayload = Boolean(Object.keys(ratios).length || Object.keys(metrics).length);
 
     const price = firstFmpMetricNumber(quote.price, metrics.stockPrice, metrics.price);
     const marketCap = firstFmpMetricNumber(quote.marketCap, profile.marketCap, metrics.marketCap);
@@ -1759,6 +1782,7 @@ async function fetchFmpMetricCards(ticker) {
     const rawShares = firstFmpMetricNumber(statementShares, impliedShares);
     const sharesOutstanding = rawShares !== null ? rawShares / 1000000 : null;
     const isAdr = profile.isAdr === true || String(profile.isAdr || "").toLowerCase() === "true";
+    const hasBalancePayload = isAdr || Boolean(Object.keys(balance).length);
     const employeeCount = firstFmpMetricNumber(profile.fullTimeEmployees, profile.employeeCount);
 
     const shortTermDebt = toNumberOrNull(balance.shortTermDebt);
@@ -1863,6 +1887,8 @@ async function fetchFmpMetricCards(ticker) {
         };
 
     return {
+      _valuationMetricsComplete: hasQuotePayload && hasValuationPayload,
+      _balanceSheetMetricsComplete: hasBalancePayload,
       isAdr,
       marketCap,
       sharesOutstanding,
@@ -2996,6 +3022,23 @@ const parseApiNumber = (value) => {
 };
 
 const formatIsoDate = (date) => date.toISOString().slice(0, 10);
+
+function financialRowSortValue(row = {}) {
+  const dateValue = row.date || row.reportDate || row.fillingDate || row.acceptedDate;
+  if (dateValue) {
+    const time = new Date(`${String(dateValue).slice(0, 10)}T12:00:00Z`).getTime();
+    if (!Number.isNaN(time)) return time;
+  }
+  const year = Number(row.year || row.fiscalYear);
+  if (!Number.isFinite(year)) return 0;
+  const quarterText = String(row.period || row.fiscalQuarter || "").toUpperCase();
+  const quarter = Number(quarterText.match(/Q([1-4])/)?.[1] || 0);
+  return year * 10 + quarter;
+}
+
+function sortFinancialRowsByDate(a = {}, b = {}) {
+  return financialRowSortValue(a) - financialRowSortValue(b);
+}
 
 function fiscalQuarterKey(fiscalQuarter, fiscalYear) {
   const quarter = toNumberOrNull(fiscalQuarter);
@@ -7558,53 +7601,25 @@ function withGuaranteedAnalystSection(data = {}) {
 
 async function repairHistoricalPeIfNeeded(ticker, data = {}) {
   const currentRows = Array.isArray(data.historicalPe) ? data.historicalPe : [];
-  if (currentRows.filter((row) => !row?.isCurrent && toNumberOrNull(row?.pe) !== null).length >= 3) {
+  const fmpRows = currentRows.filter((row) =>
+    !row?.isCurrent &&
+    toNumberOrNull(row?.pe) !== null &&
+    String(row?.source || "").includes("FMP")
+  );
+  if (fmpRows.length >= 3) {
     return data;
   }
 
-  const annualRows = Array.isArray(data.revenueData)
-    ? data.revenueData.filter((row) =>
-        !row?.isInterim &&
-        row?.year &&
-        toNumberOrNull(row.eps) !== null &&
-        toNumberOrNull(row.eps) !== 0
-      )
-    : [];
-  if (!annualRows.length) return data;
-
-  const yearEndPrices = await fetchYahooYearEndPrices(ticker).catch(() => []);
-  const priceByYear = new Map(
-    (yearEndPrices || [])
-      .filter((row) => toNumberOrNull(row.close) !== null)
-      .map((row) => [Number(row.year), toNumberOrNull(row.close)])
-  );
-  if (!priceByYear.size) return data;
-
-  const rebuiltRows = annualRows
-    .map((row) => {
-      const price = priceByYear.get(Number(row.year));
-      const eps = toNumberOrNull(row.eps);
-      const pe = price !== undefined && eps !== null && eps !== 0 ? price / eps : null;
-      return {
-        year: row.year,
-        period: row.period || String(row.year),
-        isInterim: false,
-        pe,
-        price,
-        eps,
-        source: "Yahoo year-end price"
-      };
-    })
-    .filter((row) => row.pe !== null && Number.isFinite(row.pe) && Math.abs(row.pe) < 1000)
-    .slice(-40);
-
-  if (!rebuiltRows.length) return data;
+  const rebuiltRows = await resolveWithin(fetchFmpHistoricalPe(ticker), 1800, []);
+  if (!Array.isArray(rebuiltRows) || !rebuiltRows.length) return data;
 
   const nonAnnualRows = currentRows.filter((row) => row?.isInterim || row?.isCurrent);
   return {
     ...data,
-    historicalPe: [...rebuiltRows, ...nonAnnualRows]
-      .filter((row) => toNumberOrNull(row.pe) !== null && Math.abs(toNumberOrNull(row.pe)) < 1000)
+    historicalPe: mergeHistoricalPeRows(rebuiltRows, nonAnnualRows),
+    historicalPeSource: "FMP annual ratios",
+    historicalPeVersion: HISTORICAL_PE_VERSION,
+    historicalPeCheckedAt: new Date().toISOString()
   };
 }
 
@@ -8174,6 +8189,30 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {
     toNumberOrNull(visibleNextQuarterEstimate.revenue) !== null ||
     visibleNextQuarterEstimate.date
   ) {
+    const existingReportedBeatMissRows = Array.isArray(responseData.epsBeatMiss)
+      ? responseData.epsBeatMiss.filter(isReportedEpsRow)
+      : [];
+    if (existingReportedBeatMissRows.length < 4 && !responseData.epsBeatMissCheckedAt) {
+      const fastBeatMissRows = await resolveWithin(fetchFmpEpsSurprisesFast(ticker), 850, []);
+      if (Array.isArray(fastBeatMissRows) && fastBeatMissRows.length) {
+        responseData = {
+          ...responseData,
+          epsBeatMiss: mergeEpsBeatMissRows(responseData.epsBeatMiss || [], fastBeatMissRows),
+          epsBeatMissCheckedAt: new Date().toISOString()
+        };
+        Stock.findOneAndUpdate(
+          { ticker },
+          {
+            $set: {
+              "data.epsBeatMiss": responseData.epsBeatMiss,
+              "data.epsBeatMissCheckedAt": responseData.epsBeatMissCheckedAt
+            }
+          }
+        ).catch((err) => {
+          console.log("Fast EPS beat/miss cache skipped:", ticker, err.message);
+        });
+      }
+    }
     responseData = {
       ...responseData,
       epsBeatMiss: buildEpsBeatMissSeries(responseData.epsBeatMiss || [], visibleNextQuarterEstimate)
@@ -9325,6 +9364,71 @@ async function fetchFmpEpsSurprises(ticker) {
     console.log("FMP EPS surprises skipped:", symbol, err.response?.status || err.message);
     const fallback = await resolveWithin(fetchFinnhubEpsSurprises(symbol), 1800, []);
     return writeCachedMarketActivity(epsSurpriseCache, cacheKey, fallback, fallback.length ? 6 * 60 * 60 * 1000 : 15 * 60 * 1000);
+  }
+}
+
+async function fetchFmpEpsSurprisesFast(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return [];
+  const cacheKey = `fmp:${symbol}:eps-fast-v1`;
+  const cached = readCachedMarketActivity(epsSurpriseCache, cacheKey);
+  if (cached) return cached;
+
+  const normalizeRow = (item = {}, source = "FMP earnings surprises") => {
+    const estimate = toNumberOrNull(
+      item.epsEstimated ??
+        item.epsEstimate ??
+        item.estimatedEarning ??
+        item.estimatedEps ??
+        item.consensusEPS
+    );
+    const actual = toNumberOrNull(
+      item.epsActual ??
+        item.actualEarningResult ??
+        item.actualEps ??
+        item.eps
+    );
+    const surprise = toNumberOrNull(item.surprise) ?? (
+      actual !== null && estimate !== null ? actual - estimate : null
+    );
+    return {
+      period: yahooDateToIso(item.date ?? item.period),
+      estimate,
+      actual,
+      surprise,
+      surprisePercent: toNumberOrNull(item.surprisePercent) ?? (
+        surprise !== null && estimate ? (surprise / Math.abs(estimate)) * 100 : null
+      ),
+      source
+    };
+  };
+
+  try {
+    const rows = await resolveWithin(
+      getFmpData(symbol, "fast EPS surprises", [
+        "/stable/earnings-surprises?symbol={ticker}&limit=8",
+        "/api/v3/earnings-surprises/{ticker}?limit=8",
+        "/stable/earnings?symbol={ticker}&limit=8"
+      ]),
+      1600,
+      []
+    );
+    const result = (Array.isArray(rows) ? rows : rows ? [rows] : [])
+      .filter((item) => !item.symbol || String(item.symbol || "").trim().toUpperCase() === symbol)
+      .map((item) => normalizeRow(item))
+      .filter((item) => item.period && (item.estimate !== null || item.actual !== null))
+      .sort((a, b) => String(a.period).localeCompare(String(b.period)))
+      .slice(-5);
+    return writeCachedMarketActivity(
+      epsSurpriseCache,
+      cacheKey,
+      result,
+      result.length ? 45 * 60 * 1000 : 4 * 60 * 1000
+    );
+  } catch (err) {
+    setFmpCooldown(err, "fast EPS surprises", symbol);
+    console.log("FMP fast EPS surprises skipped:", symbol, err.response?.status || err.message);
+    return writeCachedMarketActivity(epsSurpriseCache, cacheKey, [], 3 * 60 * 1000);
   }
 }
 
@@ -15395,6 +15499,15 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     const cached = priceHistoryCache.get(cacheKey);
     if (cached && Date.now() - cached.fetchedAt < rangeConfig.ttl) {
       return res.json(cached.data);
+    }
+    const staleChartMaxAge = requestedRange === "1D" ? 2 * 60 * 1000 : 15 * 60 * 1000;
+    if (
+      cached?.data?.points?.length &&
+      Date.now() - cached.fetchedAt < staleChartMaxAge &&
+      !priceHistoryInFlight.has(cacheKey)
+    ) {
+      warmPriceHistoryCache(ticker, requestedRange);
+      return res.json({ ...cached.data, stale: true, refreshing: true });
     }
     if (priceHistoryInFlight.has(cacheKey)) {
       const inFlightData = await resolveWithin(

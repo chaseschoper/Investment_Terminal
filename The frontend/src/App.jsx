@@ -5846,7 +5846,7 @@ const historicalPeHistoryBase = (stockData?.historicalPe || [])
   .map((row) => ({ ...row, period: row.period || String(row.year) }))
   .filter((row) =>
     row?.year &&
-    (row.isInterim || row.isCurrent || row.year <= new Date().getFullYear()) &&
+    (row.isInterim || row.isCurrent || row.year <= new Date().getFullYear() + 2) &&
     isNumber(row.pe)
   );
 const annualHistoricalPeHistoryBase = filterChartRowsByMode(historicalPeHistoryBase, "annual");
