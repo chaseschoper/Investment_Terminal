@@ -7038,7 +7038,8 @@ const portfolioAllocationData = portfolio.map((position, index) => {
     name: position.symbol,
     value: allocationPrice * Number(position.shares || 0)
   };
-}).filter((position) => position.value > 0);
+}).filter((position) => position.value > 0)
+  .sort((a, b) => b.value - a.value);
 const totalPortfolioValue = portfolioAllocationData.reduce(
   (total, position) => total + position.value,
   0
@@ -7084,6 +7085,10 @@ const renderPortfolioPiePanel = (title, data, emptyText) => (
               outerRadius={98}
               paddingAngle={2}
               stroke="none"
+              isAnimationActive
+              animationBegin={0}
+              animationDuration={260}
+              animationEasing="ease-out"
             >
               {data.map((item, index) => (
                 <Cell
@@ -10161,6 +10166,26 @@ return (
     loading={shouldShowHistoryLoading(sharesOutstandingHistory)}
     mode={financialChartMode}
   />
+  <div className="historical-chart-panel fundamental-chart-callout">
+    <div className="fundamental-chart-callout-art" aria-hidden="true">
+      <span />
+      <span />
+      <span />
+      <span />
+    </div>
+    <div className="fundamental-chart-callout-content">
+      <span className="home-feature-label">More Charting</span>
+      <h3>For more charts, go to the Fundamental Charts page.</h3>
+      <p>Compare companies, choose indicators, and switch between annual or quarterly views.</p>
+      <button
+        type="button"
+        className="fundamental-chart-callout-button"
+        onClick={() => setActivePage("fundamental-charts")}
+      >
+        Open Fundamental Charts
+      </button>
+    </div>
+  </div>
 </div>
 
         {/* METRICS */}
@@ -11614,6 +11639,10 @@ return (
                 outerRadius={108}
                 paddingAngle={2}
                 stroke="none"
+                isAnimationActive
+                animationBegin={0}
+                animationDuration={260}
+                animationEasing="ease-out"
               >
                 {portfolioAllocationData.map((position, index) => (
                   <Cell
@@ -11665,7 +11694,15 @@ return (
             <CartesianGrid stroke="#1f2937" />
             <XAxis dataKey="symbol" />
             <YAxis />
-            <Tooltip formatter={(value) => formatPortfolioCurrency(Number(value))} />
+            <Tooltip
+              formatter={(value) => {
+                const numericValue = Number(value);
+                return [
+                  formatPortfolioCurrency(numericValue),
+                  numericValue >= 0 ? "Gain" : "Loss"
+                ];
+              }}
+            />
             <Bar dataKey="gain" radius={[6, 6, 0, 0]}>
               {portfolio.map((position) => {
                 const current = portfolioPrices[position.symbol] || 0;
