@@ -1078,7 +1078,7 @@ function getFmpEndpointCooldownKey(endpointKey, status, symbol) {
   const baseKey = String(endpointKey || "").trim();
   if (!baseKey) return "";
   const normalizedSymbol = String(symbol || "").trim().toUpperCase();
-  return Number(status) === 429 && normalizedSymbol
+  return normalizedSymbol && [402, 403, 404, 429].includes(Number(status))
     ? `${baseKey}:${normalizedSymbol}`
     : baseKey;
 }
@@ -14102,15 +14102,36 @@ app.get("/api/prices", async (req, res) => {
     if (cached && cachedHasPercent && Date.now() - cached.fetchedAt < 45 * 1000) return;
 
     try {
-      const fmpQuote = await resolveWithin(fetchFmpStableQuoteProfile(symbol), 1600, null).catch(() => null);
+      const chartCacheKey = `${symbol}:1D`;
+      const cachedHistory = priceHistoryCache.get(chartCacheKey);
+      let chartHistoryPromise = cachedHistory?.data?.points?.length && Date.now() - cachedHistory.fetchedAt < PRICE_HISTORY_RANGES["1D"].ttl
+        ? Promise.resolve(cachedHistory.data)
+        : priceHistoryInFlight.get(chartCacheKey);
+      if (!chartHistoryPromise) {
+        chartHistoryPromise = fetchFmpPriceHistory(symbol, "1D").finally(() => {
+          priceHistoryInFlight.delete(chartCacheKey);
+        });
+        priceHistoryInFlight.set(chartCacheKey, chartHistoryPromise);
+      }
+      const [fmpQuote, chartHistory] = await Promise.all([
+        resolveWithin(fetchFmpStableQuoteProfile(symbol), 1400, null).catch(() => null),
+        resolveWithin(chartHistoryPromise, 2300, null).catch(() => null)
+      ]);
+      if (chartHistory?.points?.length && !cachedHistory?.data) {
+        priceHistoryCache.set(chartCacheKey, {
+          fetchedAt: Date.now(),
+          data: chartHistory
+        });
+      }
+      const chartLatest = chartHistory?.latest || {};
       const quote = normalizeQuotePayload({}, {
-        price: fmpQuote?.price,
-        change: fmpQuote?.change,
-        percentChange: fmpQuote?.percentChange,
-        previousClose: fmpQuote?.previousClose,
+        price: chartLatest?.price ?? fmpQuote?.price,
+        change: chartLatest?.change ?? fmpQuote?.change,
+        percentChange: chartLatest?.percentChange ?? fmpQuote?.percentChange,
+        previousClose: chartLatest?.previousClose ?? fmpQuote?.previousClose,
         high: fmpQuote?.high,
         low: fmpQuote?.low,
-        open: fmpQuote?.open
+        open: chartLatest?.open ?? fmpQuote?.open
       });
       const price = toNumberOrNull(quote?.c);
       const previousClose = toNumberOrNull(quote?.pc);
@@ -14133,6 +14154,7 @@ app.get("/api/prices", async (req, res) => {
           percentChange,
           previousClose,
           extendedHours: null,
+          source: chartHistory?.latest?.price ? "FMP 5-minute price history" : "FMP quote",
           fetchedAt: Date.now()
         });
       }
@@ -14140,7 +14162,8 @@ app.get("/api/prices", async (req, res) => {
         ...details[symbol],
         change: change ?? details[symbol].change,
         extendedHours: null,
-        percentChange: percentChange ?? details[symbol].percentChange
+        percentChange: percentChange ?? details[symbol].percentChange,
+        priceSource: chartHistory?.latest?.price ? "FMP 5-minute price history" : "FMP quote"
       };
     } catch (err) {
       console.log("Saved-symbol price skipped:", symbol, err.response?.status || err.message);
@@ -14182,7 +14205,7 @@ app.get("/api/prices", async (req, res) => {
       const symbol = queue.shift();
       await refreshSymbolQuote(symbol);
     }
-  })), wantsLiveQuotes ? 2400 : 2200, null);
+  })), wantsLiveQuotes ? 3600 : 2800, null);
   symbols.forEach(hydrateSavedSymbol);
 
   const staleSymbols = symbols.filter((symbol) => {
@@ -15599,7 +15622,7 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     const requestedRange = String(req.query.range || "1D").trim().toUpperCase();
     const rangeConfig = PRICE_HISTORY_RANGES[requestedRange] || PRICE_HISTORY_RANGES["1D"];
 
-    if (!/^[A-Z0-9.-]{1,12}$/.test(ticker)) {
+    if (!/^[A-Z0-9=._-]{1,16}$/.test(ticker)) {
       return res.status(400).json({ error: "Invalid ticker" });
     }
 
@@ -15768,6 +15791,96 @@ app.get("/api/etf/:ticker", async (req, res) => {
   } catch (err) {
     console.log("ETF data failed:", req.params.ticker, err.response?.status || err.message);
     res.status(404).json({ error: "ETF data not found yet" });
+  }
+});
+
+app.get("/api/commodities/:symbol", async (req, res) => {
+  try {
+    const symbol = String(req.params.symbol || "").trim().toUpperCase();
+    if (!/^[A-Z0-9=._-]{1,16}$/.test(symbol)) {
+      return res.status(400).json({ error: "Invalid commodity symbol" });
+    }
+    if (!process.env.FMP_API_KEY || !canUseFmp()) {
+      return res.status(503).json({ error: "Commodity data is not available yet" });
+    }
+
+    const cacheKey = `commodity:${symbol}`;
+    const cached = fmpDataCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return res.json(cached.data);
+
+    const [chartHistory, dailyResponse, listResponse] = await Promise.all([
+      resolveWithin(fetchFmpPriceHistory(symbol, "1D"), 2400, null).catch(() => null),
+      resolveWithin(getFmpAxios("https://financialmodelingprep.com/stable/historical-price-eod/light", {
+        params: { symbol, apikey: process.env.FMP_API_KEY },
+        timeout: 3000
+      }), 3200, null).catch(() => null),
+      resolveWithin(getFmpAxios("https://financialmodelingprep.com/stable/commodities-list", {
+        params: { apikey: process.env.FMP_API_KEY },
+        timeout: 3000
+      }), 3200, null).catch(() => null)
+    ]);
+
+    const dailyRows = Array.isArray(dailyResponse?.data) ? dailyResponse.data : [];
+    const points = Array.isArray(chartHistory?.points) ? chartHistory.points : [];
+    if (!points.length && !dailyRows.length) {
+      return res.status(404).json({ error: "Commodity data not found yet" });
+    }
+
+    const latestPoint = points.at(-1) || {};
+    const latestDaily = dailyRows[0] || {};
+    const previousDaily = dailyRows[1] || {};
+    const dailyYearRows = dailyRows.slice(0, 260);
+    const dayLowValues = points.map((point) => point.low ?? point.price).filter((value) => Number.isFinite(value));
+    const dayHighValues = points.map((point) => point.high ?? point.price).filter((value) => Number.isFinite(value));
+    const yearValues = dailyYearRows.map((row) => firstFiniteNumber(row.price, row.high, row.low)).filter((value) => value !== null);
+    const avg = (rows) => {
+      const values = rows.map((row) => firstFiniteNumber(row.price, row.close)).filter((value) => value !== null);
+      return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+    };
+    const price = firstFiniteNumber(latestPoint.price, latestDaily.price, latestDaily.close);
+    const previousClose = firstFiniteNumber(chartHistory?.latest?.previousClose, previousDaily.price, previousDaily.close);
+    const change = price !== null && previousClose > 0 ? price - previousClose : null;
+    const dayLow = firstFiniteNumber(
+      dayLowValues.length ? Math.min(...dayLowValues) : null,
+      latestDaily.low
+    );
+    const dayHigh = firstFiniteNumber(
+      dayHighValues.length ? Math.max(...dayHighValues) : null,
+      latestDaily.high
+    );
+    const commodityList = Array.isArray(listResponse?.data) ? listResponse.data : [];
+    const commodityMeta = commodityList.find((item) => String(item?.symbol || "").toUpperCase() === symbol) || {};
+
+    const data = {
+      symbol,
+      name: firstText(commodityMeta.name) || symbol,
+      price,
+      changePercentage: change !== null && previousClose > 0 ? (change / previousClose) * 100 : firstFiniteNumber(chartHistory?.latest?.percentChange),
+      change,
+      volume: firstFiniteNumber(latestDaily.volume, points.reduce((sum, point) => sum + (toNumberOrNull(point.volume) || 0), 0)),
+      dayLow,
+      dayHigh,
+      yearHigh: yearValues.length ? Math.max(...yearValues) : null,
+      yearLow: yearValues.length ? Math.min(...yearValues) : null,
+      marketCap: null,
+      priceAvg50: avg(dailyRows.slice(0, 50)),
+      priceAvg200: avg(dailyRows.slice(0, 200)),
+      exchange: firstText(commodityMeta.exchange),
+      open: firstFiniteNumber(chartHistory?.latest?.open, points[0]?.open, points[0]?.price),
+      previousClose,
+      updatedAt: new Date().toISOString(),
+      source: "FMP commodity chart and daily history"
+    };
+
+    fmpDataCache.set(cacheKey, {
+      data,
+      expiresAt: Date.now() + 60 * 1000
+    });
+    return res.json(data);
+  } catch (err) {
+    setFmpCooldown(err, "commodity quote", req.params.symbol);
+    console.log("Commodity data failed:", req.params.symbol, err.response?.status || err.message);
+    return res.status(502).json({ error: "Commodity data not found yet" });
   }
 });
 

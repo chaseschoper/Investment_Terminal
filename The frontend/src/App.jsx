@@ -985,6 +985,13 @@ const HOME_FEATURES = [
     text: "Search ETFs and mutual funds to review price, assets, fees, yield, exposure, asset mix, and top holdings when available."
   },
   {
+    id: "commodities",
+    icon: "commodities",
+    label: "Commodities",
+    title: "Track commodity markets",
+    text: "Search commodity symbols to review price, daily range, yearly range, volume, averages, exchange, and chart history."
+  },
+  {
     id: "stock-screener",
     icon: "screener",
     label: "Stock Screener",
@@ -1098,6 +1105,15 @@ const renderHomeFeatureIcon = (icon) => {
           <path className="icon-blue" d="M21 25H43M21 33H43M21 41H34" />
           <path className="icon-green" d="M23 25V43M33 25V43M43 25V35" />
           <circle className="icon-dot" cx="44" cy="42" r="5" />
+        </svg>
+      );
+    case "commodities":
+      return (
+        <svg {...commonProps}>
+          <path className="icon-muted" d="M18 15H46L52 25L32 53L12 25L18 15Z" />
+          <path className="icon-blue" d="M18 15L32 53L46 15" />
+          <path className="icon-green" d="M12 25H52" />
+          <path className="icon-red" d="M23 34L30 28L37 31L45 22" />
         </svg>
       );
     case "screener":
@@ -3903,6 +3919,33 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [etfChartError, setEtfChartError] =
     useState("");
 
+  const [commoditySearchInput, setCommoditySearchInput] =
+    useState("GCUSD");
+
+  const [commoditySymbol, setCommoditySymbol] =
+    useState("GCUSD");
+
+  const [commodityData, setCommodityData] =
+    useState(null);
+
+  const [isCommodityLoading, setIsCommodityLoading] =
+    useState(false);
+
+  const [commodityError, setCommodityError] =
+    useState("");
+
+  const [commodityChartRange, setCommodityChartRange] =
+    useState("1Y");
+
+  const [commodityChartData, setCommodityChartData] =
+    useState({ points: [], latest: null });
+
+  const [isCommodityChartLoading, setIsCommodityChartLoading] =
+    useState(false);
+
+  const [commodityChartError, setCommodityChartError] =
+    useState("");
+
   const [screenerFilters, setScreenerFilters] =
     useState(DEFAULT_SCREENER_FILTERS);
 
@@ -4346,6 +4389,67 @@ useEffect(() => {
     isActive = false;
   };
 }, [activePage, etfTicker, etfChartRange]);
+
+useEffect(() => {
+  if (activePage !== "commodities" || !commoditySymbol) return;
+
+  let isActive = true;
+
+  const loadCommodityData = async () => {
+    setIsCommodityLoading(true);
+    setCommodityError("");
+
+    try {
+      const response = await axios.get(`${API_URL}/api/commodities/${encodeURIComponent(commoditySymbol)}`);
+      if (!isActive) return;
+      setCommodityData(response.data);
+    } catch (error) {
+      console.error("Commodity data failed", error);
+      if (!isActive) return;
+      setCommodityError("Commodity data is not available yet for that symbol.");
+    } finally {
+      if (isActive) setIsCommodityLoading(false);
+    }
+  };
+
+  loadCommodityData();
+
+  return () => {
+    isActive = false;
+  };
+}, [activePage, commoditySymbol]);
+
+useEffect(() => {
+  if (activePage !== "commodities" || !commoditySymbol) return;
+
+  let isActive = true;
+
+  const loadCommodityChart = async () => {
+    setIsCommodityChartLoading(true);
+    setCommodityChartError("");
+
+    try {
+      const response = await axios.get(
+        `${API_URL}/api/price-history/${encodeURIComponent(commoditySymbol)}`,
+        { params: { range: commodityChartRange } }
+      );
+      if (!isActive) return;
+      setCommodityChartData(response.data || { points: [], latest: null });
+    } catch (error) {
+      console.error("Commodity chart failed", error);
+      if (!isActive) return;
+      setCommodityChartError("Price chart is not available yet for that commodity.");
+    } finally {
+      if (isActive) setIsCommodityChartLoading(false);
+    }
+  };
+
+  loadCommodityChart();
+
+  return () => {
+    isActive = false;
+  };
+}, [activePage, commoditySymbol, commodityChartRange]);
 
 useEffect(() => {
   if (activePage !== "stock-screener") return;
@@ -7416,7 +7520,33 @@ const etfProfile = etfData?.profile || {};
 const topEtfHoldings = etfData?.holdings || [];
 const etfChartPoints = Array.isArray(etfChartData?.points) ? etfChartData.points : [];
 const etfChartLatest = etfChartData?.latest || {};
+const displayedEtfPrice = isNumber(etfChartLatest?.price) ? etfChartLatest.price : etfData?.price;
+const displayedEtfPercentChange = isNumber(etfChartLatest?.percentChange)
+  ? etfChartLatest.percentChange
+  : etfData?.percentChange;
 const isMutualFundView = /mutual fund/i.test(String(etfData?.type || etfProfile.assetClass || ""));
+const commodityChartPoints = Array.isArray(commodityChartData?.points) ? commodityChartData.points : [];
+const commodityChartLatest = commodityChartData?.latest || {};
+const displayedCommodityPrice = isNumber(commodityChartLatest?.price) ? commodityChartLatest.price : commodityData?.price;
+const displayedCommodityPercentChange = isNumber(commodityChartLatest?.percentChange)
+  ? commodityChartLatest.percentChange
+  : commodityData?.changePercentage;
+const commodityCards = [
+  { label: "Price", value: formatPrice(displayedCommodityPrice) },
+  { label: "Change", value: isNumber(commodityData?.change) ? formatPrice(commodityData.change) : "N/A" },
+  { label: "Change %", value: formatSignedPercent(displayedCommodityPercentChange) },
+  { label: "Volume", value: isNumber(commodityData?.volume) ? commodityData.volume.toLocaleString() : "N/A" },
+  { label: "Day Low", value: formatPrice(commodityData?.dayLow) },
+  { label: "Day High", value: formatPrice(commodityData?.dayHigh) },
+  { label: "Year Low", value: formatPrice(commodityData?.yearLow) },
+  { label: "Year High", value: formatPrice(commodityData?.yearHigh) },
+  { label: "Market Cap", value: formatLargeDollars(commodityData?.marketCap) },
+  { label: "50 Day Avg", value: formatPrice(commodityData?.priceAvg50) },
+  { label: "200 Day Avg", value: formatPrice(commodityData?.priceAvg200) },
+  { label: "Open", value: formatPrice(commodityData?.open) },
+  { label: "Previous Close", value: formatPrice(commodityData?.previousClose) },
+  { label: "Exchange", value: commodityData?.exchange || "N/A" }
+];
 const etfOverviewCards = [
   { label: "Assets", value: formatLargeDollars(etfStats.assets) },
   { label: "Expense Ratio", value: formatPercent(etfStats.expenseRatio) },
@@ -8474,6 +8604,7 @@ return (
         ["portfolio", "Portfolio"],
         ["watchlists", "Watchlists"],
         ["etfs", "ETF Overview"],
+        ["commodities", "Commodities"],
         ["stock-screener", "Stock Screener"],
         ["news", "News"],
         ["earnings-calendar", "Calendar"],
@@ -8721,9 +8852,9 @@ return (
               </div>
               <div className="etf-price-card">
                 <span>{isMutualFundView ? "NAV / Price" : "Price"}</span>
-                <strong>{formatPrice(etfData.price)}</strong>
-                <em className={isNumber(etfData.percentChange) && etfData.percentChange < 0 ? "red" : "green"}>
-                  {formatSignedPercent(etfData.percentChange)}
+                <strong>{formatPrice(displayedEtfPrice)}</strong>
+                <em className={isNumber(displayedEtfPercentChange) && displayedEtfPercentChange < 0 ? "red" : "green"}>
+                  {formatSignedPercent(displayedEtfPercentChange)}
                 </em>
               </div>
             </div>
@@ -8887,6 +9018,166 @@ return (
           </>
         ) : (
           <div className="heatmap-loading">Search an ETF to get started.</div>
+        )}
+      </section>
+    )}
+
+
+    {activePage === "commodities" && (
+      <section className="etf-page commodities-page" id="commodities" aria-labelledby="commodities-page-title">
+        <div className="etf-heading-row">
+          <div>
+            <span className="home-feature-label">Commodity Research</span>
+            <h2 id="commodities-page-title">Commodities Overview</h2>
+            <p>Search a commodity symbol to review price, range, volume, averages, exchange, and chart history from the latest available market data.</p>
+          </div>
+          <form
+            className="etf-search"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const symbol = commoditySearchInput.trim().toUpperCase();
+              if (!symbol) return;
+              setCommodityData(null);
+              setCommodityError("");
+              setCommodityChartData({ points: [], latest: null });
+              setCommodityChartError("");
+              setIsCommodityLoading(true);
+              setCommoditySymbol(symbol);
+            }}
+          >
+            <input
+              value={commoditySearchInput}
+              onChange={(event) => setCommoditySearchInput(event.target.value.toUpperCase())}
+              placeholder="Search commodity symbol"
+              aria-label="Search commodity symbol"
+            />
+            <button type="submit">{isCommodityLoading ? "Loading..." : "Search Commodity"}</button>
+          </form>
+        </div>
+
+        {isCommodityLoading && !commodityData ? (
+          <div className="heatmap-loading">Loading {commoditySymbol} commodity data...</div>
+        ) : commodityError ? (
+          <div className="heatmap-loading">{commodityError}</div>
+        ) : commodityData ? (
+          <>
+            <div className="etf-hero-panel commodities-hero-panel">
+              <div>
+                <span className="etf-symbol">{commodityData.symbol}</span>
+                <h3>{commodityData.name}</h3>
+                <strong className="etf-type-badge">{commodityData.exchange || "Commodity"}</strong>
+                <p>Review the latest quote, trading range, moving averages, volume, and chart history for this commodity.</p>
+              </div>
+              <div className="etf-price-card">
+                <span>Price</span>
+                <strong>{formatPrice(displayedCommodityPrice)}</strong>
+                <em className={isNumber(displayedCommodityPercentChange) && displayedCommodityPercentChange < 0 ? "red" : "green"}>
+                  {formatSignedPercent(displayedCommodityPercentChange)}
+                </em>
+              </div>
+            </div>
+
+            <div className="etf-panel etf-price-chart-panel">
+              <div className="etf-panel-heading etf-chart-heading">
+                <div>
+                  <h3>{commodityData.symbol} Price Chart</h3>
+                  <span>
+                    {isNumber(commodityChartLatest?.price)
+                      ? `${formatPrice(commodityChartLatest.price)} ${formatSignedPercent(commodityChartLatest.percentChange)}`
+                      : "Latest price history"}
+                  </span>
+                </div>
+                <div className="etf-chart-controls" role="group" aria-label="Commodity chart range">
+                  {ETF_CHART_RANGES.map((range) => (
+                    <button
+                      key={range}
+                      type="button"
+                      className={commodityChartRange === range ? "active" : ""}
+                      onClick={() => setCommodityChartRange(range)}
+                    >
+                      {range}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="etf-chart-canvas">
+                {isCommodityChartLoading && !commodityChartPoints.length ? (
+                  <StockDataLoading label="Loading commodity price chart..." />
+                ) : commodityChartPoints.length ? (
+                  <ResponsiveContainer width="100%" height={330}>
+                    <LineChart
+                      data={commodityChartPoints}
+                      margin={{ top: 18, right: 22, left: 4, bottom: 8 }}
+                    >
+                      <defs>
+                        <linearGradient id="commodityPriceLineGradient" x1="0" y1="0" x2="1" y2="0">
+                          <stop offset="0%" stopColor="#38bdf8" />
+                          <stop offset="55%" stopColor="#60a5fa" />
+                          <stop offset="100%" stopColor="#34d399" />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid stroke="#223049" strokeDasharray="3 3" />
+                      <XAxis
+                        dataKey="time"
+                        tickFormatter={(value) => formatStockChartAxisLabel(value, commodityChartRange)}
+                        stroke="#8ea0bd"
+                        tick={{ fill: "#9ca3af", fontSize: 12 }}
+                        minTickGap={28}
+                      />
+                      <YAxis
+                        domain={["auto", "auto"]}
+                        tickFormatter={(value) => `$${Number(value).toFixed(value >= 100 ? 0 : 2)}`}
+                        stroke="#8ea0bd"
+                        tick={{ fill: "#9ca3af", fontSize: 12 }}
+                        width={72}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          background: "#0b1220",
+                          border: "1px solid #2b3a55",
+                          borderRadius: "12px",
+                          color: "#f8fafc"
+                        }}
+                        labelFormatter={(value) => formatStockChartTooltipLabel(value, commodityChartRange)}
+                        formatter={(value) => [formatPrice(value), "Price"]}
+                      />
+                      <Line
+                        key={`${commodityData.symbol}-${commodityChartRange}-${commodityChartPoints.length}-${commodityChartPoints[0]?.time || ""}`}
+                        type="monotone"
+                        dataKey="price"
+                        stroke="url(#commodityPriceLineGradient)"
+                        strokeWidth={3}
+                        dot={false}
+                        isAnimationActive
+                        animationDuration={700}
+                        activeDot={{
+                          r: 5,
+                          stroke: "#f8fafc",
+                          strokeWidth: 2,
+                          fill: "#38bdf8"
+                        }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="historical-chart-empty">
+                    {commodityChartError || "No price history available yet."}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="etf-stat-grid commodity-stat-grid">
+              {commodityCards.map((card) => (
+                <div key={card.label}>
+                  <span>{card.label}</span>
+                  <strong>{card.value}</strong>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="heatmap-loading">Search a commodity symbol to get started.</div>
         )}
       </section>
     )}
