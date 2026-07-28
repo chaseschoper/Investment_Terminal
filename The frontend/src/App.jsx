@@ -2658,6 +2658,19 @@ const formatCalendarEps = (value, missingLabel = "N/A") =>
 const formatCalendarPercent = (value, missingLabel = "N/A") =>
   isNumber(value) ? `${value.toFixed(2)}%` : missingLabel;
 
+const formatCalendarSignedPercent = (value, missingLabel = "N/A") =>
+  isNumber(value) ? `${value >= 0 ? "+" : ""}${value.toFixed(2)}%` : missingLabel;
+
+const formatCalendarShares = (value, missingLabel = "N/A") => {
+  if (!isNumber(value)) return missingLabel;
+  const absolute = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  if (absolute >= 1e9) return `${sign}${(absolute / 1e9).toFixed(2)}B`;
+  if (absolute >= 1e6) return `${sign}${(absolute / 1e6).toFixed(2)}M`;
+  if (absolute >= 1e3) return `${sign}${(absolute / 1e3).toFixed(1)}K`;
+  return `${sign}${absolute.toLocaleString()}`;
+};
+
 const formatTreasuryRate = (value) =>
   isNumber(value) ? `${value.toFixed(2)}%` : "N/A";
 
@@ -3966,6 +3979,15 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
 
   const [calendarMode, setCalendarMode] =
     useState("earnings");
+
+  const [selectedCalendarEvent, setSelectedCalendarEvent] =
+    useState(null);
+
+  const [calendarEarningsReports, setCalendarEarningsReports] =
+    useState({});
+
+  const [loadingCalendarReportSymbol, setLoadingCalendarReportSymbol] =
+    useState("");
 
   const [earningsWeekStart, setEarningsWeekStart] =
   useState(() => getWeekStartIso());
@@ -5575,6 +5597,32 @@ const loadUserData = async () => {
     }
   };
 
+  const openCalendarEarningsReport = async (event) => {
+    const symbol = String(event?.symbol || "").trim().toUpperCase();
+    if (!symbol) return;
+    setSelectedCalendarEvent(event);
+    if (calendarEarningsReports[symbol]?.rows) return;
+    try {
+      setLoadingCalendarReportSymbol(symbol);
+      const response = await axios.get(
+        `${API_URL}/api/earnings-report/${encodeURIComponent(symbol)}`,
+        { params: { limit: 16 } }
+      );
+      setCalendarEarningsReports((reports) => ({
+        ...reports,
+        [symbol]: response.data || { symbol, rows: [] }
+      }));
+    } catch (err) {
+      console.error(err);
+      setCalendarEarningsReports((reports) => ({
+        ...reports,
+        [symbol]: { symbol, rows: [] }
+      }));
+    } finally {
+      setLoadingCalendarReportSymbol("");
+    }
+  };
+
   /*
     LOAD PORTFOLIO PRICE
   */
@@ -7033,6 +7081,10 @@ const selectedEarningsDay = (earnings?.days || []).find(
   (day) => day.date === selectedEarningsDate
 ) || { date: selectedEarningsDate, events: [] };
 const activeCalendarConfig = CALENDAR_MODES.find((mode) => mode.id === calendarMode) || CALENDAR_MODES[0];
+const selectedCalendarSymbol = String(selectedCalendarEvent?.symbol || "").toUpperCase();
+const selectedCalendarReport = selectedCalendarSymbol
+  ? calendarEarningsReports[selectedCalendarSymbol] || { symbol: selectedCalendarSymbol, rows: [] }
+  : null;
 const earningsWeekLabel = earnings?.weekStart && earnings?.weekEnd
   ? `${new Date(`${earnings.weekStart}T12:00:00`).toLocaleDateString(undefined, {
       month: "short",
@@ -12080,7 +12132,7 @@ return (
     <div>
       <span className="home-feature-label">Market Schedule</span>
       <h2>Calendar</h2>
-      <p>Track upcoming earnings, dividends, and IPOs by week with estimates, payout details, report timing, and company context.</p>
+      <p>Track upcoming earnings, dividends, and IPOs by week with estimates, payout details, offering data, and company context.</p>
     </div>
     <span className="market-overview-updated">
       {isEarningsLoading ? "Refreshing" : `Updated ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`}
@@ -12175,17 +12227,23 @@ return (
             </>
           ) : calendarMode === "dividends" ? (
             <>
-              <span>Company</span>
-              <span>Dividend</span>
+              <span>Symbol</span>
+              <span>Date</span>
+              <span>Record date</span>
+              <span>Payment date</span>
+              <span>Declaration date</span>
+              <span>Adj dividend</span>
               <span>Yield</span>
               <span>Frequency</span>
-              <span>Ex-dividend date</span>
             </>
           ) : (
             <>
+              <span>Symbol</span>
+              <span>Date</span>
               <span>Company</span>
               <span>Exchange</span>
-              <span>Status</span>
+              <span>Actions</span>
+              <span>Shares</span>
               <span>Price range</span>
               <span>Market cap</span>
             </>
@@ -12197,6 +12255,10 @@ return (
             key={`${selectedEarningsDate}-${event.symbol}-${eventIndex}`}
             type="button"
             onClick={() => {
+              if (calendarMode === "earnings") {
+                openCalendarEarningsReport(event);
+                return;
+              }
               setSearchInput(event.symbol);
               setTicker(event.symbol);
               setActivePage("overview");
@@ -12237,15 +12299,21 @@ return (
               </>
             ) : calendarMode === "dividends" ? (
               <>
-                <strong data-label="Dividend">{formatCalendarEps(event.dividend)}</strong>
-                <strong data-label="Yield">{formatCalendarPercent(event.yield)}</strong>
+                <span data-label="Date">{formatShortDate(event.date)}</span>
+                <span data-label="Record date">{formatShortDate(event.recordDate)}</span>
+                <span data-label="Payment date">{formatShortDate(event.paymentDate)}</span>
+                <span data-label="Declaration date">{formatShortDate(event.declarationDate)}</span>
+                <strong data-label="Adj dividend">{formatCalendarEps(event.adjDividend)}</strong>
+                <strong data-label="Yield">{formatCalendarPercent(event.dividendYield)}</strong>
                 <span data-label="Frequency">{event.frequency || "N/A"}</span>
-                <span data-label="Ex-dividend date">{formatShortDate(event.exDividendDate)}</span>
               </>
             ) : (
               <>
+                <span data-label="Date">{formatShortDate(event.date)}</span>
+                <span data-label="Company">{event.company || event.symbol}</span>
                 <span data-label="Exchange">{event.exchange || "N/A"}</span>
-                <strong data-label="Status">{event.status || "Expected"}</strong>
+                <strong data-label="Actions">{event.actions || "N/A"}</strong>
+                <span data-label="Shares">{formatCalendarShares(event.shares)}</span>
                 <span data-label="Price range">{event.priceRange || "N/A"}</span>
                 <span data-label="Market cap">{formatCalendarMoney(event.marketCap)}</span>
               </>
@@ -12255,6 +12323,64 @@ return (
       </div>
     ) : (
       <div className="calendar-empty">No {activeCalendarConfig.label.toLowerCase()} events are scheduled for this date.</div>
+    )}
+
+    {calendarMode === "earnings" && selectedCalendarEvent && (
+      <div className="calendar-report-overlay" role="dialog" aria-modal="true" aria-label={`${selectedCalendarEvent.symbol} earnings report`}>
+        <div className="calendar-report-panel">
+          <div className="calendar-report-heading">
+            <div>
+              <span className="home-feature-label">Earnings Report</span>
+              <h3>{selectedCalendarEvent.symbol}</h3>
+              <p>{selectedCalendarEvent.company}</p>
+            </div>
+            <button
+              type="button"
+              aria-label="Close earnings report"
+              onClick={() => setSelectedCalendarEvent(null)}
+            >
+              Close
+            </button>
+          </div>
+
+          {loadingCalendarReportSymbol === selectedCalendarSymbol && !selectedCalendarReport?.rows?.length ? (
+            <div className="calendar-empty">Loading earnings report...</div>
+          ) : selectedCalendarReport?.rows?.length ? (
+            <div className="calendar-report-table">
+              <div className="calendar-report-table-header">
+                <span>Symbol</span>
+                <span>Date</span>
+                <span>EPS actual</span>
+                <span>EPS estimated</span>
+                <span>Revenue actual</span>
+                <span>Revenue estimated</span>
+              </div>
+              {selectedCalendarReport.rows.map((row, rowIndex) => (
+                <div className="calendar-report-table-row" key={`${row.symbol}-${row.date}-${rowIndex}`}>
+                  <strong>{row.symbol}</strong>
+                  <span>{formatShortDate(row.date)}</span>
+                  <span>
+                    {formatCalendarEps(row.epsActual)}
+                    <small className={isNumber(row.epsSurprisePercent) ? (row.epsSurprisePercent >= 0 ? "green" : "red") : ""}>
+                      {formatCalendarSignedPercent(row.epsSurprisePercent)}
+                    </small>
+                  </span>
+                  <span>{formatCalendarEps(row.epsEstimated)}</span>
+                  <span>
+                    {formatCalendarMoney(row.revenueActual)}
+                    <small className={isNumber(row.revenueSurprisePercent) ? (row.revenueSurprisePercent >= 0 ? "green" : "red") : ""}>
+                      {formatCalendarSignedPercent(row.revenueSurprisePercent)}
+                    </small>
+                  </span>
+                  <span>{formatCalendarMoney(row.revenueEstimated)}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="calendar-empty">No earnings report rows available yet.</div>
+          )}
+        </div>
+      </div>
     )}
   </div>
 

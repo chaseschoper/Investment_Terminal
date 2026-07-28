@@ -3239,10 +3239,13 @@ body {
 }
 
 .calendar-company-row-dividends,
-.calendar-company-header-dividends,
+.calendar-company-header-dividends {
+  grid-template-columns: minmax(190px, 1.5fr) minmax(105px, 0.8fr) minmax(115px, 0.9fr) minmax(115px, 0.9fr) minmax(125px, 0.9fr) minmax(110px, 0.8fr) minmax(90px, 0.7fr) minmax(110px, 0.8fr);
+}
+
 .calendar-company-row-ipos,
 .calendar-company-header-ipos {
-  grid-template-columns: minmax(220px, 2fr) minmax(110px, 0.8fr) minmax(90px, 0.7fr) minmax(120px, 0.9fr) minmax(120px, 0.9fr);
+  grid-template-columns: minmax(160px, 1.2fr) minmax(105px, 0.75fr) minmax(220px, 1.7fr) minmax(95px, 0.7fr) minmax(110px, 0.8fr) minmax(100px, 0.75fr) minmax(130px, 0.9fr) minmax(120px, 0.85fr);
 }
 
 .calendar-company-header {
@@ -3334,6 +3337,98 @@ body {
   text-align: center;
 }
 
+.calendar-report-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgba(2, 6, 23, 0.74);
+  backdrop-filter: blur(14px);
+}
+
+.calendar-report-panel {
+  width: min(1180px, 96vw);
+  max-height: min(760px, 88vh);
+  overflow: auto;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(45, 212, 191, 0.14), transparent 30%),
+    linear-gradient(135deg, rgba(8, 15, 28, 0.98), rgba(15, 23, 42, 0.98));
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.52);
+}
+
+.calendar-report-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 24px;
+  border-bottom: 1px solid rgba(56, 189, 248, 0.18);
+}
+
+.calendar-report-heading h3 {
+  margin: 8px 0 4px;
+  color: #f8fafc;
+  font-size: clamp(30px, 5vw, 54px);
+  line-height: 0.95;
+}
+
+.calendar-report-heading p {
+  margin: 0;
+  color: #94a3b8;
+  font-weight: 800;
+}
+
+.calendar-report-heading button {
+  border: 1px solid rgba(96, 165, 250, 0.42);
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.14);
+  color: #dbeafe;
+  cursor: pointer;
+  font-weight: 900;
+  padding: 10px 16px;
+}
+
+.calendar-report-table {
+  min-width: 980px;
+}
+
+.calendar-report-table-header,
+.calendar-report-table-row {
+  display: grid;
+  grid-template-columns: 0.8fr 0.9fr 1fr 1fr 1.2fr 1.2fr;
+  align-items: center;
+  gap: 16px;
+  padding: 15px 24px;
+}
+
+.calendar-report-table-header {
+  color: #67e8f9;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.calendar-report-table-row {
+  border-top: 1px solid rgba(39, 50, 68, 0.84);
+  color: #d1d5db;
+}
+
+.calendar-report-table-row strong {
+  color: #f8fafc;
+}
+
+.calendar-report-table-row small {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
 @media (max-width: 760px) {
   .calendar-heading-row {
     align-items: flex-start;
@@ -3375,6 +3470,15 @@ body {
     color: #6b7280;
     font-size: 10px;
     font-weight: 500;
+  }
+
+  .calendar-report-overlay {
+    align-items: end;
+    padding: 14px;
+  }
+
+  .calendar-report-panel {
+    max-height: 86vh;
   }
 }
 .ai-analysis-box {

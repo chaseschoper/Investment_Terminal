@@ -20184,7 +20184,6 @@ app.get("/api/earnings", async (req, res) => {
           fmpMarketCapBySymbol.get(symbol),
           row.marketCap
         ),
-        reportTime: normalizeReportTime(row.time, row.reportTime, row.reportTimeCode, stockAnalysisRow.reportTime, stockAnalysisRow.reportTimeCode),
         fiscalQuarter: row.fiscalDateEnding ? String(row.fiscalDateEnding).slice(0, 10) : null,
         epsEstimate: firstFiniteNumber(row.epsEstimated, row.epsEstimate, stockAnalysisRow.epsEstimate),
         revenueEstimate: firstFiniteNumber(row.revenueEstimated, row.revenueEstimate, stockAnalysisRow.revenueEstimate),
@@ -20310,11 +20309,12 @@ app.get("/api/calendar-events", async (req, res) => {
     const eventsByDate = new Map();
 
     rawRows.forEach((row) => {
-      const exDividendDate = String(row.date || row.exDividendDate || "").slice(0, 10);
+      const dividendDate = String(row.date || row.exDividendDate || "").slice(0, 10);
       const paymentDate = String(row.paymentDate || "").slice(0, 10);
       const recordDate = String(row.recordDate || "").slice(0, 10);
+      const declarationDate = String(row.declarationDate || "").slice(0, 10);
       const ipoDate = String(row.date || row.daa || "").slice(0, 10);
-      const date = type === "dividends" ? exDividendDate : ipoDate;
+      const date = type === "dividends" ? dividendDate : ipoDate;
       if (!dates.includes(date)) return;
       const symbol = String(row.symbol || "").trim().toUpperCase();
       if (!symbol) return;
@@ -20324,13 +20324,12 @@ app.get("/api/calendar-events", async (req, res) => {
             symbol,
             company: row.name || row.companyName || symbol,
             logo: getFinnhubLogoUrl(symbol),
-            dividend: firstFiniteNumber(row.adjDividend, row.dividend),
-            yield: firstFiniteNumber(row.yield),
+            adjDividend: firstFiniteNumber(row.adjDividend, row.dividend),
+            dividendYield: firstFiniteNumber(row.dividendYield, row.yield),
             frequency: firstText(row.frequency) || "N/A",
-            exDividendDate,
             recordDate,
             paymentDate,
-            declarationDate: firstText(row.declarationDate),
+            declarationDate,
             source: "FMP dividends calendar"
           }
         : {
@@ -20339,7 +20338,7 @@ app.get("/api/calendar-events", async (req, res) => {
             company: row.company || row.name || symbol,
             logo: getFinnhubLogoUrl(symbol),
             exchange: firstText(row.exchange) || "N/A",
-            status: firstText(row.actions) || "Expected",
+            actions: firstText(row.actions) || "N/A",
             shares: firstFiniteNumber(row.shares),
             priceRange: firstText(row.priceRange),
             marketCap: firstFiniteNumber(row.marketCap),
@@ -20378,6 +20377,80 @@ app.get("/api/calendar-events", async (req, res) => {
     setFmpCooldown(err, `${type} calendar`, "calendar");
     console.log(`FMP ${type} calendar skipped:`, err.response?.status || err.message);
     return res.status(500).json({ weekStart: dates[0], weekEnd: dates[6], type, days: [] });
+  }
+});
+
+app.get("/api/earnings-report/:symbol", async (req, res) => {
+  const symbol = String(req.params.symbol || "").trim().toUpperCase();
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 12, 1), 40);
+  if (!symbol) return res.status(400).json({ symbol, rows: [] });
+  if (!process.env.FMP_API_KEY || !canUseFmp()) {
+    return res.status(503).json({ symbol, rows: [] });
+  }
+
+  const cacheKey = `earnings-report:${symbol}:${limit}`;
+  const cached = fmpCalendarCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return res.json(cached.data);
+
+  try {
+    const rows = await resolveWithin(
+      getFmpData(symbol, "earnings report", [
+        `/stable/earnings?symbol={ticker}&limit=${limit}`
+      ]),
+      4500,
+      []
+    );
+    if (isFmpErrorPayload(rows)) {
+      const error = new Error(firstText(rows["Error Message"], rows.error, rows.Note, rows.Information) || "FMP earnings report unavailable");
+      error.response = { status: 429 };
+      throw error;
+    }
+    const normalizedRows = (Array.isArray(rows) ? rows : rows ? [rows] : [])
+      .filter((row) => !row.symbol || String(row.symbol || "").trim().toUpperCase() === symbol)
+      .map((row) => {
+        const epsActual = parseApiNumber(row.epsActual ?? row.actualEarningResult ?? row.actualEps ?? row.eps);
+        const epsEstimated = parseApiNumber(row.epsEstimated ?? row.epsEstimate ?? row.estimatedEarning ?? row.estimatedEps);
+        const revenueActual = parseApiNumber(row.revenueActual);
+        const revenueEstimated = parseApiNumber(row.revenueEstimated ?? row.revenueEstimate);
+        const epsSurprise = epsActual !== null && epsEstimated !== null
+          ? epsActual - epsEstimated
+          : null;
+        const revenueSurprise = revenueActual !== null && revenueEstimated !== null
+          ? revenueActual - revenueEstimated
+          : null;
+        return {
+          symbol,
+          date: String(row.date || row.period || "").slice(0, 10),
+          epsActual,
+          epsEstimated,
+          revenueActual,
+          revenueEstimated,
+          epsSurprise,
+          epsSurprisePercent: epsSurprise !== null && epsEstimated
+            ? (epsSurprise / Math.abs(epsEstimated)) * 100
+            : null,
+          revenueSurprise,
+          revenueSurprisePercent: revenueSurprise !== null && revenueEstimated
+            ? (revenueSurprise / Math.abs(revenueEstimated)) * 100
+            : null
+        };
+      })
+      .filter((row) => row.date)
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const responseData = {
+      symbol,
+      rows: normalizedRows,
+      updatedAt: new Date().toISOString()
+    };
+    fmpCalendarCache.set(cacheKey, {
+      data: responseData,
+      expiresAt: Date.now() + (normalizedRows.length ? 15 * 60 * 1000 : 90 * 1000)
+    });
+    return res.json(responseData);
+  } catch (err) {
+    setFmpCooldown(err, "earnings report", symbol);
+    console.log("FMP earnings report skipped:", symbol, err.response?.status || err.message);
+    return res.status(500).json({ symbol, rows: [] });
   }
 });
 
