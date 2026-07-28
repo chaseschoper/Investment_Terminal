@@ -1797,7 +1797,7 @@ function persistFmpMetricCards(ticker, metricCards = {}) {
   const update = isCompleteFmpMetricCardPayload(metricCards)
     ? buildFmpMetricCardUpdate(metricCards)
     : buildNonNullFmpMetricCardUpdate(metricCards);
-  Stock.findOneAndUpdate(
+  return Stock.findOneAndUpdate(
     { ticker: symbol },
     {
       $set: Object.fromEntries(
@@ -8251,10 +8251,14 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {
     const lastFastPatchAt = fastStockSnapshotPatchCooldowns.get(ticker) || 0;
     if (Date.now() - lastFastPatchAt > 5 * 60 * 1000) {
       const fastPatchPromise = buildFastStockSnapshot(ticker, responseData);
-      const fastPatch = await resolveWithin(fastPatchPromise, 650, null);
-      fastStockSnapshotPatchCooldowns.set(ticker, Date.now());
-      if (fastPatch) responseData = prepareCachedStockResponseData(ticker, fastPatch);
+      const fastPatch = await resolveWithin(fastPatchPromise, 2200, null);
+      if (fastPatch) {
+        fastStockSnapshotPatchCooldowns.set(ticker, Date.now());
+        responseData = prepareCachedStockResponseData(ticker, fastPatch);
+        await persistFmpMetricCards(ticker, fastPatch);
+      }
       else {
+        fastStockSnapshotPatchCooldowns.set(ticker, Date.now() - (5 * 60 * 1000) + 30 * 1000);
         backgroundPatches.push(
           fastPatchPromise
             .then((patch) => {

@@ -6555,9 +6555,21 @@ const hasUsableMetricSnapshot =
     isNumber(latestOperatingCashflowFromChart)
   );
 const isInitialStockLoad = isStockLoading && (!stockData?.symbol || stockData?.isPlaceholder);
+const hasCurrentFmpValuationMetrics = stockData?.valuationMetricsVersion === VALUATION_METRICS_VERSION;
+const hasCurrentFmpBalanceMetrics = stockData?.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION;
+const areValuationMetricsRefreshing =
+  isInitialStockLoad ||
+  (isStockLoading && !hasCurrentFmpValuationMetrics);
+const isBalanceSheetMetricsRefreshing =
+  isInitialStockLoad ||
+  (isStockLoading && !hasCurrentFmpBalanceMetrics);
 const areMetricsRefreshing =
   isInitialStockLoad ||
-  (isStockLoading && !hasUsableMetricSnapshot);
+  (isStockLoading && (
+    !hasUsableMetricSnapshot ||
+    !hasCurrentFmpValuationMetrics ||
+    !hasCurrentFmpBalanceMetrics
+  ));
 const shouldShowHistoricalPeLoading = (rows = []) =>
   !hasRealHistoryRows(rows) &&
   (
@@ -6572,9 +6584,6 @@ const metricValue = (value) =>
   areMetricsRefreshing && (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
     : stockValue(value);
-const isBalanceSheetMetricsRefreshing =
-  isInitialStockLoad ||
-  (isStockLoading && !hasUsableMetricSnapshot && !stockData?.balanceSheetCheckedAt);
 const balanceSheetValue = (value) =>
   (areMetricsRefreshing || isBalanceSheetMetricsRefreshing) &&
   (value === "N/A" || value === null || value === undefined)
@@ -6583,9 +6592,10 @@ const balanceSheetValue = (value) =>
 const hasMetricCardValue = (value) =>
   isNumber(value) || (typeof value === "string" && value.trim() && value !== "N/A");
 const shouldRenderMetricCard = (value) =>
-  hasMetricCardValue(value) || areMetricsRefreshing || isBalanceSheetMetricsRefreshing;
-const hasCurrentFmpValuationMetrics = stockData?.valuationMetricsVersion === VALUATION_METRICS_VERSION;
-const hasCurrentFmpBalanceMetrics = stockData?.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION;
+  hasMetricCardValue(value) ||
+  areMetricsRefreshing ||
+  areValuationMetricsRefreshing ||
+  isBalanceSheetMetricsRefreshing;
 const fmpMetricValue = (value) =>
   hasCurrentFmpValuationMetrics || hasMetricCardValue(value) ? value : null;
 const fmpBalanceValue = (value) =>
