@@ -829,7 +829,8 @@ const DEFAULT_FUNDAMENTAL_INDICATORS = ["income_revenue", "income_netIncome", "i
 const CALENDAR_MODES = [
   { id: "earnings", label: "Earnings" },
   { id: "dividends", label: "Dividends" },
-  { id: "ipos", label: "IPOs" }
+  { id: "ipos", label: "IPOs" },
+  { id: "economic", label: "Economic" }
 ];
 
 const TREASURY_RATE_TERMS = [
@@ -1537,6 +1538,7 @@ const chunkSymbols = (symbols, size = 10) => {
 };
 
 const STOCK_CHART_RANGES = ["1D", "1W", "1M", "1Y", "YTD", "5Y", "10Y", "MAX"];
+const ETF_CHART_RANGES = STOCK_CHART_RANGES;
 
 const formatStockChartAxisLabel = (value, range) => {
   const date = new Date(value);
@@ -2669,6 +2671,14 @@ const formatCalendarShares = (value, missingLabel = "N/A") => {
   if (absolute >= 1e6) return `${sign}${(absolute / 1e6).toFixed(2)}M`;
   if (absolute >= 1e3) return `${sign}${(absolute / 1e3).toFixed(1)}K`;
   return `${sign}${absolute.toLocaleString()}`;
+};
+
+const formatCalendarValue = (value, unit = "", missingLabel = "N/A") => {
+  if (!isNumber(value)) return missingLabel;
+  const suffix = unit && unit !== "N/A" ? ` ${unit}` : "";
+  return `${value.toLocaleString(undefined, {
+    maximumFractionDigits: Math.abs(value) < 10 ? 2 : 1
+  })}${suffix}`;
 };
 
 const formatTreasuryRate = (value) =>
@@ -3881,6 +3891,18 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [etfError, setEtfError] =
     useState("");
 
+  const [etfChartRange, setEtfChartRange] =
+    useState("1Y");
+
+  const [etfChartData, setEtfChartData] =
+    useState({ points: [], latest: null });
+
+  const [isEtfChartLoading, setIsEtfChartLoading] =
+    useState(false);
+
+  const [etfChartError, setEtfChartError] =
+    useState("");
+
   const [screenerFilters, setScreenerFilters] =
     useState(DEFAULT_SCREENER_FILTERS);
 
@@ -4292,6 +4314,38 @@ useEffect(() => {
     window.clearTimeout(startTimer);
   };
 }, [activePage, etfTicker]);
+
+useEffect(() => {
+  if (activePage !== "etfs" || !etfTicker) return;
+
+  let isActive = true;
+
+  const loadEtfChart = async () => {
+    setIsEtfChartLoading(true);
+    setEtfChartError("");
+
+    try {
+      const response = await axios.get(
+        `${API_URL}/api/price-history/${encodeURIComponent(etfTicker)}`,
+        { params: { range: etfChartRange } }
+      );
+      if (!isActive) return;
+      setEtfChartData(response.data || { points: [], latest: null });
+    } catch (error) {
+      console.error("Fund chart failed", error);
+      if (!isActive) return;
+      setEtfChartError("Price chart is not available yet for that fund.");
+    } finally {
+      if (isActive) setIsEtfChartLoading(false);
+    }
+  };
+
+  loadEtfChart();
+
+  return () => {
+    isActive = false;
+  };
+}, [activePage, etfTicker, etfChartRange]);
 
 useEffect(() => {
   if (activePage !== "stock-screener") return;
@@ -7356,6 +7410,8 @@ const heatmapSectorGroups = heatmapSectors.map((sector) => ({
 const etfStats = etfData?.stats || {};
 const etfProfile = etfData?.profile || {};
 const topEtfHoldings = etfData?.holdings || [];
+const etfChartPoints = Array.isArray(etfChartData?.points) ? etfChartData.points : [];
+const etfChartLatest = etfChartData?.latest || {};
 const isMutualFundView = /mutual fund/i.test(String(etfData?.type || etfProfile.assetClass || ""));
 const etfOverviewCards = [
   { label: "Assets", value: formatLargeDollars(etfStats.assets) },
@@ -8630,6 +8686,8 @@ return (
               if (!symbol) return;
               setEtfData(null);
               setEtfError("");
+              setEtfChartData({ points: [], latest: null });
+              setEtfChartError("");
               setIsEtfLoading(true);
               setEtfTicker(symbol);
             }}
@@ -8663,6 +8721,96 @@ return (
                 <em className={isNumber(etfData.percentChange) && etfData.percentChange < 0 ? "red" : "green"}>
                   {formatSignedPercent(etfData.percentChange)}
                 </em>
+              </div>
+            </div>
+
+            <div className="etf-panel etf-price-chart-panel">
+              <div className="etf-panel-heading etf-chart-heading">
+                <div>
+                  <h3>{etfData.symbol} Price Chart</h3>
+                  <span>
+                    {isNumber(etfChartLatest?.price)
+                      ? `${formatPrice(etfChartLatest.price)} ${formatSignedPercent(etfChartLatest.percentChange)}`
+                      : "Latest price history"}
+                  </span>
+                </div>
+                <div className="etf-chart-controls" role="group" aria-label="ETF chart range">
+                  {ETF_CHART_RANGES.map((range) => (
+                    <button
+                      key={range}
+                      type="button"
+                      className={etfChartRange === range ? "active" : ""}
+                      onClick={() => setEtfChartRange(range)}
+                    >
+                      {range}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="etf-chart-canvas">
+                {isEtfChartLoading && !etfChartPoints.length ? (
+                  <StockDataLoading label="Loading fund price chart..." />
+                ) : etfChartPoints.length ? (
+                  <ResponsiveContainer width="100%" height={330}>
+                    <LineChart
+                      data={etfChartPoints}
+                      margin={{ top: 18, right: 22, left: 4, bottom: 8 }}
+                    >
+                      <defs>
+                        <linearGradient id="etfPriceLineGradient" x1="0" y1="0" x2="1" y2="0">
+                          <stop offset="0%" stopColor="#38bdf8" />
+                          <stop offset="55%" stopColor="#60a5fa" />
+                          <stop offset="100%" stopColor="#34d399" />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid stroke="#223049" strokeDasharray="3 3" />
+                      <XAxis
+                        dataKey="time"
+                        tickFormatter={(value) => formatStockChartAxisLabel(value, etfChartRange)}
+                        stroke="#8ea0bd"
+                        tick={{ fill: "#9ca3af", fontSize: 12 }}
+                        minTickGap={28}
+                      />
+                      <YAxis
+                        domain={["auto", "auto"]}
+                        tickFormatter={(value) => `$${Number(value).toFixed(value >= 100 ? 0 : 2)}`}
+                        stroke="#8ea0bd"
+                        tick={{ fill: "#9ca3af", fontSize: 12 }}
+                        width={72}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          background: "#0b1220",
+                          border: "1px solid #2b3a55",
+                          borderRadius: "12px",
+                          color: "#f8fafc"
+                        }}
+                        labelFormatter={(value) => formatStockChartTooltipLabel(value, etfChartRange)}
+                        formatter={(value) => [formatPrice(value), "Price"]}
+                      />
+                      <Line
+                        key={`${etfData.symbol}-${etfChartRange}-${etfChartPoints.length}-${etfChartPoints[0]?.time || ""}`}
+                        type="monotone"
+                        dataKey="price"
+                        stroke="url(#etfPriceLineGradient)"
+                        strokeWidth={3}
+                        dot={false}
+                        isAnimationActive
+                        animationDuration={700}
+                        activeDot={{
+                          r: 5,
+                          stroke: "#f8fafc",
+                          strokeWidth: 2,
+                          fill: "#38bdf8"
+                        }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="historical-chart-empty">
+                    {etfChartError || "No price history available yet."}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -12203,7 +12351,9 @@ return (
           >
             <span>{date.toLocaleDateString(undefined, { weekday: "short" })}</span>
             <strong>{date.getDate()}</strong>
-            <small>{day.events?.length || 0} {calendarMode === "earnings" ? "reports" : calendarMode}</small>
+            <small>
+              {day.events?.length || 0} {calendarMode === "earnings" ? "reports" : calendarMode === "economic" ? "releases" : calendarMode}
+            </small>
           </button>
         );
       })}
@@ -12236,6 +12386,19 @@ return (
               <span>Yield</span>
               <span>Frequency</span>
             </>
+          ) : calendarMode === "economic" ? (
+            <>
+              <span>Event</span>
+              <span>Country</span>
+              <span>Currency</span>
+              <span>Previous</span>
+              <span>Estimate</span>
+              <span>Actual</span>
+              <span>Change</span>
+              <span>Impact</span>
+              <span>Change %</span>
+              <span>Unit</span>
+            </>
           ) : (
             <>
               <span>Symbol</span>
@@ -12252,13 +12415,14 @@ return (
         {selectedEarningsDay.events.map((event, eventIndex) => (
           <button
             className={`calendar-company-row calendar-company-row-${calendarMode}`}
-            key={`${selectedEarningsDate}-${event.symbol}-${eventIndex}`}
+            key={`${selectedEarningsDate}-${event.symbol || event.event || "event"}-${eventIndex}`}
             type="button"
             onClick={() => {
               if (calendarMode === "earnings") {
                 openCalendarEarningsReport(event);
                 return;
               }
+              if (calendarMode === "economic") return;
               setSearchInput(event.symbol);
               setTicker(event.symbol);
               setActivePage("overview");
@@ -12266,30 +12430,37 @@ return (
             }}
           >
             <span className="calendar-company-name">
-              <span className="calendar-company-identity">
-                <span className="calendar-company-logo-shell" aria-hidden="true">
-                  <span className="calendar-company-logo-fallback">
-                    {event.symbol.slice(0, 1)}
+              {calendarMode === "economic" ? (
+                <span className="calendar-company-copy calendar-economic-copy">
+                  <strong>{event.event || "Economic release"}</strong>
+                  <small>{formatShortDate(event.date)}</small>
+                </span>
+              ) : (
+                <span className="calendar-company-identity">
+                  <span className="calendar-company-logo-shell" aria-hidden="true">
+                    <span className="calendar-company-logo-fallback">
+                      {event.symbol.slice(0, 1)}
+                    </span>
+                    {event.logo && (
+                      <img
+                        className="calendar-company-logo"
+                        src={event.logo}
+                        alt=""
+                        onError={(imageEvent) =>
+                          handleCompanyLogoError(imageEvent, event.symbol)
+                        }
+                      />
+                    )}
                   </span>
-                  {event.logo && (
-                    <img
-                      className="calendar-company-logo"
-                      src={event.logo}
-                      alt=""
-                      onError={(imageEvent) =>
-                        handleCompanyLogoError(imageEvent, event.symbol)
-                      }
-                    />
-                  )}
+                  <span className="calendar-company-copy">
+                    <strong>{event.symbol}</strong>
+                    <small>{event.company}</small>
+                    {calendarMode === "earnings" && event.fiscalQuarter && (
+                      <em>{event.fiscalQuarter}</em>
+                    )}
+                  </span>
                 </span>
-                <span className="calendar-company-copy">
-                  <strong>{event.symbol}</strong>
-                  <small>{event.company}</small>
-                  {calendarMode === "earnings" && event.fiscalQuarter && (
-                    <em>{event.fiscalQuarter}</em>
-                  )}
-                </span>
-              </span>
+              )}
             </span>
             {calendarMode === "earnings" ? (
               <>
@@ -12306,6 +12477,18 @@ return (
                 <strong data-label="Adj dividend">{formatCalendarEps(event.adjDividend)}</strong>
                 <strong data-label="Yield">{formatCalendarPercent(event.dividendYield)}</strong>
                 <span data-label="Frequency">{event.frequency || "N/A"}</span>
+              </>
+            ) : calendarMode === "economic" ? (
+              <>
+                <span data-label="Country">{event.country || "N/A"}</span>
+                <span data-label="Currency">{event.currency || "N/A"}</span>
+                <span data-label="Previous">{formatCalendarValue(event.previous, event.unit)}</span>
+                <span data-label="Estimate">{formatCalendarValue(event.estimate, event.unit)}</span>
+                <strong data-label="Actual">{formatCalendarValue(event.actual, event.unit)}</strong>
+                <span data-label="Change">{formatCalendarValue(event.change, event.unit)}</span>
+                <strong data-label="Impact">{event.impact || "N/A"}</strong>
+                <span data-label="Change %">{formatCalendarSignedPercent(event.changePercentage)}</span>
+                <span data-label="Unit">{event.unit || "N/A"}</span>
               </>
             ) : (
               <>

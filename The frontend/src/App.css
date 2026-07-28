@@ -1407,6 +1407,55 @@ body {
   cursor: pointer;
 }
 
+.etf-price-chart-panel {
+  padding: 18px;
+}
+
+.etf-chart-heading {
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.etf-chart-heading > div:first-child {
+  min-width: 0;
+}
+
+.etf-chart-heading span {
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.etf-chart-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.etf-chart-controls button {
+  min-width: 48px;
+  min-height: 38px;
+  border: 1px solid rgba(96, 165, 250, 0.32);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.82);
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.etf-chart-controls button.active {
+  border-color: rgba(34, 211, 238, 0.82);
+  background: rgba(14, 165, 233, 0.18);
+  color: #f8fafc;
+  box-shadow: 0 0 24px rgba(14, 165, 233, 0.16);
+}
+
+.etf-chart-canvas {
+  min-height: 330px;
+}
+
 .etf-hero-panel,
 .etf-panel,
 .etf-stat-grid > div,
@@ -3222,6 +3271,7 @@ body {
 
 .calendar-company-list {
   padding: 8px 0;
+  overflow-x: auto;
 }
 
 .calendar-company-header,
@@ -3241,11 +3291,36 @@ body {
 .calendar-company-row-dividends,
 .calendar-company-header-dividends {
   grid-template-columns: minmax(190px, 1.5fr) minmax(105px, 0.8fr) minmax(115px, 0.9fr) minmax(115px, 0.9fr) minmax(125px, 0.9fr) minmax(110px, 0.8fr) minmax(90px, 0.7fr) minmax(110px, 0.8fr);
+  min-width: 1120px;
 }
 
 .calendar-company-row-ipos,
 .calendar-company-header-ipos {
   grid-template-columns: minmax(160px, 1.2fr) minmax(105px, 0.75fr) minmax(220px, 1.7fr) minmax(95px, 0.7fr) minmax(110px, 0.8fr) minmax(100px, 0.75fr) minmax(130px, 0.9fr) minmax(120px, 0.85fr);
+  min-width: 1180px;
+}
+
+.calendar-company-row-economic,
+.calendar-company-header-economic {
+  grid-template-columns: minmax(280px, 2fr) minmax(95px, 0.75fr) minmax(95px, 0.7fr) minmax(105px, 0.8fr) minmax(105px, 0.8fr) minmax(105px, 0.8fr) minmax(105px, 0.8fr) minmax(105px, 0.8fr) minmax(105px, 0.8fr) minmax(90px, 0.65fr);
+  min-width: 1260px;
+}
+
+.calendar-company-row-economic {
+  cursor: default;
+}
+
+.calendar-company-row-economic:hover {
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.calendar-economic-copy strong {
+  overflow: visible;
+  white-space: normal;
+}
+
+.calendar-economic-copy small {
+  color: #67e8f9;
 }
 
 .calendar-company-header {
@@ -3439,8 +3514,40 @@ body {
 }
 
 @media (max-width: 760px) {
+  .etf-heading-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .etf-search {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .etf-hero-panel {
+    flex-direction: column;
+  }
+
+  .etf-chart-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .etf-chart-controls {
+    justify-content: flex-start;
+  }
+
+  .etf-chart-canvas {
+    min-height: 280px;
+  }
+
   .calendar-heading-row {
     align-items: flex-start;
+  }
+
+  .calendar-mode-toggle {
+    overflow-x: auto;
+    justify-content: flex-start;
   }
 
   .calendar-date-strip {
@@ -3456,15 +3563,19 @@ body {
   }
 
   .calendar-company-row {
+    min-width: 0;
     width: 100%;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px 8px;
+    grid-template-columns: 1fr;
+    gap: 10px;
     padding: 16px;
+    border: 1px solid rgba(39, 50, 68, 0.84);
+    border-radius: 12px;
+    margin: 10px 0;
   }
 
   .calendar-company-name,
   .calendar-company-row-earnings .calendar-company-name {
-    grid-column: 1 / -1;
+    grid-column: auto;
   }
 
   .calendar-company-row > :not(:first-child) {
@@ -3472,13 +3583,24 @@ body {
     text-align: left;
   }
 
+  .calendar-company-row [data-label] {
+    display: grid;
+    grid-template-columns: minmax(116px, 0.7fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(51, 65, 85, 0.42);
+  }
+
   .calendar-company-row [data-label]::before {
     content: attr(data-label);
     display: block;
-    margin-bottom: 4px;
-    color: #6b7280;
+    margin-bottom: 0;
+    color: #67e8f9;
     font-size: 10px;
-    font-weight: 500;
+    font-weight: 900;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
   }
 
   .calendar-report-overlay {

@@ -20260,11 +20260,11 @@ const buildCalendarDates = (startValue) => {
 };
 
 app.get("/api/calendar-events", async (req, res) => {
-  const type = ["earnings", "dividends", "ipos"].includes(String(req.query.type || "").toLowerCase())
+  const type = ["earnings", "dividends", "ipos", "economic"].includes(String(req.query.type || "").toLowerCase())
     ? String(req.query.type).toLowerCase()
     : "earnings";
   const dates = buildCalendarDates(req.query.start);
-  const cacheKey = `v2:${type}:${dates[0]}:${dates[6]}`;
+  const cacheKey = `v3:${type}:${dates[0]}:${dates[6]}`;
   const cached = fmpCalendarCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return res.json(cached.data);
 
@@ -20287,7 +20287,11 @@ app.get("/api/calendar-events", async (req, res) => {
       return res.json(responseData);
     }
 
-    const endpoint = type === "dividends" ? "dividends-calendar" : "ipos-calendar";
+    const endpoint = type === "dividends"
+      ? "dividends-calendar"
+      : type === "economic"
+        ? "economic-calendar"
+        : "ipos-calendar";
     const rows = await resolveWithin(
       getFmpAxios(`https://financialmodelingprep.com/stable/${endpoint}`, {
         params: {
@@ -20309,6 +20313,29 @@ app.get("/api/calendar-events", async (req, res) => {
     const eventsByDate = new Map();
 
     rawRows.forEach((row) => {
+      if (type === "economic") {
+        const date = String(row.date || row.releaseDate || row.calendarDate || "").slice(0, 10);
+        if (!dates.includes(date)) return;
+        const event = {
+          date,
+          country: firstText(row.country) || "N/A",
+          event: firstText(row.event, row.name, row.title) || "Economic release",
+          currency: firstText(row.currency) || "N/A",
+          previous: firstFiniteNumber(row.previous),
+          estimate: firstFiniteNumber(row.estimate),
+          actual: firstFiniteNumber(row.actual),
+          change: firstFiniteNumber(row.change),
+          impact: firstText(row.impact) || "N/A",
+          changePercentage: firstFiniteNumber(row.changePercentage, row.changePercent, row.changePct),
+          unit: firstText(row.unit) || "N/A",
+          source: "FMP economic calendar"
+        };
+        const list = eventsByDate.get(date) || [];
+        list.push(event);
+        eventsByDate.set(date, list);
+        return;
+      }
+
       const dividendDate = String(row.date || row.exDividendDate || "").slice(0, 10);
       const paymentDate = String(row.paymentDate || "").slice(0, 10);
       const recordDate = String(row.recordDate || "").slice(0, 10);
@@ -20353,7 +20380,11 @@ app.get("/api/calendar-events", async (req, res) => {
     const days = dates.map((date) => {
       const events = (eventsByDate.get(date) || [])
         .sort((a, b) => {
-          if (type === "dividends") return (b.yield || 0) - (a.yield || 0) || a.symbol.localeCompare(b.symbol);
+          if (type === "dividends") return (b.dividendYield || 0) - (a.dividendYield || 0) || a.symbol.localeCompare(b.symbol);
+          if (type === "economic") {
+            return String(a.country || "").localeCompare(String(b.country || "")) ||
+              String(a.event || "").localeCompare(String(b.event || ""));
+          }
           return (b.marketCap || 0) - (a.marketCap || 0) || a.symbol.localeCompare(b.symbol);
         })
         .slice(0, 150);
@@ -20366,7 +20397,11 @@ app.get("/api/calendar-events", async (req, res) => {
       weekEnd: dates[6],
       days,
       updatedAt: new Date().toISOString(),
-      source: type === "dividends" ? "FMP dividends calendar" : "FMP IPO calendar"
+      source: type === "dividends"
+        ? "FMP dividends calendar"
+        : type === "economic"
+          ? "FMP economic calendar"
+          : "FMP IPO calendar"
     };
     fmpCalendarCache.set(cacheKey, {
       data: responseData,
