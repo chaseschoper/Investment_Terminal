@@ -387,6 +387,7 @@ const STOCK_INITIAL_SEC_TIMEOUT_MS = 9000;
 const secMarginCache = new Map();
 const yearEndPriceCache = new Map();
 const livePriceCache = new Map();
+const latestIntradayTickCache = new Map();
 const fmpDailyOhlcCache = new Map();
 const fmpEndpointCooldowns = new Map();
 const activePriceRefreshes = new Set();
@@ -14102,15 +14103,18 @@ app.get("/api/prices", async (req, res) => {
     if (cached && cachedHasPercent && Date.now() - cached.fetchedAt < 45 * 1000) return;
 
     try {
-      const fmpQuote = await resolveWithin(fetchFmpStableQuoteProfile(symbol), 1600, null).catch(() => null);
+      const [fmpQuote, latestTick] = await Promise.all([
+        resolveWithin(fetchFmpStableQuoteProfile(symbol), 1600, null).catch(() => null),
+        resolveWithin(fetchFmpLatestIntradayTick(symbol), 2200, null).catch(() => null)
+      ]);
       const quote = normalizeQuotePayload({}, {
-        price: fmpQuote?.price,
-        change: fmpQuote?.change,
-        percentChange: fmpQuote?.percentChange,
-        previousClose: fmpQuote?.previousClose,
+        price: latestTick?.price ?? fmpQuote?.price,
+        change: latestTick?.change ?? fmpQuote?.change,
+        percentChange: latestTick?.percentChange ?? fmpQuote?.percentChange,
+        previousClose: latestTick?.previousClose ?? fmpQuote?.previousClose,
         high: fmpQuote?.high,
         low: fmpQuote?.low,
-        open: fmpQuote?.open
+        open: latestTick?.open ?? fmpQuote?.open
       });
       const price = toNumberOrNull(quote?.c);
       const previousClose = toNumberOrNull(quote?.pc);
@@ -14176,13 +14180,13 @@ app.get("/api/prices", async (req, res) => {
     );
   });
   const queue = [...symbolsNeedingLive];
-  const workerCount = Math.min(wantsLiveQuotes ? 5 : 4, queue.length);
+  const workerCount = Math.min(wantsLiveQuotes ? 8 : 4, queue.length);
   await resolveWithin(Promise.all(Array.from({ length: workerCount }, async () => {
     while (queue.length) {
       const symbol = queue.shift();
       await refreshSymbolQuote(symbol);
     }
-  })), wantsLiveQuotes ? 2400 : 2200, null);
+  })), wantsLiveQuotes ? 4800 : 2200, null);
   symbols.forEach(hydrateSavedSymbol);
 
   const staleSymbols = symbols.filter((symbol) => {
@@ -15886,11 +15890,121 @@ async function fetchFmpCommodityPriceHistory(symbol, requestedRange = "1D") {
   };
 }
 
+async function fetchFmpLatestIntradayTick(symbol) {
+  const normalizedSymbol = String(symbol || "").trim().toUpperCase();
+  if (!normalizedSymbol || !process.env.FMP_API_KEY || !canUseFmp()) return null;
+
+  const cached = latestIntradayTickCache.get(normalizedSymbol);
+  if (cached && Date.now() - cached.fetchedAt < 15 * 1000) return cached.data;
+
+  const [chartResponse, dailyResponse] = await Promise.all([
+    getFmpAxios("https://financialmodelingprep.com/stable/historical-chart/5min", {
+      params: { symbol: normalizedSymbol, apikey: process.env.FMP_API_KEY },
+      timeout: 1800
+    }).catch(() => null),
+    getFmpAxios("https://financialmodelingprep.com/stable/historical-price-eod/light", {
+      params: { symbol: normalizedSymbol, apikey: process.env.FMP_API_KEY },
+      timeout: 1400
+    }).catch(() => null)
+  ]);
+
+  const chartRows = Array.isArray(chartResponse?.data) ? chartResponse.data : [];
+  const dailyRows = Array.isArray(dailyResponse?.data) ? dailyResponse.data : [];
+  if (!chartRows.length) return null;
+
+  const parsedRows = chartRows
+    .map((row) => {
+      const price = firstFiniteNumber(row.close, row.price, row.adjClose);
+      const rawDate = firstText(row.date, row.datetime, row.timestamp);
+      const parsed = parseFmpMarketDateTime(rawDate);
+      if (price === null || !parsed || Number.isNaN(parsed.getTime())) return null;
+      const dateKey = /^\d{4}-\d{2}-\d{2}/.test(rawDate) ? rawDate.slice(0, 10) : getNewYorkDateKey(parsed);
+      return {
+        time: parsed.getTime(),
+        dateKey,
+        price,
+        open: firstFiniteNumber(row.open),
+        high: firstFiniteNumber(row.high),
+        low: firstFiniteNumber(row.low),
+        volume: firstFiniteNumber(row.volume)
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.time - b.time);
+
+  if (!parsedRows.length) return null;
+
+  const latestDailyDate = firstText(dailyRows[0]?.date);
+  const latestDateKey = latestDailyDate || parsedRows.at(-1)?.dateKey;
+  const sessionRows = parsedRows.filter((row) => !latestDateKey || row.dateKey === latestDateKey);
+  const latestRow = (sessionRows.length ? sessionRows : parsedRows).at(-1);
+  if (!latestRow?.price) return null;
+
+  const previousClose = firstFiniteNumber(dailyRows[1]?.price, dailyRows[1]?.close);
+  const changeBase = previousClose ?? firstFiniteNumber((sessionRows[0] || parsedRows[0])?.open, (sessionRows[0] || parsedRows[0])?.price);
+  const change = changeBase ? latestRow.price - changeBase : null;
+  const data = {
+    price: latestRow.price,
+    change,
+    percentChange: change !== null && changeBase ? (change / changeBase) * 100 : null,
+    previousClose,
+    open: firstFiniteNumber((sessionRows[0] || parsedRows[0])?.open, (sessionRows[0] || parsedRows[0])?.price),
+    updatedAt: new Date().toISOString()
+  };
+
+  latestIntradayTickCache.set(normalizedSymbol, {
+    fetchedAt: Date.now(),
+    data
+  });
+  return data;
+}
+
+async function getFmpCommoditySymbolMap() {
+  const cacheKey = "commodities:list";
+  const cached = fmpDataCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.data;
+
+  const response = await getFmpAxios("https://financialmodelingprep.com/stable/commodities-list", {
+    params: { apikey: process.env.FMP_API_KEY },
+    timeout: 3500
+  });
+  const rows = Array.isArray(response.data) ? response.data : [];
+  const symbolMap = new Map();
+  rows.forEach((row) => {
+    const commoditySymbol = firstText(row.symbol);
+    if (!commoditySymbol) return;
+    symbolMap.set(commoditySymbol.toUpperCase(), {
+      symbol: commoditySymbol.toUpperCase(),
+      name: firstText(row.name) || commoditySymbol.toUpperCase(),
+      currency: firstText(row.currency),
+      tradeMonth: firstText(row.tradeMonth)
+    });
+  });
+
+  fmpDataCache.set(cacheKey, {
+    data: symbolMap,
+    expiresAt: Date.now() + 12 * 60 * 60 * 1000
+  });
+  return symbolMap;
+}
+
+async function getFmpCommodityMeta(symbol) {
+  if (!process.env.FMP_API_KEY || !canUseFmp()) return null;
+  const commoditySymbol = String(symbol || "").trim().toUpperCase();
+  if (!commoditySymbol) return null;
+  const symbolMap = await getFmpCommoditySymbolMap();
+  return symbolMap.get(commoditySymbol) || null;
+}
+
 app.get("/api/commodity-price-history/:symbol", async (req, res) => {
   try {
     const symbol = String(req.params.symbol || "").trim().toUpperCase();
     if (!/^[A-Z0-9=._-]{1,16}$/.test(symbol)) {
       return res.status(400).json({ error: "Invalid commodity symbol" });
+    }
+    const commodityMeta = await getFmpCommodityMeta(symbol);
+    if (!commodityMeta) {
+      return res.status(404).json({ error: "That symbol is not in FMP's commodities list" });
     }
     const requestedRange = String(req.query.range || "1D").trim().toUpperCase();
     const history = await fetchFmpCommodityPriceHistory(symbol, requestedRange);
@@ -15913,19 +16027,19 @@ app.get("/api/commodities/:symbol", async (req, res) => {
     if (!process.env.FMP_API_KEY || !canUseFmp()) {
       return res.status(503).json({ error: "Commodity data is not available yet" });
     }
+    const commodityMeta = await getFmpCommodityMeta(symbol);
+    if (!commodityMeta) {
+      return res.status(404).json({ error: "That symbol is not in FMP's commodities list" });
+    }
 
     const cacheKey = `commodity:${symbol}`;
     const cached = fmpDataCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return res.json(cached.data);
 
-    const [chartHistory, dailyResponse, listResponse] = await Promise.all([
+    const [chartHistory, dailyResponse] = await Promise.all([
       resolveWithin(fetchFmpCommodityPriceHistory(symbol, "1D"), 3000, null).catch(() => null),
       resolveWithin(getFmpAxios("https://financialmodelingprep.com/stable/historical-price-eod/light", {
         params: { symbol, apikey: process.env.FMP_API_KEY },
-        timeout: 3000
-      }), 3200, null).catch(() => null),
-      resolveWithin(getFmpAxios("https://financialmodelingprep.com/stable/commodities-list", {
-        params: { apikey: process.env.FMP_API_KEY },
         timeout: 3000
       }), 3200, null).catch(() => null)
     ]);
@@ -15958,9 +16072,6 @@ app.get("/api/commodities/:symbol", async (req, res) => {
       dayHighValues.length ? Math.max(...dayHighValues) : null,
       latestDaily.high
     );
-    const commodityList = Array.isArray(listResponse?.data) ? listResponse.data : [];
-    const commodityMeta = commodityList.find((item) => String(item?.symbol || "").toUpperCase() === symbol) || {};
-
     const data = {
       symbol,
       name: firstText(commodityMeta.name) || symbol,
@@ -15972,10 +16083,10 @@ app.get("/api/commodities/:symbol", async (req, res) => {
       dayHigh,
       yearHigh: yearValues.length ? Math.max(...yearValues) : null,
       yearLow: yearValues.length ? Math.min(...yearValues) : null,
-      marketCap: null,
       priceAvg50: avg(dailyRows.slice(0, 50)),
       priceAvg200: avg(dailyRows.slice(0, 200)),
-      exchange: firstText(commodityMeta.exchange),
+      currency: firstText(commodityMeta.currency),
+      tradeMonth: firstText(commodityMeta.tradeMonth),
       open: firstFiniteNumber(chartHistory?.latest?.open, points[0]?.open, points[0]?.price),
       previousClose,
       updatedAt: new Date().toISOString(),

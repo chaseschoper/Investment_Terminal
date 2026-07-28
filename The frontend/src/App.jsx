@@ -7540,12 +7540,12 @@ const commodityCards = [
   { label: "Day High", value: formatPrice(commodityData?.dayHigh) },
   { label: "Year Low", value: formatPrice(commodityData?.yearLow) },
   { label: "Year High", value: formatPrice(commodityData?.yearHigh) },
-  { label: "Market Cap", value: formatLargeDollars(commodityData?.marketCap) },
   { label: "50 Day Avg", value: formatPrice(commodityData?.priceAvg50) },
   { label: "200 Day Avg", value: formatPrice(commodityData?.priceAvg200) },
   { label: "Open", value: formatPrice(commodityData?.open) },
   { label: "Previous Close", value: formatPrice(commodityData?.previousClose) },
-  { label: "Exchange", value: commodityData?.exchange || "N/A" }
+  { label: "Currency", value: commodityData?.currency || "N/A" },
+  { label: "Trade Month", value: commodityData?.tradeMonth || "N/A" }
 ];
 const etfOverviewCards = [
   { label: "Assets", value: formatLargeDollars(etfStats.assets) },
@@ -9065,7 +9065,7 @@ return (
               <div>
                 <span className="etf-symbol">{commodityData.symbol}</span>
                 <h3>{commodityData.name}</h3>
-                <strong className="etf-type-badge">{commodityData.exchange || "Commodity"}</strong>
+                <strong className="etf-type-badge">Commodity</strong>
                 <p>Review the latest quote, trading range, moving averages, volume, and chart history for this commodity.</p>
               </div>
               <div className="etf-price-card">
