@@ -8058,6 +8058,17 @@ const removeFundamentalChartTicker = (symbol) => {
   );
 };
 
+const openFundamentalChartsForTicker = (symbol) => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  if (/^[A-Z0-9.-]{1,12}$/.test(cleanSymbol)) {
+    setFundamentalChartTickers((current) =>
+      [...new Set([cleanSymbol, ...current])].slice(0, 20)
+    );
+    setFundamentalChartInput("");
+  }
+  setActivePage("fundamental-charts");
+};
+
 const toggleFundamentalIndicator = (indicatorKey) => {
   setSelectedFundamentalIndicators((current) =>
     current.includes(indicatorKey)
@@ -10180,7 +10191,7 @@ return (
       <button
         type="button"
         className="fundamental-chart-callout-button"
-        onClick={() => setActivePage("fundamental-charts")}
+        onClick={() => openFundamentalChartsForTicker(stockData.symbol || ticker)}
       >
         Open Fundamental Charts
       </button>
