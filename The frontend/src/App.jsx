@@ -4430,7 +4430,7 @@ useEffect(() => {
 
     try {
       const response = await axios.get(
-        `${API_URL}/api/price-history/${encodeURIComponent(commoditySymbol)}`,
+        `${API_URL}/api/commodity-price-history/${encodeURIComponent(commoditySymbol)}`,
         { params: { range: commodityChartRange } }
       );
       if (!isActive) return;
@@ -9029,7 +9029,7 @@ return (
           <div>
             <span className="home-feature-label">Commodity Research</span>
             <h2 id="commodities-page-title">Commodities Overview</h2>
-            <p>Search a commodity symbol to review price, range, volume, averages, exchange, and chart history from the latest available market data.</p>
+            <p>Search a commodity symbol to review price, range, volume, averages, exchange, and chart history. Try GCUSD, SIUSD, or BZUSD.</p>
           </div>
           <form
             className="etf-search"
@@ -9048,7 +9048,7 @@ return (
             <input
               value={commoditySearchInput}
               onChange={(event) => setCommoditySearchInput(event.target.value.toUpperCase())}
-              placeholder="Search commodity symbol"
+              placeholder="GCUSD, SIUSD, BZUSD"
               aria-label="Search commodity symbol"
             />
             <button type="submit">{isCommodityLoading ? "Loading..." : "Search Commodity"}</button>
