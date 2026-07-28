@@ -2773,7 +2773,7 @@ const MIN_DISPLAY_INTERIM_HISTORY_ROWS = 4;
 const getDefaultCompanyLogoUrl = (symbol) => {
   const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
   return safeSymbol
-    ? `https://images.financialmodelingprep.com/symbol/${safeSymbol}.png`
+    ? `https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/${safeSymbol}.png`
     : null;
 };
 
@@ -2782,8 +2782,8 @@ const handleCompanyLogoError = (event, symbol) => {
   const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
   const fallbackUrls = [
     getDefaultCompanyLogoUrl(symbol),
+    `https://images.financialmodelingprep.com/symbol/${safeSymbol}.png`,
     `https://financialmodelingprep.com/image-stock/${safeSymbol}.png`,
-    `https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/${safeSymbol}.png`,
     `https://eodhd.com/img/logos/US/${safeSymbol}.png`,
     `https://assets.parqet.com/logos/symbol/${safeSymbol}?format=png`
   ].filter(Boolean);

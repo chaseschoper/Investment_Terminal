@@ -1764,6 +1764,15 @@ function isCompleteFmpMetricCardPayload(metricCards = {}) {
     hasUsableFmpBalancePayload(metricCards);
 }
 
+function hasCompleteFmpMetricCardSnapshot(data = {}) {
+  return (
+    data.valuationMetricsVersion === VALUATION_METRICS_VERSION &&
+    data.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION &&
+    hasUsableFmpValuationPayload(data) &&
+    hasUsableFmpBalancePayload(data)
+  );
+}
+
 function buildNonNullFmpMetricCardUpdate(metricCards = {}) {
   return Object.fromEntries(
     Object.entries(buildFmpMetricCardUpdate(metricCards))
@@ -7029,7 +7038,7 @@ function hasCompleteSupplementalData(stock) {
   return (
     hasValuationMetrics &&
     (hasBalanceSheetMetrics || balanceSheetCheckedRecently) &&
-    data.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION &&
+    hasCompleteFmpMetricCardSnapshot(data) &&
     data.estimateDataVersion === STOCK_ESTIMATE_VERSION &&
     (quarterEstimateCheckedRecently || Boolean(data.analystEstimates?.nextQuarter)) &&
     marketActivityCheckedRecently
@@ -11997,10 +12006,9 @@ const getImmediateStockSnapshot = async (ticker, previousData = {}) => {
     );
   if (hasRenderableSnapshot) {
     const needsMetricCards =
-      previousData.valuationMetricsVersion !== VALUATION_METRICS_VERSION ||
-      previousData.balanceSheetMetricsVersion !== BALANCE_SHEET_METRICS_VERSION;
+      !hasCompleteFmpMetricCardSnapshot(previousData);
     if (!needsMetricCards) return buildMinimalStockSnapshot(ticker, previousData);
-    const metricCards = needsMetricCards ? await resolveWithin(fetchFmpMetricCards(ticker), 2000, {}) : {};
+    const metricCards = needsMetricCards ? await resolveWithin(fetchFmpMetricCards(ticker), 3200, {}) : {};
     return applyFmpMetricCards(buildMinimalStockSnapshot(ticker, previousData), metricCards);
   }
 
@@ -13681,8 +13689,7 @@ function startFullStockRefresh(ticker) {
       const data = stock?.data || {};
       const hasFastOverviewData =
         data.financialHistoryVersion === FINANCIAL_HISTORY_VERSION &&
-        data.valuationMetricsVersion === VALUATION_METRICS_VERSION &&
-        data.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION &&
+        hasCompleteFmpMetricCardSnapshot(data) &&
         data.estimateDataVersion === STOCK_ESTIMATE_VERSION &&
         isFinancialHistoryFreshnessRecent(data) &&
         hasCompleteChartHistory(stock) &&
@@ -15859,6 +15866,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
         hasFutureAnnualEstimateSnapshot(stock.data || {});
       const isOutdated =
         stock.data?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION ||
+        !hasCompleteFmpMetricCardSnapshot(stock.data || {}) ||
         !hasCurrentEstimateSnapshot;
       const needsInterimHistoryRefresh =
         !hasUsableInterimHistory(stock.data || {}) &&
