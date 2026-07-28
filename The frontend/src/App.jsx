@@ -147,39 +147,54 @@ const historyRowSortValue = (row = {}) => {
   return year * 10 + quarter;
 };
 
+const sortHistoryRowsOldestFirst = (rows = []) =>
+  [...(Array.isArray(rows) ? rows : [])].sort((a, b) => {
+    const valueA = historyRowSortValue(a);
+    const valueB = historyRowSortValue(b);
+    if (valueA !== null && valueB !== null && valueA !== valueB) {
+      return valueA - valueB;
+    }
+    if (valueA !== null && valueB === null) return -1;
+    if (valueA === null && valueB !== null) return 1;
+    return String(a?.period || a?.label || "").localeCompare(String(b?.period || b?.label || ""));
+  });
+
 const filterRowsByHistoryRange = (rows = [], rangeId = "5", mode = "annual") => {
   if (!Array.isArray(rows)) return [];
-  if (rangeId === "max") return rows;
+  const sortedRows = sortHistoryRowsOldestFirst(rows);
+  if (rangeId === "max") return sortedRows;
   const limit = rangeLimitForPeriod(rangeId, mode);
-  if (!Number.isFinite(limit) || rows.length <= limit) return rows;
-
-  const firstValue = historyRowSortValue(rows[0]);
-  const lastValue = historyRowSortValue(rows.at(-1));
-  const newestFirst = firstValue !== null && lastValue !== null && firstValue > lastValue;
-  return newestFirst ? rows.slice(0, limit).reverse() : rows.slice(-limit);
+  if (!Number.isFinite(limit) || sortedRows.length <= limit) return sortedRows;
+  return sortedRows.slice(-limit);
 };
 
 const filterFinancialStatementByHistoryRange = (statementData, rangeId = "5", period = "annual") => {
-  if (!statementData?.periods?.length || rangeId === "max") return statementData;
+  if (!statementData?.periods?.length) return statementData;
+  const indexedPeriods = statementData.periods.map((periodRow, index) => ({
+    periodRow,
+    index,
+    sortValue: historyRowSortValue(periodRow)
+  }));
+  const sortedPeriods = indexedPeriods.sort((a, b) => {
+    if (a.sortValue !== null && b.sortValue !== null && a.sortValue !== b.sortValue) {
+      return a.sortValue - b.sortValue;
+    }
+    if (a.sortValue !== null && b.sortValue === null) return -1;
+    if (a.sortValue === null && b.sortValue !== null) return 1;
+    return a.index - b.index;
+  });
   const limit = rangeLimitForPeriod(rangeId, period);
-  if (!Number.isFinite(limit) || statementData.periods.length <= limit) return statementData;
-
-  const firstDate = statementData.periods[0]?.date
-    ? new Date(`${statementData.periods[0].date}T12:00:00`).getTime()
-    : null;
-  const lastDate = statementData.periods.at(-1)?.date
-    ? new Date(`${statementData.periods.at(-1).date}T12:00:00`).getTime()
-    : null;
-  const newestFirst = firstDate && lastDate ? firstDate > lastDate : true;
-  const startIndex = newestFirst ? 0 : statementData.periods.length - limit;
-  const endIndex = newestFirst ? limit : statementData.periods.length;
+  const visiblePeriods = rangeId === "max" || !Number.isFinite(limit) || sortedPeriods.length <= limit
+    ? sortedPeriods
+    : sortedPeriods.slice(-limit);
+  const visibleIndexes = visiblePeriods.map((item) => item.index);
 
   return {
     ...statementData,
-    periods: statementData.periods.slice(startIndex, endIndex),
+    periods: visiblePeriods.map((item) => item.periodRow),
     rows: (statementData.rows || []).map((row) => ({
       ...row,
-      values: (row.values || []).slice(startIndex, endIndex)
+      values: visibleIndexes.map((index) => row.values?.[index])
     }))
   };
 };
@@ -10061,7 +10076,7 @@ return (
     valueLabel="P/E"
     symbol={ticker}
     loading={shouldShowHistoricalPeLoading(historicalPeHistory)}
-    mode={financialChartMode}
+    mode="annual"
   />
   <HistoricalLineChart
     title={stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin History"}
