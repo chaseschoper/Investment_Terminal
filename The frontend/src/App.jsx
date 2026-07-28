@@ -4783,17 +4783,8 @@ useEffect(() => {
     };
     const timer = window.setTimeout(async () => {
       try {
-        axios.get(`${API_URL}/api/stock-sidecars/${symbol}`, {
-          params: { scope: "eps" },
-          timeout: 1800
-        })
-          .then((response) => mergeSidecarPatch(response.data || {}))
-          .catch((error) => {
-            console.error("EPS sidecar failed", error);
-          });
-
         const response = await axios.get(`${API_URL}/api/stock-sidecars/${symbol}`, {
-          timeout: 5200
+          timeout: 3200
         });
         mergeSidecarPatch(response.data || {});
       } catch (error) {
@@ -5269,41 +5260,9 @@ useEffect(() => {
         attempt < 12 &&
         !stableResponse.financialHistoryCheckedAt &&
         !hasExtendedHistoricalChartData(stableResponse);
-      const hasCurrentValuationMetrics =
-        stableResponse.valuationMetricsVersion === VALUATION_METRICS_VERSION;
-      const hasCurrentBalanceSheetMetrics =
-        stableResponse.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION;
-      const hasUsableMetricCards = getMetricSnapshotScore(stableResponse) >= 18;
-      const hasUsableBalanceSheetMetrics = Boolean(
-        isNumber(stableResponse.cashAndCashEquivalents ?? stableResponse.totalCash) ||
-        isNumber(stableResponse.totalDebt) ||
-        isNumber(stableResponse.netCash) ||
-        isNumber(stableResponse.equityBookValue) ||
-        isNumber(stableResponse.workingCapital)
-      );
-      const needsMoreMetricCards =
-        attempt < 20 &&
-        !hasCurrentValuationMetrics &&
-        !hasUsableMetricCards;
       const needsNewStockWarmup =
         (!hadCachedStock || attempt < 30) &&
         shouldKeepWarmingNewStock(stableResponse);
-      const needsMarketActivity =
-        attempt < 20 &&
-        !hasMarketActivityLoaded(stableResponse);
-      const needsAnnualEstimates =
-        attempt < 30 &&
-        !hasAnnualEstimateData(stableResponse);
-      const needsQuarterEstimate =
-        attempt < 30 &&
-        !hasNextQuarterData(stableResponse);
-      const needsBalanceSheetMetrics =
-        attempt < 20 &&
-        !hasUsableBalanceSheetMetrics &&
-        (
-          !hasCurrentBalanceSheetMetrics ||
-          !stableResponse.balanceSheetCheckedAt
-        );
       const needsBackendRefresh =
         attempt < 30 &&
         Boolean(response.data?.refreshing);
@@ -5313,12 +5272,7 @@ useEffect(() => {
         needsFreshHistory ||
         needsInterimHistory ||
         needsQuarterlyHistory ||
-        needsExtendedHistory ||
-        needsMoreMetricCards ||
-        needsMarketActivity ||
-        needsAnnualEstimates ||
-        needsQuarterEstimate ||
-        needsBalanceSheetMetrics;
+        needsExtendedHistory;
 
       if (
         shouldContinueStockWarmup &&
@@ -5327,32 +5281,13 @@ useEffect(() => {
           needsInterimHistory ||
           needsQuarterlyHistory ||
           needsExtendedHistory ||
-          needsMoreMetricCards ||
-          needsAnnualEstimates ||
-          needsQuarterEstimate ||
-          needsMarketActivity ||
-          needsBalanceSheetMetrics ||
           needsNewStockWarmup ||
           needsBackendRefresh
         ) &&
         attempt < 90
       ) {
-        const onlySlowMarketActivity =
-          needsMarketActivity &&
-          !needsBackendRefresh &&
-          !needsNewStockWarmup &&
-          !needsFreshHistory &&
-          !needsInterimHistory &&
-          !needsQuarterlyHistory &&
-          !needsExtendedHistory &&
-            !needsMoreMetricCards &&
-            !needsAnnualEstimates &&
-            !needsQuarterEstimate &&
-            !needsBalanceSheetMetrics;
         const retryDelay =
-          onlySlowMarketActivity
-            ? 2500
-            : attempt < 10
+          attempt < 10
             ? 900
             : attempt < 24
               ? 1200
@@ -5957,11 +5892,8 @@ const historicalPeHistoryBase = (stockData?.historicalPe || [])
     isNumber(row.pe)
   );
 const annualHistoricalPeHistoryBase = filterChartRowsByMode(historicalPeHistoryBase, "annual");
-const quarterlyHistoricalPeHistoryBase = filterChartRowsByMode(historicalPeHistoryBase, "quarterly");
 const historicalPeHistory =
-  financialChartMode === "quarterly"
-    ? filterRowsByHistoryRange(quarterlyHistoricalPeHistoryBase, financialChartRange, financialChartMode)
-    : filterRowsByHistoryRange(annualHistoricalPeHistoryBase, financialChartRange, financialChartMode);
+  filterRowsByHistoryRange(annualHistoricalPeHistoryBase, financialChartRange, "annual");
 const allMarginHistory = (stockData?.marginHistory || [])
   .map((row) => ({ ...row, period: row.period || String(row.year) }))
   .filter((row) =>
@@ -10089,10 +10021,6 @@ return (
         </LineChart>
 
       </ResponsiveContainer>
-
-      <EpsBeatMissChart
-        rows={epsBeatMissRows}
-      />
 
       {financialChartMode === "annual" && (
         <ChartGrowthStrip
