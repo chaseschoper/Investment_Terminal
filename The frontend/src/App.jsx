@@ -10178,14 +10178,44 @@ return (
     mode={financialChartMode}
   />
   <div className="historical-chart-panel fundamental-chart-callout">
-    <div className="fundamental-chart-callout-art" aria-hidden="true">
-      <span />
-      <span />
-      <span />
-      <span />
-      <span />
-      <span />
-    </div>
+    <svg className="fundamental-chart-callout-art" viewBox="0 0 760 300" aria-hidden="true" focusable="false">
+      <defs>
+        <linearGradient id="fundamentalCalloutLine" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor="#14b8a6" />
+          <stop offset="55%" stopColor="#38bdf8" />
+          <stop offset="100%" stopColor="#2563eb" />
+        </linearGradient>
+        <linearGradient id="fundamentalCalloutBars" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.36" />
+          <stop offset="100%" stopColor="#0f172a" stopOpacity="0.08" />
+        </linearGradient>
+      </defs>
+      <g className="callout-grid">
+        {[80, 160, 240, 320, 400, 480, 560, 640].map((x) => (
+          <line key={`x-${x}`} x1={x} y1="28" x2={x} y2="266" />
+        ))}
+        {[64, 112, 160, 208, 256].map((y) => (
+          <line key={`y-${y}`} x1="54" y1={y} x2="710" y2={y} />
+        ))}
+      </g>
+      <g className="callout-bars">
+        {[86, 128, 96, 162, 118, 194, 138, 214, 166].map((height, index) => {
+          const x = 74 + index * 70;
+          return <rect key={`bar-${x}`} x={x} y={260 - height} width="34" height={height} rx="6" />;
+        })}
+      </g>
+      <polyline
+        className="callout-line-shadow"
+        points="58,224 138,190 218,204 298,142 378,156 458,104 538,122 618,72 704,94"
+      />
+      <polyline
+        className="callout-line"
+        points="58,224 138,190 218,204 298,142 378,156 458,104 538,122 618,72 704,94"
+      />
+      {[["58", "224"], ["138", "190"], ["218", "204"], ["298", "142"], ["378", "156"], ["458", "104"], ["538", "122"], ["618", "72"], ["704", "94"]].map(([cx, cy]) => (
+        <circle key={`${cx}-${cy}`} className="callout-dot" cx={cx} cy={cy} r="5" />
+      ))}
+    </svg>
     <div className="fundamental-chart-callout-content">
       <span className="home-feature-label">More Charting</span>
       <h3>For more charts, go to the Fundamental Charts page.</h3>
