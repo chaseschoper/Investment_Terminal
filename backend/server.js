@@ -8254,8 +8254,16 @@ async function buildFastStockSidecars(ticker, data = {}, options = {}) {
   const needsQuarterEstimate = !hasCompleteNextQuarterEstimate(currentNextQuarter);
   const needsEpsRows = epsOnly && (reportedEpsRows.length < 4 || !data.epsBeatMissCheckedAt);
   const needsAnnualPe = existingAnnualPeRows.length < 3;
+  const needsMarketActivity =
+    !epsOnly &&
+    (
+      !Array.isArray(data.analystUpdates) ||
+      !data.analystUpdates.length ||
+      !Array.isArray(data.insiderTransactions) ||
+      !data.insiderTransactions.length
+    );
 
-  const [quarterEstimate, epsRows, annualPeRows] = await Promise.all([
+  const [quarterEstimate, epsRows, annualPeRows, marketActivity] = await Promise.all([
     needsQuarterEstimate
       ? resolveWithin(fetchCalendarQuarterEstimate(symbol, { fast: true }), epsOnly ? 900 : 1600, currentNextQuarter)
       : Promise.resolve(currentNextQuarter),
@@ -8264,6 +8272,9 @@ async function buildFastStockSidecars(ticker, data = {}, options = {}) {
       : Promise.resolve([]),
     !epsOnly && needsAnnualPe
       ? resolveWithin(fetchFmpHistoricalPe(symbol), 1600, [])
+      : Promise.resolve([]),
+    needsMarketActivity
+      ? resolveWithin(fetchFmpMarketActivity(symbol), 2200, null)
       : Promise.resolve([])
   ]);
 
@@ -8294,6 +8305,20 @@ async function buildFastStockSidecars(ticker, data = {}, options = {}) {
   const historicalPe = epsOnly
     ? existingHistoricalPe
     : baseAnnualPeRows;
+  const analystUpdates = Array.isArray(marketActivity?.analystUpdates) && marketActivity.analystUpdates.length
+    ? marketActivity.analystUpdates
+    : data.analystUpdates || [];
+  const insiderTransactions = Array.isArray(marketActivity?.insiderTransactions) && marketActivity.insiderTransactions.length
+    ? marketActivity.insiderTransactions
+    : data.insiderTransactions || [];
+  const hasMarketActivityPatch =
+    (Array.isArray(marketActivity?.analystUpdates) && marketActivity.analystUpdates.length) ||
+    (Array.isArray(marketActivity?.insiderTransactions) && marketActivity.insiderTransactions.length);
+  const hasExistingMarketActivity =
+    (Array.isArray(data.analystUpdates) && data.analystUpdates.length) ||
+    (Array.isArray(data.insiderTransactions) && data.insiderTransactions.length) ||
+    Boolean(data.analystUpdatesCheckedAt) ||
+    Boolean(data.insiderTransactionsCheckedAt);
   const patch = {
     analystEstimates: {
       ...(data.analystEstimates || {}),
@@ -8310,7 +8335,14 @@ async function buildFastStockSidecars(ticker, data = {}, options = {}) {
     historicalPe,
     historicalPeSource: "FMP annual ratios",
     historicalPeVersion: HISTORICAL_PE_VERSION,
-    historicalPeCheckedAt: checkedAt
+    historicalPeCheckedAt: checkedAt,
+    ...(hasMarketActivityPatch || hasExistingMarketActivity ? {
+      analystUpdates,
+      insiderTransactions,
+      analystUpdatesCheckedAt: hasMarketActivityPatch ? checkedAt : data.analystUpdatesCheckedAt,
+      insiderTransactionsCheckedAt: hasMarketActivityPatch ? checkedAt : data.insiderTransactionsCheckedAt,
+      marketActivityUpdatedAt: hasMarketActivityPatch ? checkedAt : data.marketActivityUpdatedAt
+    } : {})
   };
 
   const set = {
@@ -8321,6 +8353,13 @@ async function buildFastStockSidecars(ticker, data = {}, options = {}) {
       "data.historicalPeSource": patch.historicalPeSource,
       "data.historicalPeVersion": patch.historicalPeVersion,
       "data.historicalPeCheckedAt": patch.historicalPeCheckedAt
+    } : {}),
+    ...(hasMarketActivityPatch ? {
+      "data.analystUpdates": patch.analystUpdates,
+      "data.insiderTransactions": patch.insiderTransactions,
+      "data.analystUpdatesCheckedAt": patch.analystUpdatesCheckedAt,
+      "data.insiderTransactionsCheckedAt": patch.insiderTransactionsCheckedAt,
+      "data.marketActivityUpdatedAt": patch.marketActivityUpdatedAt
     } : {})
   };
   if (hasQuarterEstimate) {
