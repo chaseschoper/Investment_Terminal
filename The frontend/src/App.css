@@ -5331,40 +5331,56 @@ body {
   min-height: 394px;
   display: flex;
   align-items: center;
+  justify-content: center;
+  text-align: center;
   border-color: rgba(56, 189, 248, 0.34);
   background:
-    radial-gradient(circle at 16% 12%, rgba(20, 184, 166, 0.22), transparent 34%),
-    linear-gradient(135deg, rgba(7, 19, 32, 0.98), rgba(15, 23, 42, 0.92));
+    radial-gradient(circle at 50% 22%, rgba(56, 189, 248, 0.14), transparent 34%),
+    linear-gradient(135deg, rgba(5, 12, 24, 0.99), rgba(12, 22, 39, 0.96));
 }
 
 .fundamental-chart-callout::before {
   content: "";
   position: absolute;
-  inset: 18px;
+  inset: 24px;
   border-radius: 8px;
-  opacity: 0.44;
-  filter: blur(2px);
+  opacity: 0.56;
+  filter: blur(1.2px);
   background:
-    linear-gradient(145deg, transparent 0 16%, rgba(96, 165, 250, 0.38) 16.5% 17.5%, transparent 18% 31%, rgba(52, 211, 153, 0.38) 31.5% 32.7%, transparent 33% 52%, rgba(244, 114, 182, 0.3) 52.5% 53.4%, transparent 54%),
-    repeating-linear-gradient(90deg, rgba(148, 163, 184, 0.1) 0 1px, transparent 1px 72px),
-    repeating-linear-gradient(0deg, rgba(148, 163, 184, 0.08) 0 1px, transparent 1px 58px);
+    linear-gradient(90deg, rgba(148, 163, 184, 0.28) 0 1px, transparent 1px 100%),
+    linear-gradient(0deg, rgba(148, 163, 184, 0.28) 0 1px, transparent 1px 100%),
+    repeating-linear-gradient(90deg, transparent 0 84px, rgba(37, 99, 235, 0.18) 84px 86px, transparent 86px 168px),
+    repeating-linear-gradient(0deg, transparent 0 58px, rgba(37, 99, 235, 0.14) 58px 60px, transparent 60px 116px);
+}
+
+.fundamental-chart-callout::after {
+  content: "";
+  position: absolute;
+  inset: 54px 44px 86px;
+  border-radius: 10px;
+  opacity: 0.72;
+  filter: blur(0.7px);
+  background:
+    linear-gradient(148deg, transparent 0 20%, rgba(52, 211, 153, 0.82) 20.4% 21.3%, transparent 21.8% 36%, rgba(96, 165, 250, 0.86) 36.4% 37.4%, transparent 38% 54%, rgba(34, 211, 238, 0.72) 54.4% 55.2%, transparent 56%),
+    linear-gradient(28deg, transparent 0 42%, rgba(244, 114, 182, 0.54) 42.4% 43.3%, transparent 44%);
 }
 
 .fundamental-chart-callout-art {
   position: absolute;
-  inset: auto 26px 24px 26px;
-  height: 150px;
-  opacity: 0.28;
-  filter: blur(1px);
+  inset: auto 46px 32px 46px;
+  height: 118px;
+  opacity: 0.34;
+  filter: blur(0.8px);
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   align-items: end;
-  gap: 18px;
+  gap: 14px;
 }
 
 .fundamental-chart-callout-art span {
-  border-radius: 8px 8px 0 0;
-  background: linear-gradient(180deg, rgba(56, 189, 248, 0.78), rgba(20, 184, 166, 0.1));
+  border-radius: 4px 4px 0 0;
+  background: linear-gradient(180deg, rgba(56, 189, 248, 0.64), rgba(20, 184, 166, 0.06));
+  box-shadow: 0 0 22px rgba(56, 189, 248, 0.16);
 }
 
 .fundamental-chart-callout-art span:nth-child(1) {
@@ -5383,10 +5399,23 @@ body {
   height: 88%;
 }
 
+.fundamental-chart-callout-art span:nth-child(5) {
+  height: 62%;
+}
+
+.fundamental-chart-callout-art span:nth-child(6) {
+  height: 80%;
+}
+
 .fundamental-chart-callout-content {
   position: relative;
-  z-index: 1;
-  max-width: 520px;
+  z-index: 2;
+  width: min(680px, 86%);
+  min-height: 245px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 }
 
 .fundamental-chart-callout h3 {
@@ -5400,6 +5429,7 @@ body {
   color: #aab6ca;
   font-size: 16px;
   line-height: 1.55;
+  max-width: 580px;
 }
 
 .fundamental-chart-callout-button {

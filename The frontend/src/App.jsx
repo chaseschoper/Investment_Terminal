@@ -10183,6 +10183,8 @@ return (
       <span />
       <span />
       <span />
+      <span />
+      <span />
     </div>
     <div className="fundamental-chart-callout-content">
       <span className="home-feature-label">More Charting</span>
