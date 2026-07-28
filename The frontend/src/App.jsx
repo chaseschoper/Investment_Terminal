@@ -2283,17 +2283,25 @@ const chooseRicherRows = (previousRows, incomingRows, keys) => {
     : previousRows;
 };
 
+const historicalPeRowsScore = (rows = []) => {
+  if (!Array.isArray(rows)) return 0;
+  const cleanRows = rows.filter((row) =>
+    row &&
+    !row.isInterim &&
+    !row.isCurrent &&
+    isNumber(row.pe)
+  );
+  const fmpRows = cleanRows.filter((row) => /FMP/i.test(String(row?.source || "")));
+  const uniqueYears = new Set(cleanRows.map((row) => Number(row.year)).filter(Number.isFinite)).size;
+  return cleanRows.length * 10 + uniqueYears * 8 + fmpRows.length * 5;
+};
+
 const chooseHistoricalPeRows = (previousRows, incomingRows) => {
   if (!Array.isArray(previousRows) || !previousRows.length) return incomingRows;
   if (!Array.isArray(incomingRows) || !incomingRows.length) return previousRows;
-  const incomingHasStockAnalysis = incomingRows.some((row) =>
-    String(row?.source || "").includes("StockAnalysis")
-  );
-  const previousHasStockAnalysis = previousRows.some((row) =>
-    String(row?.source || "").includes("StockAnalysis")
-  );
-  if (incomingHasStockAnalysis && !previousHasStockAnalysis) return incomingRows;
-  return chooseRicherRows(previousRows, incomingRows, ["pe"]);
+  return historicalPeRowsScore(incomingRows) >= historicalPeRowsScore(previousRows)
+    ? incomingRows
+    : previousRows;
 };
 
 const hasMarketActivityData = (stock = {}) =>

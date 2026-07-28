@@ -87,6 +87,7 @@ const alphaVantageFundamentalCache = new Map();
 const FINANCIAL_HISTORY_VERSION = 161;
 const HISTORICAL_PE_VERSION = 3;
 const STOCK_ESTIMATE_VERSION = 23;
+const MIN_FULL_HISTORICAL_PE_ROWS = 10;
 const INTERIM_HISTORY_VERSION = 6;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const BALANCE_SHEET_METRICS_VERSION = 14;
@@ -7753,7 +7754,7 @@ async function repairHistoricalPeIfNeeded(ticker, data = {}) {
     toNumberOrNull(row?.pe) !== null &&
     String(row?.source || "").includes("FMP")
   );
-  if (fmpRows.length >= 3) {
+  if (fmpRows.length >= MIN_FULL_HISTORICAL_PE_ROWS) {
     return data;
   }
 
@@ -7995,7 +7996,7 @@ function hasCachedHistoricalPe(responseData = {}) {
     annualPeRows.some((row) => String(row?.source || "").includes("FMP"));
   return (
     responseData.historicalPeVersion === HISTORICAL_PE_VERSION &&
-    annualPeRows.length >= 3 &&
+    annualPeRows.length >= MIN_FULL_HISTORICAL_PE_ROWS &&
     hasFmpHistoricalPe
   );
 }
@@ -8003,7 +8004,7 @@ function hasCachedHistoricalPe(responseData = {}) {
 async function ensureQuarterlyHistoricalPeForResponse(ticker, data = {}, timeoutMs = 1200, options = {}) {
   const existingRows = Array.isArray(data.historicalPe) ? data.historicalPe : [];
   const annualRows = existingRows.filter((row) => !row?.isInterim && !row?.isCurrent);
-  if (annualRows.length >= 3 && data.historicalPeVersion === HISTORICAL_PE_VERSION) {
+  if (annualRows.length >= MIN_FULL_HISTORICAL_PE_ROWS && data.historicalPeVersion === HISTORICAL_PE_VERSION) {
     return {
       ...data,
       historicalPe: annualRows,
@@ -8011,10 +8012,14 @@ async function ensureQuarterlyHistoricalPeForResponse(ticker, data = {}, timeout
       historicalPeVersion: HISTORICAL_PE_VERSION
     };
   }
+  const rebuiltRows = await resolveWithin(fetchFmpHistoricalPe(ticker), timeoutMs, []);
+  const bestAnnualRows = Array.isArray(rebuiltRows) && rebuiltRows.length > annualRows.length
+    ? rebuiltRows
+    : annualRows;
   const historicalPeCheckedAt = new Date().toISOString();
   const patchedData = {
     ...data,
-    historicalPe: annualRows,
+    historicalPe: bestAnnualRows,
     historicalPeVersion: HISTORICAL_PE_VERSION,
     historicalPeCheckedAt,
     historicalPeSource: "FMP annual ratios"
@@ -8023,7 +8028,7 @@ async function ensureQuarterlyHistoricalPeForResponse(ticker, data = {}, timeout
     { ticker },
     {
       $set: {
-        "data.historicalPe": annualRows,
+        "data.historicalPe": bestAnnualRows,
         "data.historicalPeVersion": HISTORICAL_PE_VERSION,
         "data.historicalPeCheckedAt": historicalPeCheckedAt,
         "data.historicalPeSource": patchedData.historicalPeSource
@@ -8100,8 +8105,58 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {
   const recentlyCheckedEmptyFutureEstimates =
     !hasFutureAnnualEstimateSnapshot(responseData) &&
     isIsoTimestampWithin(responseData.annualEstimatesCheckedAt, 15 * 60 * 1000);
-  if (!hasFutureAnnualEstimateSnapshot(responseData) && !recentlyCheckedEmptyFutureEstimates) {
-    const futurePromise = fetchFmpFutureAnnualEstimateBlocks(ticker);
+  const futurePromise =
+    !hasFutureAnnualEstimateSnapshot(responseData) && !recentlyCheckedEmptyFutureEstimates
+      ? fetchFmpFutureAnnualEstimateBlocks(ticker)
+      : null;
+  if (!hasCachedHistoricalPe(responseData)) {
+    const historicalPePromise = fetchFmpHistoricalPe(ticker);
+    const historicalPeRows = await resolveWithin(historicalPePromise, 1200, []);
+    if (Array.isArray(historicalPeRows) && historicalPeRows.length) {
+      responseData = prepareCachedStockResponseData(ticker, {
+        ...responseData,
+        historicalPe: historicalPeRows,
+        historicalPeSource: "FMP annual ratios",
+        historicalPeVersion: HISTORICAL_PE_VERSION,
+        historicalPeCheckedAt: new Date().toISOString()
+      });
+      Stock.findOneAndUpdate(
+        { ticker },
+        {
+          $set: {
+            "data.historicalPe": historicalPeRows,
+            "data.historicalPeSource": "FMP annual ratios",
+            "data.historicalPeVersion": HISTORICAL_PE_VERSION,
+            "data.historicalPeCheckedAt": responseData.historicalPeCheckedAt
+          }
+        }
+      ).catch((err) => {
+        console.log("Fast historical PE cache skipped:", ticker, err.message);
+      });
+    } else {
+      backgroundPatches.push(
+        historicalPePromise
+          .then((rows) => {
+            if (!Array.isArray(rows) || !rows.length) return null;
+            return Stock.findOneAndUpdate(
+              { ticker },
+              {
+                $set: {
+                  "data.historicalPe": rows,
+                  "data.historicalPeSource": "FMP annual ratios",
+                  "data.historicalPeVersion": HISTORICAL_PE_VERSION,
+                  "data.historicalPeCheckedAt": new Date().toISOString()
+                }
+              }
+            );
+          })
+          .catch((err) => {
+            console.log("Fast historical PE background cache skipped:", ticker, err.message);
+          })
+      );
+    }
+  }
+  if (futurePromise) {
     const futureYears = await resolveWithin(futurePromise, 900, null);
     if (Array.isArray(futureYears) && futureYears.length) {
       const analystEstimates = {
@@ -8262,7 +8317,7 @@ async function buildFastStockSidecars(ticker, data = {}, options = {}) {
   const currentNextQuarter = data.analystEstimates?.nextQuarter || {};
   const needsQuarterEstimate = !hasCompleteNextQuarterEstimate(currentNextQuarter);
   const needsEpsRows = epsOnly && (reportedEpsRows.length < 4 || !data.epsBeatMissCheckedAt);
-  const needsAnnualPe = existingAnnualPeRows.length < 3;
+  const needsAnnualPe = existingAnnualPeRows.length < MIN_FULL_HISTORICAL_PE_ROWS;
   const needsMarketActivity =
     !epsOnly &&
     (
