@@ -12326,8 +12326,17 @@ return (
     )}
 
     {calendarMode === "earnings" && selectedCalendarEvent && (
-      <div className="calendar-report-overlay" role="dialog" aria-modal="true" aria-label={`${selectedCalendarEvent.symbol} earnings report`}>
-        <div className="calendar-report-panel">
+      <div
+        className="calendar-report-overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${selectedCalendarEvent.symbol} earnings report`}
+        onClick={() => setSelectedCalendarEvent(null)}
+      >
+        <div
+          className="calendar-report-panel"
+          onClick={(event) => event.stopPropagation()}
+        >
           <div className="calendar-report-heading">
             <div>
               <span className="home-feature-label">Earnings Report</span>
