@@ -2737,9 +2737,12 @@ body {
 }
 
 .portfolio-table {
-  background: rgba(15, 23, 42, 0.88);
-  border: 1px solid rgba(39, 50, 68, 0.95);
-  border-radius: 8px;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(45, 212, 191, 0.12), transparent 30%),
+    linear-gradient(135deg, rgba(8, 15, 28, 0.96), rgba(15, 23, 42, 0.94));
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 18px;
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.32);
   overflow-x: auto;
 }
 
@@ -2761,22 +2764,50 @@ body {
 }
 
 .portfolio-header {
-  background: rgba(30, 41, 59, 0.92);
+  background: rgba(10, 19, 34, 0.92);
+  border-bottom: 1px solid rgba(56, 189, 248, 0.18);
+  color: #67e8f9;
+  font-size: 12px;
   font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .portfolio-row {
-  border-top: 1px solid #1f2937;
+  border-top: 1px solid rgba(39, 50, 68, 0.82);
+  color: #e5e7eb;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.portfolio-row:hover {
+  background: rgba(8, 145, 178, 0.08);
+  border-color: rgba(56, 189, 248, 0.22);
 }
 
 .portfolio-edit-input {
-  width: min(100%, 110px);
-  background: #0b1220;
-  border: 1px solid #334155;
-  border-radius: 8px;
+  width: min(100%, 118px);
+  background: rgba(4, 9, 20, 0.86);
+  border: 1px solid rgba(96, 165, 250, 0.32);
+  border-radius: 12px;
+  box-shadow: inset 0 0 18px rgba(2, 6, 23, 0.72);
   color: #f8fafc;
   font: inherit;
-  padding: 8px 10px;
+  font-weight: 800;
+  padding: 10px 12px;
+  text-align: center;
+}
+
+.portfolio-edit-input::-webkit-outer-spin-button,
+.portfolio-edit-input::-webkit-inner-spin-button,
+.portfolio-input::-webkit-outer-spin-button,
+.portfolio-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.portfolio-edit-input,
+.portfolio-input {
+  -moz-appearance: textfield;
 }
 
 .portfolio-edit-input:focus {
@@ -2846,6 +2877,76 @@ body {
 .portfolio-return small {
   font-size: 12px;
 }
+
+.portfolio-return.neutral {
+  color: #93c5fd;
+}
+
+.portfolio-muted-cell {
+  color: #64748b;
+  font-weight: 800;
+}
+
+.portfolio-cash-row {
+  background: linear-gradient(90deg, rgba(20, 184, 166, 0.12), rgba(37, 99, 235, 0.08));
+}
+
+.portfolio-cash-logo {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(45, 212, 191, 0.5);
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(20, 184, 166, 0.22), rgba(37, 99, 235, 0.2));
+  color: #99f6e4;
+  font-size: 18px;
+  font-weight: 1000;
+  box-shadow: 0 0 22px rgba(45, 212, 191, 0.16);
+}
+
+.portfolio-cash-input {
+  border-color: rgba(45, 212, 191, 0.46);
+}
+
+.portfolio-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 14px;
+  min-width: 900px;
+  padding: 18px 24px 24px;
+  border-top: 1px solid rgba(56, 189, 248, 0.18);
+}
+
+.portfolio-summary-strip > div {
+  display: grid;
+  gap: 6px;
+  padding: 18px;
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.74);
+}
+
+.portfolio-summary-strip span,
+.portfolio-summary-strip small {
+  color: #94a3b8;
+  font-weight: 800;
+}
+
+.portfolio-summary-strip strong {
+  color: #f8fafc;
+  font-size: clamp(24px, 3vw, 36px);
+  line-height: 1;
+}
+
+.portfolio-summary-strip strong.green {
+  color: #22c55e;
+}
+
+.portfolio-summary-strip strong.red {
+  color: #ef4444;
+}
+
 .portfolio-add {
   display: flex;
   gap: 12px;
@@ -2871,12 +2972,19 @@ body {
 }
 
 .remove-position {
-  background: #7f1d1d;
-  border: none;
-  color: white;
-  padding: 8px 12px;
-  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(127, 29, 29, 0.28), rgba(248, 113, 113, 0.12));
+  border: 1px solid rgba(248, 113, 113, 0.42);
+  color: #fecaca;
+  padding: 10px 14px;
+  border-radius: 999px;
   cursor: pointer;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+}
+
+.remove-position:hover {
+  background: rgba(127, 29, 29, 0.42);
+  color: #ffffff;
 }
 .earnings-section {
   margin-top: 40px;
@@ -3125,6 +3233,11 @@ body {
   padding: 12px 20px;
 }
 
+.calendar-company-row-earnings,
+.calendar-company-header-earnings {
+  grid-template-columns: minmax(260px, 2.2fr) minmax(150px, 1fr) minmax(120px, 0.8fr) minmax(130px, 0.9fr);
+}
+
 .calendar-company-row-dividends,
 .calendar-company-header-dividends,
 .calendar-company-row-ipos,
@@ -3138,6 +3251,12 @@ body {
   font-weight: 900;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.calendar-company-header span:not(:first-child),
+.calendar-company-row > :not(:first-child) {
+  justify-self: end;
+  text-align: right;
 }
 
 .calendar-company-row {
@@ -3194,6 +3313,21 @@ body {
   white-space: nowrap;
 }
 
+.calendar-company-copy em {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 6px;
+  padding: 3px 8px;
+  border: 1px solid rgba(103, 232, 249, 0.28);
+  border-radius: 999px;
+  color: #67e8f9;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
 .calendar-empty {
   padding: 42px 20px;
   color: #9ca3af;
@@ -3225,8 +3359,13 @@ body {
   }
 
   .calendar-company-name,
-  .calendar-report-time {
+  .calendar-company-row-earnings .calendar-company-name {
     grid-column: 1 / -1;
+  }
+
+  .calendar-company-row > :not(:first-child) {
+    justify-self: stretch;
+    text-align: left;
   }
 
   .calendar-company-row [data-label]::before {

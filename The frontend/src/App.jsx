@@ -2694,6 +2694,7 @@ const PORTFOLIO_COLORS = [
 const DEFAULT_PORTFOLIO = {
   id: "portfolio-default",
   name: "My Portfolio",
+  cash: 0,
   positions: []
 };
 const SAVED_LISTS_STORAGE_KEY = "mrktrally-saved-lists";
@@ -2718,6 +2719,9 @@ const normalizePortfolios = (items = []) => {
   return items.map((item, index) => ({
     id: String(item?.id || `portfolio-${index}`),
     name: String(item?.name || `Portfolio ${index + 1}`),
+    cash: Number.isFinite(Number(item?.cash)) && Number(item?.cash) > 0
+      ? Number(item.cash)
+      : 0,
     positions: Array.isArray(item?.positions)
       ? item.positions.map((position, positionIndex) => ({
           ...position,
@@ -3767,6 +3771,9 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   ) || portfolios[0] || DEFAULT_PORTFOLIO;
 
   const portfolio = activePortfolio.positions || [];
+  const portfolioCash = Number.isFinite(Number(activePortfolio.cash))
+    ? Math.max(0, Number(activePortfolio.cash))
+    : 0;
 
   const setPortfolio = (nextPositions) => {
     setPortfolios((items) => items.map((item) => {
@@ -3789,6 +3796,16 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
           : position
       )
     );
+  };
+
+  const updateActivePortfolioCash = (value) => {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number < 0) return;
+    setPortfolios((items) => items.map((item) =>
+      item.id === activePortfolio.id
+        ? { ...item, cash: number }
+        : item
+    ));
   };
 
   const removePortfolioPosition = (positionId, fallbackIndex) => {
@@ -7028,7 +7045,7 @@ const earningsWeekLabel = earnings?.weekStart && earnings?.weekEnd
   : "This week";
 const latestTreasuryRates = treasuryRates?.latest || treasuryRates?.rows?.[0] || null;
 const previousTreasuryRates = treasuryRates?.rows?.[1] || null;
-const portfolioAllocationData = portfolio.map((position, index) => {
+const portfolioStockAllocationData = portfolio.map((position, index) => {
   const currentPrice = portfolioPrices[position.symbol];
   const allocationPrice = isNumber(currentPrice) && currentPrice > 0
     ? currentPrice
@@ -7040,10 +7057,33 @@ const portfolioAllocationData = portfolio.map((position, index) => {
   };
 }).filter((position) => position.value > 0)
   .sort((a, b) => b.value - a.value);
+const portfolioAllocationData = [
+  ...portfolioStockAllocationData,
+  ...(portfolioCash > 0
+    ? [{
+        key: "portfolio-cash",
+        name: "Cash",
+        value: portfolioCash
+      }]
+    : [])
+].sort((a, b) => b.value - a.value);
 const totalPortfolioValue = portfolioAllocationData.reduce(
   (total, position) => total + position.value,
   0
 );
+const totalPortfolioStockValue = portfolioStockAllocationData.reduce(
+  (total, position) => total + position.value,
+  0
+);
+const totalPortfolioCostBasis = portfolio.reduce(
+  (total, position) =>
+    total + (Number(position.avgCost) || 0) * (Number(position.shares) || 0),
+  0
+);
+const totalPortfolioProfit = totalPortfolioStockValue - totalPortfolioCostBasis;
+const totalPortfolioPerformance = totalPortfolioCostBasis > 0
+  ? (totalPortfolioProfit / totalPortfolioCostBasis) * 100
+  : null;
 const buildPortfolioExposureData = (field, fallbackLabel) => {
   const exposureMap = new Map();
   portfolio.forEach((position) => {
@@ -7068,7 +7108,9 @@ const buildPortfolioExposureData = (field, fallbackLabel) => {
 };
 const portfolioCountryData = buildPortfolioExposureData("country", "Unknown Country");
 const portfolioIndustryData = buildPortfolioExposureData("industry", "Unknown Industry");
-const renderPortfolioPiePanel = (title, data, emptyText) => (
+const renderPortfolioPiePanel = (title, data, emptyText) => {
+  const panelTotal = data.reduce((total, item) => total + item.value, 0);
+  return (
   <div className="portfolio-visual-panel">
     <h3>{title}</h3>
     {data.length ? (
@@ -7101,19 +7143,19 @@ const renderPortfolioPiePanel = (title, data, emptyText) => (
           </PieChart>
         </ResponsiveContainer>
         <div className="allocation-legend">
-          {data.map((item, index) => (
-            <div className="allocation-legend-row" key={item.key}>
+            {data.map((item, index) => (
+              <div className="allocation-legend-row" key={item.key}>
               <span
                 className="allocation-swatch"
                 style={{ background: PORTFOLIO_COLORS[index % PORTFOLIO_COLORS.length] }}
               />
-              <strong>{item.name}</strong>
-              <span>
-                {totalPortfolioValue > 0
-                  ? `${((item.value / totalPortfolioValue) * 100).toFixed(1)}%`
-                  : "0.0%"}
-              </span>
-            </div>
+                <strong>{item.name}</strong>
+                <span>
+                  {panelTotal > 0
+                    ? `${((item.value / panelTotal) * 100).toFixed(1)}%`
+                    : "0.0%"}
+                </span>
+              </div>
           ))}
         </div>
       </>
@@ -7121,7 +7163,8 @@ const renderPortfolioPiePanel = (title, data, emptyText) => (
       <div className="portfolio-visual-empty">{emptyText}</div>
     )}
   </div>
-);
+  );
+};
 const primaryResultDocuments = companyDocuments?.resultDocuments || [];
 const resultDocumentCards = (
   primaryResultDocuments.length
@@ -11375,7 +11418,7 @@ return (
         const name = newPortfolioName.trim();
         if (!name || portfolios.length >= 20) return;
         const id = globalThis.crypto?.randomUUID?.() || `portfolio-${Date.now()}`;
-        setPortfolios((items) => [...items, { id, name, positions: [] }]);
+        setPortfolios((items) => [...items, { id, name, cash: 0, positions: [] }]);
         setActivePortfolioId(id);
         setNewPortfolioName("");
       }}
@@ -11429,13 +11472,31 @@ return (
     <button
       type="button"
       className="portfolio-delete"
-      disabled={portfolios.length <= 1}
       onClick={() => {
-        if (portfolios.length <= 1) return;
-        if (!window.confirm(`Delete ${activePortfolio.name} and all of its positions?`)) return;
-        const remaining = portfolios.filter((item) => item.id !== activePortfolio.id);
-        setPortfolios(remaining);
-        setActivePortfolioId(remaining[0].id);
+        const isOnlyPortfolio = portfolios.length <= 1;
+        const message = isOnlyPortfolio
+          ? `Clear ${activePortfolio.name} and reset this portfolio?`
+          : `Delete ${activePortfolio.name} and all of its positions?`;
+        if (!window.confirm(message)) return;
+        if (isOnlyPortfolio) {
+          const resetPortfolio = { ...DEFAULT_PORTFOLIO, cash: 0, positions: [] };
+          setPortfolios([resetPortfolio]);
+          setActivePortfolioId(resetPortfolio.id);
+          return;
+        }
+        const targetId = activePortfolio.id || activePortfolioId;
+        const remaining = portfolios.filter((item) => item.id !== targetId);
+        const nextPortfolios = remaining.length === portfolios.length
+          ? portfolios.filter((item) => item.id !== activePortfolioId)
+          : remaining;
+        if (!nextPortfolios.length) {
+          const resetPortfolio = { ...DEFAULT_PORTFOLIO, cash: 0, positions: [] };
+          setPortfolios([resetPortfolio]);
+          setActivePortfolioId(resetPortfolio.id);
+          return;
+        }
+        setPortfolios(nextPortfolios);
+        setActivePortfolioId(nextPortfolios[0].id);
       }}
     >
       Delete Portfolio
@@ -11653,6 +11714,48 @@ return (
 
   );
 })}
+
+    <div className="portfolio-row portfolio-cash-row">
+      <span className="portfolio-company">
+        <span className="portfolio-cash-logo" aria-hidden="true">$</span>
+        <strong>Cash</strong>
+      </span>
+      <span className="portfolio-muted-cell">-</span>
+      <span className="portfolio-muted-cell">-</span>
+      <span className="portfolio-muted-cell">Cash balance</span>
+      <span>{formatPortfolioCurrency(portfolioCash)}</span>
+      <span className="portfolio-return neutral">
+        <strong>Excluded</strong>
+        <small>from performance</small>
+      </span>
+      <span>
+        <input
+          className="portfolio-edit-input portfolio-cash-input"
+          type="number"
+          min="0"
+          step="any"
+          value={portfolioCash}
+          aria-label="Portfolio cash"
+          onChange={(event) => updateActivePortfolioCash(event.target.value)}
+        />
+      </span>
+    </div>
+
+    <div className="portfolio-summary-strip">
+      <div>
+        <span>Total Portfolio Value</span>
+        <strong>{formatPortfolioCurrency(totalPortfolioValue)}</strong>
+      </div>
+      <div>
+        <span>Total Portfolio Performance</span>
+        <strong className={totalPortfolioProfit >= 0 ? "green" : "red"}>
+          {totalPortfolioPerformance === null
+            ? "N/A"
+            : `${totalPortfolioPerformance >= 0 ? "+" : ""}${totalPortfolioPerformance.toFixed(2)}%`}
+        </strong>
+        <small>{formatPortfolioCurrency(totalPortfolioProfit)} on stock positions</small>
+      </div>
+    </div>
 
   </div>
 </div>
@@ -12066,7 +12169,6 @@ return (
           {calendarMode === "earnings" ? (
             <>
               <span>Company</span>
-              <span>Report time</span>
               <span>Revenue estimate</span>
               <span>EPS estimate</span>
               <span>Market cap</span>
@@ -12121,15 +12223,14 @@ return (
                 <span className="calendar-company-copy">
                   <strong>{event.symbol}</strong>
                   <small>{event.company}</small>
+                  {calendarMode === "earnings" && event.fiscalQuarter && (
+                    <em>{event.fiscalQuarter}</em>
+                  )}
                 </span>
               </span>
             </span>
             {calendarMode === "earnings" ? (
               <>
-                <span className="calendar-report-time">
-                  {event.reportTime}
-                  {event.fiscalQuarter && <small>{event.fiscalQuarter}</small>}
-                </span>
                 <strong data-label="Revenue est.">{formatCalendarMoney(event.revenueEstimate, "No estimate")}</strong>
                 <strong data-label="EPS est.">{formatCalendarEps(event.epsEstimate, "No estimate")}</strong>
                 <span data-label="Market cap">{formatCalendarMoney(event.marketCap)}</span>
