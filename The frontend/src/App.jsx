@@ -7131,7 +7131,11 @@ const isInsiderMovesLoading =
   (isInitialStockLoad || stockData?.refreshing) &&
   !stockData?.insiderTransactionsCheckedAt &&
   !insiderMoveRows.length;
-const selectedEarningsDay = (earnings?.days || []).find(
+const displayedCalendar = earnings?.type === calendarMode
+  ? earnings
+  : { type: calendarMode, weekStart: earningsWeekStart, weekEnd: shiftIsoDate(earningsWeekStart, 6), days: [] };
+const displayedCalendarDays = displayedCalendar?.days || [];
+const selectedEarningsDay = displayedCalendarDays.find(
   (day) => day.date === selectedEarningsDate
 ) || { date: selectedEarningsDate, events: [] };
 const activeCalendarConfig = CALENDAR_MODES.find((mode) => mode.id === calendarMode) || CALENDAR_MODES[0];
@@ -7139,11 +7143,11 @@ const selectedCalendarSymbol = String(selectedCalendarEvent?.symbol || "").toUpp
 const selectedCalendarReport = selectedCalendarSymbol
   ? calendarEarningsReports[selectedCalendarSymbol] || { symbol: selectedCalendarSymbol, rows: [] }
   : null;
-const earningsWeekLabel = earnings?.weekStart && earnings?.weekEnd
-  ? `${new Date(`${earnings.weekStart}T12:00:00`).toLocaleDateString(undefined, {
+const earningsWeekLabel = displayedCalendar?.weekStart && displayedCalendar?.weekEnd
+  ? `${new Date(`${displayedCalendar.weekStart}T12:00:00`).toLocaleDateString(undefined, {
       month: "short",
       day: "numeric"
-    })} - ${new Date(`${earnings.weekEnd}T12:00:00`).toLocaleDateString(undefined, {
+    })} - ${new Date(`${displayedCalendar.weekEnd}T12:00:00`).toLocaleDateString(undefined, {
       month: "short",
       day: "numeric",
       year: "numeric"
@@ -12339,7 +12343,7 @@ return (
     <div className="calendar-week-label">{earningsWeekLabel}</div>
 
     <div className="calendar-date-strip">
-      {(earnings?.days || []).map((day) => {
+      {displayedCalendarDays.map((day) => {
         const date = new Date(`${day.date}T12:00:00`);
         const isToday = day.date === toLocalIsoDate(new Date());
         return (
@@ -12423,6 +12427,7 @@ return (
                 return;
               }
               if (calendarMode === "economic") return;
+              if (!event.symbol) return;
               setSearchInput(event.symbol);
               setTicker(event.symbol);
               setActivePage("overview");
