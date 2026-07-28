@@ -5424,10 +5424,11 @@ body {
 
 .fundamental-chart-callout p {
   margin: 0 0 22px;
-  color: #aab6ca;
+  color: #f8fafc;
   font-size: 16px;
   line-height: 1.55;
   max-width: 580px;
+  text-shadow: 0 2px 14px rgba(2, 6, 23, 0.9);
 }
 
 .fundamental-chart-callout-button {
