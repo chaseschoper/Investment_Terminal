@@ -1141,6 +1141,13 @@ function getFinnhubLogoUrl(ticker) {
     : null;
 }
 
+function getFmpSymbolImageUrl(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  return symbol
+    ? `https://images.financialmodelingprep.com/symbol/${encodeURIComponent(symbol)}.png`
+    : null;
+}
+
 async function getFmpData(ticker, label, endpoints) {
   if (!process.env.FMP_API_KEY) return null;
   if (!canUseFmp()) return null;
@@ -14528,6 +14535,7 @@ async function fetchStockAnalysisMutualFundData(ticker, upstreamError = null) {
     symbol,
     name,
     type: "Mutual Fund",
+    logo: getFmpSymbolImageUrl(symbol),
     price,
     change,
     percentChange,
@@ -14640,6 +14648,7 @@ async function fetchNasdaqFundFallback(ticker, upstreamError = null) {
     symbol,
     name: info.companyName || symbol,
     type: readSummary("InstrumentType") || info.stockType || "Mutual Fund",
+    logo: getFmpSymbolImageUrl(symbol),
     price,
     change,
     percentChange,
@@ -14750,6 +14759,7 @@ async function fetchYahooFundFallback(ticker, stockAnalysisError = null) {
     symbol,
     name: meta.longName || meta.shortName || priceSummary.longName || priceSummary.shortName || symbol,
     type: String(meta.instrumentType || "Fund").toUpperCase() === "MUTUALFUND" ? "Mutual Fund" : (meta.instrumentType || "Fund"),
+    logo: getFmpSymbolImageUrl(symbol),
     price,
     change,
     percentChange,
@@ -14798,7 +14808,13 @@ async function fetchEtfData(ticker) {
   const symbol = String(ticker || "").trim().toUpperCase();
   const stockAnalysisSymbol = normalizeTickerForStockAnalysis(symbol);
   const cached = etfDataCache.get(symbol);
-  if (cached && Date.now() - cached.fetchedAt < 60 * 60 * 1000) return cached.data;
+  if (cached && Date.now() - cached.fetchedAt < 60 * 60 * 1000) {
+    const cachedLogo = firstText(cached.data?.logo, getFmpSymbolImageUrl(symbol));
+    if (cachedLogo !== cached.data?.logo) {
+      cached.data = { ...cached.data, logo: cachedLogo };
+    }
+    return cached.data;
+  }
   if (!canUseStockAnalysis()) {
     try {
       return await fetchNasdaqFundFallback(symbol, new Error("StockAnalysis cooldown active"));
@@ -14907,10 +14923,17 @@ async function fetchEtfData(ticker) {
   const countries = parseEmbeddedStockAnalysisCountries(holdingsHtml);
   const assetAllocation = inferStockAnalysisAssetAllocation(holdingsHtml, sectors, selectedHoldings);
   const holdingsMeta = parseEmbeddedStockAnalysisHoldingsMeta(holdingsHtml);
+  const fmpProfileData = await resolveWithin(
+    getFmpData(symbol, "fund profile logo", ["/stable/profile?symbol={ticker}"]),
+    1100,
+    []
+  ).catch(() => []);
+  const fmpProfile = Array.isArray(fmpProfileData) ? fmpProfileData[0] || {} : fmpProfileData || {};
   const data = {
     symbol,
     name,
     type: "ETF",
+    logo: firstText(fmpProfile.image, getFmpSymbolImageUrl(symbol)),
     price,
     change,
     percentChange,
@@ -15830,6 +15853,336 @@ app.get("/api/etf/:ticker", async (req, res) => {
   } catch (err) {
     console.log("ETF data failed:", req.params.ticker, err.response?.status || err.message);
     res.status(404).json({ error: "ETF data not found yet" });
+  }
+});
+
+async function getFmpCryptoSymbolMap() {
+  const cacheKey = "crypto:list";
+  const cached = fmpDataCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.data;
+
+  const response = await getFmpAxios("https://financialmodelingprep.com/stable/cryptocurrency-list", {
+    params: { apikey: process.env.FMP_API_KEY },
+    timeout: 3500
+  });
+  const rows = Array.isArray(response.data) ? response.data : [];
+  const symbolMap = new Map();
+  rows.forEach((row) => {
+    const symbol = firstText(row.symbol)?.toUpperCase();
+    if (!symbol) return;
+    symbolMap.set(symbol, {
+      symbol,
+      name: firstText(row.name) || symbol,
+      exchange: firstText(row.exchange),
+      icoDate: firstText(row.icoDate),
+      circulatingSupply: firstFiniteNumber(row.circulatingSupply),
+      totalSupply: firstFiniteNumber(row.totalSupply)
+    });
+  });
+
+  fmpDataCache.set(cacheKey, {
+    data: symbolMap,
+    expiresAt: Date.now() + 12 * 60 * 60 * 1000
+  });
+  return symbolMap;
+}
+
+async function getFmpForexSymbolMap() {
+  const cacheKey = "forex:list";
+  const cached = fmpDataCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.data;
+
+  const response = await getFmpAxios("https://financialmodelingprep.com/stable/forex-list", {
+    params: { apikey: process.env.FMP_API_KEY },
+    timeout: 3500
+  });
+  const rows = Array.isArray(response.data) ? response.data : [];
+  const symbolMap = new Map();
+  rows.forEach((row) => {
+    const symbol = firstText(row.symbol)?.toUpperCase();
+    if (!symbol) return;
+    const fromName = firstText(row.fromName);
+    const toName = firstText(row.toName);
+    symbolMap.set(symbol, {
+      symbol,
+      name: fromName && toName ? `${fromName} / ${toName}` : symbol,
+      fromCurrency: firstText(row.fromCurrency),
+      toCurrency: firstText(row.toCurrency),
+      fromName,
+      toName
+    });
+  });
+
+  fmpDataCache.set(cacheKey, {
+    data: symbolMap,
+    expiresAt: Date.now() + 12 * 60 * 60 * 1000
+  });
+  return symbolMap;
+}
+
+async function getFmpAlternativeMarketMeta(symbol, marketType) {
+  if (!process.env.FMP_API_KEY || !canUseFmp()) return null;
+  const normalizedSymbol = String(symbol || "").trim().toUpperCase();
+  if (!normalizedSymbol) return null;
+  const symbolMap = marketType === "crypto"
+    ? await getFmpCryptoSymbolMap()
+    : await getFmpForexSymbolMap();
+  return symbolMap.get(normalizedSymbol) || null;
+}
+
+function normalizeAlternativeMarketQuote(symbol, marketType, meta = {}, quote = {}) {
+  const price = firstFiniteNumber(quote.price);
+  const previousClose = firstFiniteNumber(quote.previousClose);
+  const providerChange = firstFiniteNumber(quote.change);
+  const computedChange = price !== null && previousClose > 0 ? price - previousClose : null;
+  const change = firstFiniteNumber(providerChange, computedChange);
+  const changePercentage = firstFiniteNumber(
+    quote.changePercentage,
+    quote.changesPercentage,
+    quote.percentChange,
+    change !== null && previousClose > 0 ? (change / previousClose) * 100 : null
+  );
+  return {
+    symbol,
+    name: firstText(quote.name, meta.name) || symbol,
+    type: marketType,
+    logo: getFmpSymbolImageUrl(symbol),
+    price,
+    changePercentage,
+    change,
+    volume: firstFiniteNumber(quote.volume),
+    dayLow: firstFiniteNumber(quote.dayLow),
+    dayHigh: firstFiniteNumber(quote.dayHigh),
+    yearHigh: firstFiniteNumber(quote.yearHigh),
+    yearLow: firstFiniteNumber(quote.yearLow),
+    marketCap: marketType === "crypto" ? firstFiniteNumber(quote.marketCap) : null,
+    priceAvg50: firstFiniteNumber(quote.priceAvg50),
+    priceAvg200: firstFiniteNumber(quote.priceAvg200),
+    exchange: firstText(quote.exchange, meta.exchange),
+    open: firstFiniteNumber(quote.open),
+    previousClose,
+    icoDate: marketType === "crypto" ? firstText(meta.icoDate) : null,
+    circulatingSupply: marketType === "crypto" ? firstFiniteNumber(meta.circulatingSupply) : null,
+    totalSupply: marketType === "crypto" ? firstFiniteNumber(meta.totalSupply) : null,
+    fromCurrency: marketType === "forex" ? firstText(meta.fromCurrency) : null,
+    toCurrency: marketType === "forex" ? firstText(meta.toCurrency) : null,
+    fromName: marketType === "forex" ? firstText(meta.fromName) : null,
+    toName: marketType === "forex" ? firstText(meta.toName) : null,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+async function fetchFmpAlternativeMarketQuote(symbol, marketType) {
+  const normalizedSymbol = String(symbol || "").trim().toUpperCase();
+  const meta = await getFmpAlternativeMarketMeta(normalizedSymbol, marketType);
+  if (!meta) return null;
+  const cacheKey = `${marketType}:quote:${normalizedSymbol}`;
+  const cached = fmpDataCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.data;
+
+  const response = await getFmpAxios("https://financialmodelingprep.com/stable/quote", {
+    params: { symbol: normalizedSymbol, apikey: process.env.FMP_API_KEY },
+    timeout: 2500
+  });
+  const quote = Array.isArray(response.data) ? response.data[0] : response.data;
+  if (!quote || firstFiniteNumber(quote.price) === null) return null;
+
+  const data = normalizeAlternativeMarketQuote(normalizedSymbol, marketType, meta, quote);
+  fmpDataCache.set(cacheKey, {
+    data,
+    expiresAt: Date.now() + 20 * 1000
+  });
+  return data;
+}
+
+async function fetchFmpAlternativeMarketPriceHistory(symbol, requestedRange = "1D", marketType = "crypto") {
+  const normalizedSymbol = String(symbol || "").trim().toUpperCase();
+  const rangeKey = String(requestedRange || "1D").trim().toUpperCase();
+  if (!normalizedSymbol || !process.env.FMP_API_KEY || !canUseFmp()) return null;
+  const rangeConfig = PRICE_HISTORY_RANGES[rangeKey] || PRICE_HISTORY_RANGES["1D"];
+  const cacheKey = `${marketType}:history:${normalizedSymbol}:${rangeKey}`;
+  const cached = fmpDataCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.data;
+
+  if (rangeKey === "1D" || rangeKey === "1W") {
+    const response = await getFmpAxios("https://financialmodelingprep.com/stable/historical-chart/5min", {
+      params: { symbol: normalizedSymbol, apikey: process.env.FMP_API_KEY },
+      timeout: 3500
+    });
+    const rows = Array.isArray(response.data) ? response.data : [];
+    const allPoints = rows
+      .map((row) => {
+        const rawDate = firstText(row.date, row.datetime, row.timestamp);
+        const parsed = parseFmpMarketDateTime(rawDate);
+        const price = firstFiniteNumber(row.close, row.price, row.adjClose);
+        if (price === null || !parsed || Number.isNaN(parsed.getTime())) return null;
+        return {
+          time: parsed.getTime(),
+          date: parsed.toISOString(),
+          marketDateKey: /^\d{4}-\d{2}-\d{2}/.test(String(rawDate || "")) ? String(rawDate).slice(0, 10) : parsed.toISOString().slice(0, 10),
+          price,
+          open: firstFiniteNumber(row.open),
+          high: firstFiniteNumber(row.high),
+          low: firstFiniteNumber(row.low),
+          close: price,
+          volume: firstFiniteNumber(row.volume)
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.time - b.time);
+    if (allPoints.length < 2) return null;
+
+    const latestPoint = allPoints.at(-1);
+    const latestDateKey = latestPoint.marketDateKey;
+    const cutoff = latestPoint.time - 7 * 24 * 60 * 60 * 1000;
+    const points = rangeKey === "1D"
+      ? allPoints.filter((point) => point.marketDateKey === latestDateKey)
+      : allPoints.filter((point) => point.time >= cutoff);
+    if (points.length < 2) return null;
+    const firstPoint = points[0];
+    const previousPoint = points.at(-2);
+    const change = latestPoint.price !== null && firstPoint.price ? latestPoint.price - firstPoint.price : null;
+    const history = {
+      symbol: normalizedSymbol,
+      sourceSymbol: normalizedSymbol,
+      range: rangeKey,
+      interval: "5min",
+      source: `FMP ${marketType} intraday price`,
+      points,
+      latest: {
+        price: latestPoint.price,
+        change,
+        percentChange: change !== null && firstPoint.price ? (change / firstPoint.price) * 100 : null,
+        previousClose: previousPoint?.price ?? null,
+        open: firstPoint.open ?? firstPoint.price
+      },
+      updatedAt: new Date().toISOString()
+    };
+    fmpDataCache.set(cacheKey, {
+      data: history,
+      expiresAt: Date.now() + Math.min(rangeConfig.ttl || 60 * 1000, 45 * 1000)
+    });
+    return history;
+  }
+
+  const range = getFmpPriceHistoryDateRange(rangeKey);
+  if (!range) return null;
+  const response = await getFmpAxios("https://financialmodelingprep.com/stable/historical-price-eod/light", {
+    params: {
+      symbol: normalizedSymbol,
+      from: range.from,
+      to: range.to,
+      apikey: process.env.FMP_API_KEY
+    },
+    timeout: 3500
+  });
+  const rows = Array.isArray(response.data) ? response.data : [];
+  const points = rows
+    .map((row) => {
+      const price = firstFiniteNumber(row.price, row.close, row.adjClose);
+      const date = new Date(`${row.date}T16:00:00Z`);
+      if (price === null || Number.isNaN(date.getTime())) return null;
+      return {
+        time: date.getTime(),
+        date: date.toISOString(),
+        price,
+        volume: firstFiniteNumber(row.volume)
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.time - b.time);
+  if (points.length < 2) return null;
+  const latestPoint = points.at(-1);
+  const firstPoint = points[0];
+  const previousPoint = points.at(-2);
+  const change = latestPoint.price !== null && firstPoint.price ? latestPoint.price - firstPoint.price : null;
+  const history = {
+    symbol: normalizedSymbol,
+    sourceSymbol: normalizedSymbol,
+    range: rangeKey,
+    interval: "1d",
+    source: `FMP ${marketType} daily price`,
+    points,
+    latest: {
+      price: latestPoint.price,
+      change,
+      percentChange: change !== null && firstPoint.price ? (change / firstPoint.price) * 100 : null,
+      previousClose: previousPoint?.price ?? null
+    },
+    updatedAt: new Date().toISOString()
+  };
+  fmpDataCache.set(cacheKey, {
+    data: history,
+    expiresAt: Date.now() + (rangeConfig.ttl || 5 * 60 * 1000)
+  });
+  return history;
+}
+
+app.get("/api/crypto/:symbol", async (req, res) => {
+  try {
+    const symbol = String(req.params.symbol || "").trim().toUpperCase();
+    if (!/^[A-Z0-9._-]{2,20}$/.test(symbol)) {
+      return res.status(400).json({ error: "Invalid crypto symbol" });
+    }
+    const data = await fetchFmpAlternativeMarketQuote(symbol, "crypto");
+    if (!data) return res.status(404).json({ error: "Crypto data not found yet" });
+    return res.json(data);
+  } catch (err) {
+    setFmpCooldown(err, "crypto quote", req.params.symbol);
+    console.log("Crypto data failed:", req.params.symbol, err.response?.status || err.message);
+    return res.status(502).json({ error: "Crypto data not found yet" });
+  }
+});
+
+app.get("/api/crypto-price-history/:symbol", async (req, res) => {
+  try {
+    const symbol = String(req.params.symbol || "").trim().toUpperCase();
+    if (!/^[A-Z0-9._-]{2,20}$/.test(symbol)) {
+      return res.status(400).json({ error: "Invalid crypto symbol" });
+    }
+    const meta = await getFmpAlternativeMarketMeta(symbol, "crypto");
+    if (!meta) return res.status(404).json({ error: "That symbol is not in FMP's cryptocurrency list" });
+    const requestedRange = String(req.query.range || "1D").trim().toUpperCase();
+    const history = await fetchFmpAlternativeMarketPriceHistory(symbol, requestedRange, "crypto");
+    if (!history?.points?.length) return res.status(404).json({ error: "Crypto price history unavailable" });
+    return res.json(history);
+  } catch (err) {
+    console.log("Crypto price history failed:", req.params.symbol, err.response?.status || err.message);
+    return res.status(502).json({ error: "Crypto price history unavailable" });
+  }
+});
+
+app.get("/api/forex/:symbol", async (req, res) => {
+  try {
+    const symbol = String(req.params.symbol || "").trim().toUpperCase();
+    if (!/^[A-Z]{6,12}$/.test(symbol)) {
+      return res.status(400).json({ error: "Invalid forex symbol" });
+    }
+    const data = await fetchFmpAlternativeMarketQuote(symbol, "forex");
+    if (!data) return res.status(404).json({ error: "Forex data not found yet" });
+    return res.json(data);
+  } catch (err) {
+    setFmpCooldown(err, "forex quote", req.params.symbol);
+    console.log("Forex data failed:", req.params.symbol, err.response?.status || err.message);
+    return res.status(502).json({ error: "Forex data not found yet" });
+  }
+});
+
+app.get("/api/forex-price-history/:symbol", async (req, res) => {
+  try {
+    const symbol = String(req.params.symbol || "").trim().toUpperCase();
+    if (!/^[A-Z]{6,12}$/.test(symbol)) {
+      return res.status(400).json({ error: "Invalid forex symbol" });
+    }
+    const meta = await getFmpAlternativeMarketMeta(symbol, "forex");
+    if (!meta) return res.status(404).json({ error: "That symbol is not in FMP's forex list" });
+    const requestedRange = String(req.query.range || "1D").trim().toUpperCase();
+    const history = await fetchFmpAlternativeMarketPriceHistory(symbol, requestedRange, "forex");
+    if (!history?.points?.length) return res.status(404).json({ error: "Forex price history unavailable" });
+    return res.json(history);
+  } catch (err) {
+    console.log("Forex price history failed:", req.params.symbol, err.response?.status || err.message);
+    return res.status(502).json({ error: "Forex price history unavailable" });
   }
 });
 

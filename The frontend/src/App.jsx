@@ -985,6 +985,20 @@ const HOME_FEATURES = [
     text: "Search ETFs and mutual funds to review price, assets, fees, yield, exposure, asset mix, and top holdings when available."
   },
   {
+    id: "crypto",
+    icon: "crypto",
+    label: "Crypto Center",
+    title: "Track digital assets",
+    text: "Search cryptocurrencies to review price, market cap, supply, volume, ranges, moving averages, and 5-minute chart history."
+  },
+  {
+    id: "forex",
+    icon: "forex",
+    label: "FOREX Overview",
+    title: "Follow currency pairs",
+    text: "Search forex pairs to review price, change, volume, daily and yearly ranges, moving averages, exchange, open, and previous close."
+  },
+  {
     id: "stock-screener",
     icon: "screener",
     label: "Stock Screener",
@@ -1098,6 +1112,24 @@ const renderHomeFeatureIcon = (icon) => {
           <path className="icon-blue" d="M21 25H43M21 33H43M21 41H34" />
           <path className="icon-green" d="M23 25V43M33 25V43M43 25V35" />
           <circle className="icon-dot" cx="44" cy="42" r="5" />
+        </svg>
+      );
+    case "crypto":
+      return (
+        <svg {...commonProps}>
+          <circle className="icon-muted" cx="32" cy="32" r="22" />
+          <path className="icon-blue" d="M32 18V46M22 26H37C41 26 43 28 43 31C43 34 41 36 37 36H22" />
+          <path className="icon-green" d="M25 18V46M38 18V46" />
+          <path className="icon-red" d="M23 38H39" />
+        </svg>
+      );
+    case "forex":
+      return (
+        <svg {...commonProps}>
+          <path className="icon-muted" d="M12 22H48M48 22L40 14M48 22L40 30" />
+          <path className="icon-blue" d="M52 42H16M16 42L24 34M16 42L24 50" />
+          <path className="icon-green" d="M22 20C24 14 30 10 36 11" />
+          <path className="icon-red" d="M42 44C39 50 32 54 25 52" />
         </svg>
       );
     case "commodities":
@@ -1548,6 +1580,26 @@ const chunkSymbols = (symbols, size = 10) => {
 
 const STOCK_CHART_RANGES = ["1D", "1W", "1M", "1Y", "YTD", "5Y", "10Y", "MAX"];
 const ETF_CHART_RANGES = STOCK_CHART_RANGES;
+const CRYPTO_QUICK_PICKS = [
+  { symbol: "BTCUSD", label: "Bitcoin" },
+  { symbol: "ETHUSD", label: "Ethereum" },
+  { symbol: "SOLUSD", label: "Solana" },
+  { symbol: "XRPUSD", label: "XRP" },
+  { symbol: "BNBUSD", label: "BNB" },
+  { symbol: "ADAUSD", label: "Cardano" },
+  { symbol: "DOGEUSD", label: "Dogecoin" },
+  { symbol: "AVAXUSD", label: "Avalanche" }
+];
+const FOREX_QUICK_PICKS = [
+  { symbol: "EURUSD", label: "Euro / Dollar" },
+  { symbol: "GBPUSD", label: "Pound / Dollar" },
+  { symbol: "USDJPY", label: "Dollar / Yen" },
+  { symbol: "USDCHF", label: "Dollar / Franc" },
+  { symbol: "AUDUSD", label: "Aussie / Dollar" },
+  { symbol: "USDCAD", label: "Dollar / Loonie" },
+  { symbol: "NZDUSD", label: "Kiwi / Dollar" },
+  { symbol: "EURGBP", label: "Euro / Pound" }
+];
 const COMMODITY_GROUPS = [
   {
     title: "Precious Metals",
@@ -3984,6 +4036,60 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [etfChartError, setEtfChartError] =
     useState("");
 
+  const [cryptoSearchInput, setCryptoSearchInput] =
+    useState("BTCUSD");
+
+  const [cryptoSymbol, setCryptoSymbol] =
+    useState("BTCUSD");
+
+  const [cryptoData, setCryptoData] =
+    useState(null);
+
+  const [isCryptoLoading, setIsCryptoLoading] =
+    useState(false);
+
+  const [cryptoError, setCryptoError] =
+    useState("");
+
+  const [cryptoChartRange, setCryptoChartRange] =
+    useState("1D");
+
+  const [cryptoChartData, setCryptoChartData] =
+    useState({ points: [], latest: null });
+
+  const [isCryptoChartLoading, setIsCryptoChartLoading] =
+    useState(false);
+
+  const [cryptoChartError, setCryptoChartError] =
+    useState("");
+
+  const [forexSearchInput, setForexSearchInput] =
+    useState("EURUSD");
+
+  const [forexSymbol, setForexSymbol] =
+    useState("EURUSD");
+
+  const [forexData, setForexData] =
+    useState(null);
+
+  const [isForexLoading, setIsForexLoading] =
+    useState(false);
+
+  const [forexError, setForexError] =
+    useState("");
+
+  const [forexChartRange, setForexChartRange] =
+    useState("1D");
+
+  const [forexChartData, setForexChartData] =
+    useState({ points: [], latest: null });
+
+  const [isForexChartLoading, setIsForexChartLoading] =
+    useState(false);
+
+  const [forexChartError, setForexChartError] =
+    useState("");
+
   const [commoditySearchInput, setCommoditySearchInput] =
     useState("GCUSD");
 
@@ -4454,6 +4560,128 @@ useEffect(() => {
     isActive = false;
   };
 }, [activePage, etfTicker, etfChartRange]);
+
+useEffect(() => {
+  if (activePage !== "crypto" || !cryptoSymbol) return;
+
+  let isActive = true;
+
+  const loadCryptoData = async () => {
+    setIsCryptoLoading(true);
+    setCryptoError("");
+
+    try {
+      const response = await axios.get(`${API_URL}/api/crypto/${encodeURIComponent(cryptoSymbol)}`);
+      if (!isActive) return;
+      setCryptoData(response.data);
+    } catch (error) {
+      console.error("Crypto data failed", error);
+      if (!isActive) return;
+      setCryptoError("Crypto data is not available yet for that symbol.");
+    } finally {
+      if (isActive) setIsCryptoLoading(false);
+    }
+  };
+
+  loadCryptoData();
+
+  return () => {
+    isActive = false;
+  };
+}, [activePage, cryptoSymbol]);
+
+useEffect(() => {
+  if (activePage !== "crypto" || !cryptoSymbol) return;
+
+  let isActive = true;
+
+  const loadCryptoChart = async () => {
+    setIsCryptoChartLoading(true);
+    setCryptoChartError("");
+
+    try {
+      const response = await axios.get(
+        `${API_URL}/api/crypto-price-history/${encodeURIComponent(cryptoSymbol)}`,
+        { params: { range: cryptoChartRange } }
+      );
+      if (!isActive) return;
+      setCryptoChartData(response.data || { points: [], latest: null });
+    } catch (error) {
+      console.error("Crypto chart failed", error);
+      if (!isActive) return;
+      setCryptoChartError("Price chart is not available yet for that crypto.");
+    } finally {
+      if (isActive) setIsCryptoChartLoading(false);
+    }
+  };
+
+  loadCryptoChart();
+
+  return () => {
+    isActive = false;
+  };
+}, [activePage, cryptoSymbol, cryptoChartRange]);
+
+useEffect(() => {
+  if (activePage !== "forex" || !forexSymbol) return;
+
+  let isActive = true;
+
+  const loadForexData = async () => {
+    setIsForexLoading(true);
+    setForexError("");
+
+    try {
+      const response = await axios.get(`${API_URL}/api/forex/${encodeURIComponent(forexSymbol)}`);
+      if (!isActive) return;
+      setForexData(response.data);
+    } catch (error) {
+      console.error("Forex data failed", error);
+      if (!isActive) return;
+      setForexError("FOREX data is not available yet for that pair.");
+    } finally {
+      if (isActive) setIsForexLoading(false);
+    }
+  };
+
+  loadForexData();
+
+  return () => {
+    isActive = false;
+  };
+}, [activePage, forexSymbol]);
+
+useEffect(() => {
+  if (activePage !== "forex" || !forexSymbol) return;
+
+  let isActive = true;
+
+  const loadForexChart = async () => {
+    setIsForexChartLoading(true);
+    setForexChartError("");
+
+    try {
+      const response = await axios.get(
+        `${API_URL}/api/forex-price-history/${encodeURIComponent(forexSymbol)}`,
+        { params: { range: forexChartRange } }
+      );
+      if (!isActive) return;
+      setForexChartData(response.data || { points: [], latest: null });
+    } catch (error) {
+      console.error("Forex chart failed", error);
+      if (!isActive) return;
+      setForexChartError("Price chart is not available yet for that FOREX pair.");
+    } finally {
+      if (isActive) setIsForexChartLoading(false);
+    }
+  };
+
+  loadForexChart();
+
+  return () => {
+    isActive = false;
+  };
+}, [activePage, forexSymbol, forexChartRange]);
 
 useEffect(() => {
   if (activePage !== "commodities" || !commoditySymbol) return;
@@ -7590,6 +7818,18 @@ const displayedEtfPercentChange = isNumber(etfChartLatest?.percentChange)
   ? etfChartLatest.percentChange
   : etfData?.percentChange;
 const isMutualFundView = /mutual fund/i.test(String(etfData?.type || etfProfile.assetClass || ""));
+const cryptoChartPoints = Array.isArray(cryptoChartData?.points) ? cryptoChartData.points : [];
+const cryptoChartLatest = cryptoChartData?.latest || {};
+const displayedCryptoPrice = isNumber(cryptoChartLatest?.price) ? cryptoChartLatest.price : cryptoData?.price;
+const displayedCryptoPercentChange = isNumber(cryptoChartLatest?.percentChange)
+  ? cryptoChartLatest.percentChange
+  : cryptoData?.changePercentage;
+const forexChartPoints = Array.isArray(forexChartData?.points) ? forexChartData.points : [];
+const forexChartLatest = forexChartData?.latest || {};
+const displayedForexPrice = isNumber(forexChartLatest?.price) ? forexChartLatest.price : forexData?.price;
+const displayedForexPercentChange = isNumber(forexChartLatest?.percentChange)
+  ? forexChartLatest.percentChange
+  : forexData?.changePercentage;
 const commodityChartPoints = Array.isArray(commodityChartData?.points) ? commodityChartData.points : [];
 const commodityChartLatest = commodityChartData?.latest || {};
 const displayedCommodityPrice = isNumber(commodityChartLatest?.price) ? commodityChartLatest.price : commodityData?.price;
@@ -7611,6 +7851,41 @@ const commodityCards = [
   { label: "Previous Close", value: formatPrice(commodityData?.previousClose) },
   { label: "Currency", value: commodityData?.currency || "N/A" },
   { label: "Trade Month", value: commodityData?.tradeMonth || "N/A" }
+];
+const cryptoCards = [
+  { label: "Price", value: formatPrice(displayedCryptoPrice) },
+  { label: "Change", value: isNumber(cryptoData?.change) ? formatPrice(cryptoData.change) : "N/A" },
+  { label: "Change %", value: formatSignedPercent(displayedCryptoPercentChange) },
+  { label: "Volume", value: isNumber(cryptoData?.volume) ? cryptoData.volume.toLocaleString() : "N/A" },
+  { label: "Market Cap", value: formatLargeDollars(cryptoData?.marketCap) },
+  { label: "Day Low", value: formatPrice(cryptoData?.dayLow) },
+  { label: "Day High", value: formatPrice(cryptoData?.dayHigh) },
+  { label: "Year Low", value: formatPrice(cryptoData?.yearLow) },
+  { label: "Year High", value: formatPrice(cryptoData?.yearHigh) },
+  { label: "50 Day Avg", value: formatPrice(cryptoData?.priceAvg50) },
+  { label: "200 Day Avg", value: formatPrice(cryptoData?.priceAvg200) },
+  { label: "Open", value: formatPrice(cryptoData?.open) },
+  { label: "Previous Close", value: formatPrice(cryptoData?.previousClose) },
+  { label: "ICO Date", value: cryptoData?.icoDate || "N/A" },
+  { label: "Circulating Supply", value: isNumber(cryptoData?.circulatingSupply) ? cryptoData.circulatingSupply.toLocaleString() : "N/A" },
+  { label: "Total Supply", value: isNumber(cryptoData?.totalSupply) ? cryptoData.totalSupply.toLocaleString() : "N/A" }
+];
+const forexCards = [
+  { label: "Price", value: formatPlain(displayedForexPrice) },
+  { label: "Change", value: isNumber(forexData?.change) ? formatPlain(forexData.change) : "N/A" },
+  { label: "Change %", value: formatSignedPercent(displayedForexPercentChange) },
+  { label: "Volume", value: isNumber(forexData?.volume) ? forexData.volume.toLocaleString() : "N/A" },
+  { label: "Day Low", value: formatPlain(forexData?.dayLow) },
+  { label: "Day High", value: formatPlain(forexData?.dayHigh) },
+  { label: "Year Low", value: formatPlain(forexData?.yearLow) },
+  { label: "Year High", value: formatPlain(forexData?.yearHigh) },
+  { label: "50 Day Avg", value: formatPlain(forexData?.priceAvg50) },
+  { label: "200 Day Avg", value: formatPlain(forexData?.priceAvg200) },
+  { label: "Exchange", value: forexData?.exchange || "FOREX" },
+  { label: "Open", value: formatPlain(forexData?.open) },
+  { label: "Previous Close", value: formatPlain(forexData?.previousClose) },
+  { label: "From", value: forexData?.fromCurrency || "N/A" },
+  { label: "To", value: forexData?.toCurrency || "N/A" }
 ];
 const etfOverviewCards = [
   { label: "Assets", value: formatLargeDollars(etfStats.assets) },
@@ -8669,6 +8944,8 @@ return (
         ["portfolio", "Portfolio"],
         ["watchlists", "Watchlists"],
         ["etfs", "ETF Overview"],
+        ["crypto", "Crypto Center"],
+        ["forex", "FOREX Overview"],
         ["stock-screener", "Stock Screener"],
         ["news", "News"],
         ["earnings-calendar", "Calendar"],
@@ -8908,7 +9185,12 @@ return (
         ) : etfData ? (
           <>
             <div className="etf-hero-panel">
-              <div>
+              <div className="etf-hero-main">
+                {etfData.logo && (
+                  <span className="etf-hero-logo-shell" aria-hidden="true">
+                    <img src={etfData.logo} alt="" loading="eager" decoding="async" />
+                  </span>
+                )}
                 <span className="etf-symbol">{etfData.symbol}</span>
                 <h3>{etfData.name}</h3>
                 {etfData.type && <strong className="etf-type-badge">{etfData.type}</strong>}
@@ -9082,6 +9364,364 @@ return (
           </>
         ) : (
           <div className="heatmap-loading">Search an ETF to get started.</div>
+        )}
+      </section>
+    )}
+
+    {activePage === "crypto" && (
+      <section className="etf-page alternative-market-page" id="crypto" aria-labelledby="crypto-page-title">
+        <div className="etf-heading-row">
+          <div>
+            <span className="home-feature-label">Digital Asset Research</span>
+            <h2 id="crypto-page-title">Crypto Center</h2>
+            <p>Search a cryptocurrency pair to review price, market cap, supply, volume, ranges, averages, and chart history.</p>
+          </div>
+          <form
+            className="etf-search"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const symbol = cryptoSearchInput.trim().toUpperCase();
+              if (!symbol) return;
+              setCryptoData(null);
+              setCryptoError("");
+              setCryptoChartData({ points: [], latest: null });
+              setCryptoChartError("");
+              setIsCryptoLoading(true);
+              setCryptoSymbol(symbol);
+            }}
+          >
+            <input
+              value={cryptoSearchInput}
+              onChange={(event) => setCryptoSearchInput(event.target.value.toUpperCase())}
+              placeholder="Search crypto pair, ex. BTCUSD"
+              aria-label="Search crypto pair"
+            />
+            <button type="submit">{isCryptoLoading ? "Loading..." : "Search Crypto"}</button>
+          </form>
+        </div>
+
+        <div className="market-quick-picks" aria-label="Popular cryptocurrencies">
+          {CRYPTO_QUICK_PICKS.map((item) => (
+            <button
+              key={item.symbol}
+              type="button"
+              className={cryptoSymbol === item.symbol ? "active" : ""}
+              onClick={() => {
+                setCryptoSearchInput(item.symbol);
+                setCryptoData(null);
+                setCryptoError("");
+                setCryptoChartData({ points: [], latest: null });
+                setCryptoChartError("");
+                setCryptoSymbol(item.symbol);
+              }}
+            >
+              <strong>{item.symbol}</strong>
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {isCryptoLoading && !cryptoData ? (
+          <div className="heatmap-loading">Loading {cryptoSymbol} crypto data...</div>
+        ) : cryptoError ? (
+          <div className="heatmap-loading">{cryptoError}</div>
+        ) : cryptoData ? (
+          <>
+            <div className="etf-hero-panel">
+              <div className="etf-hero-main">
+                {cryptoData.logo ? (
+                  <span className="etf-hero-logo-shell crypto-logo-shell" aria-hidden="true">
+                    <img src={cryptoData.logo} alt="" loading="eager" decoding="async" />
+                  </span>
+                ) : (
+                  <span className="asset-symbol-orb crypto-orb" aria-hidden="true">{cryptoData.symbol?.slice(0, 3)}</span>
+                )}
+                <span className="etf-symbol">{cryptoData.symbol}</span>
+                <h3>{cryptoData.name}</h3>
+                <strong className="etf-type-badge">Cryptocurrency</strong>
+                <p>Track the latest quote, market cap, supply, trading range, averages, and chart history for this digital asset.</p>
+              </div>
+              <div className="etf-price-card">
+                <span>Price</span>
+                <strong>{formatPrice(displayedCryptoPrice)}</strong>
+                <em className={isNumber(displayedCryptoPercentChange) && displayedCryptoPercentChange < 0 ? "red" : "green"}>
+                  {formatSignedPercent(displayedCryptoPercentChange)}
+                </em>
+              </div>
+            </div>
+
+            <div className="etf-panel etf-price-chart-panel">
+              <div className="etf-panel-heading etf-chart-heading">
+                <div>
+                  <h3>{cryptoData.symbol} Price Chart</h3>
+                  <span>
+                    {isNumber(cryptoChartLatest?.price)
+                      ? `${formatPrice(cryptoChartLatest.price)} ${formatSignedPercent(cryptoChartLatest.percentChange)}`
+                      : "Latest price history"}
+                  </span>
+                </div>
+                <div className="etf-chart-controls" role="group" aria-label="Crypto chart range">
+                  {ETF_CHART_RANGES.map((range) => (
+                    <button
+                      key={range}
+                      type="button"
+                      className={cryptoChartRange === range ? "active" : ""}
+                      onClick={() => setCryptoChartRange(range)}
+                    >
+                      {range}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="etf-chart-canvas">
+                {isCryptoChartLoading && !cryptoChartPoints.length ? (
+                  <StockDataLoading label="Loading crypto price chart..." />
+                ) : cryptoChartPoints.length ? (
+                  <ResponsiveContainer width="100%" height={330}>
+                    <LineChart data={cryptoChartPoints} margin={{ top: 18, right: 22, left: 4, bottom: 8 }}>
+                      <defs>
+                        <linearGradient id="cryptoPriceLineGradient" x1="0" y1="0" x2="1" y2="0">
+                          <stop offset="0%" stopColor="#22d3ee" />
+                          <stop offset="55%" stopColor="#3b82f6" />
+                          <stop offset="100%" stopColor="#34d399" />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid stroke="#223049" strokeDasharray="3 3" />
+                      <XAxis
+                        dataKey="time"
+                        tickFormatter={(value) => formatStockChartAxisLabel(value, cryptoChartRange)}
+                        stroke="#8ea0bd"
+                        tick={{ fill: "#9ca3af", fontSize: 12 }}
+                        minTickGap={28}
+                      />
+                      <YAxis
+                        domain={["auto", "auto"]}
+                        tickFormatter={(value) => `$${Number(value).toFixed(value >= 100 ? 0 : 2)}`}
+                        stroke="#8ea0bd"
+                        tick={{ fill: "#9ca3af", fontSize: 12 }}
+                        width={78}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          background: "#0b1220",
+                          border: "1px solid #2b3a55",
+                          borderRadius: "12px",
+                          color: "#f8fafc"
+                        }}
+                        labelFormatter={(value) => formatStockChartTooltipLabel(value, cryptoChartRange)}
+                        formatter={(value) => [formatPrice(value), "Price"]}
+                      />
+                      <Line
+                        key={`${cryptoData.symbol}-${cryptoChartRange}-${cryptoChartPoints.length}-${cryptoChartPoints[0]?.time || ""}`}
+                        type="monotone"
+                        dataKey="price"
+                        stroke="url(#cryptoPriceLineGradient)"
+                        strokeWidth={3}
+                        dot={false}
+                        isAnimationActive
+                        animationDuration={700}
+                        activeDot={{ r: 5, stroke: "#f8fafc", strokeWidth: 2, fill: "#22d3ee" }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="historical-chart-empty">
+                    {cryptoChartError || "No price history available yet."}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="etf-stat-grid">
+              {cryptoCards.map((card) => (
+                <div key={card.label}>
+                  <span>{card.label}</span>
+                  <strong>{card.value}</strong>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="heatmap-loading">Search a crypto pair to get started.</div>
+        )}
+      </section>
+    )}
+
+    {activePage === "forex" && (
+      <section className="etf-page alternative-market-page" id="forex" aria-labelledby="forex-page-title">
+        <div className="etf-heading-row">
+          <div>
+            <span className="home-feature-label">Currency Market Research</span>
+            <h2 id="forex-page-title">FOREX Overview</h2>
+            <p>Search a currency pair to review price, change, volume, ranges, averages, exchange, open, previous close, and chart history.</p>
+          </div>
+          <form
+            className="etf-search"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const symbol = forexSearchInput.trim().toUpperCase();
+              if (!symbol) return;
+              setForexData(null);
+              setForexError("");
+              setForexChartData({ points: [], latest: null });
+              setForexChartError("");
+              setIsForexLoading(true);
+              setForexSymbol(symbol);
+            }}
+          >
+            <input
+              value={forexSearchInput}
+              onChange={(event) => setForexSearchInput(event.target.value.toUpperCase())}
+              placeholder="Search forex pair, ex. EURUSD"
+              aria-label="Search forex pair"
+            />
+            <button type="submit">{isForexLoading ? "Loading..." : "Search FOREX"}</button>
+          </form>
+        </div>
+
+        <div className="market-quick-picks" aria-label="Popular forex pairs">
+          {FOREX_QUICK_PICKS.map((item) => (
+            <button
+              key={item.symbol}
+              type="button"
+              className={forexSymbol === item.symbol ? "active" : ""}
+              onClick={() => {
+                setForexSearchInput(item.symbol);
+                setForexData(null);
+                setForexError("");
+                setForexChartData({ points: [], latest: null });
+                setForexChartError("");
+                setForexSymbol(item.symbol);
+              }}
+            >
+              <strong>{item.symbol}</strong>
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {isForexLoading && !forexData ? (
+          <div className="heatmap-loading">Loading {forexSymbol} FOREX data...</div>
+        ) : forexError ? (
+          <div className="heatmap-loading">{forexError}</div>
+        ) : forexData ? (
+          <>
+            <div className="etf-hero-panel">
+              <div className="etf-hero-main">
+                {forexData.logo ? (
+                  <span className="etf-hero-logo-shell forex-logo-shell" aria-hidden="true">
+                    <img src={forexData.logo} alt="" loading="eager" decoding="async" />
+                  </span>
+                ) : (
+                  <span className="asset-symbol-orb forex-orb" aria-hidden="true">{forexData.fromCurrency || forexData.symbol?.slice(0, 3)}</span>
+                )}
+                <span className="etf-symbol">{forexData.symbol}</span>
+                <h3>{forexData.name}</h3>
+                <strong className="etf-type-badge">FOREX</strong>
+                <p>Track the latest currency quote, trading range, moving averages, volume, open, previous close, and chart history.</p>
+              </div>
+              <div className="etf-price-card">
+                <span>Price</span>
+                <strong>{formatPlain(displayedForexPrice)}</strong>
+                <em className={isNumber(displayedForexPercentChange) && displayedForexPercentChange < 0 ? "red" : "green"}>
+                  {formatSignedPercent(displayedForexPercentChange)}
+                </em>
+              </div>
+            </div>
+
+            <div className="etf-panel etf-price-chart-panel">
+              <div className="etf-panel-heading etf-chart-heading">
+                <div>
+                  <h3>{forexData.symbol} Price Chart</h3>
+                  <span>
+                    {isNumber(forexChartLatest?.price)
+                      ? `${formatPlain(forexChartLatest.price)} ${formatSignedPercent(forexChartLatest.percentChange)}`
+                      : "Latest price history"}
+                  </span>
+                </div>
+                <div className="etf-chart-controls" role="group" aria-label="FOREX chart range">
+                  {ETF_CHART_RANGES.map((range) => (
+                    <button
+                      key={range}
+                      type="button"
+                      className={forexChartRange === range ? "active" : ""}
+                      onClick={() => setForexChartRange(range)}
+                    >
+                      {range}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="etf-chart-canvas">
+                {isForexChartLoading && !forexChartPoints.length ? (
+                  <StockDataLoading label="Loading FOREX price chart..." />
+                ) : forexChartPoints.length ? (
+                  <ResponsiveContainer width="100%" height={330}>
+                    <LineChart data={forexChartPoints} margin={{ top: 18, right: 22, left: 4, bottom: 8 }}>
+                      <defs>
+                        <linearGradient id="forexPriceLineGradient" x1="0" y1="0" x2="1" y2="0">
+                          <stop offset="0%" stopColor="#34d399" />
+                          <stop offset="55%" stopColor="#22d3ee" />
+                          <stop offset="100%" stopColor="#60a5fa" />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid stroke="#223049" strokeDasharray="3 3" />
+                      <XAxis
+                        dataKey="time"
+                        tickFormatter={(value) => formatStockChartAxisLabel(value, forexChartRange)}
+                        stroke="#8ea0bd"
+                        tick={{ fill: "#9ca3af", fontSize: 12 }}
+                        minTickGap={28}
+                      />
+                      <YAxis
+                        domain={["auto", "auto"]}
+                        tickFormatter={(value) => Number(value).toFixed(value >= 10 ? 2 : 5)}
+                        stroke="#8ea0bd"
+                        tick={{ fill: "#9ca3af", fontSize: 12 }}
+                        width={82}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          background: "#0b1220",
+                          border: "1px solid #2b3a55",
+                          borderRadius: "12px",
+                          color: "#f8fafc"
+                        }}
+                        labelFormatter={(value) => formatStockChartTooltipLabel(value, forexChartRange)}
+                        formatter={(value) => [formatPlain(value), "Price"]}
+                      />
+                      <Line
+                        key={`${forexData.symbol}-${forexChartRange}-${forexChartPoints.length}-${forexChartPoints[0]?.time || ""}`}
+                        type="monotone"
+                        dataKey="price"
+                        stroke="url(#forexPriceLineGradient)"
+                        strokeWidth={3}
+                        dot={false}
+                        isAnimationActive
+                        animationDuration={700}
+                        activeDot={{ r: 5, stroke: "#f8fafc", strokeWidth: 2, fill: "#34d399" }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="historical-chart-empty">
+                    {forexChartError || "No price history available yet."}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="etf-stat-grid">
+              {forexCards.map((card) => (
+                <div key={card.label}>
+                  <span>{card.label}</span>
+                  <strong>{card.value}</strong>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="heatmap-loading">Search a FOREX pair to get started.</div>
         )}
       </section>
     )}
