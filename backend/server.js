@@ -1148,6 +1148,42 @@ function getFmpSymbolImageUrl(ticker) {
     : null;
 }
 
+const FOREX_CURRENCY_CODES = new Set([
+  "USD", "EUR", "JPY", "GBP", "AUD", "CAD", "CHF", "CNY", "HKD", "NZD",
+  "SEK", "KRW", "SGD", "NOK", "MXN", "INR", "RUB", "ZAR", "TRY", "BRL",
+  "TWD", "DKK", "PLN", "THB", "IDR", "HUF", "CZK", "ILS", "CLP", "PHP",
+  "AED", "COP", "SAR", "MYR", "RON"
+]);
+const CRYPTO_BASE_SYMBOLS = new Set([
+  "BTC", "ETH", "SOL", "XRP", "BNB", "ADA", "DOGE", "AVAX", "DOT", "TRX",
+  "LINK", "LTC", "BCH", "XLM", "HBAR", "ICP", "APT", "ARB", "OP", "SUI",
+  "NEAR", "ETC", "FIL", "AAVE", "UNI", "MATIC", "POL", "ATOM", "ALGO", "VET",
+  "SHIB", "PEPE", "TON", "USDT", "USDC", "DAI"
+]);
+const CRYPTO_QUOTE_SYMBOLS = ["USDT", "USDC", "USD", "EUR", "BTC", "ETH"];
+
+function isForexPairSymbol(symbol) {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase().replace(/[^A-Z]/g, "");
+  return (
+    cleanSymbol.length === 6 &&
+    FOREX_CURRENCY_CODES.has(cleanSymbol.slice(0, 3)) &&
+    FOREX_CURRENCY_CODES.has(cleanSymbol.slice(3))
+  );
+}
+
+function isCryptoPairSymbol(symbol) {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase().replace(/[-_/]/g, "");
+  return CRYPTO_QUOTE_SYMBOLS.some((quote) => {
+    if (!cleanSymbol.endsWith(quote) || cleanSymbol.length <= quote.length) return false;
+    const base = cleanSymbol.slice(0, -quote.length);
+    return CRYPTO_BASE_SYMBOLS.has(base);
+  });
+}
+
+function isBlockedStockOnlySymbol(symbol) {
+  return isForexPairSymbol(symbol) || isCryptoPairSymbol(symbol);
+}
+
 async function getFmpData(ticker, label, endpoints) {
   if (!process.env.FMP_API_KEY) return null;
   if (!canUseFmp()) return null;
@@ -14057,7 +14093,7 @@ app.get("/api/prices", async (req, res) => {
   const symbols = [...new Set(String(req.query.symbols || "")
     .split(",")
     .map((symbol) => symbol.trim().toUpperCase())
-    .filter((symbol) => /^[A-Z0-9.-]{1,10}$/.test(symbol)))]
+    .filter((symbol) => /^[A-Z0-9.-]{1,10}$/.test(symbol) && !isBlockedStockOnlySymbol(symbol)))]
     .slice(0, 30);
 
   if (!symbols.length) return res.json({ prices: {}, details: {} });
@@ -15687,6 +15723,9 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     if (!/^[A-Z0-9=._-]{1,16}$/.test(ticker)) {
       return res.status(400).json({ error: "Invalid ticker" });
     }
+    if (isBlockedStockOnlySymbol(ticker)) {
+      return res.status(400).json({ error: "Use the crypto or FOREX page for that symbol" });
+    }
 
     const cacheKey = `${ticker}:${requestedRange}`;
     const cached = priceHistoryCache.get(cacheKey);
@@ -16518,6 +16557,9 @@ app.get("/api/stock-sidecars/:ticker", async (req, res) => {
     if (!ticker || ticker.length > 10) {
       return res.status(400).json({ error: "Invalid ticker" });
     }
+    if (isBlockedStockOnlySymbol(ticker)) {
+      return res.status(400).json({ error: "Use the crypto or FOREX page for that symbol" });
+    }
 
     const stock = await Stock.findOne({ ticker }).lean().catch(() => null);
     const data = stock?.data || buildMinimalStockSnapshot(ticker);
@@ -16542,6 +16584,11 @@ app.get("/api/stock/:ticker", async (req, res) => {
     if (!ticker || ticker.length > 10) {
       return res.status(400).json({
         error: "Invalid ticker"
+      });
+    }
+    if (isBlockedStockOnlySymbol(ticker)) {
+      return res.status(400).json({
+        error: "Use the crypto or FOREX page for that symbol"
       });
     }
     const requestedHistoryMode = String(
@@ -21296,7 +21343,7 @@ app.get("/api/news", async (req, res) => {
   const isStockNews = Boolean(symbol);
   const cacheKey = `${isStockNews ? symbol : "general"}:${page}:${limit}`;
   const cached = fmpNewsCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return res.json(cached.data);
+  if (cached && cached.expiresAt > Date.now() && cached.data?.articles?.length) return res.json(cached.data);
 
   if (isStockNews && !/^[A-Z0-9.-]{1,15}$/.test(symbol)) {
     return res.status(400).json({ error: "Invalid ticker", articles: [] });
@@ -21310,9 +21357,19 @@ app.get("/api/news", async (req, res) => {
     const endpoint = isStockNews
       ? `/stable/news/stock?symbols=${encodeURIComponent(symbol)}&page=${page}&limit=${limit}`
       : `/stable/news/general-latest?page=${page}&limit=${limit}`;
-    const data = await getFmpData(isStockNews ? symbol : "general", isStockNews ? "stock news" : "general news", [
+    let data = await getFmpData(isStockNews ? symbol : "general", isStockNews ? "stock news" : "general news", [
       endpoint
     ]);
+    if (!Array.isArray(data) || !data.length) {
+      const separator = endpoint.includes("?") ? "&" : "?";
+      const response = await getFmpAxios(`https://financialmodelingprep.com${endpoint}${separator}apikey=${process.env.FMP_API_KEY}`, {
+        timeout: 5000,
+        validateStatus: () => true
+      });
+      if (response.status < 400 && !isFmpErrorPayload(response.data)) {
+        data = response.data;
+      }
+    }
     const articles = (Array.isArray(data) ? data : data ? [data] : [])
       .map((item, index) => ({
         id: `${String(item.url || item.title || index)}-${index}`,
@@ -21334,7 +21391,10 @@ app.get("/api/news", async (req, res) => {
       updatedAt: new Date().toISOString(),
       source: isStockNews ? "FMP stock news" : "FMP general news"
     };
-    fmpNewsCache.set(cacheKey, { data: responseData, expiresAt: Date.now() + 10 * 60 * 1000 });
+    fmpNewsCache.set(cacheKey, {
+      data: responseData,
+      expiresAt: Date.now() + (articles.length ? 10 * 60 * 1000 : 30 * 1000)
+    });
     return res.json(responseData);
   } catch (err) {
     setFmpCooldown(err, isStockNews ? "stock news" : "general news", symbol || "general");
@@ -22191,6 +22251,9 @@ app.get("/api/financial-statements/:ticker", async (req, res) => {
     if (!symbol || !/^[A-Z0-9.-]{1,15}$/.test(symbol)) {
       return res.status(400).json({ error: "Invalid ticker" });
     }
+    if (isBlockedStockOnlySymbol(symbol)) {
+      return res.status(400).json({ error: "Use the crypto or FOREX page for that symbol" });
+    }
     if (!process.env.FMP_API_KEY || !canUseFmp()) {
       return res.status(503).json({ error: "Financial statements are not available yet." });
     }
@@ -22229,6 +22292,9 @@ app.get("/api/fundamental-metrics/:ticker", async (req, res) => {
     const symbol = String(req.params.ticker || "").trim().toUpperCase();
     if (!symbol || !/^[A-Z0-9.-]{1,15}$/.test(symbol)) {
       return res.status(400).json({ error: "Invalid ticker" });
+    }
+    if (isBlockedStockOnlySymbol(symbol)) {
+      return res.status(400).json({ error: "Use the crypto or FOREX page for that symbol" });
     }
     if (!process.env.FMP_API_KEY || !canUseFmp()) {
       return res.status(503).json({ error: "Fundamental metrics are not available yet." });

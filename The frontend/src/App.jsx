@@ -1600,6 +1600,48 @@ const FOREX_QUICK_PICKS = [
   { symbol: "NZDUSD", label: "Kiwi / Dollar" },
   { symbol: "EURGBP", label: "Euro / Pound" }
 ];
+const FOREX_CURRENCY_CODES = new Set([
+  "USD", "EUR", "JPY", "GBP", "AUD", "CAD", "CHF", "CNY", "HKD", "NZD",
+  "SEK", "KRW", "SGD", "NOK", "MXN", "INR", "RUB", "ZAR", "TRY", "BRL",
+  "TWD", "DKK", "PLN", "THB", "IDR", "HUF", "CZK", "ILS", "CLP", "PHP",
+  "AED", "COP", "SAR", "MYR", "RON"
+]);
+const CRYPTO_BASE_SYMBOLS = new Set([
+  "BTC", "ETH", "SOL", "XRP", "BNB", "ADA", "DOGE", "AVAX", "DOT", "TRX",
+  "LINK", "LTC", "BCH", "XLM", "HBAR", "ICP", "APT", "ARB", "OP", "SUI",
+  "NEAR", "ETC", "FIL", "AAVE", "UNI", "MATIC", "POL", "ATOM", "ALGO", "VET",
+  "SHIB", "PEPE", "TON", "USDT", "USDC", "DAI"
+]);
+const CRYPTO_QUOTE_SYMBOLS = ["USDT", "USDC", "USD", "EUR", "BTC", "ETH"];
+const isForexPairSymbol = (symbol) => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase().replace(/[^A-Z]/g, "");
+  return (
+    cleanSymbol.length === 6 &&
+    FOREX_CURRENCY_CODES.has(cleanSymbol.slice(0, 3)) &&
+    FOREX_CURRENCY_CODES.has(cleanSymbol.slice(3))
+  );
+};
+const isCryptoPairSymbol = (symbol) => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase().replace(/[-_/]/g, "");
+  if (CRYPTO_QUICK_PICKS.some((item) => item.symbol === cleanSymbol)) return true;
+  return CRYPTO_QUOTE_SYMBOLS.some((quote) => {
+    if (!cleanSymbol.endsWith(quote) || cleanSymbol.length <= quote.length) return false;
+    const base = cleanSymbol.slice(0, -quote.length);
+    return CRYPTO_BASE_SYMBOLS.has(base);
+  });
+};
+const isBlockedStockOnlySymbol = (symbol) =>
+  isForexPairSymbol(symbol) || isCryptoPairSymbol(symbol);
+const warnStockOnlySymbol = (symbol) => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  if (!cleanSymbol || !isBlockedStockOnlySymbol(cleanSymbol)) return false;
+  alert(
+    isForexPairSymbol(cleanSymbol)
+      ? "FOREX pairs belong in the FOREX Overview page, not stock-only pages."
+      : "Crypto pairs belong in the Crypto Center page, not stock-only pages."
+  );
+  return true;
+};
 const COMMODITY_GROUPS = [
   {
     title: "Precious Metals",
@@ -6233,6 +6275,7 @@ const loadUserData = async () => {
   const addComparisonTicker = (rawSymbol) => {
     const symbol = String(rawSymbol || "").trim().toUpperCase();
     if (!symbol) return false;
+    if (warnStockOnlySymbol(symbol)) return false;
     if (compareTickers.includes(symbol)) return true;
 
     latestComparisonRequest.current += 1;
@@ -8493,6 +8536,7 @@ const comparisonSection = (
 const selectStockSearchSuggestion = (item, destinationPage = "overview") => {
   const symbol = String(item?.symbol || "").trim().toUpperCase();
   if (!symbol) return;
+  if (warnStockOnlySymbol(symbol)) return;
 
   setSearchInput(symbol);
   setStockSearchSuggestions([]);
@@ -8633,6 +8677,7 @@ const handleFinancialStatementSearch = async (event) => {
   const value = financialStatementInput.trim();
   if (!value) return;
   let symbol = value.toUpperCase();
+  if (warnStockOnlySymbol(symbol)) return;
   if (!/^[A-Z0-9.-]{1,12}$/.test(symbol) || /\s/.test(value)) {
     try {
       const { data } = await axios.get(`${API_URL}/api/search-stocks`, {
@@ -8646,6 +8691,7 @@ const handleFinancialStatementSearch = async (event) => {
     }
   }
   if (!symbol) return;
+  if (warnStockOnlySymbol(symbol)) return;
   setFinancialStatementInput(symbol);
   setFinancialStatementTicker(symbol);
 };
@@ -8670,8 +8716,12 @@ const handleFundamentalChartTickerAdd = async (event) => {
     ...fundamentalChartTickers,
     ...resolvedSymbols
       .map((symbol) => String(symbol || "").toUpperCase())
-      .filter((symbol) => /^[A-Z0-9.-]{1,12}$/.test(symbol))
+      .filter((symbol) => /^[A-Z0-9.-]{1,12}$/.test(symbol) && !isBlockedStockOnlySymbol(symbol))
   ];
+  const blockedSymbol = resolvedSymbols
+    .map((symbol) => String(symbol || "").toUpperCase())
+    .find((symbol) => isBlockedStockOnlySymbol(symbol));
+  if (blockedSymbol) warnStockOnlySymbol(blockedSymbol);
 
   setFundamentalChartTickers([...new Set(nextSymbols)].slice(0, 20));
   setFundamentalChartInput("");
@@ -8685,6 +8735,7 @@ const removeFundamentalChartTicker = (symbol) => {
 
 const openFundamentalChartsForTicker = (symbol) => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  if (warnStockOnlySymbol(cleanSymbol)) return;
   if (/^[A-Z0-9.-]{1,12}$/.test(cleanSymbol)) {
     setFundamentalChartTickers((current) =>
       [...new Set([cleanSymbol, ...current])].slice(0, 20)
@@ -8738,6 +8789,7 @@ const handleStockSearchSubmit = async (event, destinationPage = "overview") => {
   event.preventDefault();
   const symbol = await resolveSearchInputToSymbol(searchInput);
   if (!symbol) return;
+  if (warnStockOnlySymbol(symbol)) return;
 
   setActivePage(destinationPage);
   setSearchInput(symbol);
@@ -8896,16 +8948,18 @@ return (
               if (!requireAuth("Log in or sign up to add stocks to your watchlist.")) {
                 return;
               }
+              const symbol = String(newTicker || "").trim().toUpperCase();
+              if (warnStockOnlySymbol(symbol)) return;
 
               if (
                 !watchlist.includes(
-                  newTicker
+                  symbol
                 )
               ) {
 
                 setWatchlist([
                   ...watchlist,
-                  newTicker,
+                  symbol,
                 ]);
               }
 
@@ -12770,19 +12824,21 @@ return (
 
     const shares = Number(portfolioShares);
     const avgCost = Number(portfolioCost);
+    const symbol = String(portfolioTicker || "").trim().toUpperCase();
+    if (warnStockOnlySymbol(symbol)) return;
     if (
-      portfolioTicker &&
+      symbol &&
       Number.isFinite(shares) && shares > 0 &&
       Number.isFinite(avgCost) && avgCost >= 0
     ) {
 
       await loadPortfolioPrice(
-        portfolioTicker
+        symbol
       );
 
       const newPosition = {
         id: globalThis.crypto?.randomUUID?.() || `position-${Date.now()}`,
-        symbol: portfolioTicker,
+        symbol,
         shares,
         avgCost,
       };
@@ -13242,6 +13298,7 @@ return (
               }
               const symbol = String(namedTickerInputs[list.id] || "").trim().toUpperCase();
               if (!symbol || !/^[A-Z0-9.-]{1,10}$/.test(symbol)) return;
+              if (warnStockOnlySymbol(symbol)) return;
               setNamedWatchlists((lists) => lists.map((item) =>
                 item.id === list.id && !item.symbols.includes(symbol)
                   ? { ...item, symbols: [...item.symbols, symbol] }
