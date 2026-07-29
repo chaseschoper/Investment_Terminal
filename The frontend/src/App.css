@@ -2517,6 +2517,12 @@ body {
   gap: 10px;
 }
 
+.etf-search .stock-search-field {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
 .etf-search input {
   min-width: 0;
   flex: 1;
@@ -2539,6 +2545,26 @@ body {
   color: #ffffff;
   font-weight: 900;
   cursor: pointer;
+}
+
+.calendar-earnings-search {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: min(720px, 100%);
+  margin: 18px auto 8px;
+}
+
+.calendar-search-field {
+  flex: 1;
+  min-width: min(100%, 320px);
+  width: auto;
+}
+
+.calendar-search-suggestions,
+.alternative-search-suggestions {
+  z-index: 60;
 }
 
 .commodity-picker {
@@ -4827,6 +4853,15 @@ body {
     width: 100%;
   }
 
+  .calendar-earnings-search {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .calendar-search-field {
+    width: 100%;
+  }
+
   .etf-hero-panel {
     flex-direction: column;
   }
@@ -4846,19 +4881,31 @@ body {
 
   .calendar-heading-row {
     align-items: flex-start;
+    flex-direction: column;
   }
 
   .calendar-mode-toggle {
     overflow-x: auto;
     justify-content: flex-start;
+    flex-wrap: nowrap;
+    padding-inline: 12px;
+    scrollbar-width: none;
   }
 
   .calendar-date-strip {
-    grid-template-columns: repeat(7, 100px);
+    grid-template-columns: repeat(7, minmax(86px, 1fr));
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .calendar-date-button {
+    min-width: 86px;
+    min-height: 82px;
   }
 
   .calendar-company-list {
     overflow: visible;
+    padding: 8px 12px 14px;
   }
 
   .calendar-company-header {
@@ -4888,7 +4935,7 @@ body {
 
   .calendar-company-row [data-label] {
     display: grid;
-    grid-template-columns: minmax(116px, 0.7fr) minmax(0, 1fr);
+    grid-template-columns: minmax(104px, 0.62fr) minmax(0, 1fr);
     align-items: center;
     gap: 10px;
     padding-top: 8px;
@@ -4908,12 +4955,13 @@ body {
 
   .calendar-report-overlay {
     align-items: start;
-    padding: 96px 12px 14px;
+    padding: 118px 10px 14px;
   }
 
   .calendar-report-panel {
     width: min(100%, 96vw);
-    max-height: calc(100vh - 110px);
+    max-height: calc(100vh - 132px);
+    border-radius: 14px;
   }
 
   .calendar-report-heading {
@@ -4922,6 +4970,14 @@ body {
 
   .calendar-report-heading h3 {
     font-size: clamp(28px, 12vw, 44px);
+  }
+
+  .calendar-report-heading button {
+    padding: 9px 12px;
+  }
+
+  .calendar-report-table {
+    min-width: 760px;
   }
 }
 .ai-analysis-box {

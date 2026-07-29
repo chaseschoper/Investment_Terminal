@@ -4481,6 +4481,15 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [cryptoSearchInput, setCryptoSearchInput] =
     useState("BTCUSD");
 
+  const [cryptoSearchSuggestions, setCryptoSearchSuggestions] =
+    useState([]);
+
+  const [isCryptoSearchSuggesting, setIsCryptoSearchSuggesting] =
+    useState(false);
+
+  const [showCryptoSearchSuggestions, setShowCryptoSearchSuggestions] =
+    useState(false);
+
   const [cryptoSymbol, setCryptoSymbol] =
     useState("BTCUSD");
 
@@ -4507,6 +4516,15 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
 
   const [forexSearchInput, setForexSearchInput] =
     useState("EURUSD");
+
+  const [forexSearchSuggestions, setForexSearchSuggestions] =
+    useState([]);
+
+  const [isForexSearchSuggesting, setIsForexSearchSuggesting] =
+    useState(false);
+
+  const [showForexSearchSuggestions, setShowForexSearchSuggestions] =
+    useState(false);
 
   const [forexSymbol, setForexSymbol] =
     useState("EURUSD");
@@ -4661,6 +4679,18 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [selectedCalendarEvent, setSelectedCalendarEvent] =
     useState(null);
 
+  const [calendarSearchInput, setCalendarSearchInput] =
+    useState("");
+
+  const [calendarSearchSuggestions, setCalendarSearchSuggestions] =
+    useState([]);
+
+  const [isCalendarSearchSuggesting, setIsCalendarSearchSuggesting] =
+    useState(false);
+
+  const [showCalendarSearchSuggestions, setShowCalendarSearchSuggestions] =
+    useState(false);
+
   const [calendarEarningsReports, setCalendarEarningsReports] =
     useState({});
 
@@ -4743,6 +4773,101 @@ useEffect(() => {
     window.clearTimeout(timer);
   };
 }, [searchInput, activePage]);
+
+useEffect(() => {
+  const query = calendarSearchInput.trim();
+  const canSuggest = activePage === "earnings-calendar" && calendarMode === "earnings" && query.length >= 2;
+
+  if (!canSuggest) {
+    setCalendarSearchSuggestions([]);
+    setIsCalendarSearchSuggesting(false);
+    return undefined;
+  }
+
+  let isActive = true;
+  const timer = window.setTimeout(async () => {
+    try {
+      setIsCalendarSearchSuggesting(true);
+      const { data } = await axios.get(`${API_URL}/api/search-stocks`, {
+        params: { q: query },
+        timeout: 4500
+      });
+      if (!isActive) return;
+      setCalendarSearchSuggestions(Array.isArray(data?.results) ? data.results : []);
+    } catch (error) {
+      if (isActive) setCalendarSearchSuggestions([]);
+    } finally {
+      if (isActive) setIsCalendarSearchSuggesting(false);
+    }
+  }, 180);
+
+  return () => {
+    isActive = false;
+    window.clearTimeout(timer);
+  };
+}, [calendarSearchInput, activePage, calendarMode]);
+
+useEffect(() => {
+  const query = cryptoSearchInput.trim();
+  if (activePage !== "crypto" || query.length < 1) {
+    setCryptoSearchSuggestions([]);
+    setIsCryptoSearchSuggesting(false);
+    return undefined;
+  }
+
+  let isActive = true;
+  const timer = window.setTimeout(async () => {
+    try {
+      setIsCryptoSearchSuggesting(true);
+      const { data } = await axios.get(`${API_URL}/api/crypto-search`, {
+        params: { q: query },
+        timeout: 4500
+      });
+      if (!isActive) return;
+      setCryptoSearchSuggestions(Array.isArray(data?.results) ? data.results : []);
+    } catch (error) {
+      if (isActive) setCryptoSearchSuggestions([]);
+    } finally {
+      if (isActive) setIsCryptoSearchSuggesting(false);
+    }
+  }, 160);
+
+  return () => {
+    isActive = false;
+    window.clearTimeout(timer);
+  };
+}, [cryptoSearchInput, activePage]);
+
+useEffect(() => {
+  const query = forexSearchInput.trim();
+  if (activePage !== "forex" || query.length < 1) {
+    setForexSearchSuggestions([]);
+    setIsForexSearchSuggesting(false);
+    return undefined;
+  }
+
+  let isActive = true;
+  const timer = window.setTimeout(async () => {
+    try {
+      setIsForexSearchSuggesting(true);
+      const { data } = await axios.get(`${API_URL}/api/forex-search`, {
+        params: { q: query },
+        timeout: 4500
+      });
+      if (!isActive) return;
+      setForexSearchSuggestions(Array.isArray(data?.results) ? data.results : []);
+    } catch (error) {
+      if (isActive) setForexSearchSuggestions([]);
+    } finally {
+      if (isActive) setIsForexSearchSuggesting(false);
+    }
+  }, 160);
+
+  return () => {
+    isActive = false;
+    window.clearTimeout(timer);
+  };
+}, [forexSearchInput, activePage]);
 
 
   
@@ -9034,6 +9159,150 @@ const renderStockSearchSuggestions = (destinationPage = "overview") => {
   );
 };
 
+const openCalendarSearchResult = async (item) => {
+  const symbol = String(item?.symbol || "").trim().toUpperCase();
+  if (!symbol || warnStockOnlySymbol(symbol)) return;
+  const event = {
+    symbol,
+    company: item.name || symbol,
+    logo: item.logo || getDefaultCompanyLogoUrl(symbol)
+  };
+  setCalendarSearchInput(symbol);
+  setCalendarSearchSuggestions([]);
+  setShowCalendarSearchSuggestions(false);
+  setCalendarMode("earnings");
+  await openCalendarEarningsReport(event);
+};
+
+const handleCalendarSearchSubmit = async (event) => {
+  event.preventDefault();
+  const value = calendarSearchInput.trim();
+  if (!value) return;
+  const exactSuggestion = calendarSearchSuggestions.find(
+    (item) => String(item.symbol || "").toUpperCase() === value.toUpperCase()
+  );
+  const selectedSuggestion = exactSuggestion || calendarSearchSuggestions[0];
+  if (selectedSuggestion?.symbol) {
+    await openCalendarSearchResult(selectedSuggestion);
+    return;
+  }
+  try {
+    const { data } = await axios.get(`${API_URL}/api/search-stocks`, {
+      params: { q: value },
+      timeout: 4500
+    });
+    const firstMatch = Array.isArray(data?.results) ? data.results[0] : null;
+    if (firstMatch?.symbol) await openCalendarSearchResult(firstMatch);
+  } catch (error) {
+    console.error("Calendar earnings search failed", error);
+  }
+};
+
+const renderCalendarSearchSuggestions = () => {
+  const shouldShow =
+    showCalendarSearchSuggestions &&
+    calendarSearchInput.trim().length >= 2 &&
+    (calendarSearchSuggestions.length || isCalendarSearchSuggesting);
+
+  if (!shouldShow) return null;
+
+  return (
+    <div className="stock-search-suggestions calendar-search-suggestions" role="listbox">
+      {isCalendarSearchSuggesting && !calendarSearchSuggestions.length ? (
+        <div className="stock-search-suggestion muted">Searching stocks...</div>
+      ) : (
+        calendarSearchSuggestions.map((item) => (
+          <button
+            type="button"
+            className="stock-search-suggestion"
+            key={`calendar-${item.symbol}-${item.exchange || ""}`}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => openCalendarSearchResult(item)}
+          >
+            <span className="stock-search-logo-shell" aria-hidden="true">
+              <span>{String(item.symbol || "?").slice(0, 1)}</span>
+              <img
+                src={item.logo || getDefaultCompanyLogoUrl(item.symbol)}
+                alt=""
+                onError={(event) => handleCompanyLogoError(event, item.symbol)}
+              />
+            </span>
+            <span className="stock-search-suggestion-copy">
+              <strong>{item.symbol}</strong>
+              <em>{item.name}</em>
+            </span>
+            {item.exchange && <small>{item.exchange}</small>}
+          </button>
+        ))
+      )}
+    </div>
+  );
+};
+
+const activateCryptoSymbol = (symbol) => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  if (!cleanSymbol) return;
+  setCryptoSearchInput(cleanSymbol);
+  setCryptoSearchSuggestions([]);
+  setShowCryptoSearchSuggestions(false);
+  setCryptoData(null);
+  setCryptoError("");
+  setCryptoChartData({ points: [], latest: null });
+  setCryptoChartError("");
+  setIsCryptoLoading(true);
+  setCryptoSymbol(cleanSymbol);
+};
+
+const activateForexSymbol = (symbol) => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  if (!cleanSymbol) return;
+  setForexSearchInput(cleanSymbol);
+  setForexSearchSuggestions([]);
+  setShowForexSearchSuggestions(false);
+  setForexData(null);
+  setForexError("");
+  setForexChartData({ points: [], latest: null });
+  setForexChartError("");
+  setIsForexLoading(true);
+  setForexSymbol(cleanSymbol);
+};
+
+const renderAlternativeMarketSuggestions = (items, isLoading, show, inputValue, onSelect, loadingLabel) => {
+  const shouldShow = show && inputValue.trim().length >= 1 && (items.length || isLoading);
+  if (!shouldShow) return null;
+  return (
+    <div className="stock-search-suggestions alternative-search-suggestions" role="listbox">
+      {isLoading && !items.length ? (
+        <div className="stock-search-suggestion muted">{loadingLabel}</div>
+      ) : (
+        items.map((item) => (
+          <button
+            type="button"
+            className="stock-search-suggestion"
+            key={`${item.type}-${item.symbol}`}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => onSelect(item.symbol)}
+          >
+            <span className="stock-search-logo-shell" aria-hidden="true">
+              <span>{String(item.symbol || "?").slice(0, 1)}</span>
+              {item.logo && <img src={item.logo} alt="" />}
+            </span>
+            <span className="stock-search-suggestion-copy">
+              <strong>{item.symbol}</strong>
+              <em>{item.name}</em>
+            </span>
+            {item.fromCurrency && item.toCurrency ? (
+              <small>{item.fromCurrency}/{item.toCurrency}</small>
+            ) : item.exchange ? (
+              <small>{item.exchange}</small>
+            ) : null}
+          </button>
+        ))
+      )}
+    </div>
+  );
+};
+
 const updateScreenerFilter = (key, value) => {
   setScreenerFilters((previous) => ({
     ...previous,
@@ -9922,22 +10191,34 @@ return (
             className="etf-search"
             onSubmit={(event) => {
               event.preventDefault();
-              const symbol = cryptoSearchInput.trim().toUpperCase();
-              if (!symbol) return;
-              setCryptoData(null);
-              setCryptoError("");
-              setCryptoChartData({ points: [], latest: null });
-              setCryptoChartError("");
-              setIsCryptoLoading(true);
-              setCryptoSymbol(symbol);
+              const exactSuggestion = cryptoSearchSuggestions.find(
+                (item) => String(item.symbol || "").toUpperCase() === cryptoSearchInput.trim().toUpperCase()
+              );
+              const selectedSuggestion = exactSuggestion || cryptoSearchSuggestions[0];
+              activateCryptoSymbol(selectedSuggestion?.symbol || cryptoSearchInput);
             }}
           >
-            <input
-              value={cryptoSearchInput}
-              onChange={(event) => setCryptoSearchInput(event.target.value.toUpperCase())}
-              placeholder="Search crypto pair, ex. BTCUSD"
-              aria-label="Search crypto pair"
-            />
+            <div className="stock-search-field alternative-search-field">
+              <input
+                value={cryptoSearchInput}
+                onChange={(event) => {
+                  setCryptoSearchInput(event.target.value.toUpperCase());
+                  setShowCryptoSearchSuggestions(true);
+                }}
+                onFocus={() => setShowCryptoSearchSuggestions(true)}
+                onBlur={() => window.setTimeout(() => setShowCryptoSearchSuggestions(false), 160)}
+                placeholder="Search crypto pair, ex. BTCUSD"
+                aria-label="Search crypto pair"
+              />
+              {renderAlternativeMarketSuggestions(
+                cryptoSearchSuggestions,
+                isCryptoSearchSuggesting,
+                showCryptoSearchSuggestions,
+                cryptoSearchInput,
+                activateCryptoSymbol,
+                "Searching crypto..."
+              )}
+            </div>
             <button type="submit">{isCryptoLoading ? "Loading..." : "Search Crypto"}</button>
           </form>
         </div>
@@ -9948,14 +10229,7 @@ return (
               key={item.symbol}
               type="button"
               className={cryptoSymbol === item.symbol ? "active" : ""}
-              onClick={() => {
-                setCryptoSearchInput(item.symbol);
-                setCryptoData(null);
-                setCryptoError("");
-                setCryptoChartData({ points: [], latest: null });
-                setCryptoChartError("");
-                setCryptoSymbol(item.symbol);
-              }}
+              onClick={() => activateCryptoSymbol(item.symbol)}
             >
               <strong>{item.symbol}</strong>
               <span>{item.label}</span>
@@ -10101,22 +10375,34 @@ return (
             className="etf-search"
             onSubmit={(event) => {
               event.preventDefault();
-              const symbol = forexSearchInput.trim().toUpperCase();
-              if (!symbol) return;
-              setForexData(null);
-              setForexError("");
-              setForexChartData({ points: [], latest: null });
-              setForexChartError("");
-              setIsForexLoading(true);
-              setForexSymbol(symbol);
+              const exactSuggestion = forexSearchSuggestions.find(
+                (item) => String(item.symbol || "").toUpperCase() === forexSearchInput.trim().toUpperCase()
+              );
+              const selectedSuggestion = exactSuggestion || forexSearchSuggestions[0];
+              activateForexSymbol(selectedSuggestion?.symbol || forexSearchInput);
             }}
           >
-            <input
-              value={forexSearchInput}
-              onChange={(event) => setForexSearchInput(event.target.value.toUpperCase())}
-              placeholder="Search forex pair, ex. EURUSD"
-              aria-label="Search forex pair"
-            />
+            <div className="stock-search-field alternative-search-field">
+              <input
+                value={forexSearchInput}
+                onChange={(event) => {
+                  setForexSearchInput(event.target.value.toUpperCase());
+                  setShowForexSearchSuggestions(true);
+                }}
+                onFocus={() => setShowForexSearchSuggestions(true)}
+                onBlur={() => window.setTimeout(() => setShowForexSearchSuggestions(false), 160)}
+                placeholder="Search forex pair, ex. EURUSD"
+                aria-label="Search forex pair"
+              />
+              {renderAlternativeMarketSuggestions(
+                forexSearchSuggestions,
+                isForexSearchSuggesting,
+                showForexSearchSuggestions,
+                forexSearchInput,
+                activateForexSymbol,
+                "Searching FOREX..."
+              )}
+            </div>
             <button type="submit">{isForexLoading ? "Loading..." : "Search FOREX"}</button>
           </form>
         </div>
@@ -10127,14 +10413,7 @@ return (
               key={item.symbol}
               type="button"
               className={forexSymbol === item.symbol ? "active" : ""}
-              onClick={() => {
-                setForexSearchInput(item.symbol);
-                setForexData(null);
-                setForexError("");
-                setForexChartData({ points: [], latest: null });
-                setForexChartError("");
-                setForexSymbol(item.symbol);
-              }}
+              onClick={() => activateForexSymbol(item.symbol)}
             >
               <strong>{item.symbol}</strong>
               <span>{item.label}</span>
@@ -13886,6 +14165,28 @@ return (
         </button>
       ))}
     </div>
+    {calendarMode === "earnings" && (
+      <form className="calendar-earnings-search" onSubmit={handleCalendarSearchSubmit}>
+        <div className="stock-search-field calendar-search-field">
+          <input
+            className="search"
+            value={calendarSearchInput}
+            onChange={(event) => {
+              setCalendarSearchInput(event.target.value.toUpperCase());
+              setShowCalendarSearchSuggestions(true);
+            }}
+            onFocus={() => setShowCalendarSearchSuggestions(true)}
+            onBlur={() => window.setTimeout(() => setShowCalendarSearchSuggestions(false), 160)}
+            placeholder="Search any stock earnings history"
+            aria-label="Search stock earnings history"
+          />
+          {renderCalendarSearchSuggestions()}
+        </div>
+        <button type="submit" className="stock-search-button">
+          Search Earnings
+        </button>
+      </form>
+    )}
     <div className="calendar-week-label">{earningsWeekLabel}</div>
 
     <div className="calendar-date-strip">

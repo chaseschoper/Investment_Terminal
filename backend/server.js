@@ -15969,6 +15969,53 @@ async function getFmpAlternativeMarketMeta(symbol, marketType) {
   return symbolMap.get(normalizedSymbol) || null;
 }
 
+function searchAlternativeMarketSymbols(symbolMap, query, marketType) {
+  const cleanQuery = String(query || "").trim().toUpperCase().replace(/[^A-Z0-9 ]/g, "");
+  const compactQuery = cleanQuery.replace(/\s+/g, "");
+  if (cleanQuery.length < 1) return [];
+  const tokens = cleanQuery
+    .toLowerCase()
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+  const rows = Array.from(symbolMap.values())
+    .filter((item) => {
+      const symbol = String(item.symbol || "").toUpperCase();
+      const name = String(item.name || "").toLowerCase();
+      const fromName = String(item.fromName || "").toLowerCase();
+      const toName = String(item.toName || "").toLowerCase();
+      const haystack = `${symbol.toLowerCase()} ${name} ${fromName} ${toName}`;
+      return tokens.every((token) => haystack.includes(token));
+    })
+    .sort((a, b) => {
+      const aSymbol = String(a.symbol || "").toUpperCase();
+      const bSymbol = String(b.symbol || "").toUpperCase();
+      const rank = (symbol) => {
+        const compactSymbol = symbol.replace(/[^A-Z0-9]/g, "");
+        if (symbol === cleanQuery || compactSymbol === compactQuery) return 0;
+        if (marketType === "crypto" && compactSymbol === `${compactQuery}USD`) return 1;
+        if (marketType === "forex" && compactSymbol === compactQuery) return 1;
+        if (symbol.startsWith(compactQuery) || compactSymbol.startsWith(compactQuery)) return 2;
+        if (symbol.includes(compactQuery) || compactSymbol.includes(compactQuery)) return 3;
+        return 4;
+      };
+      const rankA = rank(aSymbol);
+      const rankB = rank(bSymbol);
+      if (rankA !== rankB) return rankA - rankB;
+      return aSymbol.localeCompare(bSymbol);
+    })
+    .slice(0, 10);
+  return rows.map((item) => ({
+    symbol: item.symbol,
+    name: item.name || item.symbol,
+    type: marketType,
+    logo: marketType === "crypto" ? getFmpSymbolImageUrl(item.symbol) : null,
+    exchange: item.exchange || null,
+    fromCurrency: item.fromCurrency || null,
+    toCurrency: item.toCurrency || null
+  }));
+}
+
 function normalizeAlternativeMarketQuote(symbol, marketType, meta = {}, quote = {}) {
   const price = firstFiniteNumber(quote.price);
   const previousClose = firstFiniteNumber(quote.previousClose);
@@ -16157,6 +16204,19 @@ async function fetchFmpAlternativeMarketPriceHistory(symbol, requestedRange = "1
   return history;
 }
 
+app.get("/api/crypto-search", async (req, res) => {
+  try {
+    const query = String(req.query.q || "").trim();
+    if (query.length < 1) return res.json({ results: [] });
+    if (!process.env.FMP_API_KEY || !canUseFmp()) return res.json({ results: [] });
+    const symbolMap = await getFmpCryptoSymbolMap();
+    return res.json({ results: searchAlternativeMarketSymbols(symbolMap, query, "crypto") });
+  } catch (err) {
+    console.log("Crypto search failed:", err.response?.status || err.message);
+    return res.status(500).json({ results: [] });
+  }
+});
+
 app.get("/api/crypto/:symbol", async (req, res) => {
   try {
     const symbol = String(req.params.symbol || "").trim().toUpperCase();
@@ -16188,6 +16248,19 @@ app.get("/api/crypto-price-history/:symbol", async (req, res) => {
   } catch (err) {
     console.log("Crypto price history failed:", req.params.symbol, err.response?.status || err.message);
     return res.status(502).json({ error: "Crypto price history unavailable" });
+  }
+});
+
+app.get("/api/forex-search", async (req, res) => {
+  try {
+    const query = String(req.query.q || "").trim();
+    if (query.length < 1) return res.json({ results: [] });
+    if (!process.env.FMP_API_KEY || !canUseFmp()) return res.json({ results: [] });
+    const symbolMap = await getFmpForexSymbolMap();
+    return res.json({ results: searchAlternativeMarketSymbols(symbolMap, query, "forex") });
+  } catch (err) {
+    console.log("Forex search failed:", err.response?.status || err.message);
+    return res.status(500).json({ results: [] });
   }
 });
 
