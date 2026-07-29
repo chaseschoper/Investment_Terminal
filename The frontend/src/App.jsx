@@ -989,7 +989,7 @@ const HOME_FEATURES = [
     icon: "commodities",
     label: "Commodities",
     title: "Track commodity markets",
-    text: "Search commodity symbols to review price, daily range, yearly range, volume, averages, exchange, and chart history."
+    text: "Search commodity symbols to review price, daily range, yearly range, volume, averages, currency, trade month, and chart history."
   },
   {
     id: "stock-screener",
@@ -1555,6 +1555,78 @@ const chunkSymbols = (symbols, size = 10) => {
 
 const STOCK_CHART_RANGES = ["1D", "1W", "1M", "1Y", "YTD", "5Y", "10Y", "MAX"];
 const ETF_CHART_RANGES = STOCK_CHART_RANGES;
+const COMMODITY_GROUPS = [
+  {
+    title: "Precious Metals",
+    items: [
+      { symbol: "GCUSD", label: "Gold" },
+      { symbol: "MGCUSD", label: "Micro Gold" },
+      { symbol: "SIUSD", label: "Silver" },
+      { symbol: "SILUSD", label: "Micro Silver" },
+      { symbol: "PLUSD", label: "Platinum" },
+      { symbol: "PAUSD", label: "Palladium" }
+    ]
+  },
+  {
+    title: "Energy",
+    items: [
+      { symbol: "CLUSD", label: "Crude Oil" },
+      { symbol: "BZUSD", label: "Brent Crude" },
+      { symbol: "NGUSD", label: "Natural Gas" },
+      { symbol: "HOUSD", label: "Heating Oil" },
+      { symbol: "RBUSD", label: "Gasoline RBOB" }
+    ]
+  },
+  {
+    title: "Agriculture",
+    items: [
+      { symbol: "ZCUSX", label: "Corn" },
+      { symbol: "ZSUSX", label: "Soybeans" },
+      { symbol: "ZMUSD", label: "Soybean Meal" },
+      { symbol: "ZLUSX", label: "Soybean Oil" },
+      { symbol: "ZOUSX", label: "Oats" },
+      { symbol: "KEUSX", label: "Wheat" },
+      { symbol: "ZRUSD", label: "Rough Rice" },
+      { symbol: "SBUSX", label: "Sugar" },
+      { symbol: "CTUSX", label: "Cotton" },
+      { symbol: "KCUSX", label: "Coffee" },
+      { symbol: "CCUSD", label: "Cocoa" },
+      { symbol: "OJUSX", label: "Orange Juice" },
+      { symbol: "LBUSD", label: "Lumber" },
+      { symbol: "DCUSD", label: "Class III Milk" }
+    ]
+  },
+  {
+    title: "Livestock",
+    items: [
+      { symbol: "LEUSX", label: "Live Cattle" },
+      { symbol: "GFUSX", label: "Feeder Cattle" },
+      { symbol: "HEUSX", label: "Lean Hogs" }
+    ]
+  },
+  {
+    title: "Rates, Currency, and Index Futures",
+    items: [
+      { symbol: "DXUSD", label: "US Dollar" },
+      { symbol: "ZQUSD", label: "30 Day Fed Funds" },
+      { symbol: "ZTUSD", label: "2-Year T-Note" },
+      { symbol: "ZFUSD", label: "5-Year T-Note" },
+      { symbol: "ZNUSD", label: "10-Year T-Note" },
+      { symbol: "ZBUSD", label: "30-Year Treasury Bond" },
+      { symbol: "ESUSD", label: "E-mini S&P 500" },
+      { symbol: "NQUSD", label: "Nasdaq 100" },
+      { symbol: "YMUSD", label: "Mini Dow" },
+      { symbol: "RTYUSD", label: "Micro Russell 2000" }
+    ]
+  },
+  {
+    title: "Industrial Metals",
+    items: [
+      { symbol: "HGUSD", label: "Copper" },
+      { symbol: "ALIUSD", label: "Aluminum" }
+    ]
+  }
+];
 
 const formatStockChartAxisLabel = (value, range) => {
   const date = new Date(value);
@@ -9029,30 +9101,36 @@ return (
           <div>
             <span className="home-feature-label">Commodity Research</span>
             <h2 id="commodities-page-title">Commodities Overview</h2>
-            <p>Search a commodity symbol to review price, range, volume, averages, exchange, and chart history. Try GCUSD, SIUSD, or BZUSD.</p>
+            <p>Choose a commodity to review price, range, volume, averages, currency, trade month, and chart history.</p>
           </div>
-          <form
-            className="etf-search"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const symbol = commoditySearchInput.trim().toUpperCase();
-              if (!symbol) return;
-              setCommodityData(null);
-              setCommodityError("");
-              setCommodityChartData({ points: [], latest: null });
-              setCommodityChartError("");
-              setIsCommodityLoading(true);
-              setCommoditySymbol(symbol);
-            }}
-          >
-            <input
-              value={commoditySearchInput}
-              onChange={(event) => setCommoditySearchInput(event.target.value.toUpperCase())}
-              placeholder="GCUSD, SIUSD, BZUSD"
-              aria-label="Search commodity symbol"
-            />
-            <button type="submit">{isCommodityLoading ? "Loading..." : "Search Commodity"}</button>
-          </form>
+        </div>
+        <div className="commodity-picker" aria-label="Commodity symbols">
+          {COMMODITY_GROUPS.map((group) => (
+            <div className="commodity-picker-group" key={group.title}>
+              <h3>{group.title}</h3>
+              <div className="commodity-quick-picks">
+                {group.items.map((item) => (
+                  <button
+                    type="button"
+                    key={item.symbol}
+                    className={commoditySymbol === item.symbol ? "active" : ""}
+                    onClick={() => {
+                      setCommoditySearchInput(item.symbol);
+                      setCommodityData(null);
+                      setCommodityError("");
+                      setCommodityChartData({ points: [], latest: null });
+                      setCommodityChartError("");
+                      setIsCommodityLoading(true);
+                      setCommoditySymbol(item.symbol);
+                    }}
+                  >
+                    <span>{item.label}</span>
+                    <strong>{item.symbol}</strong>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
 
         {isCommodityLoading && !commodityData ? (
