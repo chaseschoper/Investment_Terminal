@@ -1077,6 +1077,200 @@ const HOME_FEATURES = [
   }
 ];
 
+const HOME_TOUR_SECTIONS = [
+  {
+    id: "overview",
+    icon: "overview",
+    label: "Stock Overview",
+    eyebrow: "Company command center",
+    title: "One page for the full stock story.",
+    text: "Search a company and move through live pricing, financial charts, valuation, estimates, peers, AI analysis, transcripts, filings, and company news without jumping between tabs.",
+    bullets: ["Price chart and watchlist-aware quote", "Annual and quarterly financial charts", "Metrics, estimates, peers, documents, and news"],
+    snapshot: "overview"
+  },
+  {
+    id: "financial-statements",
+    icon: "statements",
+    label: "Financial Statements",
+    eyebrow: "Raw statement view",
+    title: "Income statement, balance sheet, and cash flow in one clean table.",
+    text: "Choose annual or quarterly, stretch the period range, and read statement lines the way you would on a finance terminal.",
+    bullets: ["Annual and quarterly periods", "Income statement, balance sheet, cash flow", "Sticky line labels for easier reading"],
+    snapshot: "statements"
+  },
+  {
+    id: "fundamental-charts",
+    icon: "fundamental-charts",
+    label: "Fundamental Charts",
+    eyebrow: "Build your own charts",
+    title: "Compare companies across any available fundamental indicator.",
+    text: "Add multiple stocks, choose statement fields or metric groups, and chart annual or quarterly data across 3 years, 5 years, 10 years, 20 years, or max history.",
+    bullets: ["Multiple tickers and indicators", "Organized metric categories", "Hover cards for exact values"],
+    snapshot: "charts"
+  },
+  {
+    id: "projections",
+    icon: "projections",
+    label: "Projections",
+    eyebrow: "Scenario engine",
+    title: "Turn estimates into bear, base, and bull cases.",
+    text: "Use the estimates already flowing through MrktRally as a starting point, then edit the growth, margin, valuation, and return assumptions yourself.",
+    bullets: ["Editable revenue and net income growth", "Bear, base, and bull views", "Expected return and valuation outputs"],
+    snapshot: "projections"
+  },
+  {
+    id: "comparison",
+    icon: "comparison",
+    label: "Compare",
+    eyebrow: "Side-by-side research",
+    title: "Line up companies before you pick a favorite.",
+    text: "Compare prices, valuation, balance sheet metrics, profitability, efficiency, cash flow, company profile data, and more in one grouped view.",
+    bullets: ["Multiple stocks at once", "Grouped metrics for cleaner scanning", "Fast add and remove controls"],
+    snapshot: "compare"
+  },
+  {
+    id: "stock-screener",
+    icon: "screener",
+    label: "Stock Screener",
+    eyebrow: "Find market ideas",
+    title: "Filter the market by the numbers that matter.",
+    text: "Search active stocks, ETFs, and funds by size, price, beta, volume, dividend, sector, industry, exchange, and country.",
+    bullets: ["Sector and industry filters", "Beta, volume, dividend, and market cap", "Sortable market idea table"],
+    snapshot: "screener"
+  },
+  {
+    id: "market-overview",
+    icon: "market",
+    label: "Market Overview",
+    eyebrow: "Market dashboard",
+    title: "Start with the market before the stock.",
+    text: "Track index cards, the market clock, S&P 500 heat map, top movers, and top traded stocks from a dedicated market overview page.",
+    bullets: ["Index cards and countdown", "S&P 500 heat map", "Top gainers, losers, and traded names"],
+    snapshot: "market"
+  },
+  {
+    id: "etfs",
+    icon: "etf",
+    label: "ETF Overview",
+    eyebrow: "Funds and ETFs",
+    title: "Break down funds with the same research flow.",
+    text: "Search ETFs and mutual funds to review price, chart history, assets, fees, yield, holdings, sector exposure, country exposure, and asset mix.",
+    bullets: ["ETF and mutual fund search", "Holdings and exposure breakdowns", "Price chart with time ranges"],
+    snapshot: "funds"
+  },
+  {
+    id: "watchlists",
+    icon: "watchlists",
+    label: "Watchlists",
+    eyebrow: "Saved ideas",
+    title: "Keep your research queue close.",
+    text: "Save stocks you want to revisit, see current price and change, and jump back into any company page quickly.",
+    bullets: ["Top watchlist bar", "Dedicated watchlist page", "Fast remove and revisit flow"],
+    snapshot: "watchlists"
+  },
+  {
+    id: "portfolio",
+    icon: "portfolio",
+    label: "Portfolio",
+    eyebrow: "Track positions",
+    title: "Follow value, allocation, country, and industry exposure.",
+    text: "Enter shares, cost basis, and cash so you can track total value, performance, allocation, and portfolio breakdowns.",
+    bullets: ["Holdings and cash row", "Portfolio value and performance", "Allocation, country, and industry charts"],
+    snapshot: "portfolio"
+  },
+  {
+    id: "earnings-calendar",
+    icon: "calendar",
+    label: "Calendar",
+    eyebrow: "Dates that move stocks",
+    title: "Earnings, dividends, IPOs, and economic releases.",
+    text: "Switch between the calendars that matter and open events to see the fields behind them.",
+    bullets: ["Earnings reports with actuals and estimates", "Dividend and IPO calendars", "Economic data releases"],
+    snapshot: "calendar"
+  },
+  {
+    id: "treasury-rates",
+    icon: "treasury",
+    label: "Treasury Rates",
+    eyebrow: "Macro pulse",
+    title: "Watch the yield curve from short rates to long bonds.",
+    text: "Follow Treasury rates across maturities with a clean chart view for the broader market backdrop.",
+    bullets: ["1 month through 30 years", "Recent rate history", "Macro context beside equity research"],
+    snapshot: "rates"
+  },
+  {
+    id: "crypto",
+    icon: "crypto",
+    label: "Crypto Center",
+    eyebrow: "Digital assets",
+    title: "Track crypto quotes and chart history.",
+    text: "Search crypto symbols for price, market cap, volume, supply, ranges, moving averages, and intraday chart movement.",
+    bullets: ["Crypto quote cards", "Supply and market cap", "5-minute chart data"],
+    snapshot: "crypto"
+  },
+  {
+    id: "forex",
+    icon: "forex",
+    label: "FOREX Overview",
+    eyebrow: "Currency pairs",
+    title: "Follow major forex pairs in their own space.",
+    text: "Search currency pairs and review price, change, volume, open, previous close, ranges, moving averages, and chart history.",
+    bullets: ["Forex-only search", "Daily and yearly range cards", "Dedicated pair charting"],
+    snapshot: "forex"
+  },
+  {
+    id: "news",
+    icon: "news",
+    label: "News",
+    eyebrow: "Market headlines",
+    title: "Keep the news flow next to the numbers.",
+    text: "Read general market headlines and stock-specific news from the stock overview page.",
+    bullets: ["General news page", "Stock news under documents", "Clickable headlines for deeper reading"],
+    snapshot: "news"
+  }
+];
+
+const HOME_FOOTER_GROUPS = [
+  {
+    title: "Research",
+    links: [
+      ["overview", "Stock Overview"],
+      ["financial-statements", "Financial Statements"],
+      ["fundamental-charts", "Fundamental Charts"],
+      ["projections", "Projections"],
+      ["comparison", "Compare"]
+    ]
+  },
+  {
+    title: "Markets",
+    links: [
+      ["market-overview", "Market Overview"],
+      ["stock-screener", "Stock Screener"],
+      ["etfs", "ETF Overview"],
+      ["crypto", "Crypto Center"],
+      ["forex", "FOREX Overview"],
+      ["treasury-rates", "Treasury Rates"]
+    ]
+  },
+  {
+    title: "Calendar",
+    links: [
+      ["earnings-calendar", "Earnings Calendar", "earnings"],
+      ["earnings-calendar", "Dividends Calendar", "dividends"],
+      ["earnings-calendar", "IPO Calendar", "ipos"],
+      ["earnings-calendar", "Economic Releases", "economic"]
+    ]
+  },
+  {
+    title: "Portfolio",
+    links: [
+      ["watchlists", "Watchlists"],
+      ["portfolio", "Portfolio Tracker"],
+      ["news", "News"]
+    ]
+  }
+];
+
 const renderHomeFeatureIcon = (icon) => {
   const commonProps = {
     className: `home-feature-icon icon-${icon}`,
@@ -1247,6 +1441,46 @@ const renderHomeFeatureIcon = (icon) => {
       );
   }
 };
+
+const renderHomeTourSnapshot = (snapshot) => (
+  <div className={`home-tour-snapshot snapshot-${snapshot}`} aria-hidden="true">
+    <div className="snapshot-topline">
+      <span />
+      <span />
+      <span />
+    </div>
+    <div className="snapshot-grid">
+      <div className="snapshot-panel snapshot-chart-panel">
+        <div className="snapshot-chart-bars">
+          {[32, 54, 42, 70, 58, 84, 67].map((height, index) => (
+            <span key={`${snapshot}-bar-${index}`} style={{ "--bar-height": `${height}%` }} />
+          ))}
+        </div>
+        <svg className="snapshot-line" viewBox="0 0 360 130" preserveAspectRatio="none">
+          <path d="M8 106 C58 72 84 94 126 58 S194 66 224 38 S292 42 352 18" />
+          <circle cx="126" cy="58" r="6" />
+          <circle cx="224" cy="38" r="6" />
+          <circle cx="352" cy="18" r="6" />
+        </svg>
+      </div>
+      <div className="snapshot-panel snapshot-metric-stack">
+        <span />
+        <span />
+        <span />
+      </div>
+      <div className="snapshot-panel snapshot-table">
+        {[0, 1, 2, 3].map((row) => (
+          <span key={`${snapshot}-row-${row}`} />
+        ))}
+      </div>
+    </div>
+    <div className="snapshot-chip-row">
+      <span>{snapshot === "calendar" ? "Earnings" : snapshot === "market" ? "Heat Map" : "Annual"}</span>
+      <span>{snapshot === "portfolio" ? "Allocation" : snapshot === "funds" ? "Holdings" : "Quarterly"}</span>
+      <span>{snapshot === "news" ? "Headlines" : "Signals"}</span>
+    </div>
+  </div>
+);
 
 const formatDividendYield = (value) =>
   isNumber(value) ? `${(Math.abs(value) > 1 ? value : value * 100).toFixed(2)}%` : "N/A";
@@ -6841,8 +7075,17 @@ const fundamentalChartSeries = selectedFundamentalIndicatorDetails.map((indicato
     let latestValue = null;
     let latestPeriod = null;
 
-    tickerResult.periods.forEach((period, index) => {
-      const value = getFundamentalIndicatorValue(period, indicator, tickerResult.periods[index - 1]);
+    const visibleTickerPeriods = filterRowsByHistoryRange(
+      tickerResult.periods || [],
+      fundamentalChartRange,
+      fundamentalChartPeriod
+    );
+
+    visibleTickerPeriods.forEach((period, index) => {
+      const previousPeriod = visibleTickerPeriods[index - 1] ||
+        (tickerResult.periods || [])[(tickerResult.periods || []).findIndex((item) => item.key === period.key) - 1] ||
+        null;
+      const value = getFundamentalIndicatorValue(period, indicator, previousPeriod);
       if (!isNumber(value)) return;
       const periodKey = period.date || period.label || period.key;
       if (!rowMap.has(periodKey)) {
@@ -6873,7 +7116,7 @@ const fundamentalChartSeries = selectedFundamentalIndicatorDetails.map((indicato
 
   return {
     indicator,
-    rows: filterRowsByHistoryRange(rows, fundamentalChartRange, fundamentalChartPeriod),
+    rows,
     latestValues
   };
 });
@@ -9086,6 +9329,85 @@ return (
             </button>
           ))}
         </div>
+      </section>
+
+      <section className="home-product-tour" aria-labelledby="home-tour-title">
+        <div className="home-tour-heading">
+          <div className="welcome-kicker">See the whole terminal</div>
+          <h2 id="home-tour-title">Every page has a job. Together, they make the research flow.</h2>
+          <p>
+            Scroll through the full MrktRally stack, from market overview to company research, statements, charts,
+            portfolio tools, calendars, crypto, forex, and news.
+          </p>
+        </div>
+
+        <div className="home-tour-stack">
+          {HOME_TOUR_SECTIONS.map((section, index) => (
+            <article className="home-tour-card" key={section.label}>
+              <button
+                className="home-tour-copy"
+                type="button"
+                onClick={() => openPage(section.id)}
+              >
+                <span className="home-tour-number">{String(index + 1).padStart(2, "0")}</span>
+                <span className="home-tour-icon" aria-hidden="true">
+                  {renderHomeFeatureIcon(section.icon)}
+                </span>
+                <span className="home-tour-text">
+                  <span className="home-feature-label">{section.eyebrow}</span>
+                  <strong>{section.title}</strong>
+                  <span>{section.text}</span>
+                </span>
+                <span className="home-tour-bullets">
+                  {section.bullets.map((bullet) => (
+                    <span key={bullet}>{bullet}</span>
+                  ))}
+                </span>
+              </button>
+              {renderHomeTourSnapshot(section.snapshot)}
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="home-rally-footer" aria-labelledby="home-rally-title">
+        <div className="home-rally-signal" aria-hidden="true">
+          {[18, 34, 28, 52, 44, 68, 58, 80, 72].map((height, index) => (
+            <span key={`rally-footer-bar-${index}`} style={{ "--bar-height": `${height}%` }} />
+          ))}
+        </div>
+        <div className="home-rally-content">
+          <div className="home-rally-brand">
+            <div className="home-rally-brand-row">
+              <img src="/mrktrally-icon.png" alt="MrktRally logo" />
+              <strong>MrktRally</strong>
+            </div>
+            <div className="home-rally-badge">Built for focused market research</div>
+            <p>Market data by FMP</p>
+            <p>Earnings calls and ETFs by Stock Analysis</p>
+          </div>
+
+          <div className="home-rally-link-grid">
+            {HOME_FOOTER_GROUPS.map((group) => (
+              <div className="home-rally-link-group" key={group.title}>
+                <h3>{group.title}</h3>
+                {group.links.map(([page, label, mode]) => (
+                  <button
+                    key={`${group.title}-${label}`}
+                    type="button"
+                    onClick={() => {
+                      if (mode) setCalendarMode(mode);
+                      openPage(page);
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+        <h2 id="home-rally-title" className="home-rally-word">TOGETHER WE RALLY</h2>
       </section>
     </>
     )}
