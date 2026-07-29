@@ -1637,11 +1637,13 @@ const renderHomeTourSnapshot = (snapshot) => {
         </div>
       )}
 
-      <div className="snapshot-chip-row">
-        {meta.chips.map((chip) => (
-          <span key={`${snapshot}-${chip}`}>{chip}</span>
-        ))}
-      </div>
+      {meta.layout !== "calendar" && (
+        <div className="snapshot-chip-row">
+          {meta.chips.map((chip) => (
+            <span key={`${snapshot}-${chip}`}>{chip}</span>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
