@@ -1461,7 +1461,11 @@ const renderHomeTourSnapshot = (snapshot) => {
     news: { title: "Market News", layout: "news", chips: ["General", "Stocks", "Headlines"] }
   };
   const meta = snapshotMeta[snapshot] || snapshotMeta.overview;
-  const bars = [32, 54, 42, 70, 58, 84, 67];
+  const bars = snapshot === "crypto"
+    ? [38, 62, 46, 74, 52, 88, 70]
+    : snapshot === "forex"
+      ? [58, 42, 64, 48, 72, 54, 66]
+      : [32, 54, 42, 70, 58, 84, 67];
   const heatmapTiles = [3, -2, 1, 2, -3, 1, 4, -1, 2, -2, 1, 3, -1, 2, -3, 1, 2, -1, 3, 1, -2, 2, 1, -3];
 
   return (
@@ -1493,10 +1497,18 @@ const renderHomeTourSnapshot = (snapshot) => {
           ))}
         </div>
       ) : meta.layout === "calendar" ? (
-        <div className="snapshot-calendar">
-          {Array.from({ length: 28 }, (_, index) => (
-            <span key={`${snapshot}-day-${index}`} className={index % 5 === 0 || index % 9 === 0 ? "event" : ""} />
-          ))}
+        <div className="snapshot-calendar-board">
+          <div className="snapshot-calendar-grid">
+            {Array.from({ length: 28 }, (_, index) => (
+              <span key={`${snapshot}-day-${index}`} className={index % 5 === 0 || index % 9 === 0 ? "event" : ""} />
+            ))}
+          </div>
+          <div className="snapshot-calendar-events">
+            <span>Earnings</span>
+            <span>Dividends</span>
+            <span>IPOs</span>
+            <span>Economic</span>
+          </div>
         </div>
       ) : meta.layout === "portfolio" || meta.layout === "funds" ? (
         <div className="snapshot-allocation">
@@ -1507,10 +1519,94 @@ const renderHomeTourSnapshot = (snapshot) => {
             ))}
           </div>
         </div>
+      ) : meta.layout === "terminal" ? (
+        <div className="snapshot-terminal">
+          <div className="snapshot-price-tile">
+            <strong>$207.01</strong>
+            <span>+2.14%</span>
+          </div>
+          <div className="snapshot-terminal-chart">
+            <svg viewBox="0 0 420 150" preserveAspectRatio="none">
+              <path d="M10 118 C62 94 84 101 126 72 S194 78 232 45 S318 50 410 22" />
+            </svg>
+          </div>
+          <div className="snapshot-terminal-cards">
+            <span>Revenue</span>
+            <span>Margins</span>
+            <span>Estimates</span>
+            <span>Peers</span>
+          </div>
+        </div>
+      ) : meta.layout === "multi-chart" ? (
+        <div className="snapshot-multi-chart">
+          {[0, 1, 2].map((chart) => (
+            <div key={`${snapshot}-mini-chart-${chart}`}>
+              <svg viewBox="0 0 220 110" preserveAspectRatio="none">
+                <path d={chart === 0 ? "M8 88 C44 72 68 82 98 52 S158 54 212 22" : chart === 1 ? "M8 32 C42 48 70 44 108 58 S166 80 212 66" : "M8 92 C58 70 82 76 114 58 S170 32 212 36"} />
+              </svg>
+            </div>
+          ))}
+        </div>
+      ) : meta.layout === "comparison" ? (
+        <div className="snapshot-compare-table">
+          {["NVDA", "AMD", "AVGO"].map((symbol, rowIndex) => (
+            <div key={symbol}>
+              <strong>{symbol}</strong>
+              {[78, 56, 68].map((width, colIndex) => (
+                <span key={`${symbol}-${colIndex}`} style={{ "--row-fill": `${width - rowIndex * 10 + colIndex * 4}%` }} />
+              ))}
+            </div>
+          ))}
+        </div>
+      ) : meta.layout === "screener" ? (
+        <div className="snapshot-screener">
+          <div className="snapshot-filter-grid">
+            {["Market Cap", "Sector", "Beta", "Volume", "Dividend", "Country"].map((label) => (
+              <span key={label}>{label}</span>
+            ))}
+          </div>
+          <div className="snapshot-screener-results">
+            {[0, 1, 2, 3].map((row) => <span key={`${snapshot}-result-${row}`} />)}
+          </div>
+        </div>
+      ) : meta.layout === "watchlist" ? (
+        <div className="snapshot-watchlist">
+          {["AMD", "CAKE", "CRM", "NKE"].map((symbol, index) => (
+            <span key={symbol} className={index % 2 ? "positive" : "negative"}>
+              <strong>{symbol}</strong>
+              <em>{index % 2 ? "+1.4%" : "-0.8%"}</em>
+            </span>
+          ))}
+        </div>
+      ) : meta.layout === "rates" ? (
+        <div className="snapshot-rates-curve">
+          {["1M", "2Y", "5Y", "10Y", "30Y"].map((label, index) => (
+            <span key={label} style={{ "--bar-height": `${34 + index * 10}%` }}>
+              <em>{label}</em>
+            </span>
+          ))}
+        </div>
+      ) : meta.layout === "crypto" || meta.layout === "forex" ? (
+        <div className={`snapshot-asset-board ${meta.layout}`}>
+          <div className="snapshot-asset-orb">{meta.layout === "crypto" ? "₿" : "$"}</div>
+          <div className="snapshot-asset-chart">
+            <svg viewBox="0 0 360 120" preserveAspectRatio="none">
+              <path d={meta.layout === "crypto" ? "M8 90 C48 32 82 108 126 48 S192 96 246 34 S306 62 352 24" : "M8 70 C52 62 76 46 118 58 S184 78 226 54 S296 44 352 50"} />
+            </svg>
+          </div>
+          <div className="snapshot-asset-stats">
+            <span>Open</span>
+            <span>Range</span>
+            <span>Volume</span>
+          </div>
+        </div>
       ) : meta.layout === "news" ? (
         <div className="snapshot-news-feed">
-          {[0, 1, 2, 3].map((row) => (
-            <span key={`${snapshot}-headline-${row}`} />
+          {["Market Pulse", "Company Update", "Analyst Note", "Earnings Watch"].map((headline, row) => (
+            <span key={`${snapshot}-headline-${row}`}>
+              <strong>{headline}</strong>
+              <em />
+            </span>
           ))}
         </div>
       ) : (
