@@ -816,17 +816,21 @@ body {
 }
 
 .snapshot-calendar-board {
+  width: min(820px, 100%);
+  height: 100%;
+  margin: 0 auto;
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(140px, 0.85fr);
-  gap: 16px;
-  align-items: stretch;
+  grid-template-columns: minmax(0, 1fr) 190px;
+  gap: 18px;
+  align-items: center;
 }
 
 .snapshot-calendar-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 7px;
-  padding: 14px;
+  min-width: 0;
+  gap: 8px;
+  padding: 18px;
   border: 1px solid rgba(37, 99, 235, 0.38);
   border-radius: 8px;
   background:
@@ -835,7 +839,7 @@ body {
 }
 
 .snapshot-calendar-grid span {
-  min-height: 42px;
+  min-height: 36px;
   border: 1px solid rgba(45, 68, 96, 0.7);
   border-radius: 7px;
   background: rgba(9, 18, 33, 0.76);
@@ -851,23 +855,27 @@ body {
 
 .snapshot-calendar-events {
   display: grid;
-  gap: 10px;
-  align-content: center;
+  min-width: 0;
+  gap: 12px;
 }
 
 .snapshot-calendar-events span {
-  min-height: 64px;
-  display: grid;
-  place-items: center;
+  width: 100%;
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid rgba(45, 68, 96, 0.72);
   border-radius: 8px;
   background:
-    linear-gradient(90deg, rgba(20, 184, 166, 0.15), rgba(37, 99, 235, 0.1)),
+    linear-gradient(135deg, rgba(20, 184, 166, 0.18), rgba(37, 99, 235, 0.12)),
     rgba(8, 15, 28, 0.86);
   color: #dbeafe;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 950;
   letter-spacing: 0.08em;
+  line-height: 1.1;
+  text-align: center;
   text-transform: uppercase;
 }
 
