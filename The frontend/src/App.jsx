@@ -8941,16 +8941,16 @@ return (
         ["fundamental-charts", "Fundamental Charts"],
         ["projections", "Projections"],
         ["comparison", "Compare"],
-        ["portfolio", "Portfolio"],
-        ["watchlists", "Watchlists"],
-        ["etfs", "ETF Overview"],
-        ["crypto", "Crypto Center"],
-        ["forex", "FOREX Overview"],
         ["stock-screener", "Stock Screener"],
-        ["news", "News"],
+        ["market-overview", "Market Overview"],
+        ["etfs", "ETF Overview"],
+        ["watchlists", "Watchlists"],
+        ["portfolio", "Portfolio"],
         ["earnings-calendar", "Calendar"],
         ["treasury-rates", "Treasury Rates"],
-        ["market-overview", "Market Overview"]
+        ["crypto", "Crypto Center"],
+        ["forex", "FOREX Overview"],
+        ["news", "News"]
       ].map(([page, label]) => (
         <button
           key={page}
