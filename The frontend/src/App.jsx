@@ -985,13 +985,6 @@ const HOME_FEATURES = [
     text: "Search ETFs and mutual funds to review price, assets, fees, yield, exposure, asset mix, and top holdings when available."
   },
   {
-    id: "commodities",
-    icon: "commodities",
-    label: "Commodities",
-    title: "Track commodity markets",
-    text: "Search commodity symbols to review price, daily range, yearly range, volume, averages, currency, trade month, and chart history."
-  },
-  {
     id: "stock-screener",
     icon: "screener",
     label: "Stock Screener",
@@ -8676,7 +8669,6 @@ return (
         ["portfolio", "Portfolio"],
         ["watchlists", "Watchlists"],
         ["etfs", "ETF Overview"],
-        ["commodities", "Commodities"],
         ["stock-screener", "Stock Screener"],
         ["news", "News"],
         ["earnings-calendar", "Calendar"],
