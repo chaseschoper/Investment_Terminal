@@ -1469,7 +1469,7 @@ const renderHomeTourSnapshot = (snapshot) => {
   const heatmapTiles = [3, -2, 1, 2, -3, 1, 4, -1, 2, -2, 1, 3, -1, 2, -3, 1, 2, -1, 3, 1, -2, 2, 1, -3];
 
   return (
-    <div className={`home-tour-snapshot snapshot-${snapshot} snapshot-layout-${meta.layout}`} aria-hidden="true">
+    <div className={`home-tour-snapshot snapshot-key-${snapshot} snapshot-layout-${meta.layout}`} aria-hidden="true">
       <div className="snapshot-header">
         <strong>{meta.title}</strong>
         <span />
