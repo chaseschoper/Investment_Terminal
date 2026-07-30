@@ -9480,3 +9480,118 @@ body {
     height: 100%;
   }
 }
+
+@media (max-width: 760px) {
+  html,
+  body,
+  #root {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .main,
+  .calendar-page,
+  .calendar-hero,
+  .calendar-bottom-section,
+  .earnings-calendar {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .calendar-page {
+    gap: 18px;
+    overflow-x: hidden;
+  }
+
+  .calendar-hero {
+    align-items: center;
+    margin-inline: auto;
+    padding: 22px 14px;
+    text-align: center;
+  }
+
+  .calendar-hero p {
+    max-width: 100%;
+    font-size: 14px;
+  }
+
+  .calendar-bottom-section {
+    padding-inline: 0;
+    overflow-x: hidden;
+  }
+
+  .calendar-week-controls {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .calendar-mode-toggle {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    overflow: visible;
+  }
+
+  .calendar-mode-toggle button {
+    width: 100%;
+    padding-inline: 10px;
+  }
+
+  .calendar-earnings-search {
+    width: 100%;
+    padding: 18px 12px 0;
+  }
+
+  .calendar-earnings-search .stock-search-button {
+    width: 100%;
+  }
+
+  .calendar-date-strip {
+    display: flex;
+    grid-template-columns: none;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+  }
+
+  .calendar-date-button {
+    flex: 0 0 86px;
+    width: 86px;
+    min-width: 86px;
+  }
+
+  .calendar-company-list {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .calendar-company-row {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .home-rally-footer {
+    padding-inline: 14px;
+    padding-bottom: max(26px, env(safe-area-inset-bottom));
+  }
+
+  .home-rally-signal {
+    inset-inline: 8%;
+    bottom: 66px;
+    height: 190px;
+    gap: 10px;
+  }
+
+  .home-rally-word {
+    width: 100%;
+    max-width: 100%;
+    font-size: clamp(28px, 8.2vw, 42px);
+    letter-spacing: 0;
+    line-height: 1;
+    white-space: nowrap;
+  }
+}
