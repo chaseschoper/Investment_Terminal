@@ -3020,6 +3020,30 @@ const hasAnnualEstimateData = (stock = {}) => {
   );
 };
 
+function segmentScore(segmentData) {
+  return Array.isArray(segmentData?.segments)
+    ? segmentData.segments.filter((segment) => isNumber(segment?.value)).length
+    : 0;
+}
+
+const hasRevenueSegmentData = (stock = {}) =>
+  segmentScore(stock.revenueProductSegments) > 0 ||
+  segmentScore(stock.revenueGeographicSegments) > 0;
+
+const shouldRetryOverviewExtras = (stock = {}, attempt = 0) =>
+  attempt < 2 && !stock.overviewExtrasCheckedAt;
+
+const shouldRetrySidecarData = (stock = {}, attempt = 0) =>
+  attempt < 2 &&
+  (
+    !stock.stockSidecarsCheckedAt ||
+    (attempt < 1 && (
+      !hasAnnualEstimateData(stock) ||
+      !hasNextQuarterData(stock) ||
+      !hasMarketActivityLoaded(stock)
+    ))
+  );
+
 const estimateFieldScore = (estimate = {}) =>
   ["revenue", "earnings", "eps", "ebitdaAvg", "ebitAvg", "sgaExpenseAvg", "date", "fiscalYear", "fiscalQuarter"]
     .filter((field) => estimate?.[field] !== null && estimate?.[field] !== undefined && estimate?.[field] !== "")
@@ -3070,11 +3094,6 @@ const chooseRicherEpsBeatMissRows = (previousRows, incomingRows) => {
     ? incomingRows
     : previousRows;
 };
-
-const segmentScore = (segmentData) =>
-  Array.isArray(segmentData?.segments)
-    ? segmentData.segments.filter((segment) => isNumber(segment?.value)).length
-    : 0;
 
 const chooseRicherSegmentData = (previousSegments, incomingSegments) => {
   if (!segmentScore(previousSegments)) return incomingSegments;
@@ -5867,13 +5886,15 @@ useEffect(() => {
     stockOverviewExtrasRequestRef.current = requestKey;
 
     let isActive = true;
-    const timer = window.setTimeout(async () => {
+    let retryTimer;
+    const loadOverviewExtras = async (attempt = 0) => {
       try {
         const response = await axios.get(`${API_URL}/api/stock-overview-extras/${symbol}`, {
           timeout: 3500
         });
         if (!isActive) return;
         const patch = response.data || {};
+        let mergedSnapshot = null;
         setStockData((current) => {
           if (!current || String(current.symbol || "").toUpperCase() !== symbol) return current;
           const merged = stabilizeRefreshingStockData(current, {
@@ -5882,16 +5903,31 @@ useEffect(() => {
             refreshing: current.refreshing
           });
           stockMemoryCacheRef.current.set(symbol, merged);
+          mergedSnapshot = merged;
           return merged;
         });
+        if (isActive && shouldRetryOverviewExtras(mergedSnapshot || patch, attempt)) {
+          retryTimer = window.setTimeout(
+            () => loadOverviewExtras(attempt + 1),
+            900 + attempt * 450
+          );
+        }
       } catch (error) {
         console.error("Stock overview extras failed", error);
+        if (isActive && attempt < 4) {
+          retryTimer = window.setTimeout(
+            () => loadOverviewExtras(attempt + 1),
+            1000 + attempt * 500
+          );
+        }
       }
-    }, 0);
+    };
+    const timer = window.setTimeout(() => loadOverviewExtras(0), 0);
 
     return () => {
       isActive = false;
       window.clearTimeout(timer);
+      if (retryTimer) window.clearTimeout(retryTimer);
     };
   }, [
     ticker,
@@ -5915,8 +5951,10 @@ useEffect(() => {
     if (stockSidecarRequestRef.current === requestKey) return;
     stockSidecarRequestRef.current = requestKey;
     let isActive = true;
+    let retryTimer;
     const mergeSidecarPatch = (patch = {}) => {
       if (!isActive || !patch || typeof patch !== "object") return;
+      let mergedSnapshot = null;
       setStockData((current) => {
         if (!current || (current.symbol && String(current.symbol).toUpperCase() !== symbol)) return current;
         const mergedAnalystEstimates = chooseRicherAnalystEstimates(
@@ -5934,23 +5972,39 @@ useEffect(() => {
           refreshing: current.refreshing
         });
         stockMemoryCacheRef.current.set(symbol, merged);
+        mergedSnapshot = merged;
         return merged;
       });
+      return mergedSnapshot;
     };
-    const timer = window.setTimeout(async () => {
+    const loadSidecar = async (attempt = 0) => {
       try {
         const response = await axios.get(`${API_URL}/api/stock-sidecars/${symbol}`, {
           timeout: 3200
         });
-        mergeSidecarPatch(response.data || {});
+        const merged = mergeSidecarPatch(response.data || {});
+        if (isActive && shouldRetrySidecarData(merged || response.data || {}, attempt)) {
+          retryTimer = window.setTimeout(
+            () => loadSidecar(attempt + 1),
+            850 + attempt * 450
+          );
+        }
       } catch (error) {
         console.error("Stock sidecars failed", error);
+        if (isActive && attempt < 4) {
+          retryTimer = window.setTimeout(
+            () => loadSidecar(attempt + 1),
+            1000 + attempt * 500
+          );
+        }
       }
-    }, 0);
+    };
+    const timer = window.setTimeout(() => loadSidecar(0), 0);
 
     return () => {
       isActive = false;
       window.clearTimeout(timer);
+      if (retryTimer) window.clearTimeout(retryTimer);
     };
   }, [ticker, loadedStockSymbol, activePage, isStockLoading, stockData?.symbol, financialChartMode]);
 

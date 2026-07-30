@@ -8721,7 +8721,8 @@ async function buildFastStockSidecars(ticker, data = {}, options = {}) {
       analystUpdatesCheckedAt: hasMarketActivityPatch ? checkedAt : data.analystUpdatesCheckedAt,
       insiderTransactionsCheckedAt: hasMarketActivityPatch ? checkedAt : data.insiderTransactionsCheckedAt,
       marketActivityUpdatedAt: hasMarketActivityPatch ? checkedAt : data.marketActivityUpdatedAt
-    } : {})
+    } : {}),
+    stockSidecarsCheckedAt: checkedAt
   };
 
   const set = {
@@ -8739,7 +8740,8 @@ async function buildFastStockSidecars(ticker, data = {}, options = {}) {
       "data.analystUpdatesCheckedAt": patch.analystUpdatesCheckedAt,
       "data.insiderTransactionsCheckedAt": patch.insiderTransactionsCheckedAt,
       "data.marketActivityUpdatedAt": patch.marketActivityUpdatedAt
-    } : {})
+    } : {}),
+    "data.stockSidecarsCheckedAt": patch.stockSidecarsCheckedAt
   };
   if (hasQuarterEstimate) {
     set["data.analystEstimates.nextQuarter"] = nextQuarter;
@@ -16003,6 +16005,19 @@ app.get("/api/price-history/:ticker", async (req, res) => {
 
     const cacheKey = `${ticker}:${requestedRange}`;
     const cached = priceHistoryCache.get(cacheKey);
+    const cacheResolvedPriceHistory = (history) => {
+      if (!history?.points?.length) return null;
+      const data = {
+        ...history,
+        symbol: requestedTicker,
+        sourceSymbol: ticker
+      };
+      priceHistoryCache.set(cacheKey, {
+        fetchedAt: Date.now(),
+        data
+      });
+      return data;
+    };
     if (cached && Date.now() - cached.fetchedAt < rangeConfig.ttl) {
       return res.json(cached.data);
     }
@@ -16022,11 +16037,7 @@ app.get("/api/price-history/:ticker", async (req, res) => {
         null
       );
       if (inFlightData?.points?.length) {
-        return res.json({
-          ...inFlightData,
-          symbol: requestedTicker,
-          sourceSymbol: ticker
-        });
+        return res.json(cacheResolvedPriceHistory(inFlightData));
       }
       if (cached?.data) {
         return res.json({ ...cached.data, stale: true, refreshing: true });
@@ -16035,6 +16046,10 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     }
 
     const historyPromise = fetchFmpPriceHistory(ticker, requestedRange)
+      .then((history) => {
+        cacheResolvedPriceHistory(history);
+        return history;
+      })
       .finally(() => {
         priceHistoryInFlight.delete(cacheKey);
       });
@@ -16047,15 +16062,7 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     const resolvedHistory = fmpHistory;
 
     if (resolvedHistory?.points?.length) {
-      const data = {
-        ...resolvedHistory,
-        symbol: requestedTicker,
-        sourceSymbol: ticker
-      };
-      priceHistoryCache.set(cacheKey, {
-        fetchedAt: Date.now(),
-        data
-      });
+      const data = cacheResolvedPriceHistory(resolvedHistory);
       return res.json(data);
     }
 
