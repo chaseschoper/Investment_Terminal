@@ -9839,6 +9839,18 @@ return (
 
     <div className={`top-watchlist ${user ? "" : "top-watchlist-guest"}`}>
 
+      {!user && (
+        <button
+          type="button"
+          className="top-watchlist-brand"
+          onClick={() => setActivePage("home")}
+          aria-label="Go to MrktRally home"
+        >
+          <img src="/mrktrally-icon.png" alt="" />
+          <span>MrktRally</span>
+        </button>
+      )}
+
       {user && (
         <>
           <div className="watchlist-label">Watchlist</div>
