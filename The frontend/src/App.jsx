@@ -5835,10 +5835,7 @@ useEffect(() => {
     if (activePage !== "overview" || !symbol) return;
     const currentSymbol = String(stockData?.symbol || loadedStockSymbol || "").trim().toUpperCase();
     if (!currentSymbol || currentSymbol !== symbol) return;
-    const hasOverviewExtras =
-      isNumber(stockData?.afterHoursTrade?.price) &&
-      Boolean(stockData?.revenueProductSegments?.segments?.length || stockData?.revenueGeographicSegments?.segments?.length);
-    const requestKey = `${symbol}:${hasOverviewExtras ? "refresh" : "cold"}`;
+    const requestKey = symbol;
     if (stockOverviewExtrasRequestRef.current === requestKey) return;
     stockOverviewExtrasRequestRef.current = requestKey;
 
@@ -5846,7 +5843,7 @@ useEffect(() => {
     const timer = window.setTimeout(async () => {
       try {
         const response = await axios.get(`${API_URL}/api/stock-overview-extras/${symbol}`, {
-          timeout: 2200
+          timeout: 3500
         });
         if (!isActive) return;
         const patch = response.data || {};
@@ -5873,10 +5870,7 @@ useEffect(() => {
     ticker,
     loadedStockSymbol,
     activePage,
-    stockData?.symbol,
-    stockData?.afterHoursTrade?.price,
-    stockData?.revenueProductSegments?.segments?.length,
-    stockData?.revenueGeographicSegments?.segments?.length
+    stockData?.symbol
   ]);
 
   useEffect(() => () => {

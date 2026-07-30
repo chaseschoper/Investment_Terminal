@@ -64,8 +64,11 @@ const earningsCallTranscriptCache = new Map();
 const similarCompanyMetricCache = new Map();
 const fmpDataCache = new Map();
 const fmpDataInFlight = new Map();
+const fmpFastDataCache = new Map();
+const fmpFastDataInFlight = new Map();
 const fmpAfterHoursTradeCache = new Map();
 const FMP_DATA_CACHE_TTL_MS = 10 * 60 * 1000;
+const FMP_FAST_DATA_CACHE_TTL_MS = 10 * 60 * 1000;
 const FMP_MAX_CONCURRENT_REQUESTS = 3;
 const FMP_REQUEST_SPACING_MS = 60;
 let fmpActiveRequestCount = 0;
@@ -1233,6 +1236,45 @@ async function getFmpData(ticker, label, endpoints) {
   return null;
 }
 
+async function getFmpFastData(cacheKey, url, {
+  params = {},
+  timeout = 1200,
+  ttlMs = FMP_FAST_DATA_CACHE_TTL_MS,
+  emptyTtlMs = 2 * 60 * 1000
+} = {}) {
+  if (!process.env.FMP_API_KEY || !canUseFmp()) return null;
+  const key = `fast:${cacheKey}`;
+  const cached = fmpFastDataCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.data;
+  if (fmpFastDataInFlight.has(key)) return fmpFastDataInFlight.get(key);
+
+  const request = axios.get(url, {
+    params: {
+      ...params,
+      apikey: process.env.FMP_API_KEY
+    },
+    timeout,
+    headers: { "User-Agent": "Mozilla/5.0" }
+  }).then((response) => {
+    const data = response.data;
+    const result = isFmpErrorPayload(data) || (Array.isArray(data) && data.length === 0) ? null : data;
+    fmpFastDataCache.set(key, {
+      data: result,
+      expiresAt: Date.now() + (result ? ttlMs : emptyTtlMs)
+    });
+    return result;
+  }).catch((err) => {
+    setFmpCooldown(err, cacheKey, "");
+    console.log("FMP fast endpoint skipped:", cacheKey, err.response?.status || err.message);
+    return null;
+  }).finally(() => {
+    fmpFastDataInFlight.delete(key);
+  });
+
+  fmpFastDataInFlight.set(key, request);
+  return request;
+}
+
 async function fetchFmpStableQuoteProfile(ticker) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return {};
@@ -1328,15 +1370,13 @@ async function fetchFmpAfterHoursTrade(ticker) {
   if (cached && cached.expiresAt > Date.now()) return cached.data;
 
   try {
-    const response = await getFmpAxios("https://financialmodelingprep.com/stable/aftermarket-trade", {
-      params: {
-        symbol,
-        apikey: process.env.FMP_API_KEY
-      },
-      timeout: 1800
+    const payload = await getFmpFastData(cacheKey, "https://financialmodelingprep.com/stable/aftermarket-trade", {
+      params: { symbol },
+      timeout: 1000,
+      ttlMs: 45 * 1000,
+      emptyTtlMs: 30 * 1000
     });
-    const payload = response.data;
-    if (isFmpErrorPayload(payload)) return null;
+    if (!payload) return null;
     const row = Array.isArray(payload) ? payload[0] || {} : payload || {};
     const price = toNumberOrNull(row.price ?? row.tradePrice);
     if (price === null) return null;
@@ -1456,18 +1496,24 @@ const normalizeFmpRevenueSegments = (rows) => {
 async function fetchFmpRevenueProductSegments(ticker) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return null;
-  const rows = await getFmpData(symbol, "revenue product segmentation", [
-    "/stable/revenue-product-segmentation?symbol={ticker}&period=annual"
-  ]);
+  const rows = await getFmpFastData(`revenue-product-segmentation:${symbol}`, "https://financialmodelingprep.com/stable/revenue-product-segmentation", {
+    params: { symbol, period: "annual" },
+    timeout: 1000,
+    ttlMs: 30 * 60 * 1000,
+    emptyTtlMs: 5 * 60 * 1000
+  });
   return normalizeFmpRevenueSegments(rows);
 }
 
 async function fetchFmpRevenueGeographicSegments(ticker) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return null;
-  const rows = await getFmpData(symbol, "revenue geographic segmentation", [
-    "/stable/revenue-geographic-segmentation?symbol={ticker}&period=annual"
-  ]);
+  const rows = await getFmpFastData(`revenue-geographic-segmentation:${symbol}`, "https://financialmodelingprep.com/stable/revenue-geographic-segmentation", {
+    params: { symbol, period: "annual" },
+    timeout: 1000,
+    ttlMs: 30 * 60 * 1000,
+    emptyTtlMs: 5 * 60 * 1000
+  });
   return normalizeFmpRevenueSegments(rows);
 }
 
