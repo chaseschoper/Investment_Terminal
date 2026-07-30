@@ -1284,89 +1284,213 @@ const HOME_FOOTER_GROUPS = [
 const POLICY_CONTENT = {
   terms: {
     title: "Terms of Use",
-    intro: "By using MrktRally, you agree to use the site for market research, education, and portfolio organization.",
+    intro: "By using MrktRally, you agree to use the site as an informational market research platform for learning, tracking, organizing, and comparing your own investment research. These terms explain what the site does, what it does not do, and what you are responsible for when using it.",
     sections: [
       {
-        title: "Research tool",
-        text: "MrktRally provides market data, charts, estimates, filings, transcripts, calendars, watchlists, and portfolio tools for informational use. It is not a broker, adviser, exchange, or trading platform."
+        title: "What MrktRally provides",
+        text: "MrktRally brings together stock charts, financial statements, metrics, analyst estimates, filings, transcripts, calendars, market maps, ETF and fund research, watchlists, portfolio organization tools, screeners, treasury rates, crypto data, forex data, news, and other market research features. The site is meant to help you study companies and markets more efficiently in one place."
+      },
+      {
+        title: "Not a financial service",
+        text: "MrktRally is not a broker, dealer, investment adviser, exchange, bank, custodian, transfer agent, tax adviser, legal adviser, or trading platform. MrktRally does not open brokerage accounts, execute trades, hold money or securities, clear transactions, provide personalized investment recommendations, or tell you whether to buy, sell, hold, short, or trade any security."
       },
       {
         title: "Your responsibility",
-        text: "You are responsible for your own investment decisions, account security, and the accuracy of any portfolio or watchlist information you enter."
+        text: "You are responsible for your own research, decisions, account security, saved watchlists, portfolio entries, cost basis, share counts, cash values, and any conclusions you draw from the site. You should verify important information through official filings, company investor relations pages, broker statements, tax documents, and other reliable sources before making decisions."
       },
       {
-        title: "Data availability",
-        text: "Market data may be delayed, incomplete, revised, unavailable, or different from another provider. MrktRally may update, remove, or change features and data sources over time."
+        title: "Account access",
+        text: "If you create an account, you agree to provide accurate login information and keep your account secure. You should not share your password, attempt to access another user's account, or use automated tools to create accounts. If you believe your account has been accessed without permission, contact MrktRally as soon as possible."
+      },
+      {
+        title: "Saved research tools",
+        text: "Watchlists, portfolios, saved symbols, cash entries, allocation charts, and performance calculations are provided for organization and learning. They are not official account statements, tax records, brokerage records, or audited performance reports. You should compare any saved portfolio information with your brokerage or personal records."
+      },
+      {
+        title: "Market data and provider terms",
+        text: "MrktRally depends on outside providers and public sources for many features. You agree not to misuse data from the site, redistribute provider data in a way that violates provider terms, reverse engineer API calls, mass-download restricted information, or use MrktRally as a substitute for a licensed market data terminal."
+      },
+      {
+        title: "AI and generated content",
+        text: "AI summaries, earnings call analysis, stock analysis, management questions, and other generated content are research aids. They may be incomplete, wrong, outdated, or overly confident. You should treat them as starting points for your own work and verify important claims against original filings, transcripts, company releases, and other primary sources."
       },
       {
         title: "Acceptable use",
-        text: "Do not misuse the site, attempt to break security, overload the service, scrape restricted data, or use MrktRally in a way that violates laws or provider terms."
+        text: "Use MrktRally in a lawful, respectful, and reasonable way. Do not attempt to break security, overload servers, abuse the API, scrape restricted data, interfere with other users, upload malicious content, bypass access controls, impersonate others, or use the site in a way that violates laws, regulations, provider terms, or intellectual property rights."
+      },
+      {
+        title: "Availability and changes",
+        text: "MrktRally is an active project and may change over time. Pages, calculations, layouts, metrics, chart ranges, data fields, providers, calendars, transcripts, filings, and features may be added, removed, renamed, reorganized, limited, or changed to improve accuracy, speed, reliability, security, cost, or user experience."
+      },
+      {
+        title: "No guarantee of uptime",
+        text: "MrktRally may be unavailable, slow, interrupted, or temporarily broken because of hosting issues, provider outages, API limits, maintenance, bugs, deployments, internet problems, or third-party service failures. The site is provided on an as-available basis."
+      },
+      {
+        title: "Intellectual property",
+        text: "The MrktRally name, design, interface, code, branding, custom visuals, and organization of the site belong to MrktRally or its creator. Market data, company names, logos, filings, transcripts, and third-party materials belong to their respective owners and may be subject to separate terms."
+      },
+      {
+        title: "Contact and enforcement",
+        text: "If a user misuses the site, creates security risk, violates these terms, or harms the service, MrktRally may restrict, suspend, or remove access. Questions, account requests, or policy concerns can be sent through the contact link on the site."
       }
     ]
   },
   privacy: {
     title: "Privacy Policy",
-    intro: "This explains the information MrktRally may use to run your account and research tools.",
+    intro: "This policy explains what information MrktRally may collect, store, use, and share to run accounts, save research tools, improve speed, and keep the product working. MrktRally is designed around market research, not selling personal information.",
     sections: [
       {
         title: "Account information",
-        text: "MrktRally may store your username, email address, password hash, Google sign-in identifier when used, saved watchlists, portfolios, settings, and authentication tokens needed to keep you signed in."
+        text: "When you create an account, MrktRally may store your username, email address, password hash if you sign up with email and password, Google sign-in identifier if you use Google, policy acceptance status, policy version accepted, account creation date, and authentication information needed to keep you signed in. MrktRally does not store your plain-text password."
       },
       {
-        title: "Service providers",
-        text: "MrktRally uses services such as MongoDB for account data, FMP and Stock Analysis for market research data, Vercel and Render for hosting, GitHub for code deployment, Google for sign-in, and Resend or SMTP email for password recovery."
+        title: "Saved user content",
+        text: "MrktRally may store the watchlists, portfolio names, tickers, share counts, cost basis, cash entries, saved symbols, interface choices, and other research information you enter. This information is used to show your saved research again later, calculate portfolio values, display allocations, and personalize your experience."
       },
       {
-        title: "Local device storage",
-        text: "The site may use browser storage to remember login state, cached market data, saved interface choices, and performance data so the app loads faster."
+        title: "Research requests",
+        text: "When you search a stock, ETF, fund, crypto symbol, forex pair, market calendar, news page, filing, transcript, or chart, MrktRally may process the symbol, date range, selected page, selected period, selected metric, and related request details. These requests help the app fetch the correct information and improve performance."
+      },
+      {
+        title: "Market data providers",
+        text: "MrktRally uses providers such as FMP and Stock Analysis for market data, company financials, estimates, filings, earnings calls, ETF and fund data, calendars, news, and charts. When the site requests data, those providers may receive the requested symbol, endpoint, date range, or similar technical request information."
+      },
+      {
+        title: "Hosting and infrastructure",
+        text: "MrktRally uses services such as MongoDB for account data, Render for backend hosting, Vercel for frontend hosting, GitHub for code deployment, Google for sign-in, and email services such as SMTP or Resend for password recovery. These services may process technical data needed to operate, secure, deploy, or deliver the site."
+      },
+      {
+        title: "Device and technical data",
+        text: "The site or its hosting providers may process technical information such as browser type, device type, IP address, request timing, error logs, pages visited, referrer information, and performance data. This helps diagnose bugs, protect the service, improve loading speed, and understand whether features are working."
+      },
+      {
+        title: "Local browser storage",
+        text: "MrktRally may store data in your browser, including login state, cached market data, recent searches, selected chart ranges, selected tabs, policy status, and interface preferences. This makes the site faster and reduces repeated data loading, especially on research-heavy pages."
+      },
+      {
+        title: "How information is used",
+        text: "Information is used to create and secure accounts, keep you signed in, save watchlists and portfolios, load market data, show charts and calendars, calculate portfolio values, improve speed, debug issues, prevent misuse, respond to support requests, and maintain the site."
+      },
+      {
+        title: "What MrktRally does not do",
+        text: "MrktRally does not ask for brokerage credentials, bank account numbers, Social Security numbers, tax IDs, credit card numbers, or trading authorization. MrktRally does not sell securities, process trades, hold funds, or act as a custodian."
+      },
+      {
+        title: "Sharing information",
+        text: "MrktRally may share limited information with service providers only as needed to run the site, authenticate users, send account emails, fetch market data, host the application, store account records, diagnose errors, or comply with legal obligations. MrktRally does not aim to sell your personal information."
+      },
+      {
+        title: "Security practices",
+        text: "MrktRally uses reasonable security practices for an independent web project, such as hashed passwords, authentication tokens, provider-managed hosting, and limited account information. No website can guarantee perfect security, and users should use strong passwords and protect their own devices."
+      },
+      {
+        title: "Data retention",
+        text: "Account and saved research data may be kept while your account exists or as long as needed for site operations, debugging, security, backups, or legal reasons. Cached market data may expire or be replaced as new data is loaded. Some provider logs or hosting records may follow the provider's own retention rules."
       },
       {
         title: "Your choices",
-        text: "You can sign out, remove saved watchlist or portfolio items, and request account changes or deletion from the site owner."
+        text: "You can sign out, remove watchlist items, delete portfolio positions, clear browser storage, request account changes, or request account deletion by contacting MrktRally. Some data may remain temporarily in backups, logs, deployment records, or provider systems where necessary."
+      },
+      {
+        title: "Children and students",
+        text: "MrktRally is a market research and education project. It is not intended to collect sensitive information from children. If you believe someone has used the site in a way that creates a privacy concern, contact MrktRally so it can be reviewed."
       }
     ]
   },
   cookies: {
     title: "Cookie Policy",
-    intro: "MrktRally uses browser storage and may use cookies through connected services to keep the app working smoothly.",
+    intro: "MrktRally uses cookies, local storage, session storage, cached data, and similar browser technology to keep the site signed in, remembered, responsive, and useful across research sessions.",
     sections: [
       {
         title: "Essential storage",
-        text: "Cookies or local storage may keep you signed in, remember app preferences, save cached market data, and support security for account sessions."
+        text: "Cookies, local storage, or similar browser storage may keep you signed in, remember whether you accepted policies, preserve selected pages or tabs, save interface preferences, and support security for account sessions. Without this storage, login and saved account features may not work correctly."
+      },
+      {
+        title: "Performance and caching",
+        text: "MrktRally may store recent market data, chart ranges, search results, stock details, ETF details, calendar state, portfolio page data, and page state in the browser to reduce repeat loading. This is especially important for pages that pull many charts, metrics, estimates, filings, and market data fields."
+      },
+      {
+        title: "Authentication",
+        text: "Login features may use storage to remember your account session. Google sign-in may use cookies or other Google-controlled technology to verify your identity. Password reset and email features may also rely on technical records to complete account actions."
       },
       {
         title: "Third-party services",
-        text: "Google sign-in, hosting providers, email providers, and data providers may use cookies or similar technology according to their own policies."
+        text: "Google sign-in, hosting providers, email providers, market data providers, and performance or analytics tools if added may use cookies or similar technology according to their own policies. MrktRally does not control every cookie or storage decision made by those services."
       },
       {
-        title: "Performance",
-        text: "Stored data may help MrktRally load charts, watchlists, portfolios, and market pages faster between visits."
+        title: "Saved interface choices",
+        text: "The site may remember selected pages, watchlist state, chart periods, annual or quarterly views, selected tabs, recently searched tickers, policy acceptance, and other interface choices so the app feels consistent when you return."
+      },
+      {
+        title: "Security and abuse prevention",
+        text: "Cookies and technical storage may help protect account sessions, prevent repeated sign-in prompts, reduce abusive requests, support rate-limit handling, and diagnose problems when pages fail to load correctly."
       },
       {
         title: "Controls",
-        text: "You can limit cookies or clear browser storage in your browser settings, but some login, saved data, or performance features may stop working correctly."
+        text: "You can block cookies, clear site data, or delete browser storage in your browser settings. Doing so may sign you out, remove cached market data, reset preferences, slow down the site, or prevent saved watchlist and portfolio features from working as expected."
+      },
+      {
+        title: "No ad tracking focus",
+        text: "MrktRally is built as a market research project, not an advertising network. The main reason for storage is to support authentication, remembered settings, saved research tools, and faster loading. If advertising or advanced analytics are ever added, this policy should be updated."
+      },
+      {
+        title: "Updates to storage use",
+        text: "As MrktRally adds or changes features, the site may adjust what it stores locally. For example, new charting tools, market pages, calendars, profile settings, or saved research features may require additional browser storage to work smoothly."
       }
     ]
   },
   disclaimer: {
     title: "Disclaimer",
-    intro: "MrktRally is built for research and learning, not personalized financial advice.",
+    intro: "MrktRally is built for research, education, and organization. It should not be treated as financial advice, a trading system, an official record, or a guarantee that any data point is perfect.",
     sections: [
       {
         title: "Not financial advice",
-        text: "Nothing on MrktRally is financial, investment, tax, legal, accounting, or trading advice. Always do your own research and consider speaking with a qualified professional."
+        text: "Nothing on MrktRally is financial, investment, tax, legal, accounting, or trading advice. The site does not know your personal financial situation, risk tolerance, investment goals, time horizon, or legal obligations. Always do your own research and consider speaking with a qualified professional."
       },
       {
-        title: "No guarantees",
-        text: "MrktRally does not guarantee the accuracy, completeness, timeliness, or future availability of prices, estimates, filings, transcripts, news, calendars, ratings, or other data."
+        title: "Data may be wrong or delayed",
+        text: "Prices, estimates, financial statements, charts, filings, transcripts, ratings, calendars, news, market maps, after-hours data, and other information may be delayed, incomplete, stale, revised, unavailable, or inaccurate. Different providers can report different numbers, especially around earnings releases, foreign stocks, ADRs, fiscal-year changes, and restatements."
+      },
+      {
+        title: "Provider differences",
+        text: "MrktRally uses outside data sources, and those sources may define metrics differently. Items such as total debt, PEG ratio, margins, free cash flow, analyst estimates, after-hours movement, institutional holders, insider activity, and foreign-currency conversions may differ from another website, a company filing, or a brokerage platform."
       },
       {
         title: "Market risk",
-        text: "Investing involves risk, including loss of principal. Past performance, analyst estimates, projections, and historical charts do not guarantee future results."
+        text: "Investing and trading involve risk, including loss of principal. Past performance, analyst estimates, valuation ratios, historical charts, projected growth, AI summaries, and back-looking financial data do not guarantee future results. Markets can move quickly and unexpectedly."
+      },
+      {
+        title: "AI and generated analysis",
+        text: "Any AI-generated summaries, stock analysis, earnings call highlights, management questions, or research notes are informational summaries only. They can miss context, misunderstand data, overstate confidence, or be based on incomplete information. Review the underlying data, filings, transcripts, and company releases before relying on any analysis."
+      },
+      {
+        title: "Portfolio calculations",
+        text: "Portfolio values, gains, losses, allocation charts, country and industry breakdowns, and performance percentages depend on the prices, shares, cost basis, and cash values available to the site. They may not match a brokerage account and should not be used as official tax, accounting, or performance records."
+      },
+      {
+        title: "Projections and assumptions",
+        text: "Projection tools, bull/base/bear cases, growth rates, margins, valuation multiples, and expected return calculations are based on assumptions. Small changes in assumptions can create large differences in outputs. These tools are for scenario building, not predictions or recommendations."
+      },
+      {
+        title: "Calendar and event data",
+        text: "Earnings dates, dividend dates, IPO dates, economic releases, report dates, and related calendar fields may change, may be missing, or may be reported differently by providers. Always confirm important dates with company investor relations pages, official exchange notices, or other primary sources."
+      },
+      {
+        title: "No professional relationship",
+        text: "Using MrktRally does not create an adviser-client, broker-client, fiduciary, legal, tax, accounting, or professional relationship. The site provides tools and information, but you remain responsible for interpreting that information and deciding what to do with it."
+      },
+      {
+        title: "No warranties",
+        text: "MrktRally is provided as is and as available. The site does not promise uninterrupted access, error-free operation, perfect calculations, complete data coverage, or that any feature will remain available in the future."
       },
       {
         title: "Independent project",
-        text: "MrktRally is an independent research project and is not endorsed by, sponsored by, or affiliated with its market data providers unless specifically stated."
+        text: "MrktRally is an independent research project and is not endorsed by, sponsored by, or affiliated with FMP, Stock Analysis, MongoDB, Google, GitHub, Vercel, Render, or any company shown on the site unless specifically stated. Company names, logos, and data belong to their respective owners."
+      },
+      {
+        title: "Verify before acting",
+        text: "Before making any financial decision, verify the numbers and context through primary sources such as SEC filings, company reports, earnings releases, investor relations materials, broker data, and professional advice where appropriate."
       }
     ]
   }

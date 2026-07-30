@@ -7167,8 +7167,8 @@ body {
 
 .policy-modal {
   position: relative;
-  width: min(760px, 100%);
-  max-height: min(82vh, 760px);
+  width: min(1040px, 100%);
+  max-height: min(86vh, 820px);
   overflow: auto;
   padding: 30px;
   border: 1px solid rgba(94, 234, 212, 0.26);
@@ -7221,6 +7221,7 @@ body {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+  text-align: left;
 }
 
 .policy-modal-sections article {
@@ -7245,7 +7246,7 @@ body {
   margin: 0;
   color: #cbd5e1;
   font-size: 14px;
-  line-height: 1.55;
+  line-height: 1.62;
 }
 
 .policy-modal-version {
