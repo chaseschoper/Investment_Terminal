@@ -9837,123 +9837,118 @@ return (
 
     {/* TOP WATCHLIST BAR */}
 
-    <div className="top-watchlist">
+    <div className={`top-watchlist ${user ? "" : "top-watchlist-guest"}`}>
 
-      <div className="watchlist-label">Watchlist</div>
+      {user && (
+        <>
+          <div className="watchlist-label">Watchlist</div>
 
-      <div className="watchlist-scroll">
+          <div className="watchlist-scroll">
 
-        {watchlist.map((item) => (
+            {watchlist.map((item) => (
 
-          <div
-            key={item}
-            className="watchlist-stock"
-            onClick={() => {
-              setSearchInput(item);
-              setTicker(item);
-              setActivePage("overview");
-            }}
-          >
+              <div
+                key={item}
+                className="watchlist-stock"
+                onClick={() => {
+                  setSearchInput(item);
+                  setTicker(item);
+                  setActivePage("overview");
+                }}
+              >
 
-            <span className="watch-logo-shell" aria-hidden="true">
-              <span className="watch-logo-fallback">{item.slice(0, 1)}</span>
-              <img
-              className="watch-logo"
-              src={savedSymbolDetails[item]?.logo || getDefaultCompanyLogoUrl(item)}
-              alt=""
-              loading="eager"
-              decoding="async"
-              onError={(event) => handleCompanyLogoError(event, item)}
-            />
-            </span>
+                <span className="watch-logo-shell" aria-hidden="true">
+                  <span className="watch-logo-fallback">{item.slice(0, 1)}</span>
+                  <img
+                  className="watch-logo"
+                  src={savedSymbolDetails[item]?.logo || getDefaultCompanyLogoUrl(item)}
+                  alt=""
+                  loading="eager"
+                  decoding="async"
+                  onError={(event) => handleCompanyLogoError(event, item)}
+                />
+                </span>
 
-            <span className="watch-symbol">
-              {item}
-            </span>
+                <span className="watch-symbol">
+                  {item}
+                </span>
 
-            <span className="watch-price">
-              $
-              {portfolioPrices[item]
-                ?.toFixed(2) || "--"}
-            </span>
+                <span className="watch-price">
+                  $
+                  {portfolioPrices[item]
+                    ?.toFixed(2) || "--"}
+                </span>
 
-            <span className={`watch-session-change ${
-              savedSymbolDetails[item]?.percentChange > 0
-                ? "watch-positive"
-                : savedSymbolDetails[item]?.percentChange < 0
-                  ? "watch-negative"
-                  : "watch-neutral"
-            }`}>
-              {isNumber(savedSymbolDetails[item]?.percentChange)
-                ? `${savedSymbolDetails[item].percentChange > 0 ? "+" : ""}${savedSymbolDetails[item].percentChange.toFixed(2)}%`
-                : "--"}
-            </span>
+                <span className={`watch-session-change ${
+                  savedSymbolDetails[item]?.percentChange > 0
+                    ? "watch-positive"
+                    : savedSymbolDetails[item]?.percentChange < 0
+                      ? "watch-negative"
+                      : "watch-neutral"
+                }`}>
+                  {isNumber(savedSymbolDetails[item]?.percentChange)
+                    ? `${savedSymbolDetails[item].percentChange > 0 ? "+" : ""}${savedSymbolDetails[item].percentChange.toFixed(2)}%`
+                    : "--"}
+                </span>
 
-            <button
-              className="watch-remove"
-              onClick={(e) => {
+                <button
+                  className="watch-remove"
+                  onClick={(e) => {
 
-                e.stopPropagation();
+                    e.stopPropagation();
 
-                setWatchlist((items) =>
-                  items.filter(
-                    (t) => t !== item
-                  )
-                );
+                    setWatchlist((items) =>
+                      items.filter(
+                        (t) => t !== item
+                      )
+                    );
+                  }}
+                >
+                  ×
+                </button>
+
+              </div>
+
+            ))}
+
+            <input
+              className="watchlist-add-input"
+              placeholder="+ Add"
+              value={newTicker}
+              onChange={(e) =>
+                setNewTicker(
+                  e.target.value.toUpperCase()
+                )
+              }
+              onKeyDown={(e) => {
+
+                if (
+                  e.key === "Enter" &&
+                  newTicker
+                ) {
+                  const symbol = String(newTicker || "").trim().toUpperCase();
+                  if (warnStockOnlySymbol(symbol)) return;
+
+                  if (
+                    !watchlist.includes(
+                      symbol
+                    )
+                  ) {
+
+                    setWatchlist([
+                      ...watchlist,
+                      symbol,
+                    ]);
+                  }
+
+                  setNewTicker("");
+                }
               }}
-            >
-              ×
-            </button>
+            />
 
           </div>
-
-        ))}
-
-        <input
-          className="watchlist-add-input"
-          placeholder="+ Add"
-          value={newTicker}
-          onFocus={(event) => {
-            if (!user) {
-              event.currentTarget.blur();
-              requireAuth("Log in or sign up to add stocks to your watchlist.");
-            }
-          }}
-          onChange={(e) =>
-            setNewTicker(
-              e.target.value.toUpperCase()
-            )
-          }
-          onKeyDown={(e) => {
-
-            if (
-              e.key === "Enter" &&
-              newTicker
-            ) {
-              if (!requireAuth("Log in or sign up to add stocks to your watchlist.")) {
-                return;
-              }
-              const symbol = String(newTicker || "").trim().toUpperCase();
-              if (warnStockOnlySymbol(symbol)) return;
-
-              if (
-                !watchlist.includes(
-                  symbol
-                )
-              ) {
-
-                setWatchlist([
-                  ...watchlist,
-                  symbol,
-                ]);
-              }
-
-              setNewTicker("");
-            }
-          }}
-        />
-
-      </div>
+        </>
+      )}
 
       <button
         className={`auth-top-button ${user ? "signout" : ""}`}

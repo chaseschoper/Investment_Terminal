@@ -5727,6 +5727,10 @@ body {
   opacity: 0.72;
 }
 
+.top-watchlist-guest {
+  justify-content: flex-end;
+}
+
 .watchlist-label {
   color: #f9fafb;
   font-size: 14px;
