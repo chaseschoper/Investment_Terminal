@@ -920,6 +920,8 @@ const createAuthResponse = (user) => ({
   user: toSafeUser(user)
 });
 
+const CURRENT_POLICY_VERSION = "2026-07-30";
+
 const hashPasswordResetToken = (token) =>
   crypto.createHash("sha256").update(token).digest("hex");
 
@@ -21791,11 +21793,15 @@ app.get("/api/news", async (req, res) => {
 // SIGNUP
 app.post("/api/signup", async (req, res) => {
 try {
-const { username, email, password } = req.body;
+const { username, email, password, acceptedPolicies, policyVersion } = req.body;
 const normalizedEmail = String(email || "").trim().toLowerCase();
 
 if (!username || !normalizedEmail || !password) {
   return res.status(400).json({ error: "Username, email, and password are required" });
+}
+
+if (!acceptedPolicies) {
+  return res.status(400).json({ error: "Please agree to the MrktRally policies before creating an account" });
 }
 
 
@@ -21808,7 +21814,9 @@ const user = new User({
   username,
   email: normalizedEmail,
   password: hashed,
-  authProvider: "password"
+  authProvider: "password",
+  policyAcceptedAt: new Date(),
+  policyVersion: String(policyVersion || CURRENT_POLICY_VERSION)
 });
 
 await user.save();
@@ -21848,7 +21856,7 @@ res.status(500).json({ error: "Login failed" });
 
 app.post("/api/google-login", async (req, res) => {
 try {
-const { credential } = req.body;
+const { credential, acceptedPolicies, policyVersion } = req.body;
 const googleClientId = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID;
 
 if (!googleClientId) {
@@ -21880,15 +21888,25 @@ if (!normalizedEmail) {
 
 let user = await User.findOne({ email: normalizedEmail });
 if (!user) {
+  if (!acceptedPolicies) {
+    return res.status(400).json({ error: "Please agree to the MrktRally policies before creating an account" });
+  }
+
   user = new User({
     username: profile.name || normalizedEmail.split("@")[0],
     email: normalizedEmail,
     googleId: profile.sub || "",
-    authProvider: "google"
+    authProvider: "google",
+    policyAcceptedAt: new Date(),
+    policyVersion: String(policyVersion || CURRENT_POLICY_VERSION)
   });
 } else {
   user.googleId = user.googleId || profile.sub || "";
   user.authProvider = user.password ? "password_google" : "google";
+  if (acceptedPolicies && !user.policyAcceptedAt) {
+    user.policyAcceptedAt = new Date();
+    user.policyVersion = String(policyVersion || CURRENT_POLICY_VERSION);
+  }
 }
 
 await user.save();

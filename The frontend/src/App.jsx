@@ -1268,8 +1268,110 @@ const HOME_FOOTER_GROUPS = [
       ["portfolio", "Portfolio Tracker"],
       ["news", "News"]
     ]
+  },
+  {
+    title: "Policies",
+    links: [
+      ["policy:terms", "Terms of Use"],
+      ["policy:privacy", "Privacy Policy"],
+      ["policy:cookies", "Cookie Policy"],
+      ["policy:disclaimer", "Disclaimer"]
+    ]
   }
 ];
+
+const POLICY_CONTENT = {
+  terms: {
+    title: "Terms of Use",
+    intro: "By using MrktRally, you agree to use the site for market research, education, and portfolio organization.",
+    sections: [
+      {
+        title: "Research tool",
+        text: "MrktRally provides market data, charts, estimates, filings, transcripts, calendars, watchlists, and portfolio tools for informational use. It is not a broker, adviser, exchange, or trading platform."
+      },
+      {
+        title: "Your responsibility",
+        text: "You are responsible for your own investment decisions, account security, and the accuracy of any portfolio or watchlist information you enter."
+      },
+      {
+        title: "Data availability",
+        text: "Market data may be delayed, incomplete, revised, unavailable, or different from another provider. MrktRally may update, remove, or change features and data sources over time."
+      },
+      {
+        title: "Acceptable use",
+        text: "Do not misuse the site, attempt to break security, overload the service, scrape restricted data, or use MrktRally in a way that violates laws or provider terms."
+      }
+    ]
+  },
+  privacy: {
+    title: "Privacy Policy",
+    intro: "This explains the information MrktRally may use to run your account and research tools.",
+    sections: [
+      {
+        title: "Account information",
+        text: "MrktRally may store your username, email address, password hash, Google sign-in identifier when used, saved watchlists, portfolios, settings, and authentication tokens needed to keep you signed in."
+      },
+      {
+        title: "Service providers",
+        text: "MrktRally uses services such as MongoDB for account data, FMP and Stock Analysis for market research data, Vercel and Render for hosting, GitHub for code deployment, Google for sign-in, and Resend or SMTP email for password recovery."
+      },
+      {
+        title: "Local device storage",
+        text: "The site may use browser storage to remember login state, cached market data, saved interface choices, and performance data so the app loads faster."
+      },
+      {
+        title: "Your choices",
+        text: "You can sign out, remove saved watchlist or portfolio items, and request account changes or deletion from the site owner."
+      }
+    ]
+  },
+  cookies: {
+    title: "Cookie Policy",
+    intro: "MrktRally uses browser storage and may use cookies through connected services to keep the app working smoothly.",
+    sections: [
+      {
+        title: "Essential storage",
+        text: "Cookies or local storage may keep you signed in, remember app preferences, save cached market data, and support security for account sessions."
+      },
+      {
+        title: "Third-party services",
+        text: "Google sign-in, hosting providers, email providers, and data providers may use cookies or similar technology according to their own policies."
+      },
+      {
+        title: "Performance",
+        text: "Stored data may help MrktRally load charts, watchlists, portfolios, and market pages faster between visits."
+      },
+      {
+        title: "Controls",
+        text: "You can limit cookies or clear browser storage in your browser settings, but some login, saved data, or performance features may stop working correctly."
+      }
+    ]
+  },
+  disclaimer: {
+    title: "Disclaimer",
+    intro: "MrktRally is built for research and learning, not personalized financial advice.",
+    sections: [
+      {
+        title: "Not financial advice",
+        text: "Nothing on MrktRally is financial, investment, tax, legal, accounting, or trading advice. Always do your own research and consider speaking with a qualified professional."
+      },
+      {
+        title: "No guarantees",
+        text: "MrktRally does not guarantee the accuracy, completeness, timeliness, or future availability of prices, estimates, filings, transcripts, news, calendars, ratings, or other data."
+      },
+      {
+        title: "Market risk",
+        text: "Investing involves risk, including loss of principal. Past performance, analyst estimates, projections, and historical charts do not guarantee future results."
+      },
+      {
+        title: "Independent project",
+        text: "MrktRally is an independent research project and is not endorsed by, sponsored by, or affiliated with its market data providers unless specifically stated."
+      }
+    ]
+  }
+};
+
+const CURRENT_POLICY_VERSION = "2026-07-30";
 
 const renderHomeFeatureIcon = (icon) => {
   const commonProps = {
@@ -4022,6 +4124,8 @@ const [password, setPassword] = useState("");
 const [resetPassword, setResetPassword] = useState("");
 const [isRecoveringPassword, setIsRecoveringPassword] = useState(false);
 const [passwordResetToken, setPasswordResetToken] = useState("");
+const [acceptedPolicies, setAcceptedPolicies] = useState(false);
+const [activePolicyKey, setActivePolicyKey] = useState(null);
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 
 const handleSignOut = () => {
@@ -4062,6 +4166,7 @@ const completeAuth = async (data, successMessage) => {
   setPasswordResetToken("");
   setPassword("");
   setResetPassword("");
+  setAcceptedPolicies(false);
 
   alert(successMessage);
   await loadUserData();
@@ -4070,6 +4175,11 @@ const completeAuth = async (data, successMessage) => {
 const handleAuth = async () => {
 
   try {
+    if (!isLogin && !acceptedPolicies) {
+      setAuthMessage("Please agree to the Terms, Privacy Policy, Cookie Policy, and Disclaimer before creating an account.");
+      return;
+    }
+
     setIsAuthSubmitting(true);
 
     const endpoint = isLogin
@@ -4085,6 +4195,8 @@ const handleAuth = async () => {
           username,
           email,
           password,
+          acceptedPolicies,
+          policyVersion: CURRENT_POLICY_VERSION,
         };
 
     const response = await axios.post(
@@ -4116,7 +4228,9 @@ const handleGoogleCredential = async (credential) => {
   try {
     setIsAuthSubmitting(true);
     const response = await axios.post(`${API_URL}/api/google-login`, {
-      credential
+      credential,
+      acceptedPolicies,
+      policyVersion: CURRENT_POLICY_VERSION
     });
     await completeAuth(response.data, "Google sign-in successful");
   } catch (err) {
@@ -9666,6 +9780,10 @@ const handleStockSearchSubmit = async (event, destinationPage = "overview") => {
 };
 
 const openPage = (page) => {
+  if (typeof page === "string" && page.startsWith("policy:")) {
+    setActivePolicyKey(page.replace("policy:", ""));
+    return;
+  }
   setActivePage(page);
   window.scrollTo({ top: 0, behavior: "smooth" });
 };
@@ -9857,7 +9975,8 @@ return (
         ["treasury-rates", "Treasury Rates"],
         ["crypto", "Crypto Center"],
         ["forex", "FOREX Overview"],
-        ["news", "News"]
+        ["news", "News"],
+        ["profile", "Profile"]
       ].map(([page, label]) => (
         <button
           key={page}
@@ -11080,6 +11199,90 @@ return (
         ) : (
           <div className="heatmap-loading">No general news is available yet.</div>
         )}
+      </section>
+    )}
+
+
+    {activePage === "profile" && (
+      <section className="profile-page" id="profile" aria-labelledby="profile-title">
+        <div className="section-heading-row market-overview-heading">
+          <div>
+            <div className="welcome-kicker">Account center</div>
+            <h2 id="profile-title">Profile</h2>
+            <p>Manage your MrktRally account details and set the site up like an app on your phone.</p>
+          </div>
+          {user && <span className="market-overview-updated">Signed in</span>}
+        </div>
+
+        <div className="profile-grid">
+          <article className="profile-card">
+            <div className="home-feature-label">Account</div>
+            <h3>Your Login</h3>
+            {user ? (
+              <div className="profile-account-list">
+                <div>
+                  <span>Username</span>
+                  <strong>{user.username || "MrktRally user"}</strong>
+                </div>
+                <div>
+                  <span>Email</span>
+                  <strong>{user.email || "No email saved"}</strong>
+                </div>
+              </div>
+            ) : (
+              <p>Log in or create an account to see your profile details.</p>
+            )}
+            <button
+              type="button"
+              className="profile-action-button"
+              onClick={() => {
+                setEmail(user?.email || email || "");
+                setIsLogin(true);
+                setIsRecoveringPassword(true);
+                setPasswordResetToken("");
+                setAuthPrompt("Send yourself a secure reset link if you need to change your password.");
+                setAuthMessage("");
+                setShowAuth(true);
+              }}
+            >
+              Reset Password
+            </button>
+          </article>
+
+          <article className="profile-card profile-install-card">
+            <div className="home-feature-label">Mobile setup</div>
+            <h3>Add MrktRally to Your iPhone Home Screen</h3>
+            <ol className="profile-steps">
+              <li>Open Safari on your iPhone and go to mrktrally.com.</li>
+              <li>Go to the page you want MrktRally to open to, usually Home or Stock Overview.</li>
+              <li>Tap the share button at the bottom of Safari. It looks like a square with an arrow pointing up.</li>
+              <li>Scroll through the share menu and tap Add to Home Screen.</li>
+              <li>Keep the name as MrktRally, or rename it if you want.</li>
+              <li>Tap Add in the top-right corner. MrktRally will appear on your home screen like an app.</li>
+              <li>Next time, open MrktRally from that icon for a cleaner app-style experience.</li>
+            </ol>
+            <p>
+              Safari is usually the best option on iPhone. If you use Chrome, tap the share icon or three-dot menu and look for Add to Home Screen.
+            </p>
+          </article>
+
+          <article className="profile-card profile-policy-card">
+            <div className="home-feature-label">Policies</div>
+            <h3>MrktRally Policies</h3>
+            <div className="profile-policy-links">
+              {["terms", "privacy", "cookies", "disclaimer"].map((policyKey) => (
+                <button
+                  key={policyKey}
+                  type="button"
+                  onClick={() => setActivePolicyKey(policyKey)}
+                >
+                  {POLICY_CONTENT[policyKey].title}
+                </button>
+              ))}
+            </div>
+            <p>New account signups record policy agreement on the user account with policy version {CURRENT_POLICY_VERSION}.</p>
+          </article>
+        </div>
       </section>
     )}
 
@@ -14768,6 +14971,23 @@ return (
         />
       ) : null}
 
+      {!isLogin && !isRecoveringPassword && (
+        <label className="auth-policy-agreement">
+          <input
+            type="checkbox"
+            checked={acceptedPolicies}
+            onChange={(event) => setAcceptedPolicies(event.target.checked)}
+          />
+          <span>
+            I agree to MrktRally's{" "}
+            <button type="button" onClick={() => setActivePolicyKey("terms")}>Terms</button>,{" "}
+            <button type="button" onClick={() => setActivePolicyKey("privacy")}>Privacy Policy</button>,{" "}
+            <button type="button" onClick={() => setActivePolicyKey("cookies")}>Cookie Policy</button>, and{" "}
+            <button type="button" onClick={() => setActivePolicyKey("disclaimer")}>Disclaimer</button>.
+          </span>
+        </label>
+      )}
+
       <button
         disabled={isAuthSubmitting}
         onClick={
@@ -14791,6 +15011,21 @@ return (
 
       {isLogin && !isRecoveringPassword && (
         <>
+          <label className="auth-policy-agreement">
+            <input
+              type="checkbox"
+              checked={acceptedPolicies}
+              onChange={(event) => setAcceptedPolicies(event.target.checked)}
+            />
+            <span>
+              First time using Google? Agree to MrktRally's{" "}
+              <button type="button" onClick={() => setActivePolicyKey("terms")}>Terms</button>,{" "}
+              <button type="button" onClick={() => setActivePolicyKey("privacy")}>Privacy Policy</button>,{" "}
+              <button type="button" onClick={() => setActivePolicyKey("cookies")}>Cookie Policy</button>, and{" "}
+              <button type="button" onClick={() => setActivePolicyKey("disclaimer")}>Disclaimer</button>.
+            </span>
+          </label>
+
           {GOOGLE_CLIENT_ID ? (
             <div className="google-auth-button" ref={googleButtonRef} />
           ) : (
@@ -14819,6 +15054,7 @@ return (
           setIsLogin(!isLogin);
           setIsRecoveringPassword(false);
           setPasswordResetToken("");
+          setAcceptedPolicies(false);
           setAuthPrompt("");
           setAuthMessage("");
         }}
@@ -14835,6 +15071,7 @@ return (
         onClick={() => {
           setShowAuth(false);
           setAuthPrompt("");
+          setAuthMessage("");
         }}
       >
         Close
@@ -14844,6 +15081,33 @@ return (
 
   </div>
 
+)}
+
+{activePolicyKey && POLICY_CONTENT[activePolicyKey] && (
+  <div className="policy-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="policy-modal-title">
+    <div className="policy-modal">
+      <button
+        type="button"
+        className="policy-modal-close"
+        aria-label="Close policy"
+        onClick={() => setActivePolicyKey(null)}
+      >
+        ×
+      </button>
+      <div className="welcome-kicker">MrktRally Policies</div>
+      <h2 id="policy-modal-title">{POLICY_CONTENT[activePolicyKey].title}</h2>
+      <p className="policy-modal-intro">{POLICY_CONTENT[activePolicyKey].intro}</p>
+      <div className="policy-modal-sections">
+        {POLICY_CONTENT[activePolicyKey].sections.map((section) => (
+          <article key={section.title}>
+            <h3>{section.title}</h3>
+            <p>{section.text}</p>
+          </article>
+        ))}
+      </div>
+      <p className="policy-modal-version">Policy version {CURRENT_POLICY_VERSION}</p>
+    </div>
+  </div>
 )}
 
 </div>

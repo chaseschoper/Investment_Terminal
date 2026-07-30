@@ -27,6 +27,16 @@ const UserSchema = new mongoose.Schema({
     default: "password",
   },
 
+  policyAcceptedAt: {
+    type: Date,
+    default: null,
+  },
+
+  policyVersion: {
+    type: String,
+    default: "",
+  },
+
   passwordResetToken: {
     type: String,
     default: "",
