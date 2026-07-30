@@ -1343,6 +1343,8 @@ async function fetchFmpAfterHoursTrade(ticker) {
     const trade = {
       symbol,
       price,
+      providerChange: firstFiniteNumber(row.change, row.changeAmount),
+      providerPercentChange: firstFiniteNumber(row.changePercentage, row.changesPercentage, row.changePercent),
       tradeSize: toNumberOrNull(row.tradeSize ?? row.size ?? row.volume),
       timestamp: firstText(row.timestamp, row.time, row.date),
       source: "FMP after-hours trade"
@@ -1357,6 +1359,55 @@ async function fetchFmpAfterHoursTrade(ticker) {
     console.log("FMP after-hours trade skipped:", symbol, err.response?.status || err.message);
     return null;
   }
+}
+
+function parseFmpTradeTimestamp(value) {
+  const number = toNumberOrNull(value);
+  if (number !== null) {
+    const milliseconds = number < 10000000000 ? number * 1000 : number;
+    const parsed = new Date(milliseconds);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  const text = firstText(value);
+  if (!text) return null;
+  const parsed = parseFmpMarketDateTime(text);
+  return parsed && !Number.isNaN(parsed.getTime()) ? parsed : null;
+}
+
+function shouldShowAfterHoursTrade(timestamp, now = new Date()) {
+  const tradeDate = parseFmpTradeTimestamp(timestamp);
+  if (!tradeDate) return false;
+  const tradeKey = getNewYorkDateKey(tradeDate);
+  const nowKey = getNewYorkDateKey(now);
+  const nowMinutes = getNewYorkMarketMinutes(now);
+  if (nowMinutes === null) return false;
+
+  if (tradeKey === nowKey) {
+    return nowMinutes >= 16 * 60;
+  }
+
+  const ageMs = now.getTime() - tradeDate.getTime();
+  return nowMinutes < 5 * 60 && ageMs > 0 && ageMs < 18 * 60 * 60 * 1000;
+}
+
+function buildAfterHoursSessionQuote(afterHoursTrade, closePrice) {
+  if (!afterHoursTrade || afterHoursTrade.price === null || afterHoursTrade.price === undefined) return null;
+  if (!shouldShowAfterHoursTrade(afterHoursTrade.timestamp)) return null;
+  const price = toNumberOrNull(afterHoursTrade.price);
+  const close = toNumberOrNull(closePrice);
+  if (price === null) return null;
+  const change = close !== null && close > 0 ? price - close : firstFiniteNumber(afterHoursTrade.providerChange);
+  const percentChange = change !== null && close !== null && close > 0
+    ? (change / close) * 100
+    : firstFiniteNumber(afterHoursTrade.providerPercentChange);
+  return {
+    ...afterHoursTrade,
+    price,
+    regularClose: close,
+    previousClose: close,
+    change,
+    percentChange
+  };
 }
 
 const parseFmpSegmentData = (value) => {
@@ -1418,6 +1469,41 @@ async function fetchFmpRevenueGeographicSegments(ticker) {
     "/stable/revenue-geographic-segmentation?symbol={ticker}&period=annual"
   ]);
   return normalizeFmpRevenueSegments(rows);
+}
+
+async function buildStockOverviewExtras(ticker, data = {}) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol) return {};
+
+  const [afterHoursTradeRaw, revenueProductSegments, revenueGeographicSegments] = await Promise.all([
+    resolveWithin(fetchFmpAfterHoursTrade(symbol), 900, null),
+    resolveWithin(fetchFmpRevenueProductSegments(symbol), 1100, data.revenueProductSegments || null),
+    resolveWithin(fetchFmpRevenueGeographicSegments(symbol), 1100, data.revenueGeographicSegments || null)
+  ]);
+  const regularClose = firstFiniteNumber(data.regularClose, data.close, data.price, data.previousClose, data.chartPreviousClose);
+  const afterHoursTrade = buildAfterHoursSessionQuote(afterHoursTradeRaw, regularClose);
+
+  const patch = {
+    afterHoursTrade,
+    ...(revenueProductSegments ? { revenueProductSegments } : {}),
+    ...(revenueGeographicSegments ? { revenueGeographicSegments } : {}),
+    overviewExtrasCheckedAt: new Date().toISOString()
+  };
+
+  if (Object.keys(patch).length > 1) {
+    Stock.findOneAndUpdate(
+      { ticker: symbol },
+      {
+        $set: Object.fromEntries(
+          Object.entries(patch).map(([key, value]) => [`data.${key}`, value])
+        )
+      }
+    ).catch((err) => {
+      console.log("Overview extras cache skipped:", symbol, err.message);
+    });
+  }
+
+  return patch;
 }
 
 async function fetchFmpKeyExecutives(ticker) {
@@ -12479,9 +12565,9 @@ async function fetchStockData(ticker) {
     resolveWithin(fetchFmpFiftyTwoWeekRange(ticker), 1800, {}),
     resolveWithin(fetchFmpSharesFloat(ticker), 1600, {}),
     resolveWithin(fetchFmpKeyExecutives(ticker), 1600, []),
-    resolveWithin(fetchFmpAfterHoursTrade(ticker), 1900, null),
-    resolveWithin(fetchFmpRevenueProductSegments(ticker), 2400, null),
-    resolveWithin(fetchFmpRevenueGeographicSegments(ticker), 2400, null),
+    resolveWithin(fetchFmpAfterHoursTrade(ticker), 900, null),
+    resolveWithin(fetchFmpRevenueProductSegments(ticker), 1100, previousData?.revenueProductSegments || null),
+    resolveWithin(fetchFmpRevenueGeographicSegments(ticker), 1100, previousData?.revenueGeographicSegments || null),
     resolveWithin(fetchCalendarQuarterEstimate(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, {}),
     Promise.resolve([]),
     resolveWithin(fetchFmpMarketActivity(ticker), STOCK_PROVIDER_TIMEOUT_MS, { analystUpdates: [], institutionalHolders: [], insiderTransactions: [] }),
@@ -13425,14 +13511,7 @@ async function fetchStockData(ticker) {
     price: quote.c,
     change: quote.d,
     percentChange: quote.dp,
-    afterHoursTrade: fmpAfterHoursTrade?.price !== null && fmpAfterHoursTrade?.price !== undefined
-      ? {
-          ...fmpAfterHoursTrade,
-          previousClose: quote.pc ?? null,
-          change: quote.pc ? fmpAfterHoursTrade.price - quote.pc : null,
-          percentChange: quote.pc ? ((fmpAfterHoursTrade.price - quote.pc) / Math.abs(quote.pc)) * 100 : null
-        }
-      : null,
+    afterHoursTrade: buildAfterHoursSessionQuote(fmpAfterHoursTrade, quote.c),
     extendedHours: yahooSupplementalData.extendedHours || null,
     previousClose: quote.pc,
     high: firstFiniteNumber(fmpQuoteProfile.high, quote.h),
@@ -16764,6 +16843,33 @@ app.get("/api/stock-sidecars/:ticker", async (req, res) => {
   } catch (err) {
     console.log("Stock sidecars failed:", req.params.ticker, err.response?.status || err.message);
     return res.status(502).json({ error: "Stock sidecars unavailable" });
+  }
+});
+
+app.get("/api/stock-overview-extras/:ticker", async (req, res) => {
+  try {
+    const requestedTicker = req.params.ticker.trim().toUpperCase();
+    const ticker = TICKER_ALIASES[requestedTicker] || requestedTicker;
+
+    if (!ticker || ticker.length > 10) {
+      return res.status(400).json({ error: "Invalid ticker" });
+    }
+    if (isBlockedStockOnlySymbol(ticker)) {
+      return res.status(400).json({ error: "Use the crypto or FOREX page for that symbol" });
+    }
+
+    const stock = await Stock.findOne({ ticker }).lean().catch(() => null);
+    const data = stock?.data || buildMinimalStockSnapshot(ticker);
+    const patch = await buildStockOverviewExtras(ticker, data);
+    return res.json({
+      ticker: requestedTicker,
+      sourceSymbol: ticker,
+      ...patch,
+      updatedAt: new Date().toISOString()
+    });
+  } catch (err) {
+    console.log("Stock overview extras failed:", req.params.ticker, err.response?.status || err.message);
+    return res.status(502).json({ error: "Stock overview extras unavailable" });
   }
 });
 

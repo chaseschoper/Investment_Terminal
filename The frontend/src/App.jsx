@@ -3948,6 +3948,7 @@ function App() {
   const stockMemoryCacheRef = useRef(new Map());
   const stockChartMemoryCacheRef = useRef(new Map());
   const stockSidecarRequestRef = useRef("");
+  const stockOverviewExtrasRequestRef = useRef("");
   const stockSearchBlurTimerRef = useRef(null);
   const latestComparisonRequest = useRef(0);
   const latestAiRequest = useRef(0);
@@ -5809,6 +5810,7 @@ useEffect(() => {
     latestAiRequest.current += 1;
     latestEarningsCallRequest.current += 1;
     stockSidecarRequestRef.current = "";
+    stockOverviewExtrasRequestRef.current = "";
     setStockData(cachedStock);
     if (cachedStock) firstStockLoadSettled.current = true;
     setAiAnalysis(null);
@@ -5827,6 +5829,55 @@ useEffect(() => {
     loadStock(ticker, 0, requestId);
 
   }, [ticker]);
+
+  useEffect(() => {
+    const symbol = String(ticker || "").trim().toUpperCase();
+    if (activePage !== "overview" || !symbol) return;
+    const currentSymbol = String(stockData?.symbol || loadedStockSymbol || "").trim().toUpperCase();
+    if (!currentSymbol || currentSymbol !== symbol) return;
+    const hasOverviewExtras =
+      isNumber(stockData?.afterHoursTrade?.price) &&
+      Boolean(stockData?.revenueProductSegments?.segments?.length || stockData?.revenueGeographicSegments?.segments?.length);
+    const requestKey = `${symbol}:${hasOverviewExtras ? "refresh" : "cold"}`;
+    if (stockOverviewExtrasRequestRef.current === requestKey) return;
+    stockOverviewExtrasRequestRef.current = requestKey;
+
+    let isActive = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await axios.get(`${API_URL}/api/stock-overview-extras/${symbol}`, {
+          timeout: 2200
+        });
+        if (!isActive) return;
+        const patch = response.data || {};
+        setStockData((current) => {
+          if (!current || String(current.symbol || "").toUpperCase() !== symbol) return current;
+          const merged = stabilizeRefreshingStockData(current, {
+            ...current,
+            ...patch,
+            refreshing: current.refreshing
+          });
+          stockMemoryCacheRef.current.set(symbol, merged);
+          return merged;
+        });
+      } catch (error) {
+        console.error("Stock overview extras failed", error);
+      }
+    }, 0);
+
+    return () => {
+      isActive = false;
+      window.clearTimeout(timer);
+    };
+  }, [
+    ticker,
+    loadedStockSymbol,
+    activePage,
+    stockData?.symbol,
+    stockData?.afterHoursTrade?.price,
+    stockData?.revenueProductSegments?.segments?.length,
+    stockData?.revenueGeographicSegments?.segments?.length
+  ]);
 
   useEffect(() => () => {
     if (stockRetryTimerRef.current) {
@@ -8370,13 +8421,13 @@ const afterHoursTrade = stockData?.afterHoursTrade;
 const hasAfterHoursTrade = isNumber(afterHoursTrade?.price);
 const afterHoursPercentChange = isNumber(afterHoursTrade?.percentChange)
   ? afterHoursTrade.percentChange
-  : isNumber(afterHoursTrade?.price) && isNumber(stockData?.previousClose) && stockData.previousClose !== 0
-    ? ((afterHoursTrade.price - stockData.previousClose) / Math.abs(stockData.previousClose)) * 100
+  : isNumber(afterHoursTrade?.price) && isNumber(afterHoursTrade?.regularClose || afterHoursTrade?.previousClose) && (afterHoursTrade.regularClose || afterHoursTrade.previousClose) !== 0
+    ? ((afterHoursTrade.price - (afterHoursTrade.regularClose || afterHoursTrade.previousClose)) / Math.abs(afterHoursTrade.regularClose || afterHoursTrade.previousClose)) * 100
     : null;
 const afterHoursChange = isNumber(afterHoursTrade?.change)
   ? afterHoursTrade.change
-  : isNumber(afterHoursTrade?.price) && isNumber(stockData?.previousClose)
-    ? afterHoursTrade.price - stockData.previousClose
+  : isNumber(afterHoursTrade?.price) && isNumber(afterHoursTrade?.regularClose || afterHoursTrade?.previousClose)
+    ? afterHoursTrade.price - (afterHoursTrade.regularClose || afterHoursTrade.previousClose)
     : null;
 const formatAfterHoursTimestamp = (value) => {
   if (!value) return "";
@@ -13049,8 +13100,8 @@ return (
                       outerRadius={92}
                       paddingAngle={2}
                       stroke="none"
-                      isAnimationActive
-                      animationDuration={350}
+                      isAnimationActive={false}
+                      animationDuration={0}
                     >
                       {panel.segments.map((segment, index) => (
                         <Cell
