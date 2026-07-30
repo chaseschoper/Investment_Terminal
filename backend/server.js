@@ -21856,7 +21856,7 @@ res.status(500).json({ error: "Login failed" });
 
 app.post("/api/google-login", async (req, res) => {
 try {
-const { credential, acceptedPolicies, policyVersion } = req.body;
+const { credential, acceptedPolicies, policyVersion, mode } = req.body;
 const googleClientId = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID;
 
 if (!googleClientId) {
@@ -21888,6 +21888,13 @@ if (!normalizedEmail) {
 
 let user = await User.findOne({ email: normalizedEmail });
 if (!user) {
+  if (mode === "login") {
+    return res.status(404).json({
+      error: "No MrktRally account exists for that Google email. Please sign up first.",
+      needsSignup: true
+    });
+  }
+
   if (!acceptedPolicies) {
     return res.status(400).json({ error: "Please agree to the MrktRally policies before creating an account" });
   }

@@ -18,6 +18,7 @@ import {
   useRef,
   useState
 } from "react";
+import { createPortal } from "react-dom";
 const formatMoney = (value) => {
 
   if (value === null || value === undefined) return "N/A";
@@ -4226,16 +4227,29 @@ const handleAuth = async () => {
 
 const handleGoogleCredential = async (credential) => {
   try {
+    if (!isLogin && !acceptedPolicies) {
+      setAuthMessage("Please agree to the MrktRally policies before signing up with Google.");
+      return;
+    }
+
     setIsAuthSubmitting(true);
     const response = await axios.post(`${API_URL}/api/google-login`, {
       credential,
       acceptedPolicies,
-      policyVersion: CURRENT_POLICY_VERSION
+      policyVersion: CURRENT_POLICY_VERSION,
+      mode: isLogin ? "login" : "signup"
     });
     await completeAuth(response.data, "Google sign-in successful");
   } catch (err) {
     console.error(err);
-    alert(err.response?.data?.error || "Google sign-in failed");
+    const errorData = err.response?.data || {};
+    if (errorData.needsSignup) {
+      setIsLogin(false);
+      setAcceptedPolicies(false);
+      setAuthMessage(errorData.error || "No account found. Please create an account first.");
+      return;
+    }
+    alert(errorData.error || "Google sign-in failed");
   } finally {
     setIsAuthSubmitting(false);
   }
@@ -4307,7 +4321,7 @@ useEffect(() => {
 }, []);
 
 useEffect(() => {
-  if (!showAuth || !isLogin || isRecoveringPassword || !GOOGLE_CLIENT_ID || !googleButtonRef.current) return;
+  if (!showAuth || isRecoveringPassword || !GOOGLE_CLIENT_ID || !googleButtonRef.current) return;
 
   const renderGoogleButton = () => {
     if (!window.google?.accounts?.id || !googleButtonRef.current) return;
@@ -4343,7 +4357,7 @@ useEffect(() => {
   script.defer = true;
   script.addEventListener("load", renderGoogleButton, { once: true });
   document.body.appendChild(script);
-}, [showAuth, isLogin, isRecoveringPassword, GOOGLE_CLIENT_ID]);
+}, [showAuth, isLogin, isRecoveringPassword, GOOGLE_CLIENT_ID, acceptedPolicies]);
 
 
 
@@ -10114,6 +10128,12 @@ return (
             <div className="home-rally-badge">Built for focused market research</div>
             <p>Market data by FMP</p>
             <p>Earnings calls and ETFs by Stock Analysis</p>
+            <a
+              className="home-rally-contact"
+              href="mailto:mrktrally@gmail.com?subject=MrktRally%20Support"
+            >
+              Contact us
+            </a>
           </div>
 
           <div className="home-rally-link-grid">
@@ -14907,7 +14927,7 @@ return (
 
 {/* AUTH POPUP */}
 
-{showAuth && (
+{showAuth && createPortal((
 
   <div className="auth-overlay">
 
@@ -15009,42 +15029,38 @@ return (
             : "Create Account"}
       </button>
 
-      {isLogin && !isRecoveringPassword && (
+      {!isRecoveringPassword && (
         <>
-          <label className="auth-policy-agreement">
-            <input
-              type="checkbox"
-              checked={acceptedPolicies}
-              onChange={(event) => setAcceptedPolicies(event.target.checked)}
-            />
-            <span>
-              First time using Google? Agree to MrktRally's{" "}
-              <button type="button" onClick={() => setActivePolicyKey("terms")}>Terms</button>,{" "}
-              <button type="button" onClick={() => setActivePolicyKey("privacy")}>Privacy Policy</button>,{" "}
-              <button type="button" onClick={() => setActivePolicyKey("cookies")}>Cookie Policy</button>, and{" "}
-              <button type="button" onClick={() => setActivePolicyKey("disclaimer")}>Disclaimer</button>.
-            </span>
-          </label>
-
           {GOOGLE_CLIENT_ID ? (
-            <div className="google-auth-button" ref={googleButtonRef} />
+            <div
+              className={`google-auth-button ${!isLogin && !acceptedPolicies ? "google-auth-button-disabled" : ""}`}
+              ref={googleButtonRef}
+            />
           ) : (
             <div className="auth-required-message">
               Google sign-in needs a Google Client ID added first.
             </div>
           )}
 
-          <p
-            className="auth-switch"
-            onClick={() => {
-              setIsRecoveringPassword(true);
-              setPasswordResetToken("");
-              setAuthPrompt("");
-              setAuthMessage("");
-            }}
-          >
-            Forgot password?
-          </p>
+          {!isLogin && !acceptedPolicies && GOOGLE_CLIENT_ID && (
+            <div className="auth-required-message">
+              Check the policy agreement before using Google sign up.
+            </div>
+          )}
+
+          {isLogin && (
+            <p
+              className="auth-switch"
+              onClick={() => {
+                setIsRecoveringPassword(true);
+                setPasswordResetToken("");
+                setAuthPrompt("");
+                setAuthMessage("");
+              }}
+            >
+              Forgot password?
+            </p>
+          )}
         </>
       )}
 
@@ -15081,9 +15097,9 @@ return (
 
   </div>
 
-)}
+), document.body)}
 
-{activePolicyKey && POLICY_CONTENT[activePolicyKey] && (
+{activePolicyKey && POLICY_CONTENT[activePolicyKey] && createPortal((
   <div className="policy-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="policy-modal-title">
     <div className="policy-modal">
       <button
@@ -15108,7 +15124,7 @@ return (
       <p className="policy-modal-version">Policy version {CURRENT_POLICY_VERSION}</p>
     </div>
   </div>
-)}
+), document.body)}
 
 </div>
 </div>
