@@ -1264,7 +1264,7 @@ async function getFmpFastData(cacheKey, url, {
     });
     return result;
   }).catch((err) => {
-    setFmpCooldown(err, cacheKey, "");
+    if (cached) return cached.data;
     console.log("FMP fast endpoint skipped:", cacheKey, err.response?.status || err.message);
     return null;
   }).finally(() => {
@@ -1368,6 +1368,7 @@ async function fetchFmpAfterHoursTrade(ticker) {
   const cacheKey = `after-hours:${symbol}`;
   const cached = fmpAfterHoursTradeCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.data;
+  const staleTrade = cached?.data || null;
 
   try {
     const payload = await getFmpFastData(cacheKey, "https://financialmodelingprep.com/stable/aftermarket-trade", {
@@ -1376,7 +1377,7 @@ async function fetchFmpAfterHoursTrade(ticker) {
       ttlMs: 45 * 1000,
       emptyTtlMs: 30 * 1000
     });
-    if (!payload) return null;
+    if (!payload) return staleTrade;
     const row = Array.isArray(payload) ? payload[0] || {} : payload || {};
     const price = toNumberOrNull(row.price ?? row.tradePrice);
     if (price === null) return null;
@@ -1397,7 +1398,7 @@ async function fetchFmpAfterHoursTrade(ticker) {
   } catch (err) {
     setFmpCooldown(err, "after-hours trade", symbol);
     console.log("FMP after-hours trade skipped:", symbol, err.response?.status || err.message);
-    return null;
+    return staleTrade;
   }
 }
 
@@ -1461,6 +1462,38 @@ const parseFmpSegmentData = (value) => {
   }
 };
 
+const extractFmpSegmentData = (row = {}) => {
+  const direct = parseFmpSegmentData(
+    row.data ??
+    row.segments ??
+    row.segmentData ??
+    row.revenueProductSegments ??
+    row.revenueGeographicSegments
+  );
+  if (direct && Object.keys(direct).length) return direct;
+
+  const metadataKeys = new Set([
+    "symbol",
+    "date",
+    "fiscalYear",
+    "calendarYear",
+    "period",
+    "reportedCurrency",
+    "currency",
+    "cik",
+    "filingDate",
+    "acceptedDate",
+    "link",
+    "finalLink"
+  ]);
+  const inferred = Object.fromEntries(
+    Object.entries(row || {}).filter(([key, value]) =>
+      !metadataKeys.has(key) && toNumberOrNull(value) !== null
+    )
+  );
+  return Object.keys(inferred).length ? inferred : null;
+};
+
 const normalizeFmpRevenueSegments = (rows) => {
   const candidates = (Array.isArray(rows) ? rows : rows ? [rows] : [])
     .filter(Boolean)
@@ -1471,7 +1504,7 @@ const normalizeFmpRevenueSegments = (rows) => {
     });
 
   for (const row of candidates) {
-    const segmentData = parseFmpSegmentData(row.data);
+    const segmentData = extractFmpSegmentData(row);
     if (!segmentData) continue;
     const segments = Object.entries(segmentData)
       .map(([label, value]) => ({
@@ -1528,11 +1561,13 @@ async function buildStockOverviewExtras(ticker, data = {}) {
   ]);
   const regularClose = firstFiniteNumber(data.regularClose, data.close, data.price, data.previousClose, data.chartPreviousClose);
   const afterHoursTrade = buildAfterHoursSessionQuote(afterHoursTradeRaw, regularClose);
+  const productSegments = revenueProductSegments || data.revenueProductSegments || null;
+  const geographicSegments = revenueGeographicSegments || data.revenueGeographicSegments || null;
 
   const patch = {
     afterHoursTrade,
-    ...(revenueProductSegments ? { revenueProductSegments } : {}),
-    ...(revenueGeographicSegments ? { revenueGeographicSegments } : {}),
+    ...(productSegments ? { revenueProductSegments: productSegments } : {}),
+    ...(geographicSegments ? { revenueGeographicSegments: geographicSegments } : {}),
     overviewExtrasCheckedAt: new Date().toISOString()
   };
 
@@ -6241,27 +6276,20 @@ async function fetchFmpFutureAnnualEstimateBlocks(ticker) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return null;
   try {
-    const endpointKey = "stable-annual-analyst-estimates";
-    if (!canUseFmpEndpoint(endpointKey, symbol)) return null;
-    const response = await getFmpAxios("https://financialmodelingprep.com/stable/analyst-estimates", {
+    const rows = await getFmpFastData(`annual-analyst-estimates:${symbol}`, "https://financialmodelingprep.com/stable/analyst-estimates", {
       params: {
         symbol,
         period: "annual",
-        limit: 10,
-        apikey: process.env.FMP_API_KEY
+        limit: 10
       },
-      timeout: 2400
+      timeout: 2600,
+      ttlMs: 30 * 60 * 1000,
+      emptyTtlMs: 1000
     });
-    const rows = response.data;
     return normalizeFmpAnnualEstimateBlocks(
       normalizeFmpAnnualEstimateRows(rows, { symbol, maxFutureYears: 6 })
     );
   } catch (err) {
-    if (isFmpRestrictedStatus(err.response?.status)) {
-      setFmpEndpointCooldown("stable-annual-analyst-estimates", err.response?.status, "future annual analyst estimates", symbol);
-    } else {
-      setFmpCooldown(err, "future annual analyst estimates", symbol);
-    }
     console.log("FMP future annual estimates skipped:", symbol, err.response?.status || err.message);
     return null;
   }
@@ -8380,11 +8408,8 @@ async function ensureCompleteNextQuarterEstimateForResponse(ticker, data = {}) {
 async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {}) {
   let responseData = prepareCachedStockResponseData(ticker, data);
   const backgroundPatches = [];
-  const recentlyCheckedEmptyFutureEstimates =
-    !hasFutureAnnualEstimateSnapshot(responseData) &&
-    isIsoTimestampWithin(responseData.annualEstimatesCheckedAt, 15 * 60 * 1000);
   const futurePromise =
-    !hasFutureAnnualEstimateSnapshot(responseData) && !recentlyCheckedEmptyFutureEstimates
+    !hasFutureAnnualEstimateSnapshot(responseData)
       ? fetchFmpFutureAnnualEstimateBlocks(ticker)
       : null;
   if (!hasCachedHistoricalPe(responseData)) {
@@ -11692,12 +11717,11 @@ function hasMarketActivitySnapshot(data = {}) {
 }
 
 function needsSupplementalStockData(data = {}) {
-  const annualEstimatesChecked = Boolean(data.annualEstimatesCheckedAt);
   const hasFutureAnnualEstimates = hasFutureAnnualEstimateSnapshot(data);
   const hasNextQuarterEstimate = hasCompleteNextQuarterEstimate(data.analystEstimates?.nextQuarter);
   const nextQuarterChecked = Boolean(data.quarterEstimateCheckedAt);
   return (
-    (!annualEstimatesChecked && !hasFutureAnnualEstimates) ||
+    !hasFutureAnnualEstimates ||
     (!nextQuarterChecked && !hasNextQuarterEstimate) ||
     !hasMarketActivitySnapshot(data)
   );
@@ -11707,7 +11731,7 @@ function needsVisibleStockRefreshData(data = {}) {
   const hasFutureAnnualEstimates = hasFutureAnnualEstimateSnapshot(data);
   const hasNextQuarterEstimate = hasCompleteNextQuarterEstimate(data.analystEstimates?.nextQuarter);
   return (
-    (!data.annualEstimatesCheckedAt && !hasFutureAnnualEstimates) ||
+    !hasFutureAnnualEstimates ||
     (!data.quarterEstimateCheckedAt && !hasNextQuarterEstimate)
   );
 }
@@ -11727,10 +11751,7 @@ function maybeEnqueueSupplementalSnapshots(ticker, data = {}) {
 
   Promise.resolve()
     .then(async () => {
-      const recentlyCheckedEmptyFutureEstimates =
-        !hasFutureAnnualEstimateSnapshot(data) &&
-        isIsoTimestampWithin(data.annualEstimatesCheckedAt, 15 * 60 * 1000);
-      if (!hasFutureAnnualEstimateSnapshot(data) && !recentlyCheckedEmptyFutureEstimates) {
+      if (!hasFutureAnnualEstimateSnapshot(data)) {
         await publishFutureAnnualEstimateSnapshot(symbol);
         await wait(200);
       }

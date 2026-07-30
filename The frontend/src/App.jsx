@@ -5892,13 +5892,14 @@ useEffect(() => {
       if (!isActive || !patch || typeof patch !== "object") return;
       setStockData((current) => {
         if (!current || (current.symbol && String(current.symbol).toUpperCase() !== symbol)) return current;
+        const mergedAnalystEstimates = chooseRicherAnalystEstimates(
+          current.analystEstimates,
+          patch.analystEstimates
+        );
         const merged = stabilizeRefreshingStockData(current, {
           ...current,
           ...patch,
-          analystEstimates: {
-            ...(current.analystEstimates || {}),
-            ...(patch.analystEstimates || {})
-          },
+          analystEstimates: mergedAnalystEstimates,
           analystEstimatesSources: {
             ...(current.analystEstimatesSources || {}),
             ...(patch.analystEstimatesSources || {})
