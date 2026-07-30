@@ -1850,6 +1850,27 @@ body {
   font-weight: 900;
 }
 
+.after-hours-trade-quote {
+  flex-wrap: wrap;
+  border-color: rgba(20, 184, 166, 0.34);
+  background: linear-gradient(135deg, rgba(8, 47, 73, 0.72), rgba(15, 23, 42, 0.82));
+  box-shadow: 0 0 24px rgba(20, 184, 166, 0.12);
+}
+
+.after-hours-trade-quote small {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.after-hours-trade-quote .positive-text {
+  color: #34d399;
+}
+
+.after-hours-trade-quote .negative-text {
+  color: #fb7185;
+}
+
 .market-strip {
   display: flex;
   align-items: stretch;
@@ -7697,6 +7718,129 @@ body {
   color: #34d399;
 }
 
+.revenue-segments-section {
+  max-width: min(1420px, calc(100vw - 48px));
+  margin: 24px auto 0;
+  padding: 24px;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(20, 184, 166, 0.14), transparent 34%),
+    linear-gradient(135deg, rgba(15, 23, 42, 0.98), rgba(3, 7, 18, 0.98));
+  box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.08);
+}
+
+.revenue-segments-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.revenue-segments-context {
+  padding: 8px 10px;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.76);
+  color: #bfdbfe;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.revenue-segments-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.revenue-segment-card {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid rgba(39, 50, 68, 0.92);
+  border-radius: 8px;
+  background: linear-gradient(145deg, rgba(17, 24, 39, 0.96), rgba(2, 6, 23, 0.96));
+}
+
+.revenue-segment-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.revenue-segment-card-heading h3 {
+  margin: 0 0 4px;
+  color: #f8fafc;
+  font-size: 18px;
+}
+
+.revenue-segment-card-heading span {
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.revenue-segment-card-heading strong {
+  color: #67e8f9;
+  font-size: 18px;
+  white-space: nowrap;
+}
+
+.revenue-segment-body {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.9fr) minmax(0, 1.1fr);
+  gap: 16px;
+  align-items: center;
+}
+
+.revenue-segment-chart {
+  min-width: 0;
+  height: 250px;
+}
+
+.revenue-segment-legend {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.revenue-segment-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid rgba(39, 50, 68, 0.72);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.64);
+  color: #cbd5e1;
+  font-size: 12px;
+}
+
+.revenue-segment-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #f8fafc;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.revenue-segment-row span:last-of-type {
+  color: #67e8f9;
+  font-weight: 900;
+}
+
+.revenue-segment-row em {
+  color: #94a3b8;
+  font-style: normal;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .similar-companies-section {
   margin-top: 40px;
   padding: 28px;
@@ -9431,6 +9575,29 @@ body {
 
   .market-intel-grid {
     grid-template-columns: 1fr;
+  }
+
+  .revenue-segments-section {
+    max-width: calc(100vw - 32px);
+    padding: 18px;
+  }
+
+  .revenue-segments-header,
+  .revenue-segment-card-heading {
+    flex-direction: column;
+  }
+
+  .revenue-segments-grid,
+  .revenue-segment-body {
+    grid-template-columns: 1fr;
+  }
+
+  .revenue-segment-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .revenue-segment-row em {
+    grid-column: 2 / -1;
   }
 
   .similar-companies-section {

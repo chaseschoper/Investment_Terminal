@@ -64,6 +64,7 @@ const earningsCallTranscriptCache = new Map();
 const similarCompanyMetricCache = new Map();
 const fmpDataCache = new Map();
 const fmpDataInFlight = new Map();
+const fmpAfterHoursTradeCache = new Map();
 const FMP_DATA_CACHE_TTL_MS = 10 * 60 * 1000;
 const FMP_MAX_CONCURRENT_REQUESTS = 3;
 const FMP_REQUEST_SPACING_MS = 60;
@@ -1316,6 +1317,107 @@ async function fetchFmpSharesFloat(ticker) {
     console.log("FMP shares float skipped:", symbol, err.response?.status || err.message);
     return {};
   }
+}
+
+async function fetchFmpAfterHoursTrade(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return null;
+
+  const cacheKey = `after-hours:${symbol}`;
+  const cached = fmpAfterHoursTradeCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.data;
+
+  try {
+    const response = await getFmpAxios("https://financialmodelingprep.com/stable/aftermarket-trade", {
+      params: {
+        symbol,
+        apikey: process.env.FMP_API_KEY
+      },
+      timeout: 1800
+    });
+    const payload = response.data;
+    if (isFmpErrorPayload(payload)) return null;
+    const row = Array.isArray(payload) ? payload[0] || {} : payload || {};
+    const price = toNumberOrNull(row.price ?? row.tradePrice);
+    if (price === null) return null;
+    const trade = {
+      symbol,
+      price,
+      tradeSize: toNumberOrNull(row.tradeSize ?? row.size ?? row.volume),
+      timestamp: firstText(row.timestamp, row.time, row.date),
+      source: "FMP after-hours trade"
+    };
+    fmpAfterHoursTradeCache.set(cacheKey, {
+      data: trade,
+      expiresAt: Date.now() + 45 * 1000
+    });
+    return trade;
+  } catch (err) {
+    setFmpCooldown(err, "after-hours trade", symbol);
+    console.log("FMP after-hours trade skipped:", symbol, err.response?.status || err.message);
+    return null;
+  }
+}
+
+const parseFmpSegmentData = (value) => {
+  if (!value) return null;
+  if (typeof value === "object" && !Array.isArray(value)) return value;
+  if (typeof value !== "string") return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+};
+
+const normalizeFmpRevenueSegments = (rows) => {
+  const candidates = (Array.isArray(rows) ? rows : rows ? [rows] : [])
+    .filter(Boolean)
+    .sort((a, b) => {
+      const dateDiff = String(b.date || "").localeCompare(String(a.date || ""));
+      if (dateDiff !== 0) return dateDiff;
+      return Number(b.fiscalYear || b.calendarYear || 0) - Number(a.fiscalYear || a.calendarYear || 0);
+    });
+
+  for (const row of candidates) {
+    const segmentData = parseFmpSegmentData(row.data);
+    if (!segmentData) continue;
+    const segments = Object.entries(segmentData)
+      .map(([label, value]) => ({
+        label: String(label || "").trim(),
+        value: toNumberOrNull(value)
+      }))
+      .filter((item) => item.label && item.value !== null && item.value > 0)
+      .sort((a, b) => b.value - a.value);
+    if (!segments.length) continue;
+    return {
+      fiscalYear: toNumberOrNull(row.fiscalYear ?? row.calendarYear),
+      period: firstText(row.period),
+      date: firstText(row.date),
+      currency: firstText(row.reportedCurrency, row.currency),
+      segments
+    };
+  }
+
+  return null;
+};
+
+async function fetchFmpRevenueProductSegments(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return null;
+  const rows = await getFmpData(symbol, "revenue product segmentation", [
+    "/stable/revenue-product-segmentation?symbol={ticker}&period=annual"
+  ]);
+  return normalizeFmpRevenueSegments(rows);
+}
+
+async function fetchFmpRevenueGeographicSegments(ticker) {
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return null;
+  const rows = await getFmpData(symbol, "revenue geographic segmentation", [
+    "/stable/revenue-geographic-segmentation?symbol={ticker}&period=annual"
+  ]);
+  return normalizeFmpRevenueSegments(rows);
 }
 
 async function fetchFmpKeyExecutives(ticker) {
@@ -12333,6 +12435,9 @@ async function fetchStockData(ticker) {
     fmpFiftyTwoWeekRange,
     fmpSharesFloat,
     fmpExecutives,
+    fmpAfterHoursTrade,
+    fmpRevenueProductSegments,
+    fmpRevenueGeographicSegments,
     calendarQuarterEstimate,
     finnhubAnalystUpdates,
     fmpMarketActivity,
@@ -12374,6 +12479,9 @@ async function fetchStockData(ticker) {
     resolveWithin(fetchFmpFiftyTwoWeekRange(ticker), 1800, {}),
     resolveWithin(fetchFmpSharesFloat(ticker), 1600, {}),
     resolveWithin(fetchFmpKeyExecutives(ticker), 1600, []),
+    resolveWithin(fetchFmpAfterHoursTrade(ticker), 1900, null),
+    resolveWithin(fetchFmpRevenueProductSegments(ticker), 2400, null),
+    resolveWithin(fetchFmpRevenueGeographicSegments(ticker), 2400, null),
     resolveWithin(fetchCalendarQuarterEstimate(ticker), STOCK_SLOW_PROVIDER_TIMEOUT_MS, {}),
     Promise.resolve([]),
     resolveWithin(fetchFmpMarketActivity(ticker), STOCK_PROVIDER_TIMEOUT_MS, { analystUpdates: [], institutionalHolders: [], insiderTransactions: [] }),
@@ -13317,6 +13425,14 @@ async function fetchStockData(ticker) {
     price: quote.c,
     change: quote.d,
     percentChange: quote.dp,
+    afterHoursTrade: fmpAfterHoursTrade?.price !== null && fmpAfterHoursTrade?.price !== undefined
+      ? {
+          ...fmpAfterHoursTrade,
+          previousClose: quote.pc ?? null,
+          change: quote.pc ? fmpAfterHoursTrade.price - quote.pc : null,
+          percentChange: quote.pc ? ((fmpAfterHoursTrade.price - quote.pc) / Math.abs(quote.pc)) * 100 : null
+        }
+      : null,
     extendedHours: yahooSupplementalData.extendedHours || null,
     previousClose: quote.pc,
     high: firstFiniteNumber(fmpQuoteProfile.high, quote.h),
@@ -13478,7 +13594,9 @@ async function fetchStockData(ticker) {
     hasInterimHistory: revenueData.some((row) => row.isInterim),
     latestInterimPeriod: revenueData.findLast((row) => row.isInterim)?.period || null,
     revenueHistory,
-    revenueData
+    revenueData,
+    revenueProductSegments: fmpRevenueProductSegments,
+    revenueGeographicSegments: fmpRevenueGeographicSegments
   }), previousData);
   const fmpMetricCards = await resolveWithin(fetchFmpMetricCards(ticker), STOCK_PROVIDER_TIMEOUT_MS, {});
   data = applyFmpMetricCards(data, fmpMetricCards);

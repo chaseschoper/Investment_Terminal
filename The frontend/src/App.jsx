@@ -1970,6 +1970,9 @@ const formatIndexPrice = (value) =>
 const formatSignedPercent = (value) =>
   isNumber(value) ? `${value > 0 ? "+" : ""}${value.toFixed(2)}%` : "--";
 
+const formatSignedPriceChange = (value) =>
+  isNumber(value) ? `${value >= 0 ? "+" : "-"}$${Math.abs(value).toFixed(2)}` : "";
+
 const chunkSymbols = (symbols, size = 10) => {
   const chunks = [];
   for (let index = 0; index < symbols.length; index += size) {
@@ -6619,7 +6622,7 @@ const loadUserData = async () => {
     const symbol = String(event?.symbol || "").trim().toUpperCase();
     if (!symbol) return;
     setSelectedCalendarEvent(event);
-    if (calendarEarningsReports[symbol]?.rows) return;
+    if (calendarEarningsReports[symbol]?.rows?.length) return;
     try {
       setLoadingCalendarReportSymbol(symbol);
       const response = await axios.get(
@@ -8363,6 +8366,51 @@ const pauseComputerRead = () => {
 const marketSignal = getMarketSignal(marketIndices);
 const marketClock = getMarketClock(marketClockNow);
 const displayedStockPrice = stockChartMeta?.price ?? stockData?.price;
+const afterHoursTrade = stockData?.afterHoursTrade;
+const hasAfterHoursTrade = isNumber(afterHoursTrade?.price);
+const afterHoursPercentChange = isNumber(afterHoursTrade?.percentChange)
+  ? afterHoursTrade.percentChange
+  : isNumber(afterHoursTrade?.price) && isNumber(stockData?.previousClose) && stockData.previousClose !== 0
+    ? ((afterHoursTrade.price - stockData.previousClose) / Math.abs(stockData.previousClose)) * 100
+    : null;
+const afterHoursChange = isNumber(afterHoursTrade?.change)
+  ? afterHoursTrade.change
+  : isNumber(afterHoursTrade?.price) && isNumber(stockData?.previousClose)
+    ? afterHoursTrade.price - stockData.previousClose
+    : null;
+const formatAfterHoursTimestamp = (value) => {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) return "";
+  return parsed.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+};
+const normalizeRevenueSegmentPanel = (source, fallbackTitle) => {
+  const rows = Array.isArray(source?.segments) ? source.segments : [];
+  const total = rows.reduce((sum, item) => sum + (isNumber(item.value) ? item.value : 0), 0);
+  if (!rows.length || total <= 0) return null;
+  const topRows = rows.slice(0, 7);
+  const otherValue = rows.slice(7).reduce((sum, item) => sum + (isNumber(item.value) ? item.value : 0), 0);
+  const segments = otherValue > 0
+    ? [...topRows, { label: "Other", value: otherValue }]
+    : topRows;
+  return {
+    title: fallbackTitle,
+    fiscalYear: source.fiscalYear,
+    date: source.date,
+    currency: source.currency,
+    total,
+    segments
+  };
+};
+const revenueSegmentPanels = [
+  normalizeRevenueSegmentPanel(stockData?.revenueProductSegments, "Product Revenue Mix"),
+  normalizeRevenueSegmentPanel(stockData?.revenueGeographicSegments, "Geographic Revenue Mix")
+].filter(Boolean);
 const displayedMarketIndices = MARKET_INDEX_ORDER.map((item) => ({
   ...item,
   ...(marketIndices.find((index) => index.key === item.key) || {})
@@ -11422,6 +11470,20 @@ return (
                 : "--"}
             </div>
 
+            {hasAfterHoursTrade ? (
+              <div className="extended-hours-quote after-hours-trade-quote">
+                <span>After Hours</span>
+                <strong>{formatPrice(afterHoursTrade.price)}</strong>
+                <em className={isNumber(afterHoursPercentChange) && afterHoursPercentChange >= 0 ? "positive-text" : "negative-text"}>
+                  {isNumber(afterHoursChange) ? formatSignedPriceChange(afterHoursChange) : ""}
+                  {isNumber(afterHoursPercentChange) ? ` ${afterHoursPercentChange >= 0 ? "+" : ""}${afterHoursPercentChange.toFixed(2)}%` : ""}
+                </em>
+                {afterHoursTrade.timestamp ? (
+                  <small>{formatAfterHoursTimestamp(afterHoursTrade.timestamp)}</small>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="stock-change">
               {stockData.symbol}
             </div>
@@ -11783,7 +11845,7 @@ return (
           <option value="">Loading calls...</option>
         ) : transcriptPeriodOptions.length ? transcriptPeriodOptions.map((period) => (
           <option key={period.value} value={period.value}>
-            {period.label}{period.provider ? ` · ${period.provider}` : ""}
+            {period.label}
           </option>
         )) : (
           <option value="">No calls found</option>
@@ -11806,16 +11868,13 @@ return (
                 .join(" • ")}
             </div>
           </div>
-          <div className="earnings-call-provider">
-            {earningsCall.provider}
-          </div>
         </div>
 
         {earningsCall.audioUrl ? (
           <div className="earnings-call-audio">
             <div>
               <span>Earnings Call Audio</span>
-              <small>{earningsCall.provider ? `${earningsCall.provider} audio` : "Audio replay"}</small>
+              <small>Conference call replay</small>
             </div>
             <audio controls preload="none" src={earningsCall.audioUrl}>
               Your browser does not support earnings call audio.
@@ -12949,6 +13008,83 @@ return (
       ]}
     />
   </div>
+
+  {revenueSegmentPanels.length ? (
+    <div className="revenue-segments-section section-anchor" id="revenue-segments">
+      <div className="revenue-segments-header">
+        <div>
+          <span className="similar-companies-kicker">Revenue Segments</span>
+          <h2 className="section-title">Revenue Mix</h2>
+        </div>
+        <span className="revenue-segments-context">Latest annual segment data</span>
+      </div>
+
+      <div className="revenue-segments-grid">
+        {revenueSegmentPanels.map((panel) => (
+          <article className="revenue-segment-card" key={panel.title}>
+            <div className="revenue-segment-card-heading">
+              <div>
+                <h3>{panel.title}</h3>
+                <span>
+                  {[
+                    panel.fiscalYear ? `FY ${panel.fiscalYear}` : null,
+                    panel.currency || null
+                  ].filter(Boolean).join(" • ") || "Latest annual"}
+                </span>
+              </div>
+              <strong>{formatLargeDollars(panel.total)}</strong>
+            </div>
+
+            <div className="revenue-segment-body">
+              <div className="revenue-segment-chart" aria-label={`${panel.title} chart`}>
+                <ResponsiveContainer width="100%" height={250}>
+                  <PieChart>
+                    <Pie
+                      data={panel.segments}
+                      dataKey="value"
+                      nameKey="label"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={58}
+                      outerRadius={92}
+                      paddingAngle={2}
+                      stroke="none"
+                      isAnimationActive
+                      animationDuration={350}
+                    >
+                      {panel.segments.map((segment, index) => (
+                        <Cell
+                          key={`${panel.title}-${segment.label}`}
+                          fill={PORTFOLIO_COLORS[index % PORTFOLIO_COLORS.length]}
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      formatter={(value, name) => [formatLargeDollars(Number(value)), name]}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="revenue-segment-legend">
+                {panel.segments.map((segment, index) => (
+                  <div className="revenue-segment-row" key={`${panel.title}-${segment.label}`}>
+                    <span
+                      className="allocation-swatch"
+                      style={{ background: PORTFOLIO_COLORS[index % PORTFOLIO_COLORS.length] }}
+                    />
+                    <strong>{segment.label}</strong>
+                    <span>{`${((segment.value / panel.total) * 100).toFixed(1)}%`}</span>
+                    <em>{formatLargeDollars(segment.value)}</em>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  ) : null}
 
 </section>
 
