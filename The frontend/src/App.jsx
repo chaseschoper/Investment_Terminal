@@ -3071,6 +3071,19 @@ const chooseRicherEpsBeatMissRows = (previousRows, incomingRows) => {
     : previousRows;
 };
 
+const segmentScore = (segmentData) =>
+  Array.isArray(segmentData?.segments)
+    ? segmentData.segments.filter((segment) => isNumber(segment?.value)).length
+    : 0;
+
+const chooseRicherSegmentData = (previousSegments, incomingSegments) => {
+  if (!segmentScore(previousSegments)) return incomingSegments;
+  if (!segmentScore(incomingSegments)) return previousSegments;
+  return segmentScore(incomingSegments) >= segmentScore(previousSegments)
+    ? incomingSegments
+    : previousSegments;
+};
+
 const historicalFieldCount = (rows = [], field) =>
   (Array.isArray(rows) ? rows : [])
     .filter((row) => !row?.isCurrent && isNumber(row?.[field]))
@@ -3144,6 +3157,20 @@ const stabilizeRefreshingStockData = (previous, incoming) => {
     incoming.analystEstimates
   );
   stable.epsBeatMiss = chooseRicherEpsBeatMissRows(previous.epsBeatMiss, incoming.epsBeatMiss);
+  stable.revenueProductSegments = chooseRicherSegmentData(
+    previous.revenueProductSegments,
+    incoming.revenueProductSegments
+  );
+  stable.revenueGeographicSegments = chooseRicherSegmentData(
+    previous.revenueGeographicSegments,
+    incoming.revenueGeographicSegments
+  );
+  if (
+    previous.afterHoursTrade &&
+    (!incoming.afterHoursTrade || !isNumber(incoming.afterHoursTrade?.price))
+  ) {
+    stable.afterHoursTrade = previous.afterHoursTrade;
+  }
   ["analystUpdates", "institutionalHolders", "insiderTransactions"].forEach((field) => {
     const previousRows = field === "institutionalHolders"
       ? getCurrentInstitutionalHolderRows(previous[field])

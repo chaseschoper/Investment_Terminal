@@ -8408,6 +8408,7 @@ async function ensureCompleteNextQuarterEstimateForResponse(ticker, data = {}) {
 async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {}) {
   let responseData = prepareCachedStockResponseData(ticker, data);
   const backgroundPatches = [];
+  const overviewExtrasPromise = buildStockOverviewExtras(ticker, responseData);
   const futurePromise =
     !hasFutureAnnualEstimateSnapshot(responseData)
       ? fetchFmpFutureAnnualEstimateBlocks(ticker)
@@ -8460,7 +8461,7 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {
     }
   }
   if (futurePromise) {
-    const futureYears = await resolveWithin(futurePromise, 900, null);
+    const futureYears = await resolveWithin(futurePromise, 2200, null);
     if (Array.isArray(futureYears) && futureYears.length) {
       const analystEstimates = {
         ...(responseData.analystEstimates || {}),
@@ -8588,6 +8589,13 @@ async function prepareCachedStockResponseDataFast(ticker, data = {}, options = {
   }
   if (backgroundPatches.length) {
     Promise.allSettled(backgroundPatches).catch(() => {});
+  }
+  const overviewExtras = await resolveWithin(overviewExtrasPromise, 1400, null);
+  if (overviewExtras && typeof overviewExtras === "object") {
+    responseData = {
+      ...responseData,
+      ...overviewExtras
+    };
   }
   responseData = {
     ...responseData,
@@ -9056,6 +9064,7 @@ async function fetchFmpQuarterlyFinancialHistory(ticker) {
       ])
     ]);
     const incomeRows = (Array.isArray(incomeData) ? incomeData : incomeData ? [incomeData] : [])
+      .filter(Boolean)
       .map((row) => ({
         ...row,
         fiscalYear: Number(row.calendarYear || row.fiscalYear || String(row.date || "").slice(0, 4)),
@@ -9071,6 +9080,7 @@ async function fetchFmpQuarterlyFinancialHistory(ticker) {
 
     const cashByYearQuarter = new Map(
       (Array.isArray(cashFlowData) ? cashFlowData : cashFlowData ? [cashFlowData] : [])
+        .filter(Boolean)
         .map((row) => {
           const fiscalYear = Number(row.calendarYear || row.fiscalYear || String(row.date || "").slice(0, 4));
           const fiscalQuarter = fmpQuarterNumber(row);
