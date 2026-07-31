@@ -2210,6 +2210,16 @@ const chunkSymbols = (symbols, size = 10) => {
 
 const STOCK_CHART_RANGES = ["1D", "1W", "1M", "1Y", "YTD", "5Y", "10Y", "MAX"];
 const ETF_CHART_RANGES = STOCK_CHART_RANGES;
+const STOCK_QUICK_PICKS = [
+  { symbol: "NVDA", label: "NVIDIA" },
+  { symbol: "AAPL", label: "Apple" },
+  { symbol: "MSFT", label: "Microsoft" },
+  { symbol: "AMD", label: "AMD" },
+  { symbol: "CRM", label: "Salesforce" },
+  { symbol: "NKE", label: "Nike" },
+  { symbol: "TSM", label: "Taiwan Semi" },
+  { symbol: "CAKE", label: "Cheesecake" }
+];
 const CRYPTO_QUICK_PICKS = [
   { symbol: "BTCUSD", label: "Bitcoin" },
   { symbol: "ETHUSD", label: "Ethereum" },
@@ -2229,6 +2239,11 @@ const FOREX_QUICK_PICKS = [
   { symbol: "USDCAD", label: "Dollar / Loonie" },
   { symbol: "NZDUSD", label: "Kiwi / Dollar" },
   { symbol: "EURGBP", label: "Euro / Pound" }
+];
+const GUEST_MARKET_TAPE_ITEMS = [
+  ...STOCK_QUICK_PICKS.map((item) => ({ ...item, type: "stock" })),
+  ...CRYPTO_QUICK_PICKS.slice(0, 6).map((item) => ({ ...item, type: "crypto" })),
+  ...FOREX_QUICK_PICKS.slice(0, 6).map((item) => ({ ...item, type: "forex" }))
 ];
 const FOREX_CURRENCY_CODES = new Set([
   "USD", "EUR", "JPY", "GBP", "AUD", "CAD", "CHF", "CNY", "HKD", "NZD",
@@ -9520,6 +9535,48 @@ const selectStockSearchSuggestion = (item, destinationPage = "overview") => {
   loadStock(symbol, 0, requestId);
 };
 
+const openStockOverviewSymbol = (symbol) => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  if (!cleanSymbol) return;
+  if (warnStockOnlySymbol(cleanSymbol)) return;
+
+  setSearchInput(cleanSymbol);
+  setStockSearchSuggestions([]);
+  setShowStockSearchSuggestions(false);
+  setActivePage("overview");
+
+  if (cleanSymbol !== ticker) {
+    setTicker(cleanSymbol);
+    return;
+  }
+
+  if (stockRetryTimerRef.current) {
+    window.clearTimeout(stockRetryTimerRef.current);
+    stockRetryTimerRef.current = null;
+  }
+  const requestId = ++latestStockRequest.current;
+  const cachedStock = stockMemoryCacheRef.current.get(cleanSymbol) || null;
+  setStockData(cachedStock);
+  setIsStockLoading(!cachedStock);
+  loadStock(cleanSymbol, 0, requestId);
+};
+
+const openGuestMarketTapeItem = (item) => {
+  const symbol = String(item?.symbol || "").trim().toUpperCase();
+  if (!symbol) return;
+  if (item.type === "crypto") {
+    activateCryptoSymbol(symbol);
+    setActivePage("crypto");
+    return;
+  }
+  if (item.type === "forex") {
+    activateForexSymbol(symbol);
+    setActivePage("forex");
+    return;
+  }
+  openStockOverviewSymbol(symbol);
+};
+
 const resolveSearchInputToSymbol = async (rawInput) => {
   const value = String(rawInput || "").trim();
   if (!value) return "";
@@ -9973,6 +10030,24 @@ return (
           <img src="/mrktrally-icon.png" alt="" />
           <span>MrktRally</span>
         </button>
+      )}
+
+      {!user && (
+        <div className="guest-market-tape" aria-label="Explore popular markets">
+          <div className="guest-market-tape-track">
+            {[...GUEST_MARKET_TAPE_ITEMS, ...GUEST_MARKET_TAPE_ITEMS].map((item, index) => (
+              <button
+                type="button"
+                key={`${item.type}-${item.symbol}-${index}`}
+                onClick={() => openGuestMarketTapeItem(item)}
+              >
+                <span>{item.symbol}</span>
+                <em>{item.label}</em>
+                <strong>{item.type}</strong>
+              </button>
+            ))}
+          </div>
+        </div>
       )}
 
       {user && (
@@ -11877,113 +11952,105 @@ return (
     <>
 {renderOverviewSectionGuide()}
 
-<div className="financial-statement-hero stock-overview-page-hero">
-  <div>
-    <span className="home-feature-label">Company Research</span>
-    <h2 id="stock-overview-title">Stock Overview</h2>
-    <p>
-      Search a company and review live pricing, financial charts, metrics, estimates, peer comps,
-      AI analysis, transcripts, filings, and news in one focused research view.
-    </p>
-  </div>
-  <span className="market-overview-updated">Full company page</span>
-</div>
-
-<form
-  className="topbar"
-  id="overview"
-  onSubmit={handleStockSearchSubmit}
->
-
-<div className="stock-search-field">
-  <input
-    className="search"
-    value={searchInput}
-    onChange={(e) => {
-      setSearchInput(e.target.value);
-      setShowStockSearchSuggestions(true);
-    }}
-    onFocus={() => {
-      if (stockSearchBlurTimerRef.current) {
-        window.clearTimeout(stockSearchBlurTimerRef.current);
-        stockSearchBlurTimerRef.current = null;
-      }
-      setShowStockSearchSuggestions(true);
-    }}
-    onBlur={() => {
-      stockSearchBlurTimerRef.current = window.setTimeout(() => {
-        setShowStockSearchSuggestions(false);
-      }, 140);
-    }}
-    placeholder="Search ticker or company..."
-    autoComplete="off"
-  />
-  {renderStockSearchSuggestions("overview")}
-</div>
-
-  <button className="stock-search-button" type="submit">
-    Search
-  </button>
-
-  {isStockLoading && (
-    <span
-      style={{
-        color: "#9ca3af",
-        fontSize: "14px",
-      }}
+<section className="etf-page stock-overview-page-shell" id="overview" aria-labelledby="stock-overview-title">
+  <div className="etf-heading-row">
+    <div>
+      <span className="home-feature-label">Company Research</span>
+      <h2 id="stock-overview-title">Stock Overview</h2>
+      <p>
+        Search a company and review pricing, financial charts, metrics, estimates, peer comps,
+        AI analysis, transcripts, filings, and news in one focused research view.
+      </p>
+    </div>
+    <form
+      className="etf-search stock-overview-search"
+      onSubmit={handleStockSearchSubmit}
     >
-      Loading...
-    </span>
-  )}
+      <div className="stock-search-field alternative-search-field">
+        <input
+          value={searchInput}
+          onChange={(e) => {
+            setSearchInput(e.target.value);
+            setShowStockSearchSuggestions(true);
+          }}
+          onFocus={() => {
+            if (stockSearchBlurTimerRef.current) {
+              window.clearTimeout(stockSearchBlurTimerRef.current);
+              stockSearchBlurTimerRef.current = null;
+            }
+            setShowStockSearchSuggestions(true);
+          }}
+          onBlur={() => {
+            stockSearchBlurTimerRef.current = window.setTimeout(() => {
+              setShowStockSearchSuggestions(false);
+            }, 140);
+          }}
+          placeholder="Search ticker or company..."
+          autoComplete="off"
+        />
+        {renderStockSearchSuggestions("overview")}
+      </div>
 
-</form>
-        {/* HEADER */}
+      <button type="submit">
+        {isStockLoading ? "Loading..." : "Search Stock"}
+      </button>
+    </form>
+  </div>
 
-        <div className="stock-header">
+  <div className="market-quick-picks stock-quick-picks" aria-label="Popular stocks">
+    {STOCK_QUICK_PICKS.map((item) => (
+      <button
+        key={item.symbol}
+        type="button"
+        className={String(ticker || stockData.symbol || "").toUpperCase() === item.symbol ? "active" : ""}
+        onClick={() => openStockOverviewSymbol(item.symbol)}
+      >
+        <span>{item.symbol}</span>
+        <small>{item.label}</small>
+      </button>
+    ))}
+  </div>
 
-          {(ticker || stockData.symbol) && (
-            <img
-              key={ticker}
-              className="stock-company-logo"
-              src={getDefaultCompanyLogoUrl(stockData.symbol || ticker) || stockData.logo || savedSymbolDetails[ticker]?.logo}
-              alt={`${stockData.name} logo`}
-              loading="eager"
-              decoding="async"
-              onError={(event) => handleCompanyLogoError(event, ticker)}
-            />
-          )}
-
-          <div className="stock-header-copy">
-            <div className="stock-name">
-              {stockData.name}
-            </div>
-
-            <div className="stock-price">
-              {isNumber(displayedStockPrice)
-                ? `$${displayedStockPrice.toFixed(2)}`
-                : "--"}
-            </div>
-
-            {hasAfterHoursTrade ? (
-              <div className="extended-hours-quote after-hours-trade-quote">
-                <span>After Hours</span>
-                <strong>{formatPrice(afterHoursTrade.price)}</strong>
-                <em className={isNumber(afterHoursPercentChange) && afterHoursPercentChange >= 0 ? "positive-text" : "negative-text"}>
-                  {isNumber(afterHoursChange) ? formatSignedPriceChange(afterHoursChange) : ""}
-                  {isNumber(afterHoursPercentChange) ? ` ${afterHoursPercentChange >= 0 ? "+" : ""}${afterHoursPercentChange.toFixed(2)}%` : ""}
-                </em>
-                {afterHoursTrade.timestamp ? (
-                  <small>{formatAfterHoursTimestamp(afterHoursTrade.timestamp)}</small>
-                ) : null}
-              </div>
-            ) : null}
-
-            <div className="stock-change">
-              {stockData.symbol}
-            </div>
-          </div>
-
-        </div>
+  <div className="etf-hero-panel stock-overview-hero-panel">
+    <div className="etf-hero-main">
+      {(ticker || stockData.symbol) && (
+        <span className="etf-hero-logo-shell stock-hero-logo-shell" aria-hidden="true">
+          <span className="watch-logo-fallback">{String(stockData.symbol || ticker || "?").slice(0, 1)}</span>
+          <img
+            key={ticker}
+            src={getDefaultCompanyLogoUrl(stockData.symbol || ticker) || stockData.logo || savedSymbolDetails[ticker]?.logo}
+            alt=""
+            loading="eager"
+            decoding="async"
+            onError={(event) => handleCompanyLogoError(event, ticker)}
+          />
+        </span>
+      )}
+      <span className="etf-symbol">{stockData.symbol || ticker}</span>
+      <h3>{stockData.name || savedSymbolDetails[ticker]?.name || ticker}</h3>
+      <strong className="etf-type-badge">Public company</strong>
+      <p>
+        Track the latest quote, chart history, financials, valuation, estimates, filings,
+        transcripts, market news, and company-specific research in one page.
+      </p>
+    </div>
+    <div className="etf-price-card stock-overview-price-card">
+      <span>Price</span>
+      <strong>{formatPrice(displayedStockPrice)}</strong>
+      {isNumber(stockChartMeta?.percentChange) && (
+        <em className={stockChartMeta.percentChange >= 0 ? "positive-text" : "negative-text"}>
+          {formatSignedPercent(stockChartMeta.percentChange)}
+        </em>
+      )}
+      {hasAfterHoursTrade ? (
+        <small className="stock-hero-after-hours">
+          After Hours {formatPrice(afterHoursTrade.price)}
+          {isNumber(afterHoursPercentChange) ? ` ${formatSignedPercent(afterHoursPercentChange)}` : ""}
+        </small>
+      ) : null}
+    </div>
+  </div>
+</section>
         {/* LIVE STOCK CHART */}
 
 <div className="chart-section native-stock-chart-section" id="price-chart">

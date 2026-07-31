@@ -5747,6 +5747,93 @@ body {
   justify-content: space-between;
 }
 
+.guest-market-tape {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 7%, #000 93%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 7%, #000 93%, transparent 100%);
+}
+
+.guest-market-tape-track {
+  width: max-content;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: guestMarketTapeScroll 46s linear infinite;
+}
+
+.guest-market-tape:hover .guest-market-tape-track {
+  animation-play-state: paused;
+}
+
+.guest-market-tape button {
+  min-width: 154px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 10px;
+  row-gap: 2px;
+  align-items: center;
+  padding: 9px 12px;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(20, 184, 166, 0.16), transparent 45%),
+    rgba(8, 15, 28, 0.86);
+  color: #e5edf8;
+  cursor: pointer;
+  text-align: left;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.guest-market-tape button:hover,
+.guest-market-tape button:focus-visible {
+  border-color: rgba(94, 234, 212, 0.58);
+  background:
+    radial-gradient(circle at 12% 0%, rgba(20, 184, 166, 0.24), transparent 45%),
+    rgba(13, 27, 44, 0.96);
+}
+
+.guest-market-tape span {
+  color: #67e8f9;
+  font-size: 13px;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+}
+
+.guest-market-tape em {
+  min-width: 0;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.guest-market-tape strong {
+  grid-column: 1 / -1;
+  width: fit-content;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.14);
+  color: #93c5fd;
+  font-size: 9px;
+  font-weight: 950;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+@keyframes guestMarketTapeScroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
 .top-watchlist-brand {
   display: inline-flex;
   align-items: center;
@@ -5784,6 +5871,58 @@ body {
   outline: 2px solid rgba(56, 189, 248, 0.72);
   outline-offset: 6px;
   border-radius: 10px;
+}
+
+.stock-overview-page-shell {
+  padding-top: 34px;
+  margin: 0 0 22px;
+}
+
+.stock-overview-search {
+  align-items: stretch;
+}
+
+.stock-overview-hero-panel {
+  min-height: 280px;
+}
+
+.stock-overview-price-card {
+  min-width: 230px;
+  align-items: center;
+  text-align: center;
+}
+
+.stock-overview-price-card strong {
+  font-size: clamp(34px, 4vw, 50px);
+}
+
+.stock-hero-logo-shell {
+  position: relative;
+}
+
+.stock-hero-logo-shell .watch-logo-fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #67e8f9;
+  font-size: 24px;
+  font-weight: 950;
+  z-index: 0;
+}
+
+.stock-hero-logo-shell img {
+  position: relative;
+  z-index: 1;
+  background: rgba(2, 6, 12, 0.78);
+}
+
+.stock-hero-after-hours {
+  max-width: 100%;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.35;
 }
 
 .watchlist-label {
@@ -6921,6 +7060,19 @@ body {
 
   .top-watchlist-brand span {
     font-size: 22px;
+  }
+
+  .guest-market-tape {
+    max-width: 52vw;
+  }
+
+  .guest-market-tape button {
+    min-width: 132px;
+    padding: 8px 10px;
+  }
+
+  .guest-market-tape em {
+    font-size: 11px;
   }
 
   .named-watchlists-heading {
