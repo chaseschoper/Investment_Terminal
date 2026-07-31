@@ -5898,6 +5898,7 @@ body {
   height: 100%;
   padding: 5px;
   object-fit: contain;
+  background: #ffffff;
 }
 
 .guest-market-tape-logo span {
@@ -5924,17 +5925,48 @@ body {
   background:
     radial-gradient(circle at 34% 24%, rgba(255, 255, 255, 0.22), transparent 26%),
     linear-gradient(145deg, rgba(251, 191, 36, 0.95), rgba(249, 115, 22, 0.82));
-  color: #0b1220;
+  color: #ffffff;
+  text-shadow: 0 1px 6px rgba(15, 23, 42, 0.55);
   box-shadow: 0 0 16px rgba(251, 191, 36, 0.22);
 }
 
 .market-logo-mark-forex {
   background:
-    radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.2), transparent 28%),
-    linear-gradient(145deg, rgba(96, 165, 250, 0.95), rgba(20, 184, 166, 0.82));
-  color: #06111f;
-  font-size: 8px;
+    radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.13), transparent 32%),
+    rgba(2, 6, 12, 0.96);
+  color: #f8fafc;
+  font-size: 15px;
   box-shadow: 0 0 16px rgba(56, 189, 248, 0.2);
+}
+
+.market-logo-forex-flags {
+  position: relative;
+  width: 24px;
+  height: 18px;
+  display: block;
+}
+
+.market-logo-forex-flags span {
+  position: absolute;
+  top: 1px;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  font-size: 14px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 5px rgba(2, 6, 12, 0.5));
+}
+
+.market-logo-forex-flags span:first-child {
+  left: 0;
+  z-index: 1;
+}
+
+.market-logo-forex-flags span:last-child {
+  right: 0;
+  z-index: 2;
 }
 
 .market-logo-mark-stock {
@@ -6093,6 +6125,7 @@ body {
   flex: 1 1 auto;
   overflow-x: auto;
   scrollbar-width: none;
+  min-width: 0;
 }
 
 .watchlist-scroll-motion-window {
@@ -6283,6 +6316,8 @@ body {
 
 .watchlist-add-input {
   flex: 0 0 132px;
+  position: relative;
+  z-index: 3;
   background: #111827;
   border: 1px solid #1f2937;
   color: white;

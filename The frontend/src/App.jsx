@@ -3706,24 +3706,31 @@ const BALANCE_SHEET_METRICS_VERSION = 14;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const MIN_DISPLAY_INTERIM_HISTORY_ROWS = 4;
 
-const getDefaultCompanyLogoUrl = (symbol) => {
-  const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
-  return safeSymbol
-    ? `https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/${safeSymbol}.png`
-    : null;
+const getCompanyLogoCandidates = (symbol, providerLogo = "") => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  if (!cleanSymbol) return [];
+  const symbolVariants = [...new Set([
+    cleanSymbol,
+    cleanSymbol.replace(/\./g, "-"),
+    cleanSymbol.replace(/-/g, ".")
+  ])];
+  const encodedVariants = symbolVariants.map((variant) => encodeURIComponent(variant));
+  return [
+    ...encodedVariants.map((variant) => `https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/${variant}.png`),
+    providerLogo,
+    ...encodedVariants.map((variant) => `https://financialmodelingprep.com/image-stock/${variant}.png`),
+    ...encodedVariants.map((variant) => `https://images.financialmodelingprep.com/symbol/${variant}.png`),
+    ...encodedVariants.map((variant) => `https://storage.googleapis.com/iex/api/logos/${variant}.png`),
+    ...encodedVariants.map((variant) => `https://eodhd.com/img/logos/US/${variant}.png`),
+    ...encodedVariants.map((variant) => `https://assets.parqet.com/logos/symbol/${variant}?format=png`)
+  ].filter((url, index, list) => url && list.indexOf(url) === index);
 };
+
+const getDefaultCompanyLogoUrl = (symbol) => getCompanyLogoCandidates(symbol)[0] || null;
 
 const handleCompanyLogoError = (event, symbol) => {
   const image = event.currentTarget;
-  const safeSymbol = encodeURIComponent(String(symbol || "").trim().toUpperCase());
-  const fallbackUrls = [
-    getDefaultCompanyLogoUrl(symbol),
-    `https://images.financialmodelingprep.com/symbol/${safeSymbol}.png`,
-    `https://financialmodelingprep.com/image-stock/${safeSymbol}.png`,
-    `https://storage.googleapis.com/iex/api/logos/${safeSymbol}.png`,
-    `https://eodhd.com/img/logos/US/${safeSymbol}.png`,
-    `https://assets.parqet.com/logos/symbol/${safeSymbol}?format=png`
-  ].filter(Boolean);
+  const fallbackUrls = getCompanyLogoCandidates(symbol, image.dataset.providerLogo || "");
   const stage = Number(image.dataset.logoFallbackStage || 0);
 
   for (let index = stage; index < fallbackUrls.length; index += 1) {
@@ -9644,20 +9651,38 @@ const getAlternativeMarketIcon = (symbol, marketType) => {
   return cleanSymbol.slice(0, 1);
 };
 
+const getForexCurrencyFlag = (currencyCode) => {
+  const flags = {
+    USD: "🇺🇸",
+    EUR: "🇪🇺",
+    GBP: "🇬🇧",
+    JPY: "🇯🇵",
+    CHF: "🇨🇭",
+    AUD: "🇦🇺",
+    CAD: "🇨🇦",
+    NZD: "🇳🇿"
+  };
+  return flags[String(currencyCode || "").toUpperCase()] || "";
+};
+
 const renderMarketLogoMark = (symbol, marketType) => (
   <span className={`market-logo-mark market-logo-mark-${marketType}`}>
-    {getAlternativeMarketIcon(symbol, marketType)}
+    {marketType === "forex" ? (
+      <span className="market-logo-forex-flags" aria-hidden="true">
+        <span>{getForexCurrencyFlag(String(symbol || "").slice(0, 3)) || String(symbol || "").slice(0, 1)}</span>
+        <span>{getForexCurrencyFlag(String(symbol || "").slice(3, 6)) || String(symbol || "").slice(3, 4)}</span>
+      </span>
+    ) : (
+      getAlternativeMarketIcon(symbol, marketType)
+    )}
   </span>
 );
 
 const getMarketLogoUrl = (symbol, marketType) => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
   if (marketType === "stock") {
-    return savedSymbolDetails[cleanSymbol]?.logo || getDefaultCompanyLogoUrl(cleanSymbol);
+    return getDefaultCompanyLogoUrl(cleanSymbol) || savedSymbolDetails[cleanSymbol]?.logo || "";
   }
-  if (savedSymbolDetails[cleanSymbol]?.logo) return savedSymbolDetails[cleanSymbol].logo;
-  if (marketType === "crypto" && cryptoData?.symbol === cleanSymbol) return cryptoData.logo || "";
-  if (marketType === "forex" && forexData?.symbol === cleanSymbol) return forexData.logo || "";
   return "";
 };
 
@@ -9710,7 +9735,8 @@ const renderStockSearchSuggestions = (destinationPage = "overview") => {
             <span className="stock-search-logo-shell" aria-hidden="true">
               <span>{String(item.symbol || "?").slice(0, 1)}</span>
               <img
-                src={item.logo || getDefaultCompanyLogoUrl(item.symbol)}
+                src={getDefaultCompanyLogoUrl(item.symbol) || item.logo}
+                data-provider-logo={item.logo || ""}
                 alt=""
                 onError={(event) => handleCompanyLogoError(event, item.symbol)}
               />
@@ -9733,7 +9759,7 @@ const openCalendarSearchResult = async (item) => {
   const event = {
     symbol,
     company: item.name || symbol,
-    logo: item.logo || getDefaultCompanyLogoUrl(symbol)
+    logo: getDefaultCompanyLogoUrl(symbol) || item.logo
   };
   setCalendarSearchInput(symbol);
   setCalendarSearchSuggestions([]);
@@ -9790,7 +9816,8 @@ const renderCalendarSearchSuggestions = () => {
             <span className="stock-search-logo-shell" aria-hidden="true">
               <span>{String(item.symbol || "?").slice(0, 1)}</span>
               <img
-                src={item.logo || getDefaultCompanyLogoUrl(item.symbol)}
+                src={getDefaultCompanyLogoUrl(item.symbol) || item.logo}
+                data-provider-logo={item.logo || ""}
                 alt=""
                 onError={(event) => handleCompanyLogoError(event, item.symbol)}
               />
@@ -10130,15 +10157,14 @@ return (
                 onClick={() => openGuestMarketTapeItem(item)}
               >
                 <span className={`guest-market-tape-logo ${item.type}`} aria-hidden="true">
-                  {getMarketLogoUrl(item.symbol, item.type) ? (
+                  {item.type === "stock" && getMarketLogoUrl(item.symbol, item.type) ? (
                     <img
                       src={getMarketLogoUrl(item.symbol, item.type)}
                       alt=""
                       loading="eager"
                       decoding="async"
                       onError={(event) => {
-                        if (item.type === "stock") handleCompanyLogoError(event, item.symbol);
-                        event.currentTarget.style.display = "none";
+                        handleCompanyLogoError(event, item.symbol);
                       }}
                     />
                   ) : renderMarketLogoMark(item.symbol, item.type)}
@@ -10183,7 +10209,10 @@ return (
                       loading="eager"
                       decoding="async"
                       onError={(event) => {
-                        if (marketType === "stock") handleCompanyLogoError(event, item);
+                        if (marketType === "stock") {
+                          handleCompanyLogoError(event, item);
+                          return;
+                        }
                         event.currentTarget.style.display = "none";
                       }}
                     />
@@ -11465,7 +11494,8 @@ return (
                           <span className="stock-search-logo-shell" aria-hidden="true">
                             <span>{String(row.symbol || "?").slice(0, 1)}</span>
                             <img
-                              src={row.logo || getDefaultCompanyLogoUrl(row.symbol)}
+                              src={getDefaultCompanyLogoUrl(row.symbol) || row.logo}
+                              data-provider-logo={row.logo || ""}
                               alt=""
                               onError={(event) => handleCompanyLogoError(event, row.symbol)}
                             />
@@ -12149,6 +12179,7 @@ return (
           <img
             key={ticker}
             src={getDefaultCompanyLogoUrl(stockData.symbol || ticker) || stockData.logo || savedSymbolDetails[ticker]?.logo}
+            data-provider-logo={stockData.logo || savedSymbolDetails[ticker]?.logo || ""}
             alt=""
             loading="eager"
             decoding="async"
@@ -14023,6 +14054,7 @@ return (
       {(stockData.logo || stockData.symbol || ticker) && (
         <img
           src={getDefaultCompanyLogoUrl(stockData.symbol || ticker) || stockData.logo}
+          data-provider-logo={stockData.logo || ""}
           alt={`${stockData.symbol || ticker} logo`}
           onError={(event) => handleCompanyLogoError(event, stockData.symbol || ticker)}
         />
@@ -14508,10 +14540,11 @@ return (
           <span className="portfolio-logo-fallback">
             {position.symbol.slice(0, 1)}
           </span>
-          {savedSymbolDetails[position.symbol]?.logo && (
+          {(position.symbol || savedSymbolDetails[position.symbol]?.logo) && (
             <img
               className="portfolio-logo"
-              src={savedSymbolDetails[position.symbol].logo}
+              src={getDefaultCompanyLogoUrl(position.symbol) || savedSymbolDetails[position.symbol].logo}
+              data-provider-logo={savedSymbolDetails[position.symbol].logo || ""}
               alt=""
               onError={(event) =>
                 handleCompanyLogoError(event, position.symbol)
@@ -14855,7 +14888,10 @@ return (
                             src={logoUrl}
                             alt=""
                             onError={(event) => {
-                              if (marketType === "stock") handleCompanyLogoError(event, symbol);
+                              if (marketType === "stock") {
+                                handleCompanyLogoError(event, symbol);
+                                return;
+                              }
                               event.currentTarget.style.display = "none";
                             }}
                           />
@@ -15138,10 +15174,11 @@ return (
                     <span className="calendar-company-logo-fallback">
                       {event.symbol.slice(0, 1)}
                     </span>
-                    {event.logo && (
+                    {(event.symbol || event.logo) && (
                       <img
                         className="calendar-company-logo"
-                        src={event.logo}
+                        src={getDefaultCompanyLogoUrl(event.symbol) || event.logo}
+                        data-provider-logo={event.logo || ""}
                         alt=""
                         onError={(imageEvent) =>
                           handleCompanyLogoError(imageEvent, event.symbol)
