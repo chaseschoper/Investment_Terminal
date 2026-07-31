@@ -3720,6 +3720,7 @@ const handleCompanyLogoError = (event, symbol) => {
     getDefaultCompanyLogoUrl(symbol),
     `https://images.financialmodelingprep.com/symbol/${safeSymbol}.png`,
     `https://financialmodelingprep.com/image-stock/${safeSymbol}.png`,
+    `https://storage.googleapis.com/iex/api/logos/${safeSymbol}.png`,
     `https://eodhd.com/img/logos/US/${safeSymbol}.png`,
     `https://assets.parqet.com/logos/symbol/${safeSymbol}?format=png`
   ].filter(Boolean);
@@ -9643,6 +9644,12 @@ const getAlternativeMarketIcon = (symbol, marketType) => {
   return cleanSymbol.slice(0, 1);
 };
 
+const renderMarketLogoMark = (symbol, marketType) => (
+  <span className={`market-logo-mark market-logo-mark-${marketType}`}>
+    {getAlternativeMarketIcon(symbol, marketType)}
+  </span>
+);
+
 const getMarketLogoUrl = (symbol, marketType) => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
   if (marketType === "stock") {
@@ -10134,9 +10141,7 @@ return (
                         event.currentTarget.style.display = "none";
                       }}
                     />
-                  ) : (
-                    <span>{getAlternativeMarketIcon(item.symbol, item.type)}</span>
-                  )}
+                  ) : renderMarketLogoMark(item.symbol, item.type)}
                 </span>
                 <span className="guest-market-tape-symbol">{item.symbol}</span>
                 <em>{item.label}</em>
@@ -10168,7 +10173,7 @@ return (
 
                 <span className="watch-logo-shell" aria-hidden="true">
                   <span className={`watch-logo-fallback watch-logo-fallback-${marketType}`}>
-                    {getAlternativeMarketIcon(item, marketType)}
+                    {renderMarketLogoMark(item, marketType)}
                   </span>
                   {logoUrl && (
                     <img
@@ -14842,7 +14847,7 @@ return (
                     <span className="named-watchlist-identity">
                       <span className="named-watchlist-logo-shell" aria-hidden="true">
                         <span className={`named-watchlist-logo-fallback named-watchlist-logo-fallback-${marketType}`}>
-                          {getAlternativeMarketIcon(symbol, marketType)}
+                          {renderMarketLogoMark(symbol, marketType)}
                         </span>
                         {logoUrl && (
                           <img

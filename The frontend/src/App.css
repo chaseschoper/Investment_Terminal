@@ -5907,6 +5907,41 @@ body {
   letter-spacing: 0.02em;
 }
 
+.market-logo-mark {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  border-radius: inherit;
+  color: #67e8f9;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.market-logo-mark-crypto {
+  background:
+    radial-gradient(circle at 34% 24%, rgba(255, 255, 255, 0.22), transparent 26%),
+    linear-gradient(145deg, rgba(251, 191, 36, 0.95), rgba(249, 115, 22, 0.82));
+  color: #0b1220;
+  box-shadow: 0 0 16px rgba(251, 191, 36, 0.22);
+}
+
+.market-logo-mark-forex {
+  background:
+    radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.2), transparent 28%),
+    linear-gradient(145deg, rgba(96, 165, 250, 0.95), rgba(20, 184, 166, 0.82));
+  color: #06111f;
+  font-size: 8px;
+  box-shadow: 0 0 16px rgba(56, 189, 248, 0.2);
+}
+
+.market-logo-mark-stock {
+  background: #243244;
+  color: #dbeafe;
+}
+
 .guest-market-tape-logo.crypto {
   border-color: rgba(52, 211, 153, 0.34);
   background:
@@ -6041,8 +6076,8 @@ body {
   align-items: center;
   flex: 1;
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: thin;
+  overflow: hidden;
+  scrollbar-width: none;
 }
 
 .watchlist-scroll-static-window,
@@ -6055,7 +6090,9 @@ body {
 }
 
 .watchlist-scroll-static-window {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
 .watchlist-scroll-motion-window {
@@ -6168,6 +6205,12 @@ body {
   font-weight: 800;
 }
 
+.watch-logo-fallback .market-logo-mark,
+.named-watchlist-logo-fallback .market-logo-mark {
+  width: 100%;
+  height: 100%;
+}
+
 .watch-logo-fallback-crypto,
 .named-watchlist-logo-fallback-crypto {
   color: #34d399;
@@ -6239,6 +6282,7 @@ body {
 }
 
 .watchlist-add-input {
+  flex: 0 0 132px;
   background: #111827;
   border: 1px solid #1f2937;
   color: white;
