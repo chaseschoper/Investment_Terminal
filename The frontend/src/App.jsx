@@ -2212,13 +2212,13 @@ const STOCK_CHART_RANGES = ["1D", "1W", "1M", "1Y", "YTD", "5Y", "10Y", "MAX"];
 const ETF_CHART_RANGES = STOCK_CHART_RANGES;
 const STOCK_QUICK_PICKS = [
   { symbol: "NVDA", label: "NVIDIA" },
-  { symbol: "AAPL", label: "Apple" },
   { symbol: "MSFT", label: "Microsoft" },
-  { symbol: "AMD", label: "AMD" },
-  { symbol: "CRM", label: "Salesforce" },
-  { symbol: "NKE", label: "Nike" },
-  { symbol: "TSM", label: "Taiwan Semi" },
-  { symbol: "CAKE", label: "Cheesecake" }
+  { symbol: "AAPL", label: "Apple" },
+  { symbol: "AMZN", label: "Amazon" },
+  { symbol: "GOOGL", label: "Alphabet" },
+  { symbol: "META", label: "Meta" },
+  { symbol: "AVGO", label: "Broadcom" },
+  { symbol: "JPM", label: "JPMorgan" }
 ];
 const CRYPTO_QUICK_PICKS = [
   { symbol: "BTCUSD", label: "Bitcoin" },
@@ -10041,7 +10041,20 @@ return (
                 key={`${item.type}-${item.symbol}-${index}`}
                 onClick={() => openGuestMarketTapeItem(item)}
               >
-                <span>{item.symbol}</span>
+                <span className={`guest-market-tape-logo ${item.type}`} aria-hidden="true">
+                  {item.type === "stock" ? (
+                    <img
+                      src={getDefaultCompanyLogoUrl(item.symbol)}
+                      alt=""
+                      loading="eager"
+                      decoding="async"
+                      onError={(event) => handleCompanyLogoError(event, item.symbol)}
+                    />
+                  ) : (
+                    <span>{item.type === "crypto" ? item.symbol.slice(0, 1) : item.symbol.slice(0, 3)}</span>
+                  )}
+                </span>
+                <span className="guest-market-tape-symbol">{item.symbol}</span>
                 <em>{item.label}</em>
                 <strong>{item.type}</strong>
               </button>
@@ -12015,7 +12028,6 @@ return (
     <div className="etf-hero-main">
       {(ticker || stockData.symbol) && (
         <span className="etf-hero-logo-shell stock-hero-logo-shell" aria-hidden="true">
-          <span className="watch-logo-fallback">{String(stockData.symbol || ticker || "?").slice(0, 1)}</span>
           <img
             key={ticker}
             src={getDefaultCompanyLogoUrl(stockData.symbol || ticker) || stockData.logo || savedSymbolDetails[ticker]?.logo}
