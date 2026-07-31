@@ -5915,7 +5915,7 @@ body {
   place-items: center;
   border-radius: inherit;
   color: #67e8f9;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 950;
   letter-spacing: 0;
   line-height: 1;
@@ -5925,9 +5925,30 @@ body {
   background:
     radial-gradient(circle at 34% 24%, rgba(255, 255, 255, 0.22), transparent 26%),
     linear-gradient(145deg, rgba(251, 191, 36, 0.95), rgba(249, 115, 22, 0.82));
-  color: #ffffff;
-  text-shadow: 0 1px 6px rgba(15, 23, 42, 0.55);
+  color: #07111f;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.2);
   box-shadow: 0 0 16px rgba(251, 191, 36, 0.22);
+}
+
+.guest-market-tape-logo.crypto {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+}
+
+.guest-market-tape-logo.crypto .market-logo-mark-crypto {
+  font-size: 22px;
+  font-weight: 1000;
+}
+
+.guest-market-tape-logo.crypto .market-logo-mark-bnbusd,
+.guest-market-tape-logo.crypto .market-logo-mark-avaxusd {
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+.guest-market-tape-logo.crypto .market-logo-mark-adausd {
+  font-size: 21px;
 }
 
 .market-logo-mark-forex {
@@ -5939,23 +5960,33 @@ body {
   box-shadow: 0 0 16px rgba(56, 189, 248, 0.2);
 }
 
+.guest-market-tape-logo.forex {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+}
+
 .market-logo-forex-flags {
   position: relative;
-  width: 24px;
-  height: 18px;
+  width: 32px;
+  height: 23px;
   display: block;
 }
 
+.guest-market-tape-logo .market-logo-forex-flags span,
 .market-logo-forex-flags span {
   position: absolute;
-  top: 1px;
-  width: 16px;
-  height: 16px;
+  top: 0;
+  width: 22px;
+  height: 22px;
   display: grid;
   place-items: center;
+  border: 1px solid rgba(56, 189, 248, 0.34);
   border-radius: 999px;
-  font-size: 14px;
+  background: rgba(15, 23, 42, 0.92);
+  font-size: 15px;
   line-height: 1;
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.16);
   filter: drop-shadow(0 2px 5px rgba(2, 6, 12, 0.5));
 }
 
@@ -5966,6 +5997,7 @@ body {
 
 .market-logo-forex-flags span:last-child {
   right: 0;
+  bottom: 0;
   z-index: 2;
 }
 

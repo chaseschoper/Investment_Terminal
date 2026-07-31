@@ -9665,18 +9665,21 @@ const getForexCurrencyFlag = (currencyCode) => {
   return flags[String(currencyCode || "").toUpperCase()] || "";
 };
 
-const renderMarketLogoMark = (symbol, marketType) => (
-  <span className={`market-logo-mark market-logo-mark-${marketType}`}>
+const renderMarketLogoMark = (symbol, marketType) => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  return (
+  <span className={`market-logo-mark market-logo-mark-${marketType} market-logo-mark-${cleanSymbol.toLowerCase()}`}>
     {marketType === "forex" ? (
       <span className="market-logo-forex-flags" aria-hidden="true">
-        <span>{getForexCurrencyFlag(String(symbol || "").slice(0, 3)) || String(symbol || "").slice(0, 1)}</span>
-        <span>{getForexCurrencyFlag(String(symbol || "").slice(3, 6)) || String(symbol || "").slice(3, 4)}</span>
+        <span>{getForexCurrencyFlag(cleanSymbol.slice(0, 3)) || cleanSymbol.slice(0, 1)}</span>
+        <span>{getForexCurrencyFlag(cleanSymbol.slice(3, 6)) || cleanSymbol.slice(3, 4)}</span>
       </span>
     ) : (
-      getAlternativeMarketIcon(symbol, marketType)
+      getAlternativeMarketIcon(cleanSymbol, marketType)
     )}
   </span>
-);
+  );
+};
 
 const getMarketLogoUrl = (symbol, marketType) => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
