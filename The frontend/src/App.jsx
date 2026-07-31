@@ -10254,7 +10254,7 @@ return (
           <div className="home-rally-brand">
             <div className="home-rally-brand-row">
               <img src="/mrktrally-icon.png" alt="MrktRally logo" />
-              <strong>MrktRally</strong>
+              <strong>MrktRally<span aria-label="trademark">™</span></strong>
             </div>
             <div className="home-rally-badge">Built for focused market research</div>
             <p>Market data by FMP</p>
@@ -10265,6 +10265,7 @@ return (
             >
               Contact us
             </a>
+            <p className="home-rally-copyright">© 2026 MrktRally. All rights reserved.</p>
           </div>
 
           <div className="home-rally-link-grid">

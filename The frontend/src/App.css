@@ -1364,6 +1364,15 @@ body {
   font-weight: 950;
 }
 
+.home-rally-brand-row strong span {
+  display: inline-block;
+  margin-left: 2px;
+  color: #67e8f9;
+  font-size: 0.5em;
+  line-height: 1;
+  vertical-align: super;
+}
+
 .home-rally-badge {
   width: fit-content;
   margin: 0 auto 20px;
@@ -1402,6 +1411,13 @@ body {
   border-color: rgba(94, 234, 212, 0.48);
   color: #f8fafc;
   outline: none;
+}
+
+.home-rally-copyright {
+  margin-top: 14px;
+  color: #7f8da3;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .home-rally-link-grid {
