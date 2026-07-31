@@ -11877,6 +11877,18 @@ return (
     <>
 {renderOverviewSectionGuide()}
 
+<div className="financial-statement-hero stock-overview-page-hero">
+  <div>
+    <span className="home-feature-label">Company Research</span>
+    <h2 id="stock-overview-title">Stock Overview</h2>
+    <p>
+      Search a company and review live pricing, financial charts, metrics, estimates, peer comps,
+      AI analysis, transcripts, filings, and news in one focused research view.
+    </p>
+  </div>
+  <span className="market-overview-updated">Full company page</span>
+</div>
+
 <form
   className="topbar"
   id="overview"
@@ -13758,6 +13770,18 @@ return (
 
 {activePage === "projections" && (
 <>
+<div className="financial-statement-hero projections-page-hero">
+  <div>
+    <span className="home-feature-label">Scenario Model</span>
+    <h2 id="projections-page-title">Projections</h2>
+    <p>
+      Build bear, base, and bull cases with editable growth, margin, valuation, and return
+      assumptions for the company you are researching.
+    </p>
+  </div>
+  <span className="market-overview-updated">Editable cases</span>
+</div>
+
 <form className="topbar page-searchbar" onSubmit={(event) => handleStockSearchSubmit(event, "projections")}>
   <div className="stock-search-field">
   <input

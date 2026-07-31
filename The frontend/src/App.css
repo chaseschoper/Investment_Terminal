@@ -9205,6 +9205,11 @@ body {
   line-height: 1.55;
 }
 
+.stock-overview-page-hero,
+.projections-page-hero {
+  margin: 34px 18px 22px;
+}
+
 .financial-statement-controls {
   display: flex;
   align-items: center;
