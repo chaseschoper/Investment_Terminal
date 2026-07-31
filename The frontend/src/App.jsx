@@ -3728,6 +3728,13 @@ const getCompanyLogoCandidates = (symbol, providerLogo = "") => {
 
 const getDefaultCompanyLogoUrl = (symbol) => getCompanyLogoCandidates(symbol)[0] || null;
 
+const getFmpMarketSymbolLogoUrl = (symbol) => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  return cleanSymbol
+    ? `https://images.financialmodelingprep.com/symbol/${encodeURIComponent(cleanSymbol)}.png`
+    : "";
+};
+
 const handleCompanyLogoError = (event, symbol) => {
   const image = event.currentTarget;
   const fallbackUrls = getCompanyLogoCandidates(symbol, image.dataset.providerLogo || "");
@@ -9686,6 +9693,9 @@ const getMarketLogoUrl = (symbol, marketType) => {
   if (marketType === "stock") {
     return getDefaultCompanyLogoUrl(cleanSymbol) || savedSymbolDetails[cleanSymbol]?.logo || "";
   }
+  if (marketType === "crypto") {
+    return getFmpMarketSymbolLogoUrl(cleanSymbol);
+  }
   return "";
 };
 
@@ -10160,16 +10170,23 @@ return (
                 onClick={() => openGuestMarketTapeItem(item)}
               >
                 <span className={`guest-market-tape-logo ${item.type}`} aria-hidden="true">
-                  {item.type === "stock" && getMarketLogoUrl(item.symbol, item.type) ? (
+                  {item.type !== "forex" && getMarketLogoUrl(item.symbol, item.type) ? (
+                    <>
                     <img
                       src={getMarketLogoUrl(item.symbol, item.type)}
                       alt=""
                       loading="eager"
                       decoding="async"
                       onError={(event) => {
-                        handleCompanyLogoError(event, item.symbol);
+                        if (item.type === "stock") {
+                          handleCompanyLogoError(event, item.symbol);
+                          return;
+                        }
+                        event.currentTarget.style.display = "none";
                       }}
                     />
+                    {item.type === "crypto" ? renderMarketLogoMark(item.symbol, item.type) : null}
+                    </>
                   ) : renderMarketLogoMark(item.symbol, item.type)}
                 </span>
                 <span className="guest-market-tape-symbol">{item.symbol}</span>
