@@ -2335,6 +2335,84 @@ body {
   line-height: 1.55;
 }
 
+.profile-settings-card {
+  min-height: 100%;
+}
+
+.profile-toggle-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid rgba(20, 184, 166, 0.24);
+  border-radius: 10px;
+  background: rgba(8, 15, 28, 0.74);
+  cursor: pointer;
+}
+
+.profile-toggle-row > span:first-child {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.profile-toggle-row strong {
+  color: #f8fafc;
+  font-size: 15px;
+  font-weight: 950;
+}
+
+.profile-toggle-row em {
+  color: #9aa8bc;
+  font-size: 13px;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.profile-toggle-row input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.profile-toggle-switch {
+  position: relative;
+  flex: 0 0 54px;
+  width: 54px;
+  height: 30px;
+  border: 1px solid rgba(96, 165, 250, 0.34);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.95);
+  transition: 0.2s ease;
+}
+
+.profile-toggle-switch::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: #94a3b8;
+  box-shadow: 0 0 18px rgba(148, 163, 184, 0.24);
+  transition: 0.2s ease;
+}
+
+.profile-toggle-row input:checked + .profile-toggle-switch {
+  border-color: rgba(45, 212, 191, 0.74);
+  background: linear-gradient(135deg, rgba(20, 184, 166, 0.65), rgba(37, 99, 235, 0.65));
+}
+
+.profile-toggle-row input:checked + .profile-toggle-switch::after {
+  left: 28px;
+  background: #f8fafc;
+  box-shadow: 0 0 20px rgba(45, 212, 191, 0.52);
+}
+
 .profile-account-list {
   display: grid;
   gap: 12px;
@@ -5967,6 +6045,50 @@ body {
   scrollbar-width: thin;
 }
 
+.watchlist-scroll-static-window,
+.watchlist-scroll-motion-window,
+.watchlist-scroll-track {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.watchlist-scroll-static-window {
+  flex: 0 1 auto;
+}
+
+.watchlist-scroll-motion-window {
+  flex: 1 1 auto;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 92%, transparent 100%);
+  mask-image: linear-gradient(90deg, #000 0%, #000 92%, transparent 100%);
+}
+
+.watchlist-scroll-moving {
+  overflow: hidden;
+}
+
+.watchlist-scroll-moving .watchlist-scroll-track {
+  flex: 0 0 auto;
+  width: max-content;
+  min-width: max-content;
+  animation: signedInWatchlistTapeScroll 82s linear infinite;
+}
+
+.watchlist-scroll-moving:hover .watchlist-scroll-track {
+  animation-play-state: paused;
+}
+
+@keyframes signedInWatchlistTapeScroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
 .auth-top-button {
   min-height: 38px;
   flex: 0 0 auto;
@@ -6044,6 +6166,27 @@ body {
   color: #dbeafe;
   font-size: 11px;
   font-weight: 800;
+}
+
+.watch-logo-fallback-crypto,
+.named-watchlist-logo-fallback-crypto {
+  color: #34d399;
+}
+
+.watch-logo-fallback-forex,
+.named-watchlist-logo-fallback-forex {
+  color: #93c5fd;
+  font-size: 9px;
+}
+
+.watchlist-stock-crypto .watch-logo-shell,
+.named-watchlist-row-crypto .named-watchlist-logo-shell {
+  box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.24);
+}
+
+.watchlist-stock-forex .watch-logo-shell,
+.named-watchlist-row-forex .named-watchlist-logo-shell {
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.24);
 }
 
 .watchlist-stock:hover {

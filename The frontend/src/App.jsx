@@ -2240,6 +2240,26 @@ const FOREX_QUICK_PICKS = [
   { symbol: "NZDUSD", label: "Kiwi / Dollar" },
   { symbol: "EURGBP", label: "Euro / Pound" }
 ];
+const CRYPTO_TAPE_ICONS = {
+  BTCUSD: "₿",
+  ETHUSD: "Ξ",
+  SOLUSD: "◎",
+  XRPUSD: "X",
+  BNBUSD: "BNB",
+  ADAUSD: "₳",
+  DOGEUSD: "Ð",
+  AVAXUSD: "A"
+};
+const FOREX_TAPE_ICONS = {
+  EURUSD: "€/$",
+  GBPUSD: "£/$",
+  USDJPY: "$/¥",
+  USDCHF: "$/₣",
+  AUDUSD: "A$",
+  USDCAD: "C$",
+  NZDUSD: "NZ$",
+  EURGBP: "€/£"
+};
 const GUEST_MARKET_TAPE_ITEMS = [
   ...STOCK_QUICK_PICKS.map((item) => ({ ...item, type: "stock" })),
   ...CRYPTO_QUICK_PICKS.slice(0, 6).map((item) => ({ ...item, type: "crypto" })),
@@ -4660,6 +4680,9 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
    const [watchlist, setWatchlist] =
   useState([]);
 
+  const [watchlistTapeMoves, setWatchlistTapeMoves] =
+  useState(() => localStorage.getItem("mrktrallyWatchlistTapeMoves") === "true");
+
   const [newTicker, setNewTicker] =
   useState("");
 
@@ -5188,6 +5211,14 @@ useEffect(() => {
 
 
   
+
+useEffect(() => {
+  localStorage.setItem(
+    "mrktrallyWatchlistTapeMoves",
+    watchlistTapeMoves ? "true" : "false"
+  );
+}, [watchlistTapeMoves]);
+
 
   /*
     SAVE WATCHLIST
@@ -9577,6 +9608,52 @@ const openGuestMarketTapeItem = (item) => {
   openStockOverviewSymbol(symbol);
 };
 
+const getMarketSymbolType = (symbol) => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  if (isCryptoPairSymbol(cleanSymbol)) return "crypto";
+  if (isForexPairSymbol(cleanSymbol)) return "forex";
+  return "stock";
+};
+
+const openWatchlistSymbol = (symbol) => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  if (!cleanSymbol) return;
+  const marketType = getMarketSymbolType(cleanSymbol);
+  if (marketType === "crypto") {
+    activateCryptoSymbol(cleanSymbol);
+    setActivePage("crypto");
+    return;
+  }
+  if (marketType === "forex") {
+    activateForexSymbol(cleanSymbol);
+    setActivePage("forex");
+    return;
+  }
+  openStockOverviewSymbol(cleanSymbol);
+};
+
+const getAlternativeMarketIcon = (symbol, marketType) => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  if (marketType === "crypto") {
+    return CRYPTO_TAPE_ICONS[cleanSymbol] || cleanSymbol.replace(/(USDT|USDC|USD|EUR|BTC|ETH)$/, "").slice(0, 3);
+  }
+  if (marketType === "forex") {
+    return FOREX_TAPE_ICONS[cleanSymbol] || `${cleanSymbol.slice(0, 3)}/${cleanSymbol.slice(3, 6)}`;
+  }
+  return cleanSymbol.slice(0, 1);
+};
+
+const getMarketLogoUrl = (symbol, marketType) => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  if (marketType === "stock") {
+    return savedSymbolDetails[cleanSymbol]?.logo || getDefaultCompanyLogoUrl(cleanSymbol);
+  }
+  if (savedSymbolDetails[cleanSymbol]?.logo) return savedSymbolDetails[cleanSymbol].logo;
+  if (marketType === "crypto" && cryptoData?.symbol === cleanSymbol) return cryptoData.logo || "";
+  if (marketType === "forex" && forexData?.symbol === cleanSymbol) return forexData.logo || "";
+  return "";
+};
+
 const resolveSearchInputToSymbol = async (rawInput) => {
   const value = String(rawInput || "").trim();
   if (!value) return "";
@@ -9984,6 +10061,10 @@ const openPage = (page) => {
 };
 
 
+const isWatchlistTapeMoving = user && watchlistTapeMoves && watchlist.length > 1;
+const topWatchlistItems = isWatchlistTapeMoving
+  ? [...watchlist, ...watchlist]
+  : watchlist;
  
 
 return (
@@ -10042,16 +10123,19 @@ return (
                 onClick={() => openGuestMarketTapeItem(item)}
               >
                 <span className={`guest-market-tape-logo ${item.type}`} aria-hidden="true">
-                  {item.type === "stock" ? (
+                  {getMarketLogoUrl(item.symbol, item.type) ? (
                     <img
-                      src={getDefaultCompanyLogoUrl(item.symbol)}
+                      src={getMarketLogoUrl(item.symbol, item.type)}
                       alt=""
                       loading="eager"
                       decoding="async"
-                      onError={(event) => handleCompanyLogoError(event, item.symbol)}
+                      onError={(event) => {
+                        if (item.type === "stock") handleCompanyLogoError(event, item.symbol);
+                        event.currentTarget.style.display = "none";
+                      }}
                     />
                   ) : (
-                    <span>{item.type === "crypto" ? item.symbol.slice(0, 1) : item.symbol.slice(0, 3)}</span>
+                    <span>{getAlternativeMarketIcon(item.symbol, item.type)}</span>
                   )}
                 </span>
                 <span className="guest-market-tape-symbol">{item.symbol}</span>
@@ -10067,30 +10151,38 @@ return (
         <>
           <div className="watchlist-label">Watchlist</div>
 
-          <div className="watchlist-scroll">
+          <div className={`watchlist-scroll ${isWatchlistTapeMoving ? "watchlist-scroll-moving" : ""}`}>
 
-            {watchlist.map((item) => (
+            <div className={isWatchlistTapeMoving ? "watchlist-scroll-motion-window" : "watchlist-scroll-static-window"}>
+              <div className="watchlist-scroll-track">
+            {topWatchlistItems.map((item, index) => {
+              const marketType = getMarketSymbolType(item);
+              const logoUrl = getMarketLogoUrl(item, marketType);
+              return (
 
               <div
-                key={item}
-                className="watchlist-stock"
-                onClick={() => {
-                  setSearchInput(item);
-                  setTicker(item);
-                  setActivePage("overview");
-                }}
+                key={`${item}-${index}`}
+                className={`watchlist-stock watchlist-stock-${marketType}`}
+                onClick={() => openWatchlistSymbol(item)}
               >
 
                 <span className="watch-logo-shell" aria-hidden="true">
-                  <span className="watch-logo-fallback">{item.slice(0, 1)}</span>
-                  <img
-                  className="watch-logo"
-                  src={savedSymbolDetails[item]?.logo || getDefaultCompanyLogoUrl(item)}
-                  alt=""
-                  loading="eager"
-                  decoding="async"
-                  onError={(event) => handleCompanyLogoError(event, item)}
-                />
+                  <span className={`watch-logo-fallback watch-logo-fallback-${marketType}`}>
+                    {getAlternativeMarketIcon(item, marketType)}
+                  </span>
+                  {logoUrl && (
+                    <img
+                      className="watch-logo"
+                      src={logoUrl}
+                      alt=""
+                      loading="eager"
+                      decoding="async"
+                      onError={(event) => {
+                        if (marketType === "stock") handleCompanyLogoError(event, item);
+                        event.currentTarget.style.display = "none";
+                      }}
+                    />
+                  )}
                 </span>
 
                 <span className="watch-symbol">
@@ -10133,7 +10225,10 @@ return (
 
               </div>
 
-            ))}
+            );
+            })}
+              </div>
+            </div>
 
             <input
               className="watchlist-add-input"
@@ -10151,9 +10246,9 @@ return (
                   newTicker
                 ) {
                   const symbol = String(newTicker || "").trim().toUpperCase();
-                  if (warnStockOnlySymbol(symbol)) return;
 
                   if (
+                    /^[A-Z0-9.-]{1,12}$/.test(symbol) &&
                     !watchlist.includes(
                       symbol
                     )
@@ -11487,6 +11582,24 @@ return (
             >
               Reset Password
             </button>
+          </article>
+
+          <article className="profile-card profile-settings-card">
+            <div className="home-feature-label">Top bar</div>
+            <h3>Watchlist Tape</h3>
+            <p>Choose whether your saved top watchlist stays still or moves like a market tape.</p>
+            <label className="profile-toggle-row">
+              <span>
+                <strong>Move my watchlist tape</strong>
+                <em>Your saved symbols scroll across the top bar and pause when you hover.</em>
+              </span>
+              <input
+                type="checkbox"
+                checked={watchlistTapeMoves}
+                onChange={(event) => setWatchlistTapeMoves(event.target.checked)}
+              />
+              <span className="profile-toggle-switch" aria-hidden="true" />
+            </label>
           </article>
 
           <article className="profile-card profile-install-card">
@@ -14713,65 +14826,72 @@ return (
           </div>
 
           <div className="named-watchlist-symbols">
-            {(list.symbols || []).map((symbol) => (
-              <div className="named-watchlist-row" key={symbol}>
-                <button
-                  className="named-watchlist-open"
-                  type="button"
-                  onClick={() => {
-                    setSearchInput(symbol);
-                    setTicker(symbol);
-                    setActivePage("overview");
-                    window.scrollTo({ top: 0, behavior: "smooth" });
-                  }}
-                >
-                  <span className="named-watchlist-identity">
-                    <span className="named-watchlist-logo-shell" aria-hidden="true">
-                      <span className="named-watchlist-logo-fallback">
-                        {symbol.slice(0, 1)}
+            {(list.symbols || []).map((symbol) => {
+              const marketType = getMarketSymbolType(symbol);
+              const logoUrl = getMarketLogoUrl(symbol, marketType);
+              return (
+                <div className={`named-watchlist-row named-watchlist-row-${marketType}`} key={symbol}>
+                  <button
+                    className="named-watchlist-open"
+                    type="button"
+                    onClick={() => {
+                      openWatchlistSymbol(symbol);
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                  >
+                    <span className="named-watchlist-identity">
+                      <span className="named-watchlist-logo-shell" aria-hidden="true">
+                        <span className={`named-watchlist-logo-fallback named-watchlist-logo-fallback-${marketType}`}>
+                          {getAlternativeMarketIcon(symbol, marketType)}
+                        </span>
+                        {logoUrl && (
+                          <img
+                            className="named-watchlist-logo"
+                            src={logoUrl}
+                            alt=""
+                            onError={(event) => {
+                              if (marketType === "stock") handleCompanyLogoError(event, symbol);
+                              event.currentTarget.style.display = "none";
+                            }}
+                          />
+                        )}
                       </span>
-                      <img
-                        className="named-watchlist-logo"
-                        src={savedSymbolDetails[symbol]?.logo || getDefaultCompanyLogoUrl(symbol)}
-                        alt=""
-                        onError={(event) => handleCompanyLogoError(event, symbol)}
-                      />
+                      <strong>{symbol}</strong>
                     </span>
-                    <strong>{symbol}</strong>
-                  </span>
-                  <span className="named-watchlist-quote">
-                    <span className="named-watchlist-price">
-                      {formatPrice(portfolioPrices[symbol])}
+                    <span className="named-watchlist-quote">
+                      <span className="named-watchlist-price">
+                        {formatPrice(portfolioPrices[symbol])}
+                      </span>
+                      <span className={`named-watchlist-change ${
+                        savedSymbolDetails[symbol]?.percentChange > 0
+                          ? "watch-positive"
+                          : savedSymbolDetails[symbol]?.percentChange < 0
+                            ? "watch-negative"
+                            : "watch-neutral"
+                      }`}>
+                        {isNumber(savedSymbolDetails[symbol]?.percentChange)
+                          ? `${savedSymbolDetails[symbol].percentChange > 0 ? "+" : ""}${savedSymbolDetails[symbol].percentChange.toFixed(2)}%`
+                          : "--"}
+                      </span>
                     </span>
-                    <span className={`named-watchlist-change ${
-                      savedSymbolDetails[symbol]?.percentChange > 0
-                        ? "watch-positive"
-                        : savedSymbolDetails[symbol]?.percentChange < 0
-                          ? "watch-negative"
-                          : "watch-neutral"
-                    }`}>
-                      {isNumber(savedSymbolDetails[symbol]?.percentChange)
-                        ? `${savedSymbolDetails[symbol].percentChange > 0 ? "+" : ""}${savedSymbolDetails[symbol].percentChange.toFixed(2)}%`
-                        : "--"}
-                    </span>
-                  </span>
-                </button>
-                <button
-                  className="named-watchlist-remove"
-                  type="button"
-                  aria-label={`Remove ${symbol} from ${list.name}`}
-                  title="Remove ticker"
-                  onClick={() => setNamedWatchlists((lists) =>
-                    lists.map((item) => item.id === list.id
-                      ? { ...item, symbols: (item.symbols || []).filter((itemSymbol) => itemSymbol !== symbol) }
-                      : item
-                    )
-                  )}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
+                  </button>
+                  <button
+                    className="named-watchlist-remove"
+                    type="button"
+                    aria-label={`Remove ${symbol} from ${list.name}`}
+                    title="Remove ticker"
+                    onClick={() => setNamedWatchlists((lists) =>
+                      lists.map((item) => item.id === list.id
+                        ? { ...item, symbols: (item.symbols || []).filter((itemSymbol) => itemSymbol !== symbol) }
+                        : item
+                      )
+                    )}
+                  >
+                    ×
+                  </button>
+                </div>
+              );
+            })}
             {!list.symbols?.length && (
               <div className="named-watchlist-empty">No tickers added.</div>
             )}
@@ -14785,8 +14905,7 @@ return (
                 return;
               }
               const symbol = String(namedTickerInputs[list.id] || "").trim().toUpperCase();
-              if (!symbol || !/^[A-Z0-9.-]{1,10}$/.test(symbol)) return;
-              if (warnStockOnlySymbol(symbol)) return;
+              if (!symbol || !/^[A-Z0-9.-]{1,12}$/.test(symbol)) return;
               setNamedWatchlists((lists) => lists.map((item) =>
                 item.id === list.id && !item.symbols.includes(symbol)
                   ? { ...item, symbols: [...item.symbols, symbol] }
@@ -14808,7 +14927,7 @@ return (
                 [list.id]: event.target.value.toUpperCase()
               }))}
               placeholder="Add ticker"
-              maxLength={10}
+              maxLength={12}
             />
             <button type="submit" aria-label={`Add ticker to ${list.name}`} title="Add ticker">+</button>
           </form>

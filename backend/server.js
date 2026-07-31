@@ -14371,7 +14371,7 @@ app.get("/api/prices", async (req, res) => {
   const symbols = [...new Set(String(req.query.symbols || "")
     .split(",")
     .map((symbol) => symbol.trim().toUpperCase())
-    .filter((symbol) => /^[A-Z0-9.-]{1,10}$/.test(symbol) && !isBlockedStockOnlySymbol(symbol)))]
+    .filter((symbol) => /^[A-Z0-9.-]{1,12}$/.test(symbol)))]
     .slice(0, 30);
 
   if (!symbols.length) return res.json({ prices: {}, details: {} });
@@ -14379,12 +14379,39 @@ app.get("/api/prices", async (req, res) => {
   const wantsLiveQuotes = req.query.live === "1" || req.query.live === "true";
   const prices = {};
   const details = {};
-  const savedStocks = await Stock.find({ ticker: { $in: symbols } })
+  const getSavedPriceMarketType = (symbol) => {
+    if (isCryptoPairSymbol(symbol)) return "crypto";
+    if (isForexPairSymbol(symbol)) return "forex";
+    return "stock";
+  };
+  const stockSymbols = symbols.filter((symbol) => getSavedPriceMarketType(symbol) === "stock");
+  const savedStocks = await Stock.find({ ticker: { $in: stockSymbols } })
     .select("ticker data.price data.change data.percentChange data.previousClose data.logo data.name data.sector data.industry data.country data.exchange")
     .lean();
   const savedBySymbol = new Map(savedStocks.map((stock) => [stock.ticker, stock.data || {}]));
 
   const hydrateSavedSymbol = (symbol) => {
+    const marketType = getSavedPriceMarketType(symbol);
+    if (marketType !== "stock") {
+      const cached = livePriceCache.get(symbol);
+      const cachedPrice = toNumberOrNull(cached?.price);
+      const cachedPercentChange = toNumberOrNull(cached?.percentChange);
+      prices[symbol] = cachedPrice !== null && cachedPrice > 0 ? cachedPrice : prices[symbol];
+      details[symbol] = {
+        name: cached?.name || symbol,
+        logo: cached?.logo || null,
+        sector: null,
+        industry: null,
+        country: null,
+        exchange: cached?.exchange || null,
+        change: toNumberOrNull(cached?.change),
+        extendedHours: null,
+        percentChange: cachedPercentChange,
+        marketType,
+        source: cached?.source || null
+      };
+      return;
+    }
     const savedData = savedBySymbol.get(symbol) || {};
     const savedPrice = toNumberOrNull(savedData.price);
     const savedPreviousClose = toNumberOrNull(savedData.previousClose);
@@ -14398,6 +14425,7 @@ app.get("/api/prices", async (req, res) => {
       exchange: savedData.exchange || null,
       change: toNumberOrNull(savedData.change),
       extendedHours: null,
+      marketType,
       percentChange: !wantsLiveQuotes && savedPercentChange !== null
         ? savedPercentChange
         : !wantsLiveQuotes && savedPrice !== null && savedPreviousClose > 0
@@ -14423,6 +14451,7 @@ app.get("/api/prices", async (req, res) => {
   };
 
   const refreshSymbolQuote = async (symbol) => {
+    const marketType = getSavedPriceMarketType(symbol);
     const cached = livePriceCache.get(symbol);
     const cachedHasPercent = toNumberOrNull(cached?.percentChange) !== null;
     const cachedNeedsOfficialClose =
@@ -14433,6 +14462,44 @@ app.get("/api/prices", async (req, res) => {
     if (cached && cachedHasPercent && Date.now() - cached.fetchedAt < 45 * 1000 && !cachedNeedsOfficialClose) return;
 
     try {
+      if (marketType !== "stock") {
+        const data = await resolveWithin(
+          fetchFmpAlternativeMarketQuote(symbol, marketType),
+          wantsLiveQuotes ? 1800 : 2200,
+          null
+        ).catch(() => null);
+        const price = toNumberOrNull(data?.price);
+        if (price !== null && price > 0) {
+          const change = toNumberOrNull(data.change);
+          const percentChange = toNumberOrNull(data.changePercentage);
+          prices[symbol] = price;
+          livePriceCache.set(symbol, {
+            price,
+            name: data.name || symbol,
+            logo: data.logo || null,
+            exchange: data.exchange || null,
+            change,
+            percentChange,
+            previousClose: toNumberOrNull(data.previousClose),
+            extendedHours: null,
+            source: `fmp-${marketType}-quote`,
+            usedOfficialClose: true,
+            fetchedAt: Date.now()
+          });
+          details[symbol] = {
+            ...details[symbol],
+            name: data.name || symbol,
+            logo: data.logo || null,
+            exchange: data.exchange || null,
+            change,
+            extendedHours: null,
+            percentChange,
+            marketType,
+            source: `fmp-${marketType}-quote`
+          };
+        }
+        return;
+      }
       if (wantsLiveQuotes && !isLikelyUsMarketSession()) {
         const dailyRows = await resolveWithin(fetchFmpRecentDailyOhlc(symbol), 2400, []).catch(() => []);
         const latestDaily = dailyRows.at(-1);
