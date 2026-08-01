@@ -1438,14 +1438,15 @@ function buildAfterHoursSessionQuote(afterHoursTrade, closePrice) {
   if (!shouldShowAfterHoursTrade(afterHoursTrade.timestamp)) return null;
   const price = toNumberOrNull(afterHoursTrade.price);
   const close = toNumberOrNull(closePrice);
-  if (price === null || close === null || close <= 0) return null;
-  const change = price - close;
-  const percentChange = (change / close) * 100;
+  if (price === null) return null;
+  const hasClose = close !== null && close > 0;
+  const change = hasClose ? price - close : null;
+  const percentChange = hasClose ? (change / close) * 100 : null;
   return {
     ...afterHoursTrade,
     price,
-    regularClose: close,
-    previousClose: close,
+    regularClose: hasClose ? close : null,
+    previousClose: hasClose ? close : null,
     change,
     percentChange
   };

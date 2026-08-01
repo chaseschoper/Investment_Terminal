@@ -8808,12 +8808,18 @@ const marketClock = getMarketClock(marketClockNow);
 const displayedStockPrice = stockChartMeta?.price ?? stockData?.price;
 const afterHoursTrade = stockData?.afterHoursTrade;
 const hasAfterHoursTrade = isNumber(afterHoursTrade?.price);
-const afterHoursRegularClose = isNumber(afterHoursTrade?.regularClose) ? afterHoursTrade.regularClose : null;
-const afterHoursChange = isNumber(afterHoursTrade?.price) && isNumber(afterHoursRegularClose)
-  ? afterHoursTrade.price - afterHoursRegularClose
+const afterHoursBaseline = isNumber(displayedStockPrice)
+  ? displayedStockPrice
+  : isNumber(stockData?.regularClose)
+    ? stockData.regularClose
+    : isNumber(afterHoursTrade?.regularClose)
+      ? afterHoursTrade.regularClose
+      : null;
+const afterHoursChange = isNumber(afterHoursTrade?.price) && isNumber(afterHoursBaseline)
+  ? afterHoursTrade.price - afterHoursBaseline
   : null;
-const afterHoursPercentChange = isNumber(afterHoursChange) && afterHoursRegularClose > 0
-  ? (afterHoursChange / afterHoursRegularClose) * 100
+const afterHoursPercentChange = isNumber(afterHoursChange) && afterHoursBaseline > 0
+  ? (afterHoursChange / afterHoursBaseline) * 100
   : null;
 const formatAfterHoursTimestamp = (value) => {
   if (!value) return "";
