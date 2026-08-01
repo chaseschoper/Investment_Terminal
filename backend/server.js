@@ -958,6 +958,24 @@ const getPasswordResetEmailError = () => {
   return "Password reset email is not configured yet. Add Resend settings in Render.";
 };
 
+const getPasswordResetEmailHint = (failures = []) => {
+  const detail = failures.join(" ").toLowerCase();
+  if (!detail) return "";
+  if (detail.includes("api key") || detail.includes("unauthorized") || detail.includes("forbidden")) {
+    return "Resend rejected the API key. Create a new Resend API key, update RESEND_API_KEY in Render, then redeploy.";
+  }
+  if (detail.includes("domain") || detail.includes("verify") || detail.includes("from")) {
+    return "Resend rejected the sender. Use onboarding@resend.dev for testing, or verify mrktrally.com in Resend and use a verified sender.";
+  }
+  if (detail.includes("testing emails") || detail.includes("own email address")) {
+    return "Resend is still in test mode. It can only send to the Resend account email until you verify a domain.";
+  }
+  if (detail.includes("timeout") || detail.includes("network") || detail.includes("econn") || detail.includes("enet")) {
+    return "The email provider timed out. Resend is preferred; keep EMAIL_SMTP_FALLBACK=false so Gmail SMTP does not slow this down.";
+  }
+  return "";
+};
+
 const sendPasswordResetEmail = async ({ to, resetUrl }) => {
   const email = buildPasswordResetEmail(resetUrl);
   const failures = [];
@@ -22088,6 +22106,7 @@ res.json({
   emailSent,
   emailProvider: emailSent ? emailProvider : undefined,
   emailError: emailSent ? undefined : getPasswordResetEmailError(),
+  emailFailureHint: emailSent ? undefined : getPasswordResetEmailHint(emailFailures),
   emailFailureDetail:
     !emailSent && process.env.NODE_ENV !== "production" && emailFailures.length
       ? emailFailures.join(" | ")

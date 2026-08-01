@@ -4441,6 +4441,8 @@ const handleForgotPassword = async () => {
     setAuthMessage(
       response.data.resetLink
         ? `Reset link created: ${response.data.resetLink}`
+        : response.data.emailFailureHint
+          ? response.data.emailFailureHint
         : response.data.emailError
           ? response.data.emailError
         : response.data.emailSent === false
