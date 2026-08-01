@@ -937,42 +937,70 @@ const buildPasswordResetEmail = (resetUrl) => ({
   html: `<p>Use this link to reset your MrktRally password. It expires in 1 hour.</p><p><a href="${resetUrl}">Reset password</a></p>`
 });
 
+const compactEmailError = (err) => {
+  if (!err) return "Unknown email error";
+  const status = err?.response?.status;
+  const responseMessage =
+    err?.response?.data?.message ||
+    err?.response?.data?.error ||
+    (typeof err?.response?.data === "string" ? err.response.data : "");
+  const message = responseMessage || err?.message || String(err);
+  return status ? `${status}: ${message}` : message;
+};
+
 const sendPasswordResetEmail = async ({ to, resetUrl }) => {
   const email = buildPasswordResetEmail(resetUrl);
+  const failures = [];
 
   if (process.env.RESEND_API_KEY) {
-    await axios.post(
-      "https://api.resend.com/emails",
-      {
-        from: process.env.RESEND_FROM || process.env.SMTP_FROM || "MrktRally <onboarding@resend.dev>",
-        to: [to],
-        subject: email.subject,
-        text: email.text,
-        html: email.html
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-          "Content-Type": "application/json",
-          "User-Agent": "MrktRally/1.0"
+    try {
+      await axios.post(
+        "https://api.resend.com/emails",
+        {
+          from: process.env.RESEND_FROM || process.env.SMTP_FROM || "MrktRally <onboarding@resend.dev>",
+          to: [to],
+          subject: email.subject,
+          text: email.text,
+          html: email.html
         },
-        timeout: 12000
-      }
-    );
-    return true;
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+            "Content-Type": "application/json",
+            "User-Agent": "MrktRally/1.0"
+          },
+          timeout: 20000
+        }
+      );
+      return { sent: true, provider: "resend" };
+    } catch (err) {
+      failures.push(`Resend failed: ${compactEmailError(err)}`);
+      console.error("Password reset Resend email failed:", compactEmailError(err));
+    }
   }
 
-  if (!process.env.SMTP_HOST) return false;
+  if (!process.env.SMTP_HOST) {
+    return {
+      sent: false,
+      provider: null,
+      failures
+    };
+  }
 
   const port = Number(process.env.SMTP_PORT || 587);
   const transporter = nodemailer.createTransport({
+    ...(process.env.SMTP_SERVICE ? { service: process.env.SMTP_SERVICE } : {}),
     host: process.env.SMTP_HOST,
     port,
-    secure: port === 465,
+    secure: String(process.env.SMTP_SECURE || "").toLowerCase() === "true" || port === 465,
     family: 4,
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 15000,
+    connectionTimeout: 30000,
+    greetingTimeout: 30000,
+    socketTimeout: 45000,
+    requireTLS: port === 587,
+    tls: {
+      servername: process.env.SMTP_HOST
+    },
     auth: process.env.SMTP_USER
       ? {
           user: process.env.SMTP_USER,
@@ -981,15 +1009,24 @@ const sendPasswordResetEmail = async ({ to, resetUrl }) => {
       : undefined
   });
 
-  await transporter.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER || "no-reply@mrktrally.com",
-    to,
-    subject: email.subject,
-    text: email.text,
-    html: email.html
-  });
-
-  return true;
+  try {
+    await transporter.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER || "no-reply@mrktrally.com",
+      to,
+      subject: email.subject,
+      text: email.text,
+      html: email.html
+    });
+    return { sent: true, provider: "smtp" };
+  } catch (err) {
+    failures.push(`SMTP failed: ${compactEmailError(err)}`);
+    console.error("Password reset SMTP email failed:", compactEmailError(err));
+    return {
+      sent: false,
+      provider: null,
+      failures
+    };
+  }
 };
 
 
@@ -22010,13 +22047,17 @@ await user.save();
 
 const resetUrl = `${getFrontendUrl(req).replace(/\/$/, "")}/?resetToken=${encodeURIComponent(resetToken)}&email=${encodeURIComponent(user.email)}`;
 let emailSent = false;
-let emailError = "";
+let emailProvider = null;
+let emailFailures = [];
 
 try {
-  emailSent = await sendPasswordResetEmail({ to: user.email, resetUrl });
+  const emailResult = await sendPasswordResetEmail({ to: user.email, resetUrl });
+  emailSent = Boolean(emailResult?.sent);
+  emailProvider = emailResult?.provider || null;
+  emailFailures = Array.isArray(emailResult?.failures) ? emailResult.failures : [];
 } catch (err) {
-  emailError = err?.response || err?.message || "Email send failed";
-  console.error("Password reset email failed:", emailError);
+  emailFailures = [compactEmailError(err)];
+  console.error("Password reset email failed:", compactEmailError(err));
 }
 
 if (!emailSent) {
@@ -22027,7 +22068,16 @@ res.json({
   ...genericResponse,
   emailConfigured: Boolean(process.env.RESEND_API_KEY || process.env.SMTP_HOST),
   emailSent,
-  emailError: emailSent ? undefined : "Password reset email could not be sent. Check SMTP settings in Render.",
+  emailProvider: emailSent ? emailProvider : undefined,
+  emailError: emailSent
+    ? undefined
+    : process.env.RESEND_API_KEY
+      ? "Password reset email could not be sent. Check Resend or SMTP settings in Render."
+      : "Password reset email could not be sent. Check SMTP settings in Render.",
+  emailFailureDetail:
+    !emailSent && process.env.NODE_ENV !== "production" && emailFailures.length
+      ? emailFailures.join(" | ")
+      : undefined,
   resetLink: !emailSent && process.env.ALLOW_RESET_LINK_RESPONSE === "true" ? resetUrl : undefined
 });
 
