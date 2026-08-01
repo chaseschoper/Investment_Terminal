@@ -8808,16 +8808,13 @@ const marketClock = getMarketClock(marketClockNow);
 const displayedStockPrice = stockChartMeta?.price ?? stockData?.price;
 const afterHoursTrade = stockData?.afterHoursTrade;
 const hasAfterHoursTrade = isNumber(afterHoursTrade?.price);
-const afterHoursPercentChange = isNumber(afterHoursTrade?.percentChange)
-  ? afterHoursTrade.percentChange
-  : isNumber(afterHoursTrade?.price) && isNumber(afterHoursTrade?.regularClose || afterHoursTrade?.previousClose) && (afterHoursTrade.regularClose || afterHoursTrade.previousClose) !== 0
-    ? ((afterHoursTrade.price - (afterHoursTrade.regularClose || afterHoursTrade.previousClose)) / Math.abs(afterHoursTrade.regularClose || afterHoursTrade.previousClose)) * 100
-    : null;
-const afterHoursChange = isNumber(afterHoursTrade?.change)
-  ? afterHoursTrade.change
-  : isNumber(afterHoursTrade?.price) && isNumber(afterHoursTrade?.regularClose || afterHoursTrade?.previousClose)
-    ? afterHoursTrade.price - (afterHoursTrade.regularClose || afterHoursTrade.previousClose)
-    : null;
+const afterHoursRegularClose = isNumber(afterHoursTrade?.regularClose) ? afterHoursTrade.regularClose : null;
+const afterHoursChange = isNumber(afterHoursTrade?.price) && isNumber(afterHoursRegularClose)
+  ? afterHoursTrade.price - afterHoursRegularClose
+  : null;
+const afterHoursPercentChange = isNumber(afterHoursChange) && afterHoursRegularClose > 0
+  ? (afterHoursChange / afterHoursRegularClose) * 100
+  : null;
 const formatAfterHoursTimestamp = (value) => {
   if (!value) return "";
   const parsed = new Date(value);

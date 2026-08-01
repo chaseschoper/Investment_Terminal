@@ -1438,11 +1438,9 @@ function buildAfterHoursSessionQuote(afterHoursTrade, closePrice) {
   if (!shouldShowAfterHoursTrade(afterHoursTrade.timestamp)) return null;
   const price = toNumberOrNull(afterHoursTrade.price);
   const close = toNumberOrNull(closePrice);
-  if (price === null) return null;
-  const change = close !== null && close > 0 ? price - close : firstFiniteNumber(afterHoursTrade.providerChange);
-  const percentChange = change !== null && close !== null && close > 0
-    ? (change / close) * 100
-    : firstFiniteNumber(afterHoursTrade.providerPercentChange);
+  if (price === null || close === null || close <= 0) return null;
+  const change = price - close;
+  const percentChange = (change / close) * 100;
   return {
     ...afterHoursTrade,
     price,
@@ -1561,7 +1559,7 @@ async function buildStockOverviewExtras(ticker, data = {}) {
     resolveWithin(fetchFmpRevenueProductSegments(symbol), 1100, data.revenueProductSegments || null),
     resolveWithin(fetchFmpRevenueGeographicSegments(symbol), 1100, data.revenueGeographicSegments || null)
   ]);
-  const regularClose = firstFiniteNumber(data.regularClose, data.close, data.price, data.previousClose, data.chartPreviousClose);
+  const regularClose = firstFiniteNumber(data.regularClose, data.close, data.marketClose, data.officialClose);
   const afterHoursTrade = buildAfterHoursSessionQuote(afterHoursTradeRaw, regularClose);
   const productSegments = revenueProductSegments || data.revenueProductSegments || null;
   const geographicSegments = revenueGeographicSegments || data.revenueGeographicSegments || null;
@@ -13590,6 +13588,7 @@ async function fetchStockData(ticker) {
         : [],
     logo: getFinnhubLogoUrl(ticker),
     price: quote.c,
+    regularClose: quote.c,
     change: quote.d,
     percentChange: quote.dp,
     afterHoursTrade: buildAfterHoursSessionQuote(fmpAfterHoursTrade, quote.c),
