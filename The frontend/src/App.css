@@ -10612,4 +10612,93 @@ body {
     line-height: 1;
     white-space: nowrap;
   }
+
+  .top-watchlist:not(.top-watchlist-guest) {
+    gap: 8px;
+    padding: 10px 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  .top-watchlist:not(.top-watchlist-guest)::-webkit-scrollbar,
+  .watchlist-scroll-static-window::-webkit-scrollbar {
+    display: none;
+  }
+
+  .top-watchlist:not(.top-watchlist-guest) .watchlist-label {
+    flex: 0 0 auto;
+    font-size: 13px;
+  }
+
+  .top-watchlist:not(.top-watchlist-guest) .watchlist-scroll {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: none;
+    overflow: visible;
+  }
+
+  .top-watchlist:not(.top-watchlist-guest) .watchlist-scroll-static-window {
+    flex: 0 0 auto;
+    max-width: none;
+    overflow: visible;
+  }
+
+  .top-watchlist:not(.top-watchlist-guest) .watchlist-scroll-track {
+    flex: 0 0 auto;
+    gap: 8px;
+  }
+
+  .top-watchlist:not(.top-watchlist-guest) .watchlist-stock {
+    flex: 0 0 220px;
+    min-width: 220px;
+    max-width: 220px;
+    gap: 8px;
+    padding: 9px 10px;
+  }
+
+  .top-watchlist:not(.top-watchlist-guest) .watch-symbol {
+    min-width: 40px;
+  }
+
+  .top-watchlist:not(.top-watchlist-guest) .watch-price {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .top-watchlist:not(.top-watchlist-guest) .watch-session-change {
+    min-width: 48px;
+  }
+
+  .top-watchlist:not(.top-watchlist-guest) .watch-remove {
+    flex: 0 0 auto;
+  }
+
+  .top-watchlist:not(.top-watchlist-guest) .watchlist-add-input {
+    flex: 0 0 132px;
+    width: 132px;
+    min-width: 132px;
+  }
+
+  .top-watchlist:not(.top-watchlist-guest) .auth-top-button.signout {
+    flex: 0 0 auto;
+    padding-inline: 10px;
+  }
+
+  .stock-quick-picks,
+  .alternative-market-page .market-quick-picks {
+    justify-content: center;
+    width: min(100%, 720px);
+    margin-inline: auto;
+  }
+
+  .stock-quick-picks button,
+  .alternative-market-page .market-quick-picks button {
+    flex: 0 1 calc(50% - 8px);
+    min-width: 0;
+    max-width: 180px;
+  }
 }
