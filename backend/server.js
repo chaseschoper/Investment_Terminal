@@ -948,9 +948,20 @@ const compactEmailError = (err) => {
   return status ? `${status}: ${message}` : message;
 };
 
+const getPasswordResetEmailError = () => {
+  if (process.env.RESEND_API_KEY) {
+    return "Password reset email could not be sent. Check RESEND_API_KEY and RESEND_FROM in Render.";
+  }
+  if (process.env.SMTP_HOST) {
+    return "Password reset email could not be sent. Check SMTP settings in Render.";
+  }
+  return "Password reset email is not configured yet. Add Resend settings in Render.";
+};
+
 const sendPasswordResetEmail = async ({ to, resetUrl }) => {
   const email = buildPasswordResetEmail(resetUrl);
   const failures = [];
+  const shouldTrySmtpFallback = String(process.env.EMAIL_SMTP_FALLBACK || "").toLowerCase() === "true";
 
   if (process.env.RESEND_API_KEY) {
     try {
@@ -969,13 +980,20 @@ const sendPasswordResetEmail = async ({ to, resetUrl }) => {
             "Content-Type": "application/json",
             "User-Agent": "MrktRally/1.0"
           },
-          timeout: 20000
+          timeout: 8000
         }
       );
       return { sent: true, provider: "resend" };
     } catch (err) {
       failures.push(`Resend failed: ${compactEmailError(err)}`);
       console.error("Password reset Resend email failed:", compactEmailError(err));
+      if (!shouldTrySmtpFallback) {
+        return {
+          sent: false,
+          provider: null,
+          failures
+        };
+      }
     }
   }
 
@@ -994,9 +1012,9 @@ const sendPasswordResetEmail = async ({ to, resetUrl }) => {
     port,
     secure: String(process.env.SMTP_SECURE || "").toLowerCase() === "true" || port === 465,
     family: 4,
-    connectionTimeout: 30000,
-    greetingTimeout: 30000,
-    socketTimeout: 45000,
+    connectionTimeout: 8000,
+    greetingTimeout: 8000,
+    socketTimeout: 12000,
     requireTLS: port === 587,
     tls: {
       servername: process.env.SMTP_HOST
@@ -22069,11 +22087,7 @@ res.json({
   emailConfigured: Boolean(process.env.RESEND_API_KEY || process.env.SMTP_HOST),
   emailSent,
   emailProvider: emailSent ? emailProvider : undefined,
-  emailError: emailSent
-    ? undefined
-    : process.env.RESEND_API_KEY
-      ? "Password reset email could not be sent. Check Resend or SMTP settings in Render."
-      : "Password reset email could not be sent. Check SMTP settings in Render.",
+  emailError: emailSent ? undefined : getPasswordResetEmailError(),
   emailFailureDetail:
     !emailSent && process.env.NODE_ENV !== "production" && emailFailures.length
       ? emailFailures.join(" | ")

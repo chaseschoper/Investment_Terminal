@@ -4435,6 +4435,8 @@ const handleForgotPassword = async () => {
     setAuthMessage("Sending reset link...");
     const response = await axios.post(`${API_URL}/api/forgot-password`, {
       email
+    }, {
+      timeout: 15000
     });
     setAuthMessage(
       response.data.resetLink
@@ -4447,7 +4449,11 @@ const handleForgotPassword = async () => {
     );
   } catch (err) {
     console.error(err);
-    alert(err.response?.data?.error || "Password reset request failed");
+    setAuthMessage(
+      err.code === "ECONNABORTED"
+        ? "Password reset request timed out. Check the email sender settings in Render, then try again."
+        : err.response?.data?.error || "Password reset request failed"
+    );
   } finally {
     setIsAuthSubmitting(false);
   }
