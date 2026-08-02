@@ -5729,7 +5729,7 @@ useEffect(() => {
     try {
       const response = await axios.get(`${API_URL}/api/stock-screener`, {
         params: appliedScreenerFilters,
-        timeout: 8000
+        timeout: 25000
       });
       if (!isActive) return;
       setScreenerResults(Array.isArray(response.data?.results) ? response.data.results : []);
@@ -5765,7 +5765,7 @@ useEffect(() => {
   const loadScreenerOptions = async () => {
     try {
       const response = await axios.get(`${API_URL}/api/stock-screener/options`, {
-        timeout: 8000
+        timeout: 15000
       });
       if (!isActive) return;
       setScreenerOptions({

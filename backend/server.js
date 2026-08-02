@@ -22370,7 +22370,7 @@ const { data } = await getFmpAxios("https://financialmodelingprep.com/stable/com
     ...params,
     apikey: process.env.FMP_API_KEY
   },
-  timeout: 6000
+  timeout: 20000
 });
 
 const results = (Array.isArray(data) ? data : [])
@@ -22926,7 +22926,7 @@ const fetchOptionList = async (path, key, mapper = null) => {
   try {
     const { data } = await getFmpAxios(`https://financialmodelingprep.com/stable/${path}`, {
       params: { apikey: process.env.FMP_API_KEY },
-      timeout: 6000
+      timeout: 12000
     });
 
     return [...new Set((Array.isArray(data) ? data : [])
