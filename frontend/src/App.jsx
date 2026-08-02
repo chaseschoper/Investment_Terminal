@@ -8676,6 +8676,25 @@ const earningsSnapshotDays = calendarMode === "earnings"
         };
       })
   : [];
+const printWeeklyEarningsSnapshot = () => {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+
+  const snapshot = document.querySelector(".earnings-week-snapshot");
+  if (!snapshot) return;
+
+  const clearPrintMode = () => {
+    document.body.classList.remove("printing-earnings-snapshot");
+    window.removeEventListener("afterprint", clearPrintMode);
+  };
+
+  document.body.classList.add("printing-earnings-snapshot");
+  window.addEventListener("afterprint", clearPrintMode);
+
+  window.setTimeout(() => {
+    window.print();
+    window.setTimeout(clearPrintMode, 1200);
+  }, 80);
+};
 const latestTreasuryRates = treasuryRates?.latest || treasuryRates?.rows?.[0] || null;
 const previousTreasuryRates = treasuryRates?.rows?.[1] || null;
 const portfolioStockAllocationData = portfolio.map((position, index) => {
@@ -15454,6 +15473,13 @@ return (
           <h3>Top earnings for the week of {earningsWeekLabel}</h3>
           <p>A compact daily board of the most important reports from the calendar above.</p>
         </div>
+        <button
+          className="earnings-week-export-button"
+          type="button"
+          onClick={printWeeklyEarningsSnapshot}
+        >
+          Save Weekly PDF
+        </button>
       </div>
 
       <div className="earnings-week-snapshot-board">
