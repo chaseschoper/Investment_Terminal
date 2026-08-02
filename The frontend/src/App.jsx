@@ -2537,17 +2537,17 @@ const parseInputNumber = (value) => {
   return Number.isFinite(number) ? number : null;
 };
 
-const parseProjectionSharesInput = (value) => {
+const parseProjectionMillionsInput = (value) => {
   const raw = String(value ?? "").trim();
   if (!raw) return null;
 
-  const normalized = raw.replace(/,/g, "").toUpperCase();
+  const normalized = raw.replace(/[$,\s]/g, "").toUpperCase();
   const suffix = normalized.endsWith("B")
     ? "B"
     : normalized.endsWith("M")
       ? "M"
       : "";
-  const numericText = suffix ? normalized.slice(0, -1).trim() : normalized;
+  const numericText = suffix ? normalized.slice(0, -1) : normalized;
   const number = Number(numericText);
   if (!Number.isFinite(number)) return null;
 
@@ -2556,9 +2556,20 @@ const parseProjectionSharesInput = (value) => {
   return Math.abs(number) < 100000 ? number * 1000000 : number;
 };
 
+const parseProjectionMoneyInput = parseProjectionMillionsInput;
+
+const parseProjectionSharesInput = (value) => {
+  return parseProjectionMillionsInput(value);
+};
+
 const formatProjectionShares = (value) => {
   if (!isNumber(value)) return "N/A";
   return formatSharesCount(value);
+};
+
+const formatProjectionMoney = (value) => {
+  if (!isNumber(value)) return "N/A";
+  return formatEstimateMoney(value);
 };
 
 const getEasternParts = (date) => {
@@ -8016,8 +8027,8 @@ const buildProjectionRows = (caseId) => PROJECTION_YEARS.reduce((rows, year) => 
   const sharesGrowthRate = isBaseYear
     ? parseInputPercent(getProjectionInputValue(caseId, "sharesGrowth", year)) ?? 0
     : parseInputPercent(getProjectionInputValue(caseId, "sharesGrowth", year)) ?? 0;
-  const baseRevenueOverride = parseInputNumber(getProjectionInputValue(caseId, "revenue", year));
-  const baseNetIncomeOverride = parseInputNumber(getProjectionInputValue(caseId, "netIncome", year));
+  const baseRevenueOverride = parseProjectionMoneyInput(getProjectionInputValue(caseId, "revenue", year));
+  const baseNetIncomeOverride = parseProjectionMoneyInput(getProjectionInputValue(caseId, "netIncome", year));
   const baseSharesOverride = parseProjectionSharesInput(getProjectionInputValue(caseId, "shares", year));
   const hasBaseNetIncomeOverride = baseNetIncomeOverride !== null;
   const hasBaseSharesOverride = baseSharesOverride !== null;
@@ -14166,8 +14177,9 @@ return (
                       <input
                         value={getProjectionInputValue(projectionCase.id, "revenue", row.year)}
                         onChange={(event) => updateProjectionSetting(projectionCase.id, "revenue", row.year, event.target.value)}
-                        placeholder={isNumber(row.revenue) ? formatEstimateMoney(row.revenue) : "N/A"}
+                        placeholder={formatProjectionMoney(row.revenue)}
                         inputMode="decimal"
+                        title="Enter dollars in millions, like 1 for $1M or 1000 for $1B. You can also use 1M or 1B."
                         aria-label={`${projectionCase.label} ${row.year} revenue`}
                       />
                     ) : (
@@ -14207,8 +14219,9 @@ return (
                       <input
                         value={getProjectionInputValue(projectionCase.id, "netIncome", row.year)}
                         onChange={(event) => updateProjectionSetting(projectionCase.id, "netIncome", row.year, event.target.value)}
-                        placeholder={isNumber(row.netIncome) ? formatEstimateMoney(row.netIncome) : "N/A"}
+                        placeholder={formatProjectionMoney(row.netIncome)}
                         inputMode="decimal"
+                        title="Enter dollars in millions, like 1 for $1M or 1000 for $1B. You can also use 1M or 1B."
                         aria-label={`${projectionCase.label} ${row.year} net income`}
                       />
                     ) : (
