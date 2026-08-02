@@ -8682,16 +8682,21 @@ const earningsSnapshotWeekdays = earningsSnapshotDays
     return weekday >= 1 && weekday <= 5;
   })
   .slice(0, 5);
+const getCanvasImageUrl = (src) => {
+  if (!src || typeof src !== "string") return "";
+  if (src.startsWith("/")) return src;
+  return `${API_URL}/api/image-proxy?url=${encodeURIComponent(src)}`;
+};
 const loadCanvasImage = async (src) => {
   if (!src || typeof window === "undefined") return null;
 
+  const imageUrl = getCanvasImageUrl(src);
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 1400);
+  const timeout = window.setTimeout(() => controller.abort(), 1800);
 
   try {
-    const response = await fetch(src, {
+    const response = await fetch(imageUrl, {
       cache: "force-cache",
-      mode: "cors",
       signal: controller.signal
     });
     if (!response.ok) return null;
@@ -8715,6 +8720,14 @@ const loadCanvasImage = async (src) => {
     window.clearTimeout(timeout);
   }
 };
+const loadFirstCanvasImage = async (urls) => {
+  const candidates = Array.isArray(urls) ? urls : [urls];
+  for (const url of candidates.filter(Boolean)) {
+    const image = await loadCanvasImage(url);
+    if (image) return image;
+  }
+  return null;
+};
 const downloadWeeklyEarningsImage = async () => {
   if (typeof window === "undefined" || typeof document === "undefined") return;
 
@@ -8728,7 +8741,7 @@ const downloadWeeklyEarningsImage = async () => {
   const canvas = document.createElement("canvas");
   const scale = 2;
   const width = 1800;
-  const height = 1050;
+  const height = 1080;
   canvas.width = width * scale;
   canvas.height = height * scale;
   const ctx = canvas.getContext("2d");
@@ -8758,7 +8771,7 @@ const downloadWeeklyEarningsImage = async () => {
   const drawFittedText = (text, x, y, maxWidth, {
     fontSize = 16,
     fontWeight = 700,
-    color = "#111827",
+    color = "#e5f4ff",
     align = "left",
     minFontSize = 9
   } = {}) => {
@@ -8826,82 +8839,105 @@ const downloadWeeklyEarningsImage = async () => {
   posterDays.forEach((day) => {
     day.events.slice(0, 20).forEach((event) => {
       const symbol = String(event.symbol || "").toUpperCase();
-      const logoUrl = getDefaultCompanyLogoUrl(symbol) || event.logo || "";
-      if (symbol && logoUrl) logoEntries.push([symbol, logoUrl]);
+      const logoUrls = getCompanyLogoCandidates(symbol, event.logo);
+      if (symbol && logoUrls.length) logoEntries.push([symbol, logoUrls]);
     });
   });
   logoEntries.push(["MRKTRALLY", "/mrktrally-icon.png"]);
   const logoMap = new Map();
   await Promise.allSettled(
-    [...new Map(logoEntries).entries()].map(async ([symbol, logoUrl]) => {
-      const image = await loadCanvasImage(logoUrl);
+    [...new Map(logoEntries).entries()].map(async ([symbol, logoUrls]) => {
+      const image = await loadFirstCanvasImage(logoUrls);
       if (image) logoMap.set(symbol, image);
     })
   );
 
   const background = ctx.createLinearGradient(0, 0, width, height);
-  background.addColorStop(0, "#d6ae78");
-  background.addColorStop(0.48, "#e4c18d");
-  background.addColorStop(1, "#c99a5d");
+  background.addColorStop(0, "#02070d");
+  background.addColorStop(0.42, "#071522");
+  background.addColorStop(1, "#02050b");
   ctx.fillStyle = background;
   ctx.fillRect(0, 0, width, height);
 
-  ctx.fillStyle = "rgba(255,255,255,0.32)";
+  const leftGlow = ctx.createRadialGradient(210, 120, 30, 210, 120, 560);
+  leftGlow.addColorStop(0, "rgba(20, 184, 166, 0.34)");
+  leftGlow.addColorStop(1, "rgba(20, 184, 166, 0)");
+  ctx.fillStyle = leftGlow;
+  ctx.fillRect(0, 0, width, height);
+
+  const rightGlow = ctx.createRadialGradient(width - 300, 300, 40, width - 300, 300, 620);
+  rightGlow.addColorStop(0, "rgba(37, 99, 235, 0.28)");
+  rightGlow.addColorStop(1, "rgba(37, 99, 235, 0)");
+  ctx.fillStyle = rightGlow;
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.strokeStyle = "rgba(34, 211, 238, 0.07)";
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= width; x += 88) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, height);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= height; y += 78) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = "rgba(34, 211, 238, 0.035)";
   ctx.font = "900 230px Inter, Arial, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("MRKTRALLY", width / 2, height / 2 + 42);
+  ctx.fillText("MRKTRALLY", width / 2, height / 2 + 50);
 
-  fillRoundRect(28, 134, width - 56, height - 210, 16, "rgba(255, 255, 255, 0.84)", "rgba(120, 78, 34, 0.28)");
+  fillRoundRect(28, 166, width - 56, height - 248, 18, "rgba(7, 16, 28, 0.88)", "rgba(56, 189, 248, 0.42)");
+  ctx.strokeStyle = "rgba(45, 212, 191, 0.9)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(40, 166);
+  ctx.lineTo(width - 40, 166);
+  ctx.stroke();
 
   const brandLogo = logoMap.get("MRKTRALLY");
-  fillRoundRect(42, 24, 64, 64, 14, "#050b14", "rgba(17, 24, 39, 0.3)");
-  drawImageContained(brandLogo, 50, 32, 48);
-  drawFittedText("MrktRally", 120, 54, 280, {
-    fontSize: 34,
+  fillRoundRect(44, 32, 70, 70, 14, "#050b14", "rgba(45, 212, 191, 0.42)");
+  drawImageContained(brandLogo, 53, 41, 52);
+  drawFittedText("MrktRally", 130, 66, 300, {
+    fontSize: 36,
     fontWeight: 900,
-    color: "#111827"
+    color: "#f8fafc"
   });
-  drawFittedText("Most Anticipated Earnings Releases", width / 2, 34, 560, {
-    fontSize: 28,
+  drawFittedText("WEEKLY EARNINGS BOARD", width / 2, 42, 520, {
+    fontSize: 30,
     fontWeight: 900,
-    color: "#111827",
+    color: "#5eead4",
     align: "center"
   });
-  drawFittedText("for the week of", width / 2, 64, 220, {
-    fontSize: 12,
+  drawFittedText(`Top earnings for the week of ${earningsWeekLabel}`, width / 2, 76, 620, {
+    fontSize: 17,
     fontWeight: 800,
-    color: "#475569",
+    color: "#e5f4ff",
     align: "center"
   });
-  drawFittedText(earningsWeekLabel, width / 2, 88, 320, {
-    fontSize: 18,
-    fontWeight: 900,
-    color: "#111827",
+  drawFittedText("A compact daily board of the most important reports from the calendar above.", width / 2, 104, 740, {
+    fontSize: 15,
+    fontWeight: 700,
+    color: "#94a3b8",
     align: "center"
   });
-  fillRoundRect(width - 116, 26, 76, 76, 8, "#f8fafc", "rgba(17, 24, 39, 0.18)");
-  ctx.strokeStyle = "#111827";
-  ctx.lineWidth = 3;
-  for (let row = 0; row < 5; row += 1) {
-    for (let col = 0; col < 5; col += 1) {
-      if ((row + col) % 2 === 0 || row === 0 || col === 4) {
-        ctx.strokeRect(width - 104 + col * 12, 38 + row * 12, 8, 8);
-      }
-    }
-  }
 
   const boardX = 28;
-  const boardY = 134;
+  const boardY = 166;
   const boardW = width - 56;
-  const boardH = height - 210;
+  const boardH = height - 248;
   const colW = boardW / 5;
-  const headerH = 62;
+  const headerH = 54;
   const rowH = (boardH - headerH) / 10;
 
   posterDays.forEach((day, dayIndex) => {
     const x = boardX + dayIndex * colW;
-    ctx.strokeStyle = "rgba(120, 78, 34, 0.32)";
+    ctx.strokeStyle = "rgba(56, 189, 248, 0.18)";
     ctx.lineWidth = 1;
     if (dayIndex > 0) {
       ctx.beginPath();
@@ -8913,25 +8949,13 @@ const downloadWeeklyEarningsImage = async () => {
     drawFittedText(day.weekday, x + colW / 2, boardY + 18, colW - 22, {
       fontSize: 17,
       fontWeight: 900,
-      color: "#111827",
+      color: "#f8fafc",
       align: "center"
     });
     drawFittedText(day.shortDate, x + colW / 2, boardY + 42, colW - 22, {
       fontSize: 11,
       fontWeight: 900,
-      color: "#475569",
-      align: "center"
-    });
-    drawFittedText("Before Open", x + colW * 0.25, boardY + 58, colW / 2 - 16, {
-      fontSize: 10,
-      fontWeight: 900,
-      color: "#111827",
-      align: "center"
-    });
-    drawFittedText("After Close", x + colW * 0.75, boardY + 58, colW / 2 - 16, {
-      fontSize: 10,
-      fontWeight: 900,
-      color: "#111827",
+      color: "#7dd3fc",
       align: "center"
     });
 
@@ -8951,20 +8975,25 @@ const downloadWeeklyEarningsImage = async () => {
         const cellY = boardY + headerH + rowIndex * rowH + 6;
         const cellW = colW / 2 - 16;
         const cellH = rowH - 9;
-        const logoSize = Math.min(34, cellH - 16);
+        const logoSize = Math.min(38, cellH - 16);
 
         ctx.save();
         drawRoundRect(cellX, cellY, cellW, cellH, 8);
         ctx.clip();
-        ctx.fillStyle = rowIndex % 2 === 0 ? "rgba(255,255,255,0.56)" : "rgba(248,250,252,0.36)";
+        const cellGradient = ctx.createLinearGradient(cellX, cellY, cellX + cellW, cellY + cellH);
+        cellGradient.addColorStop(0, rowIndex % 2 === 0 ? "rgba(13, 148, 136, 0.18)" : "rgba(15, 23, 42, 0.82)");
+        cellGradient.addColorStop(1, "rgba(15, 23, 42, 0.9)");
+        ctx.fillStyle = cellGradient;
         ctx.fillRect(cellX, cellY, cellW, cellH);
         ctx.restore();
-        ctx.strokeStyle = "rgba(120, 78, 34, 0.12)";
-        ctx.strokeRect(cellX, cellY + cellH, cellW, 0.5);
+        ctx.strokeStyle = "rgba(56, 189, 248, 0.18)";
+        ctx.lineWidth = 1;
+        drawRoundRect(cellX, cellY, cellW, cellH, 8);
+        ctx.stroke();
 
         const logoX = cellX + 7;
         const logoY = cellY + (cellH - logoSize) / 2;
-        fillRoundRect(logoX, logoY, logoSize, logoSize, 7, "#ffffff", "rgba(15, 23, 42, 0.1)");
+        fillRoundRect(logoX, logoY, logoSize, logoSize, 8, "#050b14", "rgba(45, 212, 191, 0.35)");
         const logoImage = logoMap.get(symbol);
         if (!drawImageContained(logoImage, logoX + 4, logoY + 4, logoSize - 8)) {
           drawFallbackLogo(symbol, logoX, logoY, logoSize);
@@ -8975,18 +9004,18 @@ const downloadWeeklyEarningsImage = async () => {
         drawFittedText(symbol, textX, cellY + 16, textW, {
           fontSize: 14,
           fontWeight: 900,
-          color: "#111827"
+          color: "#67e8f9"
         });
         drawWrappedText(company, textX, cellY + 33, textW, 11, 2, {
           fontSize: 9,
           fontWeight: 800,
-          color: "#334155",
+          color: "#dbeafe",
           minFontSize: 8
         });
         drawFittedText(cap, textX, cellY + cellH - 9, textW, {
           fontSize: 9,
           fontWeight: 900,
-          color: "#64748b"
+          color: "#94a3b8"
         });
       });
     });
@@ -8995,12 +9024,12 @@ const downloadWeeklyEarningsImage = async () => {
   drawFittedText("mrktrally.com", 42, height - 38, 300, {
     fontSize: 13,
     fontWeight: 800,
-    color: "#111827"
+    color: "#e5f4ff"
   });
   drawFittedText("Built from the visible MrktRally earnings calendar", width - 42, height - 38, 520, {
     fontSize: 13,
     fontWeight: 800,
-    color: "#111827",
+    color: "#94a3b8",
     align: "right"
   });
 

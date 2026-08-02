@@ -874,6 +874,45 @@ res.setHeader("Cache-Control", "no-store");
 next();
 });
 
+const SAFE_IMAGE_PROXY_HOSTS = new Set([
+  "static2.finnhub.io",
+  "financialmodelingprep.com",
+  "images.financialmodelingprep.com",
+  "storage.googleapis.com",
+  "eodhd.com",
+  "assets.parqet.com"
+]);
+
+app.get("/api/image-proxy", async (req, res) => {
+  const rawUrl = String(req.query.url || "");
+  try {
+    const parsedUrl = new URL(rawUrl);
+    if (parsedUrl.protocol !== "https:" || !SAFE_IMAGE_PROXY_HOSTS.has(parsedUrl.hostname)) {
+      return res.status(400).send("Unsupported image host");
+    }
+
+    const response = await axios.get(parsedUrl.toString(), {
+      responseType: "arraybuffer",
+      timeout: 2500,
+      maxContentLength: 1024 * 1024,
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        Accept: "image/avif,image/webp,image/png,image/svg+xml,image/*,*/*;q=0.8"
+      }
+    });
+    const contentType = response.headers["content-type"] || "image/png";
+    if (!/^image\//i.test(contentType)) {
+      return res.status(415).send("Not an image");
+    }
+
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", "public, max-age=86400, s-maxage=86400");
+    return res.send(Buffer.from(response.data));
+  } catch {
+    return res.status(404).send("Image unavailable");
+  }
+});
+
 // =========================
 // DB CONNECTION
 // =========================
