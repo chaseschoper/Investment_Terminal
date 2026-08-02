@@ -15452,7 +15452,7 @@ return (
         <div>
           <span className="home-feature-label">Weekly earnings board</span>
           <h3>Top earnings for the week of {earningsWeekLabel}</h3>
-          <p>The biggest scheduled reports for each day, ranked by available market cap.</p>
+          <p>A compact daily board of the most important reports from the calendar above.</p>
         </div>
       </div>
 

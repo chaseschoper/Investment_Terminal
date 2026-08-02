@@ -4997,13 +4997,13 @@ body {
   position: relative;
   overflow: hidden;
   margin-top: 28px;
-  padding: clamp(18px, 2.2vw, 30px);
+  padding: clamp(18px, 2vw, 28px);
   border: 1px solid rgba(56, 189, 248, 0.28);
   border-radius: 20px;
   background:
-    radial-gradient(circle at 12% 0%, rgba(45, 212, 191, 0.18), transparent 34%),
-    radial-gradient(circle at 88% 0%, rgba(37, 99, 235, 0.16), transparent 36%),
-    linear-gradient(135deg, rgba(8, 18, 31, 0.98), rgba(12, 21, 39, 0.96));
+    radial-gradient(circle at 10% 6%, rgba(45, 212, 191, 0.16), transparent 30%),
+    radial-gradient(circle at 88% 4%, rgba(37, 99, 235, 0.18), transparent 34%),
+    linear-gradient(135deg, rgba(8, 18, 31, 0.98), rgba(5, 10, 21, 0.98));
   box-shadow: 0 24px 70px rgba(2, 6, 23, 0.42);
 }
 
@@ -5036,11 +5036,12 @@ body {
 .earnings-week-snapshot-header {
   position: relative;
   z-index: 1;
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(260px, 1.4fr);
+  align-items: center;
   gap: 24px;
   margin-bottom: 22px;
+  text-align: center;
 }
 
 .earnings-week-brand {
@@ -5085,32 +5086,40 @@ body {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 16px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid rgba(96, 165, 250, 0.2);
+  border-radius: 16px;
+  background: rgba(2, 6, 23, 0.38);
 }
 
 .earnings-snapshot-day {
   min-height: 0;
-  padding: 14px;
-  border: 1px solid rgba(96, 165, 250, 0.22);
-  border-radius: 16px;
-  background: rgba(15, 23, 42, 0.62);
+  padding: 12px;
+  border-right: 1px solid rgba(96, 165, 250, 0.2);
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.72), rgba(2, 6, 23, 0.54));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.earnings-snapshot-day:last-child {
+  border-right: 0;
 }
 
 .earnings-snapshot-day-head {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
+  justify-content: center;
   gap: 10px;
-  padding-bottom: 12px;
+  padding-bottom: 10px;
   border-bottom: 1px solid rgba(51, 65, 85, 0.55);
+  text-align: center;
 }
 
 .earnings-snapshot-day-head strong {
   display: block;
   color: #f8fafc;
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .earnings-snapshot-day-head span {
@@ -5134,26 +5143,28 @@ body {
 
 .earnings-snapshot-list {
   display: grid;
-  grid-template-columns: repeat(10, minmax(0, 1fr));
-  gap: 8px;
-  padding-top: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(64px, auto);
+  gap: 7px;
+  padding-top: 10px;
 }
 
 .earnings-snapshot-company {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: 34px minmax(0, 1fr);
   align-content: start;
-  justify-items: center;
-  gap: 7px;
+  align-items: center;
+  justify-items: stretch;
+  gap: 8px;
   width: 100%;
   min-width: 0;
-  min-height: 112px;
-  padding: 9px 6px;
-  border: 1px solid rgba(56, 189, 248, 0.16);
-  border-radius: 13px;
-  background: rgba(2, 6, 23, 0.34);
+  min-height: 64px;
+  padding: 7px;
+  border: 1px solid rgba(56, 189, 248, 0.11);
+  border-radius: 10px;
+  background: rgba(2, 6, 23, 0.24);
   color: #cbd5e1;
-  text-align: center;
+  text-align: left;
   cursor: pointer;
   transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
 }
@@ -5169,10 +5180,10 @@ body {
   display: grid;
   place-items: center;
   overflow: hidden;
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   border: 1px solid rgba(45, 212, 191, 0.24);
-  border-radius: 10px;
+  border-radius: 8px;
   background: #020617;
 }
 
@@ -5200,7 +5211,7 @@ body {
 .earnings-snapshot-copy strong {
   display: block;
   color: #f8fafc;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.15;
 }
 
@@ -5215,8 +5226,9 @@ body {
 }
 
 .earnings-snapshot-meta {
+  grid-column: 2;
   color: #7dd3fc;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 900;
   max-width: 100%;
   overflow: hidden;
@@ -5237,14 +5249,33 @@ body {
 }
 
 @media (max-width: 1280px) {
-  .earnings-snapshot-list {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+  .earnings-week-snapshot-board {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .earnings-snapshot-day:nth-child(2n) {
+    border-right: 0;
   }
 }
 
 @media (max-width: 900px) {
-  .earnings-snapshot-list {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+  .earnings-week-snapshot-header {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .earnings-week-snapshot-board {
+    grid-template-columns: 1fr;
+  }
+
+  .earnings-snapshot-day,
+  .earnings-snapshot-day:nth-child(2n) {
+    border-right: 0;
+    border-bottom: 1px solid rgba(96, 165, 250, 0.2);
+  }
+
+  .earnings-snapshot-day:last-child {
+    border-bottom: 0;
   }
 }
 
@@ -5491,8 +5522,8 @@ body {
   }
 
   .earnings-snapshot-company {
-    grid-template-columns: 1fr;
-    min-height: 108px;
+    grid-template-columns: 36px minmax(0, 1fr);
+    min-height: 66px;
   }
 
   .earnings-snapshot-logo-shell {
@@ -5501,8 +5532,8 @@ body {
   }
 
   .earnings-snapshot-meta {
-    grid-column: auto;
-    justify-self: center;
+    grid-column: 2;
+    justify-self: start;
   }
 
   .calendar-report-overlay {
