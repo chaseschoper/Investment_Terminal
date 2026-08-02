@@ -76,6 +76,11 @@ const UserSchema = new mongoose.Schema({
     type: Object,
     default: {},
   },
+
+  profileSettings: {
+    type: Object,
+    default: {},
+  },
 });
 
 module.exports = mongoose.model(

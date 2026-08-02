@@ -4342,6 +4342,7 @@ const handleSignOut = () => {
   localStorage.removeItem("token");
   localStorage.removeItem("user");
   setUser(null);
+  setHasLoadedRemoteUserData(false);
   setWatchlist([]);
   setPortfolios([DEFAULT_PORTFOLIO]);
   setActivePortfolioId(DEFAULT_PORTFOLIO.id);
@@ -4364,6 +4365,7 @@ const requireAuth = (message = "Log in or sign up to save this.") => {
 
 const completeAuth = async (data, successMessage) => {
   if (data.user) {
+    setHasLoadedRemoteUserData(false);
     setUser(data.user);
     localStorage.setItem("token", data.token);
     localStorage.setItem("user", JSON.stringify(data.user));
@@ -4583,6 +4585,8 @@ const [user, setUser] =
   useState(null);
 const [hasLoadedSavedLists, setHasLoadedSavedLists] =
   useState(false);
+const [hasLoadedRemoteUserData, setHasLoadedRemoteUserData] =
+  useState(false);
 const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   useState(false);
   useEffect(() => {
@@ -4606,13 +4610,17 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
     if (Array.isArray(savedLists.namedWatchlists)) {
       setNamedWatchlists(savedLists.namedWatchlists);
     }
+    if (typeof savedLists.profileSettings?.watchlistTapeMoves === "boolean") {
+      setWatchlistTapeMoves(savedLists.profileSettings.watchlistTapeMoves);
+    }
     setSavedProjections(normalizeStockProjections(savedLists.projections || {}));
     setHasMeaningfulSavedLists(
       Boolean(
         (savedLists.watchlist || []).length ||
         hasPortfolioPositions(savedLists.portfolios || []) ||
         (savedLists.namedWatchlists || []).some((list) => (list.symbols || []).length) ||
-        Object.keys(savedLists.projections || {}).length
+        Object.keys(savedLists.projections || {}).length ||
+        savedLists.profileSettings
       )
     );
   } catch (error) {
@@ -6887,11 +6895,15 @@ useEffect(() => {
 
   if (!hasLoadedSavedLists) return;
 
+  const profileSettings = {
+    watchlistTapeMoves
+  };
   const hasSavedContent = Boolean(
     watchlist.length ||
     hasPortfolioPositions(portfolios) ||
     namedWatchlists.some((list) => (list.symbols || []).length)
-    || Object.keys(savedProjections || {}).length
+    || Object.keys(savedProjections || {}).length ||
+    profileSettings.watchlistTapeMoves
   );
 
   if (hasSavedContent) {
@@ -6908,10 +6920,11 @@ useEffect(() => {
       activePortfolioId,
       namedWatchlists,
       projections: savedProjections,
+      profileSettings,
     })
   );
 
-  if (!user || (!hasSavedContent && !hasMeaningfulSavedLists)) return;
+  if (!user || !hasLoadedRemoteUserData) return;
 
   const saveData = async () => {
 
@@ -6928,6 +6941,7 @@ useEffect(() => {
           activePortfolioId,
           namedWatchlists,
           projections: savedProjections,
+          profileSettings,
         },
         {
           headers: {
@@ -6955,7 +6969,7 @@ useEffect(() => {
   return () =>
     clearTimeout(timeout);
 
-}, [watchlist, portfolios, activePortfolioId, namedWatchlists, savedProjections, user, hasLoadedSavedLists]);
+}, [watchlist, portfolios, activePortfolioId, namedWatchlists, savedProjections, watchlistTapeMoves, user, hasLoadedSavedLists, hasLoadedRemoteUserData]);
        
   
 const loadUserData = async () => {
@@ -7012,6 +7026,10 @@ const loadUserData = async () => {
       ...normalizeStockProjections(response.data.projections || {}),
       ...normalizeStockProjections(localSavedLists.projections || {})
     };
+    const profileSettings = {
+      ...(response.data.profileSettings || {}),
+      ...(localSavedLists.profileSettings || {})
+    };
     const preferredActivePortfolioId =
       localSavedLists.activePortfolioId ||
       response.data.activePortfolioId ||
@@ -7027,12 +7045,16 @@ const loadUserData = async () => {
     setActivePortfolioId(savedActivePortfolioId);
     setNamedWatchlists(mergedNamedWatchlists);
     setSavedProjections(mergedProjections);
+    if (typeof profileSettings.watchlistTapeMoves === "boolean") {
+      setWatchlistTapeMoves(profileSettings.watchlistTapeMoves);
+    }
     setHasMeaningfulSavedLists(
       Boolean(
         mergedWatchlist.length ||
         hasPortfolioPositions(mergedPortfolios) ||
         mergedNamedWatchlists.some((list) => (list.symbols || []).length) ||
-        Object.keys(mergedProjections).length
+        Object.keys(mergedProjections).length ||
+        profileSettings.watchlistTapeMoves
       )
     );
 
@@ -7041,6 +7063,7 @@ const loadUserData = async () => {
     console.error(err);
   } finally {
     setHasLoadedSavedLists(true);
+    setHasLoadedRemoteUserData(true);
   }
 };
     

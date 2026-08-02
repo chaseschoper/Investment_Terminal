@@ -22975,37 +22975,47 @@ res.status(500).json({ sectors: [], industries: [], exchanges: [], countries: []
 // SAVE USER DATA
 app.post("/api/save-data", authMiddleware, async (req, res) => {
 try {
-const { watchlist, portfolio, portfolios, activePortfolioId, namedWatchlists, projections } = req.body;
-const cleanSymbols = (symbols, limit = 100) => [...new Set((Array.isArray(symbols) ? symbols : [])
+const { watchlist, portfolio, portfolios, activePortfolioId, namedWatchlists, projections, profileSettings } = req.body;
+const SYMBOL_PATTERN = /^[A-Z0-9.-]{1,16}$/;
+const cleanSymbols = (symbols, limit = 150) => [...new Set((Array.isArray(symbols) ? symbols : [])
   .map((symbol) => String(symbol).trim().toUpperCase())
-  .filter((symbol) => /^[A-Z0-9.-]{1,10}$/.test(symbol)))]
+  .filter((symbol) => SYMBOL_PATTERN.test(symbol)))]
   .slice(0, limit);
-const cleanProjectionNumberMap = (values) => {
+const cleanProjectionInputMap = (values) => {
   if (!values || typeof values !== "object" || Array.isArray(values)) return {};
 
   return Object.fromEntries(
     Object.entries(values)
       .filter(([year, value]) =>
         /^\d{4}$/.test(String(year)) &&
-        /^-?\d{0,6}(\.\d{0,4})?$/.test(String(value ?? ""))
+        (typeof value === "string" || typeof value === "number")
       )
       .slice(0, 10)
-      .map(([year, value]) => [String(year), String(value ?? "").slice(0, 20)])
+      .map(([year, value]) => [
+        String(year),
+        String(value ?? "")
+          .trim()
+          .replace(/[^\d.,$%+\-KMBTkmbt]/g, "")
+          .slice(0, 40)
+      ])
   );
 };
 const cleanProjectionCase = (settings = {}) => ({
-  revenueGrowth: cleanProjectionNumberMap(settings.revenueGrowth),
-  netIncomeGrowth: cleanProjectionNumberMap(settings.netIncomeGrowth),
-  sharesGrowth: cleanProjectionNumberMap(settings.sharesGrowth),
-  lowPe: cleanProjectionNumberMap(settings.lowPe),
-  highPe: cleanProjectionNumberMap(settings.highPe)
+  revenue: cleanProjectionInputMap(settings.revenue),
+  revenueGrowth: cleanProjectionInputMap(settings.revenueGrowth),
+  netIncome: cleanProjectionInputMap(settings.netIncome),
+  netIncomeGrowth: cleanProjectionInputMap(settings.netIncomeGrowth),
+  shares: cleanProjectionInputMap(settings.shares),
+  sharesGrowth: cleanProjectionInputMap(settings.sharesGrowth),
+  lowPe: cleanProjectionInputMap(settings.lowPe),
+  highPe: cleanProjectionInputMap(settings.highPe)
 });
 const cleanProjections = (items) => {
   if (!items || typeof items !== "object" || Array.isArray(items)) return {};
 
   return Object.fromEntries(
     Object.entries(items)
-      .filter(([symbol]) => /^[A-Z0-9.-]{1,10}$/.test(String(symbol).toUpperCase()))
+      .filter(([symbol]) => SYMBOL_PATTERN.test(String(symbol).toUpperCase()))
       .slice(0, 300)
       .map(([symbol, cases]) => [
         String(symbol).toUpperCase(),
@@ -23017,14 +23027,19 @@ const cleanProjections = (items) => {
       ])
   );
 };
+const cleanCash = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : 0;
+};
 const cleanPositions = (positions) => (Array.isArray(positions) ? positions : [])
-  .map((position) => ({
+  .map((position, index) => ({
+    id: String(position?.id || `${position?.symbol || "position"}-${index}`).slice(0, 80),
     symbol: String(position?.symbol || "").trim().toUpperCase(),
     shares: Number(position?.shares),
     avgCost: Number(position?.avgCost)
   }))
   .filter((position) =>
-    /^[A-Z0-9.-]{1,10}$/.test(position.symbol) &&
+    SYMBOL_PATTERN.test(position.symbol) &&
     Number.isFinite(position.shares) && position.shares > 0 &&
     Number.isFinite(position.avgCost) && position.avgCost >= 0
   )
@@ -23034,12 +23049,13 @@ const cleanPortfolios = Array.isArray(portfolios)
   ? portfolios.slice(0, 20).map((item, index) => ({
       id: String(item?.id || `portfolio-${index}`).slice(0, 80),
       name: String(item?.name || `Portfolio ${index + 1}`).trim().slice(0, 60),
+      cash: cleanCash(item?.cash),
       positions: cleanPositions(item?.positions)
     }))
   : [];
 const savedPortfolios = cleanPortfolios.length
   ? cleanPortfolios
-  : [{ id: "portfolio-default", name: "My Portfolio", positions: cleanLegacyPortfolio }];
+  : [{ id: "portfolio-default", name: "My Portfolio", cash: 0, positions: cleanLegacyPortfolio }];
 const savedActivePortfolioId = savedPortfolios.some(
   (item) => item.id === String(activePortfolioId || "")
 )
@@ -23053,6 +23069,9 @@ const cleanNamedWatchlists = Array.isArray(namedWatchlists)
     }))
   : [];
 const cleanSavedProjections = cleanProjections(projections);
+const cleanProfileSettings = {
+  watchlistTapeMoves: Boolean(profileSettings?.watchlistTapeMoves)
+};
 
 req.user.watchlist = cleanSymbols(watchlist);
 req.user.portfolios = savedPortfolios;
@@ -23062,6 +23081,7 @@ req.user.portfolio = savedPortfolios.find(
 )?.positions || [];
 req.user.namedWatchlists = cleanNamedWatchlists;
 req.user.projections = cleanSavedProjections;
+req.user.profileSettings = cleanProfileSettings;
 
 await req.user.save();
 
@@ -23081,7 +23101,8 @@ portfolio: req.user.portfolio || [],
 portfolios: req.user.portfolios || [],
 activePortfolioId: req.user.activePortfolioId || "",
 namedWatchlists: req.user.namedWatchlists || [],
-projections: req.user.projections || {}
+projections: req.user.projections || {},
+profileSettings: req.user.profileSettings || {}
 });
 });
 
