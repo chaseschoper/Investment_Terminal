@@ -2537,6 +2537,30 @@ const parseInputNumber = (value) => {
   return Number.isFinite(number) ? number : null;
 };
 
+const parseProjectionSharesInput = (value) => {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+
+  const normalized = raw.replace(/,/g, "").toUpperCase();
+  const suffix = normalized.endsWith("B")
+    ? "B"
+    : normalized.endsWith("M")
+      ? "M"
+      : "";
+  const numericText = suffix ? normalized.slice(0, -1).trim() : normalized;
+  const number = Number(numericText);
+  if (!Number.isFinite(number)) return null;
+
+  if (suffix === "B") return number * 1000000000;
+  if (suffix === "M") return number * 1000000;
+  return Math.abs(number) < 100000 ? number * 1000000 : number;
+};
+
+const formatProjectionShares = (value) => {
+  if (!isNumber(value)) return "N/A";
+  return formatSharesCount(value);
+};
+
 const getEasternParts = (date) => {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
@@ -7956,9 +7980,27 @@ const getProjectionInputValue = (caseId, key, year) => {
 
   return getProjectionAssumptionValue(caseSettings, key, year);
 };
+const projectionSharesHistoryRows = buildChartRows(financialHistory, "sharesOutstanding");
+const latestQuarterlySharesOutstandingFromChart = latestQuarterlyMetricValue(
+  projectionSharesHistoryRows,
+  "sharesOutstanding"
+);
+const latestSharesOutstandingFromChart = [...projectionSharesHistoryRows]
+  .filter((row) => isNumber(row?.sharesOutstanding))
+  .sort((a, b) => {
+    const yearDiff = Number(a.year || 0) - Number(b.year || 0);
+    if (yearDiff !== 0) return yearDiff;
+    return String(a.period || "").localeCompare(String(b.period || ""), undefined, { numeric: true });
+  })
+  .at(-1)?.sharesOutstanding;
+const projectionShareBaseMillions = firstNumber(
+  latestQuarterlySharesOutstandingFromChart,
+  latestSharesOutstandingFromChart,
+  stockData?.sharesOutstanding
+);
 const projectionShareBase =
-  isNumber(stockData?.sharesOutstanding) && stockData.sharesOutstanding > 0
-    ? stockData.sharesOutstanding * 1000000
+  isNumber(projectionShareBaseMillions) && projectionShareBaseMillions > 0
+    ? projectionShareBaseMillions * 1000000
     : isNumber(estimateCurrentYearCard?.earnings) && isNumber(estimateCurrentYearCard?.eps) && estimateCurrentYearCard.eps !== 0
       ? estimateCurrentYearCard.earnings / estimateCurrentYearCard.eps
       : null;
@@ -7976,7 +8018,9 @@ const buildProjectionRows = (caseId) => PROJECTION_YEARS.reduce((rows, year) => 
     : parseInputPercent(getProjectionInputValue(caseId, "sharesGrowth", year)) ?? 0;
   const baseRevenueOverride = parseInputNumber(getProjectionInputValue(caseId, "revenue", year));
   const baseNetIncomeOverride = parseInputNumber(getProjectionInputValue(caseId, "netIncome", year));
-  const baseSharesOverride = parseInputNumber(getProjectionInputValue(caseId, "shares", year));
+  const baseSharesOverride = parseProjectionSharesInput(getProjectionInputValue(caseId, "shares", year));
+  const hasBaseNetIncomeOverride = baseNetIncomeOverride !== null;
+  const hasBaseSharesOverride = baseSharesOverride !== null;
   const revenue = isBaseYear
     ? firstNumber(baseRevenueOverride, estimateCurrentYearCard?.revenue)
     : isNumber(previousRow?.revenue)
@@ -7992,7 +8036,7 @@ const buildProjectionRows = (caseId) => PROJECTION_YEARS.reduce((rows, year) => 
     : isNumber(previousRow?.shares)
       ? previousRow.shares * (1 + sharesGrowthRate)
       : null;
-  const eps = isBaseYear && isNumber(estimateCurrentYearCard?.eps)
+  const eps = isBaseYear && isNumber(estimateCurrentYearCard?.eps) && !hasBaseNetIncomeOverride && !hasBaseSharesOverride
     ? estimateCurrentYearCard.eps
     : isNumber(netIncome) && isNumber(shares) && shares !== 0
       ? netIncome / shares
@@ -14201,13 +14245,14 @@ return (
                       <input
                         value={getProjectionInputValue(projectionCase.id, "shares", row.year)}
                         onChange={(event) => updateProjectionSetting(projectionCase.id, "shares", row.year, event.target.value)}
-                        placeholder={isNumber(row.shares) ? row.shares.toLocaleString(undefined, { maximumFractionDigits: 0 }) : "N/A"}
+                        placeholder={formatProjectionShares(row.shares)}
                         inputMode="decimal"
+                        title="Enter shares in millions, like 402, or use 402M / 402000000."
                         aria-label={`${projectionCase.label} ${row.year} shares outstanding`}
                       />
                     ) : (
                       isNumber(row.shares)
-                        ? row.shares.toLocaleString(undefined, { maximumFractionDigits: 0 })
+                        ? formatProjectionShares(row.shares)
                         : estimateValue("N/A")
                     )}
                   </td>
