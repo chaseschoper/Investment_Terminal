@@ -3570,6 +3570,7 @@ const formatCalendarMoney = (value, missingLabel = "N/A") => {
   if (!isNumber(value)) return missingLabel;
   const absolute = Math.abs(value);
   const sign = value < 0 ? "-" : "";
+  if (absolute >= 1e12) return `${sign}$${(absolute / 1e12).toFixed(2)}T`;
   if (absolute >= 1e9) return `${sign}$${(absolute / 1e9).toFixed(1)}B`;
   if (absolute >= 1e6) return `${sign}$${(absolute / 1e6).toFixed(1)}M`;
   return `${sign}$${absolute.toLocaleString()}`;
@@ -3600,17 +3601,6 @@ const formatCalendarValue = (value, unit = "", missingLabel = "N/A") => {
   return `${value.toLocaleString(undefined, {
     maximumFractionDigits: Math.abs(value) < 10 ? 2 : 1
   })}${suffix}`;
-};
-
-const getCalendarEventRank = (event) => {
-  const candidates = [
-    event?.marketCap,
-    event?.revenueEstimate,
-    event?.revenueActual,
-    event?.revenueEstimated
-  ];
-  const value = candidates.find((candidate) => isNumber(candidate) && Math.abs(candidate) > 0);
-  return value ? Math.abs(value) : 0;
 };
 
 const formatTreasuryRate = (value) =>
@@ -8675,16 +8665,14 @@ const earningsSnapshotDays = calendarMode === "earnings"
       })
       .map((day) => {
         const date = new Date(`${day.date}T12:00:00`);
-        const rankedEvents = [...(day.events || [])]
+        const visibleEvents = [...(day.events || [])]
           .filter((event) => event?.symbol)
-          .sort((a, b) => getCalendarEventRank(b) - getCalendarEventRank(a));
-        const visibleEvents = rankedEvents.slice(0, 20);
+          .slice(0, 20);
         return {
           date: day.date,
           weekday: date.toLocaleDateString(undefined, { weekday: "long" }),
           shortDate: date.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
-          events: visibleEvents,
-          remainingCount: Math.max(0, rankedEvents.length - visibleEvents.length)
+          events: visibleEvents
         };
       })
   : [];
@@ -15476,7 +15464,6 @@ return (
                 <strong>{day.weekday}</strong>
                 <span>{day.shortDate}</span>
               </div>
-              <small>{day.events.length ? `${day.events.length}${day.remainingCount ? "+" : ""} shown` : "Quiet"}</small>
             </div>
 
             <div className="earnings-snapshot-list">
@@ -15522,11 +15509,6 @@ return (
                 })
               ) : (
                 <div className="earnings-snapshot-empty">No major reports listed yet.</div>
-              )}
-              {day.remainingCount > 0 && (
-                <div className="earnings-snapshot-more">
-                  +{day.remainingCount} more reports on the calendar
-                </div>
               )}
             </div>
           </article>

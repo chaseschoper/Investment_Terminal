@@ -5085,12 +5085,12 @@ body {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 14px;
+  grid-template-columns: 1fr;
+  gap: 16px;
 }
 
 .earnings-snapshot-day {
-  min-height: 440px;
+  min-height: 0;
   padding: 14px;
   border: 1px solid rgba(96, 165, 250, 0.22);
   border-radius: 16px;
@@ -5134,23 +5134,26 @@ body {
 
 .earnings-snapshot-list {
   display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
   gap: 8px;
   padding-top: 12px;
 }
 
 .earnings-snapshot-company {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 9px;
+  grid-template-columns: 1fr;
+  align-content: start;
+  justify-items: center;
+  gap: 7px;
   width: 100%;
   min-width: 0;
-  padding: 8px;
+  min-height: 112px;
+  padding: 9px 6px;
   border: 1px solid rgba(56, 189, 248, 0.16);
   border-radius: 13px;
   background: rgba(2, 6, 23, 0.34);
   color: #cbd5e1;
-  text-align: left;
+  text-align: center;
   cursor: pointer;
   transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
 }
@@ -5166,8 +5169,8 @@ body {
   display: grid;
   place-items: center;
   overflow: hidden;
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   border: 1px solid rgba(45, 212, 191, 0.24);
   border-radius: 10px;
   background: #020617;
@@ -5191,12 +5194,13 @@ body {
 
 .earnings-snapshot-copy {
   min-width: 0;
+  width: 100%;
 }
 
 .earnings-snapshot-copy strong {
   display: block;
   color: #f8fafc;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.15;
 }
 
@@ -5205,20 +5209,24 @@ body {
   overflow: hidden;
   margin-top: 3px;
   color: #94a3b8;
-  font-size: 11px;
+  font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .earnings-snapshot-meta {
   color: #7dd3fc;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 900;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .earnings-snapshot-more,
 .earnings-snapshot-empty {
+  grid-column: 1 / -1;
   padding: 11px;
   border: 1px dashed rgba(103, 232, 249, 0.22);
   border-radius: 12px;
@@ -5226,6 +5234,18 @@ body {
   font-size: 12px;
   font-weight: 800;
   text-align: center;
+}
+
+@media (max-width: 1280px) {
+  .earnings-snapshot-list {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .earnings-snapshot-list {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
 .calendar-report-overlay {
@@ -5471,7 +5491,8 @@ body {
   }
 
   .earnings-snapshot-company {
-    grid-template-columns: 36px minmax(0, 1fr);
+    grid-template-columns: 1fr;
+    min-height: 108px;
   }
 
   .earnings-snapshot-logo-shell {
@@ -5480,8 +5501,8 @@ body {
   }
 
   .earnings-snapshot-meta {
-    grid-column: 2;
-    justify-self: start;
+    grid-column: auto;
+    justify-self: center;
   }
 
   .calendar-report-overlay {
