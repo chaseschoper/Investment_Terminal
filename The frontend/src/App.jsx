@@ -2553,7 +2553,7 @@ const parseProjectionMillionsInput = (value) => {
 
   if (suffix === "B") return number * 1000000000;
   if (suffix === "M") return number * 1000000;
-  return Math.abs(number) < 100000 ? number * 1000000 : number;
+  return number * 1000000;
 };
 
 const parseProjectionMoneyInput = parseProjectionMillionsInput;
