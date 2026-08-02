@@ -8676,24 +8676,353 @@ const earningsSnapshotDays = calendarMode === "earnings"
         };
       })
   : [];
-const printWeeklyEarningsSnapshot = () => {
+const earningsSnapshotWeekdays = earningsSnapshotDays
+  .filter((day) => {
+    const weekday = new Date(`${day.date}T12:00:00`).getDay();
+    return weekday >= 1 && weekday <= 5;
+  })
+  .slice(0, 5);
+const loadCanvasImage = async (src) => {
+  if (!src || typeof window === "undefined") return null;
+
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 1400);
+
+  try {
+    const response = await fetch(src, {
+      cache: "force-cache",
+      mode: "cors",
+      signal: controller.signal
+    });
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      const image = new Image();
+      image.decoding = "async";
+      image.src = objectUrl;
+      await new Promise((resolve, reject) => {
+        image.onload = resolve;
+        image.onerror = reject;
+      });
+      return image;
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  } catch {
+    return null;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+};
+const downloadWeeklyEarningsImage = async () => {
   if (typeof window === "undefined" || typeof document === "undefined") return;
 
-  const snapshot = document.querySelector(".earnings-week-snapshot");
-  if (!snapshot) return;
+  const posterDays = earningsSnapshotWeekdays;
+  if (!posterDays.length) return;
 
-  const clearPrintMode = () => {
-    document.body.classList.remove("printing-earnings-snapshot");
-    window.removeEventListener("afterprint", clearPrintMode);
+  if (document.fonts?.ready) {
+    await document.fonts.ready.catch(() => null);
+  }
+
+  const canvas = document.createElement("canvas");
+  const scale = 2;
+  const width = 1800;
+  const height = 1050;
+  canvas.width = width * scale;
+  canvas.height = height * scale;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.scale(scale, scale);
+
+  const drawRoundRect = (x, y, w, h, r) => {
+    const radius = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.arcTo(x + w, y, x + w, y + h, radius);
+    ctx.arcTo(x + w, y + h, x, y + h, radius);
+    ctx.arcTo(x, y + h, x, y, radius);
+    ctx.arcTo(x, y, x + w, y, radius);
+    ctx.closePath();
+  };
+  const fillRoundRect = (x, y, w, h, r, fillStyle, strokeStyle = null) => {
+    drawRoundRect(x, y, w, h, r);
+    ctx.fillStyle = fillStyle;
+    ctx.fill();
+    if (strokeStyle) {
+      ctx.strokeStyle = strokeStyle;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  };
+  const drawFittedText = (text, x, y, maxWidth, {
+    fontSize = 16,
+    fontWeight = 700,
+    color = "#111827",
+    align = "left",
+    minFontSize = 9
+  } = {}) => {
+    const value = String(text || "").trim();
+    if (!value) return;
+    let size = fontSize;
+    ctx.textAlign = align;
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = color;
+    ctx.font = `${fontWeight} ${size}px Inter, Arial, sans-serif`;
+    while (size > minFontSize && ctx.measureText(value).width > maxWidth) {
+      size -= 1;
+      ctx.font = `${fontWeight} ${size}px Inter, Arial, sans-serif`;
+    }
+    if (ctx.measureText(value).width <= maxWidth) {
+      ctx.fillText(value, x, y);
+      return;
+    }
+    let clipped = value;
+    while (clipped.length > 2 && ctx.measureText(`${clipped}...`).width > maxWidth) {
+      clipped = clipped.slice(0, -1);
+    }
+    ctx.fillText(`${clipped}...`, x, y);
+  };
+  const drawWrappedText = (text, x, y, maxWidth, lineHeight, maxLines, options = {}) => {
+    const words = String(text || "").trim().split(/\s+/).filter(Boolean);
+    const lines = [];
+    let current = "";
+    ctx.font = `${options.fontWeight || 700} ${options.fontSize || 11}px Inter, Arial, sans-serif`;
+    words.forEach((word) => {
+      const next = current ? `${current} ${word}` : word;
+      if (ctx.measureText(next).width <= maxWidth) {
+        current = next;
+      } else {
+        if (current) lines.push(current);
+        current = word;
+      }
+    });
+    if (current) lines.push(current);
+    lines.slice(0, maxLines).forEach((line, index) => {
+      const suffix = index === maxLines - 1 && lines.length > maxLines ? "..." : "";
+      drawFittedText(`${line}${suffix}`, x, y + index * lineHeight, maxWidth, options);
+    });
+  };
+  const drawImageContained = (image, x, y, size) => {
+    if (!image) return false;
+    const ratio = Math.min(size / image.width, size / image.height);
+    const drawWidth = image.width * ratio;
+    const drawHeight = image.height * ratio;
+    ctx.drawImage(image, x + (size - drawWidth) / 2, y + (size - drawHeight) / 2, drawWidth, drawHeight);
+    return true;
+  };
+  const drawFallbackLogo = (symbol, x, y, size) => {
+    fillRoundRect(x, y, size, size, 8, "#f8fafc", "rgba(17, 24, 39, 0.18)");
+    drawFittedText(symbol.slice(0, 4), x + size / 2, y + size / 2, size - 6, {
+      fontSize: symbol.length > 3 ? 10 : 14,
+      fontWeight: 900,
+      color: "#0f172a",
+      align: "center",
+      minFontSize: 8
+    });
   };
 
-  document.body.classList.add("printing-earnings-snapshot");
-  window.addEventListener("afterprint", clearPrintMode);
+  const logoEntries = [];
+  posterDays.forEach((day) => {
+    day.events.slice(0, 20).forEach((event) => {
+      const symbol = String(event.symbol || "").toUpperCase();
+      const logoUrl = getDefaultCompanyLogoUrl(symbol) || event.logo || "";
+      if (symbol && logoUrl) logoEntries.push([symbol, logoUrl]);
+    });
+  });
+  logoEntries.push(["MRKTRALLY", "/mrktrally-icon.png"]);
+  const logoMap = new Map();
+  await Promise.allSettled(
+    [...new Map(logoEntries).entries()].map(async ([symbol, logoUrl]) => {
+      const image = await loadCanvasImage(logoUrl);
+      if (image) logoMap.set(symbol, image);
+    })
+  );
 
-  window.setTimeout(() => {
-    window.print();
-    window.setTimeout(clearPrintMode, 1200);
-  }, 80);
+  const background = ctx.createLinearGradient(0, 0, width, height);
+  background.addColorStop(0, "#d6ae78");
+  background.addColorStop(0.48, "#e4c18d");
+  background.addColorStop(1, "#c99a5d");
+  ctx.fillStyle = background;
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.fillStyle = "rgba(255,255,255,0.32)";
+  ctx.font = "900 230px Inter, Arial, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("MRKTRALLY", width / 2, height / 2 + 42);
+
+  fillRoundRect(28, 134, width - 56, height - 210, 16, "rgba(255, 255, 255, 0.84)", "rgba(120, 78, 34, 0.28)");
+
+  const brandLogo = logoMap.get("MRKTRALLY");
+  fillRoundRect(42, 24, 64, 64, 14, "#050b14", "rgba(17, 24, 39, 0.3)");
+  drawImageContained(brandLogo, 50, 32, 48);
+  drawFittedText("MrktRally", 120, 54, 280, {
+    fontSize: 34,
+    fontWeight: 900,
+    color: "#111827"
+  });
+  drawFittedText("Most Anticipated Earnings Releases", width / 2, 34, 560, {
+    fontSize: 28,
+    fontWeight: 900,
+    color: "#111827",
+    align: "center"
+  });
+  drawFittedText("for the week of", width / 2, 64, 220, {
+    fontSize: 12,
+    fontWeight: 800,
+    color: "#475569",
+    align: "center"
+  });
+  drawFittedText(earningsWeekLabel, width / 2, 88, 320, {
+    fontSize: 18,
+    fontWeight: 900,
+    color: "#111827",
+    align: "center"
+  });
+  fillRoundRect(width - 116, 26, 76, 76, 8, "#f8fafc", "rgba(17, 24, 39, 0.18)");
+  ctx.strokeStyle = "#111827";
+  ctx.lineWidth = 3;
+  for (let row = 0; row < 5; row += 1) {
+    for (let col = 0; col < 5; col += 1) {
+      if ((row + col) % 2 === 0 || row === 0 || col === 4) {
+        ctx.strokeRect(width - 104 + col * 12, 38 + row * 12, 8, 8);
+      }
+    }
+  }
+
+  const boardX = 28;
+  const boardY = 134;
+  const boardW = width - 56;
+  const boardH = height - 210;
+  const colW = boardW / 5;
+  const headerH = 62;
+  const rowH = (boardH - headerH) / 10;
+
+  posterDays.forEach((day, dayIndex) => {
+    const x = boardX + dayIndex * colW;
+    ctx.strokeStyle = "rgba(120, 78, 34, 0.32)";
+    ctx.lineWidth = 1;
+    if (dayIndex > 0) {
+      ctx.beginPath();
+      ctx.moveTo(x, boardY);
+      ctx.lineTo(x, boardY + boardH);
+      ctx.stroke();
+    }
+
+    drawFittedText(day.weekday, x + colW / 2, boardY + 18, colW - 22, {
+      fontSize: 17,
+      fontWeight: 900,
+      color: "#111827",
+      align: "center"
+    });
+    drawFittedText(day.shortDate, x + colW / 2, boardY + 42, colW - 22, {
+      fontSize: 11,
+      fontWeight: 900,
+      color: "#475569",
+      align: "center"
+    });
+    drawFittedText("Before Open", x + colW * 0.25, boardY + 58, colW / 2 - 16, {
+      fontSize: 10,
+      fontWeight: 900,
+      color: "#111827",
+      align: "center"
+    });
+    drawFittedText("After Close", x + colW * 0.75, boardY + 58, colW / 2 - 16, {
+      fontSize: 10,
+      fontWeight: 900,
+      color: "#111827",
+      align: "center"
+    });
+
+    const leftEvents = day.events.slice(0, 10);
+    const rightEvents = day.events.slice(10, 20);
+    [leftEvents, rightEvents].forEach((events, sideIndex) => {
+      const sideX = x + sideIndex * (colW / 2);
+      events.forEach((event, rowIndex) => {
+        const symbol = String(event.symbol || "").toUpperCase();
+        const company = event.company || event.name || symbol;
+        const cap = isNumber(event.marketCap)
+          ? formatCalendarMoney(event.marketCap)
+          : isNumber(event.revenueEstimate)
+            ? formatCalendarMoney(event.revenueEstimate)
+            : "Pending";
+        const cellX = sideX + 8;
+        const cellY = boardY + headerH + rowIndex * rowH + 6;
+        const cellW = colW / 2 - 16;
+        const cellH = rowH - 9;
+        const logoSize = Math.min(34, cellH - 16);
+
+        ctx.save();
+        drawRoundRect(cellX, cellY, cellW, cellH, 8);
+        ctx.clip();
+        ctx.fillStyle = rowIndex % 2 === 0 ? "rgba(255,255,255,0.56)" : "rgba(248,250,252,0.36)";
+        ctx.fillRect(cellX, cellY, cellW, cellH);
+        ctx.restore();
+        ctx.strokeStyle = "rgba(120, 78, 34, 0.12)";
+        ctx.strokeRect(cellX, cellY + cellH, cellW, 0.5);
+
+        const logoX = cellX + 7;
+        const logoY = cellY + (cellH - logoSize) / 2;
+        fillRoundRect(logoX, logoY, logoSize, logoSize, 7, "#ffffff", "rgba(15, 23, 42, 0.1)");
+        const logoImage = logoMap.get(symbol);
+        if (!drawImageContained(logoImage, logoX + 4, logoY + 4, logoSize - 8)) {
+          drawFallbackLogo(symbol, logoX, logoY, logoSize);
+        }
+
+        const textX = logoX + logoSize + 7;
+        const textW = cellX + cellW - textX - 5;
+        drawFittedText(symbol, textX, cellY + 16, textW, {
+          fontSize: 14,
+          fontWeight: 900,
+          color: "#111827"
+        });
+        drawWrappedText(company, textX, cellY + 33, textW, 11, 2, {
+          fontSize: 9,
+          fontWeight: 800,
+          color: "#334155",
+          minFontSize: 8
+        });
+        drawFittedText(cap, textX, cellY + cellH - 9, textW, {
+          fontSize: 9,
+          fontWeight: 900,
+          color: "#64748b"
+        });
+      });
+    });
+  });
+
+  drawFittedText("mrktrally.com", 42, height - 38, 300, {
+    fontSize: 13,
+    fontWeight: 800,
+    color: "#111827"
+  });
+  drawFittedText("Built from the visible MrktRally earnings calendar", width - 42, height - 38, 520, {
+    fontSize: 13,
+    fontWeight: 800,
+    color: "#111827",
+    align: "right"
+  });
+
+  const safeWeekLabel = earningsWeekLabel.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase();
+  const downloadCanvas = (targetCanvas) => {
+    const link = document.createElement("a");
+    link.download = `mrktrally-earnings-${safeWeekLabel || "week"}.png`;
+    link.href = targetCanvas.toDataURL("image/png");
+    link.click();
+  };
+
+  try {
+    downloadCanvas(canvas);
+  } catch {
+    const fallbackCanvas = document.createElement("canvas");
+    fallbackCanvas.width = canvas.width;
+    fallbackCanvas.height = canvas.height;
+    const fallbackCtx = fallbackCanvas.getContext("2d");
+    if (!fallbackCtx) return;
+    fallbackCtx.drawImage(canvas, 0, 0);
+    downloadCanvas(fallbackCanvas);
+  }
 };
 const latestTreasuryRates = treasuryRates?.latest || treasuryRates?.rows?.[0] || null;
 const previousTreasuryRates = treasuryRates?.rows?.[1] || null;
@@ -15476,14 +15805,14 @@ return (
         <button
           className="earnings-week-export-button"
           type="button"
-          onClick={printWeeklyEarningsSnapshot}
+          onClick={downloadWeeklyEarningsImage}
         >
-          Save Weekly PDF
+          Save Weekly Image
         </button>
       </div>
 
       <div className="earnings-week-snapshot-board">
-        {earningsSnapshotDays.map((day) => (
+        {earningsSnapshotWeekdays.map((day) => (
           <article className="earnings-snapshot-day" key={`snapshot-${day.date}`}>
             <div className="earnings-snapshot-day-head">
               <div>
