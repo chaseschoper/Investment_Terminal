@@ -3602,6 +3602,17 @@ const formatCalendarValue = (value, unit = "", missingLabel = "N/A") => {
   })}${suffix}`;
 };
 
+const getCalendarEventRank = (event) => {
+  const candidates = [
+    event?.marketCap,
+    event?.revenueEstimate,
+    event?.revenueActual,
+    event?.revenueEstimated
+  ];
+  const value = candidates.find((candidate) => isNumber(candidate) && Math.abs(candidate) > 0);
+  return value ? Math.abs(value) : 0;
+};
+
 const formatTreasuryRate = (value) =>
   isNumber(value) ? `${value.toFixed(2)}%` : "N/A";
 
@@ -8656,6 +8667,27 @@ const earningsWeekLabel = displayedCalendar?.weekStart && displayedCalendar?.wee
       year: "numeric"
     })}`
   : "This week";
+const earningsSnapshotDays = calendarMode === "earnings"
+  ? displayedCalendarDays
+      .filter((day) => {
+        const weekday = new Date(`${day.date}T12:00:00`).getDay();
+        return day.events?.length || (weekday >= 1 && weekday <= 5);
+      })
+      .map((day) => {
+        const date = new Date(`${day.date}T12:00:00`);
+        const rankedEvents = [...(day.events || [])]
+          .filter((event) => event?.symbol)
+          .sort((a, b) => getCalendarEventRank(b) - getCalendarEventRank(a));
+        const visibleEvents = rankedEvents.slice(0, 20);
+        return {
+          date: day.date,
+          weekday: date.toLocaleDateString(undefined, { weekday: "long" }),
+          shortDate: date.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+          events: visibleEvents,
+          remainingCount: Math.max(0, rankedEvents.length - visibleEvents.length)
+        };
+      })
+  : [];
 const latestTreasuryRates = treasuryRates?.latest || treasuryRates?.rows?.[0] || null;
 const previousTreasuryRates = treasuryRates?.rows?.[1] || null;
 const portfolioStockAllocationData = portfolio.map((position, index) => {
@@ -15422,6 +15454,86 @@ return (
     )}
   </div>
 
+  {calendarMode === "earnings" && (
+    <section className="earnings-week-snapshot" aria-label="Top earnings snapshot">
+      <div className="earnings-week-snapshot-header">
+        <div className="earnings-week-brand">
+          <img src="/mrktrally-icon.png" alt="MrktRally logo" />
+          <span>MrktRally</span>
+        </div>
+        <div>
+          <span className="home-feature-label">Weekly earnings board</span>
+          <h3>Top earnings for the week of {earningsWeekLabel}</h3>
+          <p>The biggest scheduled reports for each day, ranked by available market cap.</p>
+        </div>
+      </div>
+
+      <div className="earnings-week-snapshot-board">
+        {earningsSnapshotDays.map((day) => (
+          <article className="earnings-snapshot-day" key={`snapshot-${day.date}`}>
+            <div className="earnings-snapshot-day-head">
+              <div>
+                <strong>{day.weekday}</strong>
+                <span>{day.shortDate}</span>
+              </div>
+              <small>{day.events.length ? `${day.events.length}${day.remainingCount ? "+" : ""} shown` : "Quiet"}</small>
+            </div>
+
+            <div className="earnings-snapshot-list">
+              {day.events.length ? (
+                day.events.map((event, eventIndex) => {
+                  const symbol = String(event.symbol || "").toUpperCase();
+                  return (
+                    <button
+                      className="earnings-snapshot-company"
+                      key={`${day.date}-${symbol}-${eventIndex}`}
+                      type="button"
+                      onClick={() => openCalendarEarningsReport(event)}
+                    >
+                      <span className="earnings-snapshot-logo-shell" aria-hidden="true">
+                        <span className="earnings-snapshot-logo-fallback">
+                          {symbol.slice(0, 1)}
+                        </span>
+                        {symbol && (
+                          <img
+                            className="earnings-snapshot-logo"
+                            src={getDefaultCompanyLogoUrl(symbol) || event.logo}
+                            data-provider-logo={event.logo || ""}
+                            alt=""
+                            onError={(imageEvent) =>
+                              handleCompanyLogoError(imageEvent, symbol)
+                            }
+                          />
+                        )}
+                      </span>
+                      <span className="earnings-snapshot-copy">
+                        <strong>{symbol}</strong>
+                        <small>{event.company || "Company"}</small>
+                      </span>
+                      <span className="earnings-snapshot-meta">
+                        {isNumber(event.marketCap)
+                          ? formatCalendarMoney(event.marketCap)
+                          : isNumber(event.revenueEstimate)
+                            ? formatCalendarMoney(event.revenueEstimate)
+                            : "Est. pending"}
+                      </span>
+                    </button>
+                  );
+                })
+              ) : (
+                <div className="earnings-snapshot-empty">No major reports listed yet.</div>
+              )}
+              {day.remainingCount > 0 && (
+                <div className="earnings-snapshot-more">
+                  +{day.remainingCount} more reports on the calendar
+                </div>
+              )}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  )}
 
 </div>
 </section>
