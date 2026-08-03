@@ -883,7 +883,19 @@ const SAFE_IMAGE_PROXY_HOSTS = new Set([
   "assets.parqet.com"
 ]);
 
+const setImageProxyCorsHeaders = (res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  res.setHeader("Vary", "Origin");
+};
+
+app.options("/api/image-proxy", (req, res) => {
+  setImageProxyCorsHeaders(res);
+  return res.sendStatus(204);
+});
+
 app.get("/api/image-proxy", async (req, res) => {
+  setImageProxyCorsHeaders(res);
   const rawUrl = String(req.query.url || "");
   try {
     const parsedUrl = new URL(rawUrl);
@@ -893,7 +905,8 @@ app.get("/api/image-proxy", async (req, res) => {
 
     const response = await axios.get(parsedUrl.toString(), {
       responseType: "arraybuffer",
-      timeout: 2500,
+      timeout: 6000,
+      maxRedirects: 4,
       maxContentLength: 1024 * 1024,
       headers: {
         "User-Agent": "Mozilla/5.0",
