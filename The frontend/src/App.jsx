@@ -3748,12 +3748,16 @@ const getCompanyLogoCandidates = (symbol, providerLogo = "") => {
   const symbolVariants = [...new Set([
     cleanSymbol,
     cleanSymbol.replace(/\./g, "-"),
-    cleanSymbol.replace(/-/g, ".")
-  ])];
+    cleanSymbol.replace(/-/g, "."),
+    cleanSymbol.replace(/[.-]/g, ""),
+    cleanSymbol.split(".")[0],
+    cleanSymbol.split("-")[0]
+  ].map((value) => String(value || "").replace(/[^A-Z0-9.-]/g, "")).filter(Boolean))];
   const encodedVariants = symbolVariants.map((variant) => encodeURIComponent(variant));
+  const lowerEncodedVariants = symbolVariants.map((variant) => encodeURIComponent(variant.toLowerCase()));
   return [
-    ...encodedVariants.map((variant) => `https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/${variant}.png`),
     providerLogo,
+    ...lowerEncodedVariants.map((variant) => `https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/${variant}.png`),
     ...encodedVariants.map((variant) => `https://financialmodelingprep.com/image-stock/${variant}.png`),
     ...encodedVariants.map((variant) => `https://images.financialmodelingprep.com/symbol/${variant}.png`),
     ...encodedVariants.map((variant) => `https://storage.googleapis.com/iex/api/logos/${variant}.png`),
@@ -8682,17 +8686,29 @@ const earningsSnapshotWeekdays = earningsSnapshotDays
     return weekday >= 1 && weekday <= 5;
   })
   .slice(0, 5);
-const getCanvasImageUrl = (src) => {
-  if (!src || typeof src !== "string") return "";
-  if (src.startsWith("/")) return src;
-  return `${API_URL}/api/image-proxy?url=${encodeURIComponent(src)}`;
-};
-const loadCanvasImage = async (src) => {
-  if (!src || typeof window === "undefined") return null;
+const getCanvasImageUrls = (src) => {
+  if (!src || typeof src !== "string") return [];
+  if (src.startsWith("/")) return [src];
+  const apiRoot = String(API_URL || "").replace(/\/$/, "");
+  const proxyBase = apiRoot.endsWith("/api") ? apiRoot : `${apiRoot}/api`;
 
-  const imageUrl = getCanvasImageUrl(src);
+  try {
+    const sourceUrl = new URL(src, window.location.origin);
+    const apiUrl = new URL(proxyBase, window.location.origin);
+    const apiPath = apiUrl.pathname.replace(/\/$/, "");
+    if (sourceUrl.origin === apiUrl.origin && sourceUrl.pathname.startsWith(apiPath)) {
+      return [src];
+    }
+  } catch {
+    // Keep proxy/direct fallback for malformed external URLs.
+  }
+
+  const proxyUrl = `${proxyBase}/image-proxy?url=${encodeURIComponent(src)}`;
+  return [proxyUrl, src].filter((url, index, list) => url && list.indexOf(url) === index);
+};
+const loadCanvasImageFromUrl = async (imageUrl) => {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 1800);
+  const timeout = window.setTimeout(() => controller.abort(), 4500);
 
   try {
     const response = await fetch(imageUrl, {
@@ -8700,33 +8716,73 @@ const loadCanvasImage = async (src) => {
       signal: controller.signal
     });
     if (!response.ok) return null;
+    const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+    if (contentType && !contentType.includes("image") && !contentType.includes("octet-stream")) return null;
     const blob = await response.blob();
+    if (!blob.size) return null;
     const objectUrl = URL.createObjectURL(blob);
-    try {
-      const image = new Image();
-      image.decoding = "async";
-      image.src = objectUrl;
-      await new Promise((resolve, reject) => {
-        image.onload = resolve;
-        image.onerror = reject;
-      });
-      return image;
-    } finally {
-      URL.revokeObjectURL(objectUrl);
-    }
+    const image = new Image();
+    image.decoding = "async";
+    image.src = objectUrl;
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = reject;
+    });
+    return image;
   } catch {
     return null;
   } finally {
     window.clearTimeout(timeout);
   }
 };
-const loadFirstCanvasImage = async (urls) => {
-  const candidates = Array.isArray(urls) ? urls : [urls];
-  for (const url of candidates.filter(Boolean)) {
-    const image = await loadCanvasImage(url);
+const loadCanvasImage = async (src) => {
+  if (!src || typeof window === "undefined") return null;
+
+  for (const imageUrl of getCanvasImageUrls(src)) {
+    const image = await loadCanvasImageFromUrl(imageUrl);
     if (image) return image;
   }
   return null;
+};
+const loadFirstCanvasImage = async (urls) => {
+  const candidates = [...new Set((Array.isArray(urls) ? urls : [urls]).filter(Boolean))];
+  for (let index = 0; index < candidates.length; index += 4) {
+    const images = await Promise.all(candidates.slice(index, index + 4).map((url) => loadCanvasImage(url)));
+    const image = images.find(Boolean);
+    if (image) return image;
+  }
+  return null;
+};
+const getProviderLogoFromRecord = (record = {}) => (
+  record.logo ||
+  record.logoUrl ||
+  record.image ||
+  record.companyLogo ||
+  record.companyImage ||
+  record.profileImage ||
+  record.profile?.image ||
+  record.company?.image ||
+  ""
+);
+const getWeeklyBoardLogoCandidates = (symbol, providerLogo = "") => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  if (!cleanSymbol) return [];
+  const apiRoot = String(API_URL || "").replace(/\/$/, "");
+  const apiBase = apiRoot.endsWith("/api") ? apiRoot : `${apiRoot}/api`;
+  const symbolVariants = [...new Set([
+    cleanSymbol,
+    cleanSymbol.replace(/\./g, "-"),
+    cleanSymbol.replace(/-/g, "."),
+    cleanSymbol.replace(/[.-]/g, ""),
+    cleanSymbol.split(".")[0],
+    cleanSymbol.split("-")[0]
+  ].map((value) => String(value || "").replace(/[^A-Z0-9.-]/g, "")).filter(Boolean))];
+  const proxyLogoUrls = symbolVariants.map((variant) => `${apiBase}/company-logo/${encodeURIComponent(variant)}`);
+  return [
+    ...proxyLogoUrls,
+    providerLogo,
+    ...getCompanyLogoCandidates(cleanSymbol, providerLogo)
+  ].filter((url, index, list) => url && list.indexOf(url) === index);
 };
 const downloadWeeklyEarningsImage = async () => {
   if (typeof window === "undefined" || typeof document === "undefined") return;
@@ -8839,7 +8895,7 @@ const downloadWeeklyEarningsImage = async () => {
   posterDays.forEach((day) => {
     day.events.slice(0, 20).forEach((event) => {
       const symbol = String(event.symbol || "").toUpperCase();
-      const logoUrls = getCompanyLogoCandidates(symbol, event.logo);
+      const logoUrls = getWeeklyBoardLogoCandidates(symbol, getProviderLogoFromRecord(event));
       if (symbol && logoUrls.length) logoEntries.push([symbol, logoUrls]);
     });
   });

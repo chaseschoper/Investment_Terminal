@@ -926,6 +926,87 @@ app.get("/api/image-proxy", async (req, res) => {
   }
 });
 
+const buildCompanyLogoCandidateUrls = (symbol) => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  if (!cleanSymbol) return [];
+  const symbolVariants = [...new Set([
+    cleanSymbol,
+    cleanSymbol.replace(/\./g, "-"),
+    cleanSymbol.replace(/-/g, "."),
+    cleanSymbol.replace(/[.-]/g, ""),
+    cleanSymbol.split(".")[0],
+    cleanSymbol.split("-")[0]
+  ].map((value) => String(value || "").replace(/[^A-Z0-9.-]/g, "")).filter(Boolean))];
+
+  const candidates = symbolVariants.flatMap((variant) => {
+    const encoded = encodeURIComponent(variant);
+    const lower = encodeURIComponent(variant.toLowerCase());
+    return [
+      `https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/${lower}.png`,
+      `https://financialmodelingprep.com/image-stock/${encoded}.png`,
+      `https://images.financialmodelingprep.com/symbol/${encoded}.png`,
+      `https://storage.googleapis.com/iex/api/logos/${encoded}.png`,
+      `https://eodhd.com/img/logos/US/${encoded}.png`,
+      `https://assets.parqet.com/logos/symbol/${encoded}?format=png`
+    ];
+  });
+
+  return [...new Set(candidates)];
+};
+
+const inferLogoContentType = (buffer) => {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 4) return "";
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) return "image/png";
+  if (buffer[0] === 0xff && buffer[1] === 0xd8) return "image/jpeg";
+  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) return "image/gif";
+  if (buffer.slice(0, 4).toString("ascii") === "RIFF" && buffer.slice(8, 12).toString("ascii") === "WEBP") return "image/webp";
+  const textStart = buffer.slice(0, Math.min(buffer.length, 256)).toString("utf8").trim().toLowerCase();
+  if (textStart.startsWith("<svg") || textStart.includes("<svg")) return "image/svg+xml";
+  return "";
+};
+
+const fetchCompanyLogoImage = async (url) => {
+  const response = await axios.get(url, {
+    responseType: "arraybuffer",
+    timeout: 3500,
+    maxRedirects: 4,
+    maxContentLength: 2 * 1024 * 1024,
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
+    }
+  });
+  const buffer = Buffer.from(response.data || []);
+  const headerContentType = String(response.headers["content-type"] || "").split(";")[0];
+  const inferredContentType = inferLogoContentType(buffer);
+  const contentType = /^image\//i.test(headerContentType) ? headerContentType : inferredContentType;
+  if (!contentType || buffer.length < 50) {
+    throw new Error("Logo response was not an image");
+  }
+  return { buffer, contentType };
+};
+
+app.options("/api/company-logo/:symbol", (req, res) => {
+  setImageProxyCorsHeaders(res);
+  return res.sendStatus(204);
+});
+
+app.get("/api/company-logo/:symbol", async (req, res) => {
+  setImageProxyCorsHeaders(res);
+  const candidates = buildCompanyLogoCandidateUrls(req.params.symbol);
+  for (const url of candidates) {
+    try {
+      const { buffer, contentType } = await fetchCompanyLogoImage(url);
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Cache-Control", "public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800");
+      return res.send(buffer);
+    } catch {
+      // Try the next known logo provider.
+    }
+  }
+  return res.status(404).send("Logo unavailable");
+});
+
 // =========================
 // DB CONNECTION
 // =========================
