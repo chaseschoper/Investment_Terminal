@@ -905,7 +905,7 @@ app.get("/api/image-proxy", async (req, res) => {
 
     const response = await axios.get(parsedUrl.toString(), {
       responseType: "arraybuffer",
-      timeout: 6000,
+      timeout: 9000,
       maxRedirects: 4,
       maxContentLength: 1024 * 1024,
       headers: {
@@ -939,15 +939,9 @@ const buildCompanyLogoCandidateUrls = (symbol) => {
   ].map((value) => String(value || "").replace(/[^A-Z0-9.-]/g, "")).filter(Boolean))];
 
   const candidates = symbolVariants.flatMap((variant) => {
-    const encoded = encodeURIComponent(variant);
     const lower = encodeURIComponent(variant.toLowerCase());
     return [
-      `https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/${lower}.png`,
-      `https://financialmodelingprep.com/image-stock/${encoded}.png`,
-      `https://images.financialmodelingprep.com/symbol/${encoded}.png`,
-      `https://storage.googleapis.com/iex/api/logos/${encoded}.png`,
-      `https://eodhd.com/img/logos/US/${encoded}.png`,
-      `https://assets.parqet.com/logos/symbol/${encoded}?format=png`
+      `https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/${lower}.png`
     ];
   });
 
@@ -968,7 +962,7 @@ const inferLogoContentType = (buffer) => {
 const fetchCompanyLogoImage = async (url) => {
   const response = await axios.get(url, {
     responseType: "arraybuffer",
-    timeout: 3500,
+    timeout: 9000,
     maxRedirects: 4,
     maxContentLength: 2 * 1024 * 1024,
     headers: {
@@ -1354,10 +1348,7 @@ function getFinnhubLogoUrl(ticker) {
 }
 
 function getFmpSymbolImageUrl(ticker) {
-  const symbol = String(ticker || "").trim().toUpperCase();
-  return symbol
-    ? `https://images.financialmodelingprep.com/symbol/${encodeURIComponent(symbol)}.png`
-    : null;
+  return getFinnhubLogoUrl(ticker);
 }
 
 const FOREX_CURRENCY_CODES = new Set([
@@ -22392,13 +22383,7 @@ const results = rows
       exchangeFullName: firstText(row.exchangeFullName, row.stockExchange),
       type,
       logo: getFinnhubLogoUrl(symbol),
-      logoFallbacks: [
-        getFinnhubLogoUrl(symbol),
-        `https://images.financialmodelingprep.com/symbol/${encodeURIComponent(symbol)}.png`,
-        `https://financialmodelingprep.com/image-stock/${encodeURIComponent(symbol)}.png`,
-        `https://eodhd.com/img/logos/US/${encodeURIComponent(symbol)}.png`,
-        `https://assets.parqet.com/logos/symbol/${encodeURIComponent(symbol)}?format=png`
-      ].filter(Boolean)
+      logoFallbacks: [getFinnhubLogoUrl(symbol)].filter(Boolean)
     };
   })
   .filter(Boolean)

@@ -3741,6 +3741,9 @@ const VALUATION_METRICS_VERSION = 23;
 const BALANCE_SHEET_METRICS_VERSION = 14;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const MIN_DISPLAY_INTERIM_HISTORY_ROWS = 4;
+const FINNHUB_STOCK_LOGO_BASE = "https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/";
+
+const isFinnhubLogoUrl = (url = "") => String(url || "").includes(FINNHUB_STOCK_LOGO_BASE);
 
 const getCompanyLogoCandidates = (symbol, providerLogo = "") => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
@@ -3753,16 +3756,10 @@ const getCompanyLogoCandidates = (symbol, providerLogo = "") => {
     cleanSymbol.split(".")[0],
     cleanSymbol.split("-")[0]
   ].map((value) => String(value || "").replace(/[^A-Z0-9.-]/g, "")).filter(Boolean))];
-  const encodedVariants = symbolVariants.map((variant) => encodeURIComponent(variant));
   const lowerEncodedVariants = symbolVariants.map((variant) => encodeURIComponent(variant.toLowerCase()));
   return [
-    providerLogo,
-    ...lowerEncodedVariants.map((variant) => `https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/${variant}.png`),
-    ...encodedVariants.map((variant) => `https://financialmodelingprep.com/image-stock/${variant}.png`),
-    ...encodedVariants.map((variant) => `https://images.financialmodelingprep.com/symbol/${variant}.png`),
-    ...encodedVariants.map((variant) => `https://storage.googleapis.com/iex/api/logos/${variant}.png`),
-    ...encodedVariants.map((variant) => `https://eodhd.com/img/logos/US/${variant}.png`),
-    ...encodedVariants.map((variant) => `https://assets.parqet.com/logos/symbol/${variant}?format=png`)
+    ...(isFinnhubLogoUrl(providerLogo) ? [providerLogo] : []),
+    ...lowerEncodedVariants.map((variant) => `${FINNHUB_STOCK_LOGO_BASE}${variant}.png`)
   ].filter((url, index, list) => url && list.indexOf(url) === index);
 };
 
@@ -3770,9 +3767,7 @@ const getDefaultCompanyLogoUrl = (symbol) => getCompanyLogoCandidates(symbol)[0]
 
 const getFmpMarketSymbolLogoUrl = (symbol) => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
-  return cleanSymbol
-    ? `https://images.financialmodelingprep.com/symbol/${encodeURIComponent(cleanSymbol)}.png`
-    : "";
+  return getDefaultCompanyLogoUrl(cleanSymbol) || "";
 };
 
 const handleCompanyLogoError = (event, symbol) => {
@@ -8708,7 +8703,7 @@ const getCanvasImageUrls = (src) => {
 };
 const loadCanvasImageFromUrl = async (imageUrl) => {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 4500);
+  const timeout = window.setTimeout(() => controller.abort(), 9000);
 
   try {
     const response = await fetch(imageUrl, {
@@ -8753,6 +8748,24 @@ const loadFirstCanvasImage = async (urls) => {
   }
   return null;
 };
+const loadWeeklyBoardLogoMap = async (logoEntries) => {
+  const uniqueEntries = [...new Map(logoEntries).entries()];
+  const logoMap = new Map();
+  const queue = [...uniqueEntries];
+  const workerCount = Math.min(8, queue.length);
+
+  await Promise.allSettled(Array.from({ length: workerCount }, async () => {
+    while (queue.length) {
+      const entry = queue.shift();
+      if (!entry) continue;
+      const [symbol, logoUrls] = entry;
+      const image = await loadFirstCanvasImage(logoUrls);
+      if (image) logoMap.set(symbol, image);
+    }
+  }));
+
+  return logoMap;
+};
 const getProviderLogoFromRecord = (record = {}) => (
   record.logo ||
   record.logoUrl ||
@@ -8764,11 +8777,16 @@ const getProviderLogoFromRecord = (record = {}) => (
   record.company?.image ||
   ""
 );
+
+const isFmpLogoUrl = (url = "") => {
+  const value = String(url || "");
+  return value.includes("financialmodelingprep.com/image-stock/") ||
+    value.includes("images.financialmodelingprep.com/symbol/");
+};
+
 const getWeeklyBoardLogoCandidates = (symbol, providerLogo = "") => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
   if (!cleanSymbol) return [];
-  const apiRoot = String(API_URL || "").replace(/\/$/, "");
-  const apiBase = apiRoot.endsWith("/api") ? apiRoot : `${apiRoot}/api`;
   const symbolVariants = [...new Set([
     cleanSymbol,
     cleanSymbol.replace(/\./g, "-"),
@@ -8777,11 +8795,11 @@ const getWeeklyBoardLogoCandidates = (symbol, providerLogo = "") => {
     cleanSymbol.split(".")[0],
     cleanSymbol.split("-")[0]
   ].map((value) => String(value || "").replace(/[^A-Z0-9.-]/g, "")).filter(Boolean))];
-  const proxyLogoUrls = symbolVariants.map((variant) => `${apiBase}/company-logo/${encodeURIComponent(variant)}`);
+  const encodedVariants = symbolVariants.map((variant) => encodeURIComponent(variant));
   return [
-    ...proxyLogoUrls,
-    providerLogo,
-    ...getCompanyLogoCandidates(cleanSymbol, providerLogo)
+    ...(isFmpLogoUrl(providerLogo) ? [providerLogo] : []),
+    ...encodedVariants.map((variant) => `https://financialmodelingprep.com/image-stock/${variant}.png`),
+    ...encodedVariants.map((variant) => `https://images.financialmodelingprep.com/symbol/${variant}.png`)
   ].filter((url, index, list) => url && list.indexOf(url) === index);
 };
 const downloadWeeklyEarningsImage = async () => {
@@ -8900,13 +8918,7 @@ const downloadWeeklyEarningsImage = async () => {
     });
   });
   logoEntries.push(["MRKTRALLY", "/mrktrally-icon.png"]);
-  const logoMap = new Map();
-  await Promise.allSettled(
-    [...new Map(logoEntries).entries()].map(async ([symbol, logoUrls]) => {
-      const image = await loadFirstCanvasImage(logoUrls);
-      if (image) logoMap.set(symbol, image);
-    })
-  );
+  const logoMap = await loadWeeklyBoardLogoMap(logoEntries);
 
   const background = ctx.createLinearGradient(0, 0, width, height);
   background.addColorStop(0, "#02070d");
