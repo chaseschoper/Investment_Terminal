@@ -13237,7 +13237,7 @@ return (
       )}
       {hasAfterHoursTrade ? (
         <small className="stock-hero-after-hours">
-          After Hours {formatPrice(afterHoursTrade.price)}
+          {afterHoursTrade.label || "After Hours"} {formatPrice(afterHoursTrade.price)}
           {isNumber(afterHoursPercentChange) ? ` ${formatSignedPercent(afterHoursPercentChange)}` : ""}
         </small>
       ) : null}

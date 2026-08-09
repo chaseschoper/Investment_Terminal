@@ -1762,33 +1762,138 @@ function parseFmpTradeTimestamp(value) {
   return parsed && !Number.isNaN(parsed.getTime()) ? parsed : null;
 }
 
-function shouldShowAfterHoursTrade(timestamp, now = new Date()) {
+function getDateKeyParts(dateKey) {
+  const match = String(dateKey || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  return {
+    year: Number(match[1]),
+    month: Number(match[2]),
+    day: Number(match[3])
+  };
+}
+
+function getNthWeekdayOfMonthUtc(year, month, weekday, occurrence) {
+  let count = 0;
+  for (let day = 1; day <= 31; day += 1) {
+    const date = new Date(Date.UTC(year, month - 1, day, 12));
+    if (date.getUTCMonth() !== month - 1) break;
+    if (date.getUTCDay() === weekday) {
+      count += 1;
+      if (count === occurrence) return day;
+    }
+  }
+  return null;
+}
+
+function getLastWeekdayOfMonthUtc(year, month, weekday) {
+  for (let day = 31; day >= 1; day -= 1) {
+    const date = new Date(Date.UTC(year, month - 1, day, 12));
+    if (date.getUTCMonth() === month - 1 && date.getUTCDay() === weekday) return day;
+  }
+  return null;
+}
+
+function getWesternEasterUtcParts(year) {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return { year, month, day };
+}
+
+function addUtcCalendarDays(parts, days) {
+  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + days, 12));
+  return {
+    year: date.getUTCFullYear(),
+    month: date.getUTCMonth() + 1,
+    day: date.getUTCDate()
+  };
+}
+
+function formatUtcDateKey(parts) {
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
+function getObservedUsMarketHolidayKey(year, month, day) {
+  const date = new Date(Date.UTC(year, month - 1, day, 12));
+  const weekday = date.getUTCDay();
+  if (weekday === 6) return formatUtcDateKey(addUtcCalendarDays({ year, month, day }, -1));
+  if (weekday === 0) return formatUtcDateKey(addUtcCalendarDays({ year, month, day }, 1));
+  return formatUtcDateKey({ year, month, day });
+}
+
+function getNyseHolidayKeysForYear(year) {
+  return new Set([
+    getObservedUsMarketHolidayKey(year, 1, 1),
+    formatUtcDateKey({ year, month: 1, day: getNthWeekdayOfMonthUtc(year, 1, 1, 3) }),
+    formatUtcDateKey({ year, month: 2, day: getNthWeekdayOfMonthUtc(year, 2, 1, 3) }),
+    formatUtcDateKey(addUtcCalendarDays(getWesternEasterUtcParts(year), -2)),
+    formatUtcDateKey({ year, month: 5, day: getLastWeekdayOfMonthUtc(year, 5, 1) }),
+    getObservedUsMarketHolidayKey(year, 6, 19),
+    getObservedUsMarketHolidayKey(year, 7, 4),
+    formatUtcDateKey({ year, month: 9, day: getNthWeekdayOfMonthUtc(year, 9, 1, 1) }),
+    formatUtcDateKey({ year, month: 11, day: getNthWeekdayOfMonthUtc(year, 11, 4, 4) }),
+    getObservedUsMarketHolidayKey(year, 12, 25)
+  ].filter(Boolean));
+}
+
+function isNyseHolidayDateKey(dateKey) {
+  const parts = getDateKeyParts(dateKey);
+  return parts ? getNyseHolidayKeysForYear(parts.year).has(dateKey) : false;
+}
+
+function getFmpExtendedHoursSession(timestamp, now = new Date()) {
   const tradeDate = parseFmpTradeTimestamp(timestamp);
-  if (!tradeDate) return false;
+  if (!tradeDate) return null;
   const tradeKey = getNewYorkDateKey(tradeDate);
   const nowKey = getNewYorkDateKey(now);
+  const tradeMinutes = getNewYorkMarketMinutes(tradeDate);
   const nowMinutes = getNewYorkMarketMinutes(now);
   const nowWeekday = getNewYorkClockParts(now).weekday;
-  if (nowMinutes === null) return false;
+  if (tradeMinutes === null || nowMinutes === null) return null;
 
   if (tradeKey === nowKey) {
-    return nowMinutes >= 16 * 60;
+    if (nowMinutes >= 4 * 60 && nowMinutes < 9 * 60 + 30 && tradeMinutes >= 4 * 60 && tradeMinutes < 9 * 60 + 30) {
+      return "preMarket";
+    }
+    if (nowMinutes >= 16 * 60 && tradeMinutes >= 16 * 60) {
+      return "afterHours";
+    }
+    if (isNyseHolidayDateKey(nowKey) && tradeMinutes >= 16 * 60) {
+      return "afterHours";
+    }
+    return null;
   }
 
   const ageMs = now.getTime() - tradeDate.getTime();
-  if (ageMs <= 0) return false;
+  if (ageMs <= 0) return null;
+  const isWeekend = nowWeekday === "Sat" || nowWeekday === "Sun";
+  const isMondayPreOpen = nowWeekday === "Mon" && nowMinutes < 9 * 60 + 30;
+  const isHoliday = isNyseHolidayDateKey(nowKey);
   if (
-    (nowWeekday === "Sat" || nowWeekday === "Sun" || (nowWeekday === "Mon" && nowMinutes < 9 * 60 + 30)) &&
-    ageMs < 72 * 60 * 60 * 1000
+    tradeMinutes >= 16 * 60 &&
+    (isWeekend || isMondayPreOpen || isHoliday) &&
+    ageMs < 120 * 60 * 60 * 1000
   ) {
-    return true;
+    return "afterHours";
   }
-  return nowMinutes < 5 * 60 && ageMs > 0 && ageMs < 18 * 60 * 60 * 1000;
+  return null;
 }
 
 function buildAfterHoursSessionQuote(afterHoursTrade, closePrice) {
   if (!afterHoursTrade || afterHoursTrade.price === null || afterHoursTrade.price === undefined) return null;
-  if (!shouldShowAfterHoursTrade(afterHoursTrade.timestamp)) return null;
+  const session = getFmpExtendedHoursSession(afterHoursTrade.timestamp);
+  if (!session) return null;
   const price = toNumberOrNull(afterHoursTrade.price);
   const close = toNumberOrNull(closePrice);
   if (price === null) return null;
@@ -1797,6 +1902,8 @@ function buildAfterHoursSessionQuote(afterHoursTrade, closePrice) {
   const percentChange = hasClose ? (change / close) * 100 : null;
   return {
     ...afterHoursTrade,
+    session,
+    label: session === "preMarket" ? "Pre Market" : "After Hours",
     price,
     regularClose: hasClose ? close : null,
     previousClose: hasClose ? close : null,
