@@ -10351,7 +10351,22 @@ const resolveEtfSearchInputToSymbol = async () => {
   );
   if (exactSuggestion?.symbol) return String(exactSuggestion.symbol).toUpperCase();
   if (etfSearchSuggestions[0]?.symbol) return String(etfSearchSuggestions[0].symbol).toUpperCase();
-  return resolveSearchInputToSymbol(value);
+
+  try {
+    const { data } = await axios.get(`${API_URL}/api/search-stocks`, {
+      params: { q: value, includeFunds: true, fundsOnly: true },
+      timeout: 4500
+    });
+    const results = Array.isArray(data?.results) ? data.results : [];
+    const exactResult = results.find(
+      (item) => String(item.symbol || "").toUpperCase() === normalizedValue
+    );
+    return String((exactResult || results[0])?.symbol || "").toUpperCase();
+  } catch (error) {
+    console.error("ETF search lookup failed", error);
+  }
+
+  return "";
 };
 
 const selectEtfSearchSuggestion = (item) => {
@@ -11500,7 +11515,10 @@ return (
             onSubmit={async (event) => {
               event.preventDefault();
               const symbol = await resolveEtfSearchInputToSymbol();
-              if (!symbol) return;
+              if (!symbol) {
+                setEtfError("Search an ETF or fund ticker.");
+                return;
+              }
               searchEtfSymbol(symbol);
             }}
           >

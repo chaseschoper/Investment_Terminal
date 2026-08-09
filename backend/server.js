@@ -1022,7 +1022,7 @@ app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
     service: "investment-terminal-api",
-    version: "fmp-restore-2026-08-09",
+    version: "fmp-search-after-hours-2026-08-09",
     yahooProviderEnabled: YAHOO_PROVIDER_ENABLED,
     timestamp: new Date().toISOString()
   });
@@ -1719,7 +1719,7 @@ async function fetchFmpAfterHoursTrade(ticker) {
   try {
     const payload = await getFmpFastData(cacheKey, "https://financialmodelingprep.com/stable/aftermarket-trade", {
       params: { symbol },
-      timeout: 1000,
+      timeout: 2400,
       ttlMs: 45 * 1000,
       emptyTtlMs: 30 * 1000
     });
@@ -1908,7 +1908,7 @@ async function buildStockOverviewExtras(ticker, data = {}) {
   if (!symbol) return {};
 
   const [afterHoursTradeRaw, revenueProductSegments, revenueGeographicSegments] = await Promise.all([
-    resolveWithin(fetchFmpAfterHoursTrade(symbol), 900, null),
+    resolveWithin(fetchFmpAfterHoursTrade(symbol), 2600, null),
     resolveWithin(fetchFmpRevenueProductSegments(symbol), 1100, data.revenueProductSegments || null),
     resolveWithin(fetchFmpRevenueGeographicSegments(symbol), 1100, data.revenueGeographicSegments || null)
   ]);
@@ -22916,7 +22916,7 @@ if (cleanQuery.length < 2) return res.json({ results: [] });
 const includeFunds = String(req.query.includeFunds || "").toLowerCase() === "true";
 const fundsOnly = String(req.query.fundsOnly || "").toLowerCase() === "true";
 
-const cacheKey = `${cleanQuery.toLowerCase()}:${fundsOnly ? "funds-only" : includeFunds ? "funds" : "stocks"}`;
+const cacheKey = `${cleanQuery.toLowerCase()}:${fundsOnly ? "funds-only-v2" : includeFunds ? "funds" : "stocks"}`;
 const cached = stockSearchCache.get(cacheKey);
 if (cached && cached.expiresAt > Date.now()) return res.json({ results: cached.results });
 
@@ -22991,7 +22991,14 @@ const isStockSearchEquity = (item) => {
     /\b(etf|etn|fund|trust|index fund|income etf|covered call|yield|treasury|bond|s&p 500|nasdaq-100)\b/i.test(name) ||
     exchange === "MUTF";
   if (fundsOnly) {
-    if (!looksLikeFund) return false;
+    const explicitFundType =
+      item?.isEtf === true ||
+      item?.isFund === true ||
+      /(etf|etn|fund|mutual)/i.test(type) ||
+      exchange === "MUTF";
+    const fundNameEvidence =
+      /\b(etf|etn|mutual fund|index fund|exchange traded fund|trust|treasury|bond|income|yield|covered call|proshares|direxion|ishares|vanguard|spdr|invesco|schwab|fidelity|blackrock|global x|ark|wisdomtree|first trust|van eck|vaneck|ishares)\b/i.test(name);
+    if (!explicitFundType && !fundNameEvidence) return false;
   } else if (includeFunds) {
     if (type && !/(stock|equity|common|etf|etn|fund|mutual)/i.test(type)) return false;
   } else {
