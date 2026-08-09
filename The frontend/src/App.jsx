@@ -3741,9 +3741,31 @@ const VALUATION_METRICS_VERSION = 23;
 const BALANCE_SHEET_METRICS_VERSION = 14;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const MIN_DISPLAY_INTERIM_HISTORY_ROWS = 4;
-const FINNHUB_STOCK_LOGO_BASE = "https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/";
 
-const isFinnhubLogoUrl = (url = "") => String(url || "").includes(FINNHUB_STOCK_LOGO_BASE);
+const getApiBaseUrl = () => {
+  const apiRoot = String(API_URL || "").replace(/\/$/, "");
+  return apiRoot.endsWith("/api") ? apiRoot : `${apiRoot}/api`;
+};
+
+const getCompanyLogoProxyUrl = (symbol) => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  return cleanSymbol ? `${getApiBaseUrl()}/company-logo/${encodeURIComponent(cleanSymbol)}` : "";
+};
+
+const getImageProxyUrl = (src) => {
+  if (!src || typeof src !== "string" || src.startsWith("/")) return src || "";
+  try {
+    const sourceUrl = new URL(src, window.location.origin);
+    const apiUrl = new URL(getApiBaseUrl(), window.location.origin);
+    const apiPath = apiUrl.pathname.replace(/\/$/, "");
+    if (sourceUrl.origin === apiUrl.origin && sourceUrl.pathname.startsWith(apiPath)) {
+      return src;
+    }
+  } catch {
+    return src;
+  }
+  return `${getApiBaseUrl()}/image-proxy?url=${encodeURIComponent(src)}`;
+};
 
 const getCompanyLogoCandidates = (symbol, providerLogo = "") => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
@@ -3756,10 +3778,17 @@ const getCompanyLogoCandidates = (symbol, providerLogo = "") => {
     cleanSymbol.split(".")[0],
     cleanSymbol.split("-")[0]
   ].map((value) => String(value || "").replace(/[^A-Z0-9.-]/g, "")).filter(Boolean))];
+  const encodedVariants = symbolVariants.map((variant) => encodeURIComponent(variant));
   const lowerEncodedVariants = symbolVariants.map((variant) => encodeURIComponent(variant.toLowerCase()));
   return [
-    ...(isFinnhubLogoUrl(providerLogo) ? [providerLogo] : []),
-    ...lowerEncodedVariants.map((variant) => `${FINNHUB_STOCK_LOGO_BASE}${variant}.png`)
+    ...symbolVariants.map((variant) => getCompanyLogoProxyUrl(variant)),
+    providerLogo,
+    ...lowerEncodedVariants.map((variant) => `https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/${variant}.png`),
+    ...encodedVariants.map((variant) => `https://financialmodelingprep.com/image-stock/${variant}.png`),
+    ...encodedVariants.map((variant) => `https://images.financialmodelingprep.com/symbol/${variant}.png`),
+    ...encodedVariants.map((variant) => `https://storage.googleapis.com/iex/api/logos/${variant}.png`),
+    ...encodedVariants.map((variant) => `https://eodhd.com/img/logos/US/${variant}.png`),
+    ...encodedVariants.map((variant) => `https://assets.parqet.com/logos/symbol/${variant}?format=png`)
   ].filter((url, index, list) => url && list.indexOf(url) === index);
 };
 
@@ -3767,7 +3796,38 @@ const getDefaultCompanyLogoUrl = (symbol) => getCompanyLogoCandidates(symbol)[0]
 
 const getFmpMarketSymbolLogoUrl = (symbol) => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
-  return getDefaultCompanyLogoUrl(cleanSymbol) || "";
+  return cleanSymbol
+    ? getImageProxyUrl(`https://images.financialmodelingprep.com/symbol/${encodeURIComponent(cleanSymbol)}.png`)
+    : "";
+};
+
+const getCryptoLogoCandidates = (symbol, providerLogo = "") => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  const fmpLogo = cleanSymbol
+    ? `https://images.financialmodelingprep.com/symbol/${encodeURIComponent(cleanSymbol)}.png`
+    : "";
+  return [
+    fmpLogo ? getImageProxyUrl(fmpLogo) : "",
+    providerLogo ? getImageProxyUrl(providerLogo) : "",
+    fmpLogo,
+    providerLogo
+  ].filter((url, index, list) => url && list.indexOf(url) === index);
+};
+
+const handleCryptoLogoError = (event, symbol) => {
+  const image = event.currentTarget;
+  const fallbackUrls = getCryptoLogoCandidates(symbol, image.dataset.providerLogo || "");
+  const stage = Number(image.dataset.logoFallbackStage || 0);
+  for (let index = stage; index < fallbackUrls.length; index += 1) {
+    const nextUrl = fallbackUrls[index];
+    if (nextUrl && nextUrl !== image.src) {
+      image.dataset.logoFallbackStage = String(index + 1);
+      image.src = nextUrl;
+      return;
+    }
+  }
+  image.closest(".has-logo")?.classList.remove("has-logo");
+  image.style.display = "none";
 };
 
 const handleCompanyLogoError = (event, symbol) => {
@@ -3784,6 +3844,7 @@ const handleCompanyLogoError = (event, symbol) => {
     }
   }
 
+  image.closest(".has-logo")?.classList.remove("has-logo");
   image.style.display = "none";
 };
 
@@ -8703,7 +8764,7 @@ const getCanvasImageUrls = (src) => {
 };
 const loadCanvasImageFromUrl = async (imageUrl) => {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 9000);
+  const timeout = window.setTimeout(() => controller.abort(), 4500);
 
   try {
     const response = await fetch(imageUrl, {
@@ -8748,24 +8809,6 @@ const loadFirstCanvasImage = async (urls) => {
   }
   return null;
 };
-const loadWeeklyBoardLogoMap = async (logoEntries) => {
-  const uniqueEntries = [...new Map(logoEntries).entries()];
-  const logoMap = new Map();
-  const queue = [...uniqueEntries];
-  const workerCount = Math.min(8, queue.length);
-
-  await Promise.allSettled(Array.from({ length: workerCount }, async () => {
-    while (queue.length) {
-      const entry = queue.shift();
-      if (!entry) continue;
-      const [symbol, logoUrls] = entry;
-      const image = await loadFirstCanvasImage(logoUrls);
-      if (image) logoMap.set(symbol, image);
-    }
-  }));
-
-  return logoMap;
-};
 const getProviderLogoFromRecord = (record = {}) => (
   record.logo ||
   record.logoUrl ||
@@ -8777,16 +8820,11 @@ const getProviderLogoFromRecord = (record = {}) => (
   record.company?.image ||
   ""
 );
-
-const isFmpLogoUrl = (url = "") => {
-  const value = String(url || "");
-  return value.includes("financialmodelingprep.com/image-stock/") ||
-    value.includes("images.financialmodelingprep.com/symbol/");
-};
-
 const getWeeklyBoardLogoCandidates = (symbol, providerLogo = "") => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
   if (!cleanSymbol) return [];
+  const apiRoot = String(API_URL || "").replace(/\/$/, "");
+  const apiBase = apiRoot.endsWith("/api") ? apiRoot : `${apiRoot}/api`;
   const symbolVariants = [...new Set([
     cleanSymbol,
     cleanSymbol.replace(/\./g, "-"),
@@ -8795,11 +8833,11 @@ const getWeeklyBoardLogoCandidates = (symbol, providerLogo = "") => {
     cleanSymbol.split(".")[0],
     cleanSymbol.split("-")[0]
   ].map((value) => String(value || "").replace(/[^A-Z0-9.-]/g, "")).filter(Boolean))];
-  const encodedVariants = symbolVariants.map((variant) => encodeURIComponent(variant));
+  const proxyLogoUrls = symbolVariants.map((variant) => `${apiBase}/company-logo/${encodeURIComponent(variant)}`);
   return [
-    ...(isFmpLogoUrl(providerLogo) ? [providerLogo] : []),
-    ...encodedVariants.map((variant) => `https://financialmodelingprep.com/image-stock/${variant}.png`),
-    ...encodedVariants.map((variant) => `https://images.financialmodelingprep.com/symbol/${variant}.png`)
+    ...proxyLogoUrls,
+    providerLogo,
+    ...getCompanyLogoCandidates(cleanSymbol, providerLogo)
   ].filter((url, index, list) => url && list.indexOf(url) === index);
 };
 const downloadWeeklyEarningsImage = async () => {
@@ -8918,7 +8956,13 @@ const downloadWeeklyEarningsImage = async () => {
     });
   });
   logoEntries.push(["MRKTRALLY", "/mrktrally-icon.png"]);
-  const logoMap = await loadWeeklyBoardLogoMap(logoEntries);
+  const logoMap = new Map();
+  await Promise.allSettled(
+    [...new Map(logoEntries).entries()].map(async ([symbol, logoUrls]) => {
+      const image = await loadFirstCanvasImage(logoUrls);
+      if (image) logoMap.set(symbol, image);
+    })
+  );
 
   const background = ctx.createLinearGradient(0, 0, width, height);
   background.addColorStop(0, "#02070d");
@@ -10248,9 +10292,16 @@ const getMarketLogoUrl = (symbol, marketType) => {
     return getDefaultCompanyLogoUrl(cleanSymbol) || savedSymbolDetails[cleanSymbol]?.logo || "";
   }
   if (marketType === "crypto") {
-    return getFmpMarketSymbolLogoUrl(cleanSymbol);
+    return getCryptoLogoCandidates(cleanSymbol, savedSymbolDetails[cleanSymbol]?.logo)[0] || "";
   }
   return "";
+};
+
+const formatWatchlistMarketPrice = (symbol, marketType) => {
+  const value = portfolioPrices[String(symbol || "").trim().toUpperCase()];
+  if (!isNumber(value)) return "--";
+  if (marketType === "forex") return formatPlain(value);
+  return formatPrice(value);
 };
 
 const resolveSearchInputToSymbol = async (rawInput) => {
@@ -10299,7 +10350,7 @@ const renderStockSearchSuggestions = (destinationPage = "overview") => {
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => selectStockSearchSuggestion(item, destinationPage)}
           >
-            <span className="stock-search-logo-shell" aria-hidden="true">
+            <span className="stock-search-logo-shell has-logo" aria-hidden="true">
               <span>{String(item.symbol || "?").slice(0, 1)}</span>
               <img
                 src={getDefaultCompanyLogoUrl(item.symbol) || item.logo}
@@ -10380,7 +10431,7 @@ const renderCalendarSearchSuggestions = () => {
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => openCalendarSearchResult(item)}
           >
-            <span className="stock-search-logo-shell" aria-hidden="true">
+            <span className="stock-search-logo-shell has-logo" aria-hidden="true">
               <span>{String(item.symbol || "?").slice(0, 1)}</span>
               <img
                 src={getDefaultCompanyLogoUrl(item.symbol) || item.logo}
@@ -10445,9 +10496,22 @@ const renderAlternativeMarketSuggestions = (items, isLoading, show, inputValue, 
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => onSelect(item.symbol)}
           >
-            <span className="stock-search-logo-shell" aria-hidden="true">
+            <span className={`stock-search-logo-shell${item.logo ? " has-logo" : ""}`} aria-hidden="true">
               <span>{String(item.symbol || "?").slice(0, 1)}</span>
-              {item.logo && <img src={item.logo} alt="" />}
+              {item.logo && (
+                <img
+                  src={item.type === "crypto" ? getCryptoLogoCandidates(item.symbol, item.logo)[0] : item.logo}
+                  data-provider-logo={item.logo || ""}
+                  alt=""
+                  onError={(event) => {
+                    if (item.type === "crypto") {
+                      handleCryptoLogoError(event, item.symbol);
+                      return;
+                    }
+                    event.currentTarget.style.display = "none";
+                  }}
+                />
+              )}
             </span>
             <span className="stock-search-suggestion-copy">
               <strong>{item.symbol}</strong>
@@ -10723,8 +10787,8 @@ return (
                 key={`${item.type}-${item.symbol}-${index}`}
                 onClick={() => openGuestMarketTapeItem(item)}
               >
-                <span className={`guest-market-tape-logo ${item.type}`} aria-hidden="true">
-                  {item.type !== "forex" && getMarketLogoUrl(item.symbol, item.type) ? (
+                <span className={`guest-market-tape-logo ${item.type}${getMarketLogoUrl(item.symbol, item.type) ? " has-logo" : ""}`} aria-hidden="true">
+                  {getMarketLogoUrl(item.symbol, item.type) ? (
                     <>
                     <img
                       src={getMarketLogoUrl(item.symbol, item.type)}
@@ -10736,10 +10800,14 @@ return (
                           handleCompanyLogoError(event, item.symbol);
                           return;
                         }
+                        if (item.type === "crypto") {
+                          handleCryptoLogoError(event, item.symbol);
+                          return;
+                        }
                         event.currentTarget.style.display = "none";
                       }}
                     />
-                    {item.type === "crypto" ? renderMarketLogoMark(item.symbol, item.type) : null}
+                    {item.type === "crypto" || item.type === "forex" ? renderMarketLogoMark(item.symbol, item.type) : null}
                     </>
                   ) : renderMarketLogoMark(item.symbol, item.type)}
                 </span>
@@ -10771,7 +10839,7 @@ return (
                 onClick={() => openWatchlistSymbol(item)}
               >
 
-                <span className="watch-logo-shell" aria-hidden="true">
+                <span className={`watch-logo-shell${logoUrl ? " has-logo" : ""}`} aria-hidden="true">
                   <span className={`watch-logo-fallback watch-logo-fallback-${marketType}`}>
                     {renderMarketLogoMark(item, marketType)}
                   </span>
@@ -10787,6 +10855,10 @@ return (
                           handleCompanyLogoError(event, item);
                           return;
                         }
+                        if (marketType === "crypto") {
+                          handleCryptoLogoError(event, item);
+                          return;
+                        }
                         event.currentTarget.style.display = "none";
                       }}
                     />
@@ -10798,9 +10870,7 @@ return (
                 </span>
 
                 <span className="watch-price">
-                  $
-                  {portfolioPrices[item]
-                    ?.toFixed(2) || "--"}
+                  {formatWatchlistMarketPrice(item, marketType)}
                 </span>
 
                 <span className={`watch-session-change ${
@@ -11234,9 +11304,16 @@ return (
           <>
             <div className="etf-hero-panel">
               <div className="etf-hero-main">
-                {etfData.logo && (
+                {(getDefaultCompanyLogoUrl(etfData.symbol) || etfData.logo) && (
                   <span className="etf-hero-logo-shell" aria-hidden="true">
-                    <img src={etfData.logo} alt="" loading="eager" decoding="async" />
+                    <img
+                      src={getDefaultCompanyLogoUrl(etfData.symbol) || etfData.logo}
+                      data-provider-logo={etfData.logo || ""}
+                      alt=""
+                      loading="eager"
+                      decoding="async"
+                      onError={(event) => handleCompanyLogoError(event, etfData.symbol)}
+                    />
                   </span>
                 )}
                 <span className="etf-symbol">{etfData.symbol}</span>
@@ -11483,8 +11560,18 @@ return (
             <div className="etf-hero-panel">
               <div className="etf-hero-main">
                 {cryptoData.logo ? (
-                  <span className="etf-hero-logo-shell crypto-logo-shell" aria-hidden="true">
-                    <img src={cryptoData.logo} alt="" loading="eager" decoding="async" />
+                  <span className="etf-hero-logo-shell crypto-logo-shell has-logo" aria-hidden="true">
+                    <img
+                      src={getCryptoLogoCandidates(cryptoData.symbol, cryptoData.logo)[0] || cryptoData.logo}
+                      data-provider-logo={cryptoData.logo || ""}
+                      alt=""
+                      loading="eager"
+                      decoding="async"
+                      onError={(event) => {
+                        handleCryptoLogoError(event, cryptoData.symbol);
+                      }}
+                    />
+                    {renderMarketLogoMark(cryptoData.symbol, "crypto")}
                   </span>
                 ) : (
                   <span className="asset-symbol-orb crypto-orb" aria-hidden="true">{cryptoData.symbol?.slice(0, 3)}</span>
@@ -11666,13 +11753,9 @@ return (
           <>
             <div className="etf-hero-panel">
               <div className="etf-hero-main">
-                {forexData.logo ? (
-                  <span className="etf-hero-logo-shell forex-logo-shell" aria-hidden="true">
-                    <img src={forexData.logo} alt="" loading="eager" decoding="async" />
-                  </span>
-                ) : (
-                  <span className="asset-symbol-orb forex-orb" aria-hidden="true">{forexData.fromCurrency || forexData.symbol?.slice(0, 3)}</span>
-                )}
+                <span className="etf-hero-logo-shell forex-logo-shell" aria-hidden="true">
+                  {renderMarketLogoMark(forexData.symbol, "forex")}
+                </span>
                 <span className="etf-symbol">{forexData.symbol}</span>
                 <h3>{forexData.name}</h3>
                 <strong className="etf-type-badge">FOREX</strong>
@@ -12065,7 +12148,7 @@ return (
                     >
                       <td>
                         <span className="screener-symbol-cell">
-                          <span className="stock-search-logo-shell" aria-hidden="true">
+                          <span className="stock-search-logo-shell has-logo" aria-hidden="true">
                             <span>{String(row.symbol || "?").slice(0, 1)}</span>
                             <img
                               src={getDefaultCompanyLogoUrl(row.symbol) || row.logo}
@@ -15113,7 +15196,7 @@ return (
     >
 
       <span className="portfolio-company">
-        <span className="portfolio-logo-shell" aria-hidden="true">
+        <span className={`portfolio-logo-shell${(position.symbol || savedSymbolDetails[position.symbol]?.logo) ? " has-logo" : ""}`} aria-hidden="true">
           <span className="portfolio-logo-fallback">
             {position.symbol.slice(0, 1)}
           </span>
@@ -15455,7 +15538,7 @@ return (
                     }}
                   >
                     <span className="named-watchlist-identity">
-                      <span className="named-watchlist-logo-shell" aria-hidden="true">
+                      <span className={`named-watchlist-logo-shell${logoUrl ? " has-logo" : ""}`} aria-hidden="true">
                         <span className={`named-watchlist-logo-fallback named-watchlist-logo-fallback-${marketType}`}>
                           {renderMarketLogoMark(symbol, marketType)}
                         </span>
@@ -15469,6 +15552,10 @@ return (
                                 handleCompanyLogoError(event, symbol);
                                 return;
                               }
+                              if (marketType === "crypto") {
+                                handleCryptoLogoError(event, symbol);
+                                return;
+                              }
                               event.currentTarget.style.display = "none";
                             }}
                           />
@@ -15478,7 +15565,7 @@ return (
                     </span>
                     <span className="named-watchlist-quote">
                       <span className="named-watchlist-price">
-                        {formatPrice(portfolioPrices[symbol])}
+                        {formatWatchlistMarketPrice(symbol, marketType)}
                       </span>
                       <span className={`named-watchlist-change ${
                         savedSymbolDetails[symbol]?.percentChange > 0
@@ -15747,7 +15834,7 @@ return (
                 </span>
               ) : (
                 <span className="calendar-company-identity">
-                  <span className="calendar-company-logo-shell" aria-hidden="true">
+                  <span className={`calendar-company-logo-shell${(event.symbol || event.logo) ? " has-logo" : ""}`} aria-hidden="true">
                     <span className="calendar-company-logo-fallback">
                       {event.symbol.slice(0, 1)}
                     </span>
@@ -15929,7 +16016,7 @@ return (
                       type="button"
                       onClick={() => openCalendarEarningsReport(event)}
                     >
-                      <span className="earnings-snapshot-logo-shell" aria-hidden="true">
+                      <span className={`earnings-snapshot-logo-shell${symbol ? " has-logo" : ""}`} aria-hidden="true">
                         <span className="earnings-snapshot-logo-fallback">
                           {symbol.slice(0, 1)}
                         </span>
