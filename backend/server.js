@@ -1018,6 +1018,16 @@ app.get("/api/company-logo/:symbol", async (req, res) => {
   return res.status(404).send("Logo unavailable");
 });
 
+app.get("/api/health", (req, res) => {
+  res.json({
+    ok: true,
+    service: "investment-terminal-api",
+    version: "fmp-restore-2026-08-09",
+    yahooProviderEnabled: YAHOO_PROVIDER_ENABLED,
+    timestamp: new Date().toISOString()
+  });
+});
+
 // =========================
 // DB CONNECTION
 // =========================
