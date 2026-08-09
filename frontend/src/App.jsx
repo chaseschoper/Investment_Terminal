@@ -10786,7 +10786,7 @@ return (
                 onClick={() => openGuestMarketTapeItem(item)}
               >
                 <span className={`guest-market-tape-logo ${item.type}`} aria-hidden="true">
-                  {item.type !== "forex" && getMarketLogoUrl(item.symbol, item.type) ? (
+                  {getMarketLogoUrl(item.symbol, item.type) ? (
                     <>
                     <img
                       src={getMarketLogoUrl(item.symbol, item.type)}
@@ -10805,7 +10805,7 @@ return (
                         event.currentTarget.style.display = "none";
                       }}
                     />
-                    {item.type === "crypto" ? renderMarketLogoMark(item.symbol, item.type) : null}
+                    {item.type === "crypto" || item.type === "forex" ? renderMarketLogoMark(item.symbol, item.type) : null}
                     </>
                   ) : renderMarketLogoMark(item.symbol, item.type)}
                 </span>
@@ -11302,9 +11302,16 @@ return (
           <>
             <div className="etf-hero-panel">
               <div className="etf-hero-main">
-                {etfData.logo && (
+                {(getDefaultCompanyLogoUrl(etfData.symbol) || etfData.logo) && (
                   <span className="etf-hero-logo-shell" aria-hidden="true">
-                    <img src={etfData.logo} alt="" loading="eager" decoding="async" />
+                    <img
+                      src={getDefaultCompanyLogoUrl(etfData.symbol) || etfData.logo}
+                      data-provider-logo={etfData.logo || ""}
+                      alt=""
+                      loading="eager"
+                      decoding="async"
+                      onError={(event) => handleCompanyLogoError(event, etfData.symbol)}
+                    />
                   </span>
                 )}
                 <span className="etf-symbol">{etfData.symbol}</span>
@@ -11744,22 +11751,9 @@ return (
           <>
             <div className="etf-hero-panel">
               <div className="etf-hero-main">
-                {forexData.logo ? (
-                  <span className="etf-hero-logo-shell forex-logo-shell" aria-hidden="true">
-                    <img
-                      src={forexData.logo}
-                      alt=""
-                      loading="eager"
-                      decoding="async"
-                      onError={(event) => {
-                        event.currentTarget.style.display = "none";
-                      }}
-                    />
-                    {renderMarketLogoMark(forexData.symbol, "forex")}
-                  </span>
-                ) : (
-                  <span className="asset-symbol-orb forex-orb" aria-hidden="true">{forexData.fromCurrency || forexData.symbol?.slice(0, 3)}</span>
-                )}
+                <span className="etf-hero-logo-shell forex-logo-shell" aria-hidden="true">
+                  {renderMarketLogoMark(forexData.symbol, "forex")}
+                </span>
                 <span className="etf-symbol">{forexData.symbol}</span>
                 <h3>{forexData.name}</h3>
                 <strong className="etf-type-badge">FOREX</strong>

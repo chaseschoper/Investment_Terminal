@@ -1419,6 +1419,81 @@ const CRYPTO_BASE_SYMBOLS = new Set([
   "SHIB", "PEPE", "TON", "USDT", "USDC", "DAI"
 ]);
 const CRYPTO_QUOTE_SYMBOLS = ["USDT", "USDC", "USD", "EUR", "BTC", "ETH"];
+const CRYPTO_BASE_NAMES = {
+  BTC: "Bitcoin",
+  ETH: "Ethereum",
+  SOL: "Solana",
+  XRP: "XRP",
+  BNB: "BNB",
+  ADA: "Cardano",
+  DOGE: "Dogecoin",
+  AVAX: "Avalanche",
+  DOT: "Polkadot",
+  TRX: "TRON",
+  LINK: "Chainlink",
+  LTC: "Litecoin",
+  BCH: "Bitcoin Cash",
+  XLM: "Stellar",
+  HBAR: "Hedera",
+  ICP: "Internet Computer",
+  APT: "Aptos",
+  ARB: "Arbitrum",
+  OP: "Optimism",
+  SUI: "Sui",
+  NEAR: "NEAR Protocol",
+  ETC: "Ethereum Classic",
+  FIL: "Filecoin",
+  AAVE: "Aave",
+  UNI: "Uniswap",
+  MATIC: "Polygon",
+  POL: "Polygon Ecosystem Token",
+  ATOM: "Cosmos",
+  ALGO: "Algorand",
+  VET: "VeChain",
+  SHIB: "Shiba Inu",
+  PEPE: "Pepe",
+  TON: "Toncoin",
+  USDT: "Tether",
+  USDC: "USD Coin",
+  DAI: "Dai"
+};
+const FOREX_CURRENCY_NAMES = {
+  USD: "US Dollar",
+  EUR: "Euro",
+  JPY: "Japanese Yen",
+  GBP: "British Pound",
+  AUD: "Australian Dollar",
+  CAD: "Canadian Dollar",
+  CHF: "Swiss Franc",
+  CNY: "Chinese Yuan",
+  HKD: "Hong Kong Dollar",
+  NZD: "New Zealand Dollar",
+  SEK: "Swedish Krona",
+  KRW: "South Korean Won",
+  SGD: "Singapore Dollar",
+  NOK: "Norwegian Krone",
+  MXN: "Mexican Peso",
+  INR: "Indian Rupee",
+  RUB: "Russian Ruble",
+  ZAR: "South African Rand",
+  TRY: "Turkish Lira",
+  BRL: "Brazilian Real",
+  TWD: "Taiwan Dollar",
+  DKK: "Danish Krone",
+  PLN: "Polish Zloty",
+  THB: "Thai Baht",
+  IDR: "Indonesian Rupiah",
+  HUF: "Hungarian Forint",
+  CZK: "Czech Koruna",
+  ILS: "Israeli Shekel",
+  CLP: "Chilean Peso",
+  PHP: "Philippine Peso",
+  AED: "UAE Dirham",
+  COP: "Colombian Peso",
+  SAR: "Saudi Riyal",
+  MYR: "Malaysian Ringgit",
+  RON: "Romanian Leu"
+};
 
 function isForexPairSymbol(symbol) {
   const cleanSymbol = String(symbol || "").trim().toUpperCase().replace(/[^A-Z]/g, "");
@@ -1436,6 +1511,47 @@ function isCryptoPairSymbol(symbol) {
     const base = cleanSymbol.slice(0, -quote.length);
     return CRYPTO_BASE_SYMBOLS.has(base);
   });
+}
+
+function splitCryptoPairSymbol(symbol) {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase().replace(/[-_/]/g, "");
+  for (const quote of CRYPTO_QUOTE_SYMBOLS) {
+    if (!cleanSymbol.endsWith(quote) || cleanSymbol.length <= quote.length) continue;
+    const base = cleanSymbol.slice(0, -quote.length);
+    if (CRYPTO_BASE_SYMBOLS.has(base)) return { base, quote };
+  }
+  return null;
+}
+
+function buildFallbackAlternativeMarketMeta(symbol, marketType) {
+  const normalizedSymbol = String(symbol || "").trim().toUpperCase().replace(/[-_/]/g, "");
+  if (!normalizedSymbol) return null;
+  if (marketType === "crypto") {
+    const pair = splitCryptoPairSymbol(normalizedSymbol);
+    if (!pair) return null;
+    const baseName = CRYPTO_BASE_NAMES[pair.base] || pair.base;
+    return {
+      symbol: normalizedSymbol,
+      name: `${baseName} ${pair.quote}`,
+      exchange: "CRYPTO"
+    };
+  }
+  if (marketType === "forex" && isForexPairSymbol(normalizedSymbol)) {
+    const fromCurrency = normalizedSymbol.slice(0, 3);
+    const toCurrency = normalizedSymbol.slice(3, 6);
+    const fromName = FOREX_CURRENCY_NAMES[fromCurrency] || fromCurrency;
+    const toName = FOREX_CURRENCY_NAMES[toCurrency] || toCurrency;
+    return {
+      symbol: normalizedSymbol,
+      name: `${fromName} / ${toName}`,
+      exchange: "FOREX",
+      fromCurrency,
+      toCurrency,
+      fromName,
+      toName
+    };
+  }
+  return null;
 }
 
 function isBlockedStockOnlySymbol(symbol) {
@@ -16869,13 +16985,19 @@ async function getFmpForexSymbolMap() {
 }
 
 async function getFmpAlternativeMarketMeta(symbol, marketType) {
-  if (!process.env.FMP_API_KEY || !canUseFmp()) return null;
   const normalizedSymbol = String(symbol || "").trim().toUpperCase();
   if (!normalizedSymbol) return null;
-  const symbolMap = marketType === "crypto"
-    ? await getFmpCryptoSymbolMap()
-    : await getFmpForexSymbolMap();
-  return symbolMap.get(normalizedSymbol) || null;
+  const fallbackMeta = buildFallbackAlternativeMarketMeta(normalizedSymbol, marketType);
+  if (!process.env.FMP_API_KEY || !canUseFmp()) return fallbackMeta;
+  try {
+    const symbolMap = marketType === "crypto"
+      ? await getFmpCryptoSymbolMap()
+      : await getFmpForexSymbolMap();
+    return symbolMap.get(normalizedSymbol) || fallbackMeta;
+  } catch (err) {
+    console.log(`${marketType} symbol metadata skipped:`, normalizedSymbol, err.response?.status || err.message);
+    return fallbackMeta;
+  }
 }
 
 function searchAlternativeMarketSymbols(symbolMap, query, marketType) {
