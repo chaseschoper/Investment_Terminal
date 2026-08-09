@@ -5338,7 +5338,7 @@ useEffect(() => {
     try {
       setIsEtfSearchSuggesting(true);
       const { data } = await axios.get(`${API_URL}/api/search-stocks`, {
-        params: { q: query, includeFunds: true },
+        params: { q: query, includeFunds: true, fundsOnly: true },
         timeout: 4500
       });
       if (!isActive) return;

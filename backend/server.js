@@ -22914,8 +22914,9 @@ if (query.length < 2) return res.json({ results: [] });
 const cleanQuery = query.replace(/[^a-zA-Z0-9 .&'-]/g, "").slice(0, 60);
 if (cleanQuery.length < 2) return res.json({ results: [] });
 const includeFunds = String(req.query.includeFunds || "").toLowerCase() === "true";
+const fundsOnly = String(req.query.fundsOnly || "").toLowerCase() === "true";
 
-const cacheKey = `${cleanQuery.toLowerCase()}:${includeFunds ? "funds" : "stocks"}`;
+const cacheKey = `${cleanQuery.toLowerCase()}:${fundsOnly ? "funds-only" : includeFunds ? "funds" : "stocks"}`;
 const cached = stockSearchCache.get(cacheKey);
 if (cached && cached.expiresAt > Date.now()) return res.json({ results: cached.results });
 
@@ -22951,24 +22952,21 @@ if (!rows.length) {
 
 if (includeFunds && /^[A-Z0-9.-]{1,12}$/.test(cleanQuery.toUpperCase())) {
   const exactSymbol = cleanQuery.toUpperCase();
-  const hasExact = rows.some((row) =>
-    String(row?.symbol || row?.ticker || row?.data?.symbol || "").trim().toUpperCase() === exactSymbol
-  );
-  if (!hasExact) {
-    const fundRow = await resolveWithin(
-      fetchEtfData(exactSymbol).then((fund) => fund ? ({
-        symbol: fund.symbol || exactSymbol,
-        name: fund.name || exactSymbol,
-        exchange: fund.profile?.exchange || fund.exchange || (fund.type === "Mutual Fund" ? "MUTF" : "ETF"),
-        exchangeFullName: fund.profile?.provider || fund.profile?.exchange || "",
-        type: fund.type || "ETF",
-        logo: fund.logo || getFinnhubLogoUrl(exactSymbol)
-      }) : null),
-      2600,
-      null
-    ).catch(() => null);
-    if (fundRow?.symbol) rows.unshift(fundRow);
-  }
+  const fundRow = await resolveWithin(
+    fetchEtfData(exactSymbol).then((fund) => fund ? ({
+      symbol: fund.symbol || exactSymbol,
+      name: fund.name || exactSymbol,
+      exchange: fund.profile?.exchange || fund.exchange || (fund.type === "Mutual Fund" ? "MUTF" : "ETF"),
+      exchangeFullName: fund.profile?.provider || fund.profile?.exchange || "",
+      type: fund.type || "ETF",
+      isEtf: fund.type !== "Mutual Fund",
+      isFund: fund.type === "Mutual Fund",
+      logo: fund.logo || getFinnhubLogoUrl(exactSymbol)
+    }) : null),
+    2600,
+    null
+  ).catch(() => null);
+  if (fundRow?.symbol) rows.unshift(fundRow);
 }
 
 const seen = new Set();
@@ -22987,7 +22985,14 @@ const isStockSearchEquity = (item) => {
   const exchange = String(item?.exchange || "").trim().toUpperCase();
   const exchangeName = String(item?.exchangeFullName || "").trim().toLowerCase();
   if (!symbol || ["CRYPTO", "CCC", "FOREX", "FX"].includes(exchange)) return false;
-  if (includeFunds) {
+  const looksLikeFund = item?.isEtf === true ||
+    item?.isFund === true ||
+    /(etf|etn|fund|mutual)/i.test(type) ||
+    /\b(etf|etn|fund|trust|index fund|income etf|covered call|yield|treasury|bond|s&p 500|nasdaq-100)\b/i.test(name) ||
+    exchange === "MUTF";
+  if (fundsOnly) {
+    if (!looksLikeFund) return false;
+  } else if (includeFunds) {
     if (type && !/(stock|equity|common|etf|etn|fund|mutual)/i.test(type)) return false;
   } else {
     if (type && !/(stock|equity|common)/i.test(type)) return false;
@@ -23031,12 +23036,16 @@ const results = rows
     );
     const exchange = firstText(row.exchange, row.stockExchange, row.exchangeShortName, row?.data?.exchange);
     const type = firstText(row.type, row.securityType);
+    const rowIsEtf = row.isEtf === true || /\b(etf|etn|trust)\b/i.test(`${type} ${name}`);
+    const rowIsFund = row.isFund === true || /\b(mutual fund|index fund|fund)\b/i.test(`${type} ${name}`);
     return {
       symbol,
       name,
       exchange,
       exchangeFullName: firstText(row.exchangeFullName, row.stockExchange),
       type,
+      isEtf: rowIsEtf,
+      isFund: rowIsFund,
       logo: getFinnhubLogoUrl(symbol),
       logoFallbacks: [
         getFinnhubLogoUrl(symbol),
