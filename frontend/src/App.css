@@ -1760,7 +1760,9 @@ body {
   height: 100%;
   object-fit: contain;
   padding: 5px;
-  background: rgba(2, 6, 12, 0.86);
+  background: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
 }
 
 .stock-search-logo-shell.has-logo > span,
@@ -3041,6 +3043,9 @@ body {
   height: 100%;
   padding: 9px;
   object-fit: contain;
+  background: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
 }
 
 .crypto-logo-shell,
@@ -4499,7 +4504,9 @@ body {
   width: 100%;
   height: 100%;
   padding: 3px;
-  background: rgba(2, 6, 12, 0.78);
+  background: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
   object-fit: contain;
 }
 
@@ -5237,7 +5244,9 @@ body {
   width: 100%;
   height: 100%;
   padding: 4px;
-  background: #020617;
+  background: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
   object-fit: contain;
 }
 
@@ -6574,7 +6583,9 @@ body {
 }
 
 .stock-hero-logo-shell img {
-  background: rgba(2, 6, 12, 0.78);
+  background: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
 }
 
 .stock-hero-after-hours {
@@ -6715,7 +6726,9 @@ body {
   position: absolute;
   inset: 0;
   z-index: 2;
-  background: rgba(2, 6, 12, 0.9);
+  background: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
   object-fit: contain;
   padding: 3px;
 }
@@ -7275,7 +7288,9 @@ body {
   position: absolute;
   inset: 0;
   z-index: 2;
-  background: rgba(2, 6, 12, 0.9);
+  background: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
   object-fit: contain;
   padding: 3px;
 }
