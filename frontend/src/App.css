@@ -1760,7 +1760,7 @@ body {
   height: 100%;
   object-fit: contain;
   padding: 5px;
-  background: #ffffff;
+  background: rgba(2, 6, 12, 0.86);
 }
 
 .stock-search-logo-shell.has-logo > span,

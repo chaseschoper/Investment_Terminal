@@ -69,8 +69,9 @@ const fmpFastDataInFlight = new Map();
 const fmpAfterHoursTradeCache = new Map();
 const FMP_DATA_CACHE_TTL_MS = 10 * 60 * 1000;
 const FMP_FAST_DATA_CACHE_TTL_MS = 10 * 60 * 1000;
-const FMP_MAX_CONCURRENT_REQUESTS = 2;
-const FMP_REQUEST_SPACING_MS = 180;
+const FMP_MAX_CONCURRENT_REQUESTS = 4;
+const FMP_REQUEST_SPACING_MS = 80;
+const FMP_DEFAULT_QUEUE_TIMEOUT_MS = 14000;
 let fmpActiveRequestCount = 0;
 let fmpLastRequestStartedAt = 0;
 const fmpRequestQueue = [];
@@ -1215,9 +1216,32 @@ const sendPasswordResetEmail = async ({ to, resetUrl }) => {
 // =========================
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function runQueuedFmpRequest(task, priority = 0) {
+function runQueuedFmpRequest(task, priority = 0, queueTimeoutMs = FMP_DEFAULT_QUEUE_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
-    const queued = { task, resolve, reject, priority, queuedAt: Date.now() };
+    let settled = false;
+    const queued = {
+      task,
+      priority,
+      queuedAt: Date.now(),
+      resolve: (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(queued.timeout);
+        resolve(value);
+      },
+      reject: (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(queued.timeout);
+        reject(error);
+      },
+      timeout: null
+    };
+    queued.timeout = setTimeout(() => {
+      const index = fmpRequestQueue.indexOf(queued);
+      if (index !== -1) fmpRequestQueue.splice(index, 1);
+      queued.reject(new Error("FMP request queue timeout"));
+    }, Math.max(1200, queueTimeoutMs));
     if (priority > 0) {
       const insertIndex = fmpRequestQueue.findIndex((item) => (item.priority || 0) < priority);
       if (insertIndex === -1) {
@@ -1242,8 +1266,14 @@ function drainFmpRequestQueue() {
 
   const queued = fmpRequestQueue.shift();
   if (!queued) return;
+  if (Date.now() - queued.queuedAt > FMP_DEFAULT_QUEUE_TIMEOUT_MS * 2) {
+    queued.reject(new Error("FMP stale queued request skipped"));
+    setImmediate(drainFmpRequestQueue);
+    return;
+  }
   fmpActiveRequestCount += 1;
   fmpLastRequestStartedAt = Date.now();
+  clearTimeout(queued.timeout);
   Promise.resolve()
     .then(queued.task)
     .then(queued.resolve, queued.reject)
@@ -1255,9 +1285,12 @@ function drainFmpRequestQueue() {
 
 function getFmpAxios(url, config = {}) {
   const priority = Number(config.fmpPriority) || 0;
+  const queueTimeoutMs = Number(config.fmpQueueTimeoutMs) ||
+    Math.max(FMP_DEFAULT_QUEUE_TIMEOUT_MS, Number(config.timeout) ? Number(config.timeout) + 1200 : 0);
   const axiosConfig = { ...config };
   delete axiosConfig.fmpPriority;
-  return runQueuedFmpRequest(() => axios.get(url, axiosConfig), priority);
+  delete axiosConfig.fmpQueueTimeoutMs;
+  return runQueuedFmpRequest(() => axios.get(url, axiosConfig), priority, queueTimeoutMs);
 }
 
 const isRateLimitError = (err) => err?.response?.status === 429;
@@ -1342,10 +1375,11 @@ function setStockAnalysisCooldown(err, label, ticker) {
   console.log(`StockAnalysis cooldown active after ${label}:`, ticker, err.response?.status || err.message);
 }
 
-const canUseYahoo = () => Date.now() >= yahooCooldownUntil;
-const canUseYahooQuoteSummary = () => Date.now() >= yahooQuoteSummaryCooldownUntil;
-const canUseYahooEarningsTrend = () => Date.now() >= yahooEarningsTrendCooldownUntil;
-const canUseYahooAnalysisPage = () => Date.now() >= yahooAnalysisPageCooldownUntil;
+const YAHOO_PROVIDER_ENABLED = process.env.ENABLE_YAHOO_PROVIDER === "true";
+const canUseYahoo = () => YAHOO_PROVIDER_ENABLED && Date.now() >= yahooCooldownUntil;
+const canUseYahooQuoteSummary = () => YAHOO_PROVIDER_ENABLED && Date.now() >= yahooQuoteSummaryCooldownUntil;
+const canUseYahooEarningsTrend = () => YAHOO_PROVIDER_ENABLED && Date.now() >= yahooEarningsTrendCooldownUntil;
+const canUseYahooAnalysisPage = () => YAHOO_PROVIDER_ENABLED && Date.now() >= yahooAnalysisPageCooldownUntil;
 const canUseFmp = () => Boolean(process.env.FMP_API_KEY);
 const canUseStockAnalysis = () => Date.now() >= stockAnalysisCooldownUntil;
 
@@ -3436,8 +3470,9 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
     try {
       const response = await getFmpAxios(endpoint.url, {
         params: endpoint.params,
-        timeout: requestedRange === "1D" ? 3200 : 2600,
-        fmpPriority: requestedRange === "1D" || requestedRange === "1W" ? 10 : 7
+        timeout: requestedRange === "1D" ? 5200 : 4200,
+        fmpPriority: requestedRange === "1D" || requestedRange === "1W" ? 10 : 7,
+        fmpQueueTimeoutMs: requestedRange === "1D" || requestedRange === "1W" ? 11000 : 9000
       });
       const rows = Array.isArray(response.data) ? response.data : [];
       if (rows.length) {
@@ -3640,6 +3675,7 @@ async function fetchFmpFiftyTwoWeekRange(ticker) {
 }
 
 async function fetchYahooSparkQuotes(symbols = []) {
+  if (!canUseYahoo()) return [];
   const uniqueSymbols = [...new Set((symbols || [])
     .map((symbol) => String(symbol || "").trim().toUpperCase())
     .filter(Boolean))];
@@ -15636,6 +15672,9 @@ async function fetchNasdaqFundFallback(ticker, upstreamError = null) {
 }
 
 async function fetchYahooFundFallback(ticker, stockAnalysisError = null) {
+  if (!YAHOO_PROVIDER_ENABLED) {
+    throw stockAnalysisError || new Error("Yahoo provider disabled");
+  }
   const symbol = String(ticker || "").trim().toUpperCase();
   const chartResponse = await axios.get(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`, {
     params: { range: "1mo", interval: "1d" },
@@ -16814,7 +16853,7 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     if (priceHistoryInFlight.has(cacheKey)) {
       const inFlightData = await resolveWithin(
         priceHistoryInFlight.get(cacheKey),
-        requestedRange === "1D" ? 3400 : 3200,
+        requestedRange === "1D" ? 7600 : 8600,
         null
       );
       if (inFlightData?.points?.length) {
@@ -16837,7 +16876,7 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     priceHistoryInFlight.set(cacheKey, historyPromise);
     const fmpHistory = await resolveWithin(
       historyPromise,
-      requestedRange === "1D" ? 3400 : 3200,
+      requestedRange === "1D" ? 7600 : 8600,
       null
     );
     const resolvedHistory = fmpHistory;
@@ -17147,22 +17186,54 @@ async function fetchFmpAlternativeMarketQuote(symbol, marketType) {
   try {
     const response = await getFmpAxios("https://financialmodelingprep.com/stable/quote", {
       params: { symbol: normalizedSymbol, apikey: process.env.FMP_API_KEY },
-      timeout: 2200,
-      fmpPriority: 9
+      timeout: 4200,
+      fmpPriority: 9,
+      fmpQueueTimeoutMs: 9000
     });
     quote = Array.isArray(response.data) ? response.data[0] : response.data;
   } catch (err) {
     setFmpCooldown(err, `${marketType} quote`, normalizedSymbol);
     console.log(`FMP ${marketType} quote skipped:`, normalizedSymbol, err.response?.status || err.message);
-    return null;
   }
-  if (!quote || firstFiniteNumber(quote.price) === null) return null;
 
   const chartHistory = await resolveWithin(
     fetchFmpAlternativeMarketPriceHistory(normalizedSymbol, "1D", marketType),
-    2600,
+    4800,
     null
   ).catch(() => null);
+  if (!quote || firstFiniteNumber(quote.price) === null) {
+    const chartLatest = chartHistory?.latest;
+    const chartPrice = firstFiniteNumber(chartLatest?.price);
+    if (chartPrice === null) return null;
+    const chartQuote = {
+      price: chartPrice,
+      change: firstFiniteNumber(chartLatest.change),
+      changePercentage: firstFiniteNumber(chartLatest.percentChange),
+      previousClose: firstFiniteNumber(chartLatest.previousClose),
+      open: firstFiniteNumber(chartLatest.open),
+      dayLow: (() => {
+        const values = (chartHistory.points || [])
+          .map((point) => firstFiniteNumber(point.low, point.price))
+          .filter((value) => value !== null);
+        return values.length ? Math.min(...values) : null;
+      })(),
+      dayHigh: (() => {
+        const values = (chartHistory.points || [])
+          .map((point) => firstFiniteNumber(point.high, point.price))
+          .filter((value) => value !== null);
+        return values.length ? Math.max(...values) : null;
+      })()
+    };
+    const chartData = {
+      ...normalizeAlternativeMarketQuote(normalizedSymbol, marketType, meta, chartQuote),
+      source: `FMP ${marketType} 5-minute chart`
+    };
+    fmpDataCache.set(cacheKey, {
+      data: chartData,
+      expiresAt: Date.now() + 20 * 1000
+    });
+    return chartData;
+  }
   const shouldUseChartPrice =
     chartHistory?.latest?.price !== null &&
     chartHistory?.latest?.price !== undefined &&
@@ -17204,8 +17275,9 @@ async function fetchFmpAlternativeMarketPriceHistory(symbol, requestedRange = "1
     try {
       const response = await getFmpAxios("https://financialmodelingprep.com/stable/historical-chart/5min", {
         params: { symbol: normalizedSymbol, apikey: process.env.FMP_API_KEY },
-        timeout: 2800,
-        fmpPriority: 10
+        timeout: 5200,
+        fmpPriority: 10,
+        fmpQueueTimeoutMs: 11000
       });
       rows = Array.isArray(response.data) ? response.data : [];
     } catch (err) {
@@ -17279,8 +17351,9 @@ async function fetchFmpAlternativeMarketPriceHistory(symbol, requestedRange = "1
         to: range.to,
         apikey: process.env.FMP_API_KEY
       },
-      timeout: 3000,
-      fmpPriority: 7
+      timeout: 5200,
+      fmpPriority: 7,
+      fmpQueueTimeoutMs: 10000
     });
     rows = Array.isArray(response.data) ? response.data : [];
   } catch (err) {
