@@ -3828,6 +3828,8 @@ const getCompanyLogoProxyUrl = (symbol) => {
   return cleanSymbol ? `${getApiBaseUrl()}/company-logo/${encodeURIComponent(cleanSymbol)}` : "";
 };
 
+const SYMBOLS_WITH_MISLEADING_LOGOS = new Set(["SPCX"]);
+
 const getImageProxyUrl = (src) => {
   if (!src || typeof src !== "string" || src.startsWith("/")) return src || "";
   try {
@@ -3846,6 +3848,7 @@ const getImageProxyUrl = (src) => {
 const getCompanyLogoCandidates = (symbol, providerLogo = "") => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
   if (!cleanSymbol) return [];
+  if (SYMBOLS_WITH_MISLEADING_LOGOS.has(cleanSymbol)) return [];
   const symbolVariants = [...new Set([
     cleanSymbol,
     cleanSymbol.replace(/\./g, "-"),
@@ -3869,6 +3872,12 @@ const getCompanyLogoCandidates = (symbol, providerLogo = "") => {
 };
 
 const getDefaultCompanyLogoUrl = (symbol) => getCompanyLogoCandidates(symbol)[0] || null;
+
+const getDisplayCompanyLogoUrl = (symbol, providerLogo = "") => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  if (!cleanSymbol || SYMBOLS_WITH_MISLEADING_LOGOS.has(cleanSymbol)) return "";
+  return getDefaultCompanyLogoUrl(cleanSymbol) || providerLogo || "";
+};
 
 const getFmpMarketSymbolLogoUrl = (symbol) => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
@@ -3946,7 +3955,11 @@ const handleCompanyLogoLoad = (event) => {
     const averageLuma = lumaTotal / visible;
     const darkRatio = dark / visible;
     const colorfulRatio = colorful / visible;
-    if (visibleRatio > 0.035 && averageLuma < 88 && darkRatio > 0.62 && colorfulRatio < 0.45) {
+    const isLowContrastDarkMark =
+      visibleRatio > 0.035 && averageLuma < 88 && darkRatio > 0.62 && colorfulRatio < 0.45;
+    const isDarkSaturatedMark =
+      visibleRatio > 0.035 && averageLuma < 55 && darkRatio > 0.72;
+    if (isLowContrastDarkMark || isDarkSaturatedMark) {
       image.classList.add("company-logo-light-mark");
     }
   } catch {
@@ -10432,7 +10445,7 @@ const renderEtfSearchSuggestions = () => {
             <span className="stock-search-logo-shell has-logo" aria-hidden="true">
               <span>{String(item.symbol || "?").slice(0, 1)}</span>
               <img
-                src={getDefaultCompanyLogoUrl(item.symbol) || item.logo}
+                src={getDisplayCompanyLogoUrl(item.symbol, item.logo)}
                 data-provider-logo={item.logo || ""}
                 alt=""
                 crossOrigin="anonymous"
@@ -10562,7 +10575,7 @@ const renderMarketLogoMark = (symbol, marketType) => {
 const getMarketLogoUrl = (symbol, marketType) => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
   if (marketType === "stock") {
-    return getDefaultCompanyLogoUrl(cleanSymbol) || savedSymbolDetails[cleanSymbol]?.logo || "";
+    return getDisplayCompanyLogoUrl(cleanSymbol, savedSymbolDetails[cleanSymbol]?.logo);
   }
   if (marketType === "crypto") {
     return getCryptoLogoCandidates(cleanSymbol, savedSymbolDetails[cleanSymbol]?.logo)[0] || "";
@@ -10626,7 +10639,7 @@ const renderStockSearchSuggestions = (destinationPage = "overview") => {
             <span className="stock-search-logo-shell has-logo" aria-hidden="true">
               <span>{String(item.symbol || "?").slice(0, 1)}</span>
               <img
-                src={getDefaultCompanyLogoUrl(item.symbol) || item.logo}
+                src={getDisplayCompanyLogoUrl(item.symbol, item.logo)}
                 data-provider-logo={item.logo || ""}
                 alt=""
                 crossOrigin="anonymous"
@@ -10652,7 +10665,7 @@ const openCalendarSearchResult = async (item) => {
   const event = {
     symbol,
     company: item.name || symbol,
-    logo: getDefaultCompanyLogoUrl(symbol) || item.logo
+    logo: getDisplayCompanyLogoUrl(symbol, item.logo)
   };
   setCalendarSearchInput(symbol);
   setCalendarSearchSuggestions([]);
@@ -10709,7 +10722,7 @@ const renderCalendarSearchSuggestions = () => {
             <span className="stock-search-logo-shell has-logo" aria-hidden="true">
               <span>{String(item.symbol || "?").slice(0, 1)}</span>
               <img
-                src={getDefaultCompanyLogoUrl(item.symbol) || item.logo}
+                src={getDisplayCompanyLogoUrl(item.symbol, item.logo)}
                 data-provider-logo={item.logo || ""}
                 alt=""
                 crossOrigin="anonymous"
@@ -11590,10 +11603,10 @@ return (
           <>
             <div className="etf-hero-panel">
               <div className="etf-hero-main">
-                {(getDefaultCompanyLogoUrl(etfData.symbol) || etfData.logo) && (
+                {getDisplayCompanyLogoUrl(etfData.symbol, etfData.logo) && (
                   <span className="etf-hero-logo-shell" aria-hidden="true">
                     <img
-                      src={getDefaultCompanyLogoUrl(etfData.symbol) || etfData.logo}
+                      src={getDisplayCompanyLogoUrl(etfData.symbol, etfData.logo)}
                       data-provider-logo={etfData.logo || ""}
                       alt=""
                       loading="eager"
@@ -12439,7 +12452,7 @@ return (
                           <span className="stock-search-logo-shell has-logo" aria-hidden="true">
                             <span>{String(row.symbol || "?").slice(0, 1)}</span>
                             <img
-                              src={getDefaultCompanyLogoUrl(row.symbol) || row.logo}
+                              src={getDisplayCompanyLogoUrl(row.symbol, row.logo)}
                               data-provider-logo={row.logo || ""}
                               alt=""
                               crossOrigin="anonymous"
@@ -13128,7 +13141,7 @@ return (
         >
           <img
             key={ticker}
-            src={getDefaultCompanyLogoUrl(stockData.symbol || ticker) || stockData.logo || savedSymbolDetails[ticker]?.logo}
+            src={getDisplayCompanyLogoUrl(stockData.symbol || ticker, stockData.logo || savedSymbolDetails[ticker]?.logo)}
             data-provider-logo={stockData.logo || savedSymbolDetails[ticker]?.logo || ""}
             alt=""
             loading="eager"
@@ -15005,7 +15018,7 @@ return (
     <div className="projections-company">
       {(stockData.logo || stockData.symbol || ticker) && (
         <img
-          src={getDefaultCompanyLogoUrl(stockData.symbol || ticker) || stockData.logo}
+          src={getDisplayCompanyLogoUrl(stockData.symbol || ticker, stockData.logo)}
           data-provider-logo={stockData.logo || ""}
           alt={`${stockData.symbol || ticker} logo`}
           crossOrigin="anonymous"
@@ -15500,7 +15513,7 @@ return (
           {(position.symbol || savedSymbolDetails[position.symbol]?.logo) && (
             <img
               className="portfolio-logo"
-              src={getDefaultCompanyLogoUrl(position.symbol) || savedSymbolDetails[position.symbol]?.logo || ""}
+              src={getDisplayCompanyLogoUrl(position.symbol, savedSymbolDetails[position.symbol]?.logo)}
               data-provider-logo={savedSymbolDetails[position.symbol]?.logo || ""}
               alt=""
               crossOrigin="anonymous"
@@ -16144,7 +16157,7 @@ return (
                     {(event.symbol || event.logo) && (
                       <img
                         className="calendar-company-logo"
-                        src={getDefaultCompanyLogoUrl(event.symbol) || event.logo}
+                        src={getDisplayCompanyLogoUrl(event.symbol, event.logo)}
                         data-provider-logo={event.logo || ""}
                         alt=""
                         crossOrigin="anonymous"
@@ -16328,7 +16341,7 @@ return (
                         {symbol && (
                           <img
                             className="earnings-snapshot-logo"
-                            src={getDefaultCompanyLogoUrl(symbol) || event.logo}
+                            src={getDisplayCompanyLogoUrl(symbol, event.logo)}
                             data-provider-logo={event.logo || ""}
                             alt=""
                             crossOrigin="anonymous"
