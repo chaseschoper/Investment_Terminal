@@ -3877,12 +3877,6 @@ const getCompanyLogoCandidates = (symbol, providerLogo = "") => {
 
 const getDefaultCompanyLogoUrl = (symbol) => getCompanyLogoCandidates(symbol)[0] || null;
 
-const LIGHT_ON_DARK_COMPANY_LOGOS = new Set(["MAR", "PLTR"]);
-const getCompanyLogoTone = (symbol) => {
-  const cleanSymbol = String(symbol || "").trim().toUpperCase();
-  return LIGHT_ON_DARK_COMPANY_LOGOS.has(cleanSymbol) ? "light-on-dark" : "";
-};
-
 const getFmpMarketSymbolLogoUrl = (symbol) => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
   return cleanSymbol
@@ -10414,7 +10408,6 @@ const renderEtfSearchSuggestions = () => {
               <img
                 src={getDefaultCompanyLogoUrl(item.symbol) || item.logo}
                 data-provider-logo={item.logo || ""}
-                data-logo-tone={getCompanyLogoTone(item.symbol)}
                 alt=""
                 onError={(event) => handleCompanyLogoError(event, item.symbol)}
               />
@@ -10607,7 +10600,6 @@ const renderStockSearchSuggestions = (destinationPage = "overview") => {
               <img
                 src={getDefaultCompanyLogoUrl(item.symbol) || item.logo}
                 data-provider-logo={item.logo || ""}
-                data-logo-tone={getCompanyLogoTone(item.symbol)}
                 alt=""
                 onError={(event) => handleCompanyLogoError(event, item.symbol)}
               />
@@ -10690,7 +10682,6 @@ const renderCalendarSearchSuggestions = () => {
               <img
                 src={getDefaultCompanyLogoUrl(item.symbol) || item.logo}
                 data-provider-logo={item.logo || ""}
-                data-logo-tone={getCompanyLogoTone(item.symbol)}
                 alt=""
                 onError={(event) => handleCompanyLogoError(event, item.symbol)}
               />
@@ -11047,7 +11038,6 @@ return (
                     <>
                     <img
                       src={getMarketLogoUrl(item.symbol, item.type)}
-                      data-logo-tone={item.type === "stock" ? getCompanyLogoTone(item.symbol) : ""}
                       alt=""
                       loading="eager"
                       decoding="async"
@@ -11103,7 +11093,6 @@ return (
                     <img
                       className="watch-logo"
                       src={logoUrl}
-                      data-logo-tone={marketType === "stock" ? getCompanyLogoTone(item) : ""}
                       alt=""
                       loading="eager"
                       decoding="async"
@@ -11570,7 +11559,6 @@ return (
                     <img
                       src={getDefaultCompanyLogoUrl(etfData.symbol) || etfData.logo}
                       data-provider-logo={etfData.logo || ""}
-                      data-logo-tone={getCompanyLogoTone(etfData.symbol)}
                       alt=""
                       loading="eager"
                       decoding="async"
@@ -12415,7 +12403,6 @@ return (
                             <img
                               src={getDefaultCompanyLogoUrl(row.symbol) || row.logo}
                               data-provider-logo={row.logo || ""}
-                              data-logo-tone={getCompanyLogoTone(row.symbol)}
                               alt=""
                               onError={(event) => handleCompanyLogoError(event, row.symbol)}
                             />
@@ -13097,14 +13084,12 @@ return (
       {(ticker || stockData.symbol) && (
         <span
           className="etf-hero-logo-shell stock-hero-logo-shell"
-          data-logo-tone={getCompanyLogoTone(stockData.symbol || ticker)}
           aria-hidden="true"
         >
           <img
             key={ticker}
             src={getDefaultCompanyLogoUrl(stockData.symbol || ticker) || stockData.logo || savedSymbolDetails[ticker]?.logo}
             data-provider-logo={stockData.logo || savedSymbolDetails[ticker]?.logo || ""}
-            data-logo-tone={getCompanyLogoTone(stockData.symbol || ticker)}
             alt=""
             loading="eager"
             decoding="async"
@@ -14980,7 +14965,6 @@ return (
         <img
           src={getDefaultCompanyLogoUrl(stockData.symbol || ticker) || stockData.logo}
           data-provider-logo={stockData.logo || ""}
-          data-logo-tone={getCompanyLogoTone(stockData.symbol || ticker)}
           alt={`${stockData.symbol || ticker} logo`}
           onError={(event) => handleCompanyLogoError(event, stockData.symbol || ticker)}
         />
@@ -15474,7 +15458,6 @@ return (
               className="portfolio-logo"
               src={getDefaultCompanyLogoUrl(position.symbol) || savedSymbolDetails[position.symbol]?.logo || ""}
               data-provider-logo={savedSymbolDetails[position.symbol]?.logo || ""}
-              data-logo-tone={getCompanyLogoTone(position.symbol)}
               alt=""
               onError={(event) =>
                 handleCompanyLogoError(event, position.symbol)
@@ -15816,7 +15799,6 @@ return (
                           <img
                             className="named-watchlist-logo"
                             src={logoUrl}
-                            data-logo-tone={marketType === "stock" ? getCompanyLogoTone(symbol) : ""}
                             alt=""
                             onError={(event) => {
                               if (marketType === "stock") {
@@ -16114,7 +16096,6 @@ return (
                         className="calendar-company-logo"
                         src={getDefaultCompanyLogoUrl(event.symbol) || event.logo}
                         data-provider-logo={event.logo || ""}
-                        data-logo-tone={getCompanyLogoTone(event.symbol)}
                         alt=""
                         onError={(imageEvent) =>
                           handleCompanyLogoError(imageEvent, event.symbol)
@@ -16297,7 +16278,6 @@ return (
                             className="earnings-snapshot-logo"
                             src={getDefaultCompanyLogoUrl(symbol) || event.logo}
                             data-provider-logo={event.logo || ""}
-                            data-logo-tone={getCompanyLogoTone(symbol)}
                             alt=""
                             onError={(imageEvent) =>
                               handleCompanyLogoError(imageEvent, symbol)
