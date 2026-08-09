@@ -6572,6 +6572,12 @@ body {
   min-height: 280px;
 }
 
+.stock-hero-logo-shell {
+  background: #f8fafc;
+  border-color: rgba(148, 163, 184, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.05), 0 14px 32px rgba(14, 165, 233, 0.12);
+}
+
 .stock-overview-price-card {
   min-width: 230px;
   align-items: center;
