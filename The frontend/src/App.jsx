@@ -3965,7 +3965,11 @@ const handleCompanyLogoLoad = (event) => {
     const redDominantRatio = redDominant / visible;
     const blueDominantRatio = blueDominant / visible;
     const isMonochromeDarkMark =
-      visibleRatio > 0.035 && averageLuma < 88 && darkRatio > 0.62 && colorfulRatio < 0.45;
+      visibleRatio > 0.035 &&
+      visibleRatio < 0.72 &&
+      averageLuma < 88 &&
+      darkRatio > 0.62 &&
+      colorfulRatio < 0.45;
     const isTransparentDarkBlueMark =
       visibleRatio > 0.035 &&
       visibleRatio < 0.72 &&
