@@ -3934,6 +3934,8 @@ const handleCompanyLogoLoad = (event) => {
     let visible = 0;
     let dark = 0;
     let colorful = 0;
+    let redDominant = 0;
+    let blueDominant = 0;
     let lumaTotal = 0;
 
     for (let index = 0; index < pixels.length; index += 4) {
@@ -3948,6 +3950,8 @@ const handleCompanyLogoLoad = (event) => {
       lumaTotal += luma;
       if (luma < 82) dark += 1;
       if (saturation > 36) colorful += 1;
+      if (red > green + 20 && red > blue + 20) redDominant += 1;
+      if (blue > red + 20 && blue > green + 20) blueDominant += 1;
     }
 
     if (!visible) return;
@@ -3955,11 +3959,18 @@ const handleCompanyLogoLoad = (event) => {
     const averageLuma = lumaTotal / visible;
     const darkRatio = dark / visible;
     const colorfulRatio = colorful / visible;
-    const isLowContrastDarkMark =
+    const redDominantRatio = redDominant / visible;
+    const blueDominantRatio = blueDominant / visible;
+    const isMonochromeDarkMark =
       visibleRatio > 0.035 && averageLuma < 88 && darkRatio > 0.62 && colorfulRatio < 0.45;
-    const isDarkSaturatedMark =
-      visibleRatio > 0.035 && averageLuma < 55 && darkRatio > 0.72;
-    if (isLowContrastDarkMark || isDarkSaturatedMark) {
+    const isTransparentDarkBlueMark =
+      visibleRatio > 0.035 &&
+      visibleRatio < 0.72 &&
+      averageLuma < 55 &&
+      darkRatio > 0.72 &&
+      blueDominantRatio > 0.55 &&
+      redDominantRatio < 0.2;
+    if (isMonochromeDarkMark || isTransparentDarkBlueMark) {
       image.classList.add("company-logo-light-mark");
     }
   } catch {
