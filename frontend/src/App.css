@@ -2777,6 +2777,7 @@ body {
 }
 
 .etf-search {
+  position: relative;
   min-width: min(100%, 430px);
   display: flex;
   gap: 10px;

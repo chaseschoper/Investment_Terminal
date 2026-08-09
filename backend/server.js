@@ -1767,6 +1767,7 @@ function shouldShowAfterHoursTrade(timestamp, now = new Date()) {
   const tradeKey = getNewYorkDateKey(tradeDate);
   const nowKey = getNewYorkDateKey(now);
   const nowMinutes = getNewYorkMarketMinutes(now);
+  const nowWeekday = getNewYorkClockParts(now).weekday;
   if (nowMinutes === null) return false;
 
   if (tradeKey === nowKey) {
@@ -1774,6 +1775,13 @@ function shouldShowAfterHoursTrade(timestamp, now = new Date()) {
   }
 
   const ageMs = now.getTime() - tradeDate.getTime();
+  if (ageMs <= 0) return false;
+  if (
+    (nowWeekday === "Sat" || nowWeekday === "Sun" || (nowWeekday === "Mon" && nowMinutes < 9 * 60 + 30)) &&
+    ageMs < 72 * 60 * 60 * 1000
+  ) {
+    return true;
+  }
   return nowMinutes < 5 * 60 && ageMs > 0 && ageMs < 18 * 60 * 60 * 1000;
 }
 
@@ -22905,8 +22913,9 @@ if (query.length < 2) return res.json({ results: [] });
 
 const cleanQuery = query.replace(/[^a-zA-Z0-9 .&'-]/g, "").slice(0, 60);
 if (cleanQuery.length < 2) return res.json({ results: [] });
+const includeFunds = String(req.query.includeFunds || "").toLowerCase() === "true";
 
-const cacheKey = cleanQuery.toLowerCase();
+const cacheKey = `${cleanQuery.toLowerCase()}:${includeFunds ? "funds" : "stocks"}`;
 const cached = stockSearchCache.get(cacheKey);
 if (cached && cached.expiresAt > Date.now()) return res.json({ results: cached.results });
 
@@ -22940,6 +22949,28 @@ if (!rows.length) {
   if (exact) rows = [exact];
 }
 
+if (includeFunds && /^[A-Z0-9.-]{1,12}$/.test(cleanQuery.toUpperCase())) {
+  const exactSymbol = cleanQuery.toUpperCase();
+  const hasExact = rows.some((row) =>
+    String(row?.symbol || row?.ticker || row?.data?.symbol || "").trim().toUpperCase() === exactSymbol
+  );
+  if (!hasExact) {
+    const fundRow = await resolveWithin(
+      fetchEtfData(exactSymbol).then((fund) => fund ? ({
+        symbol: fund.symbol || exactSymbol,
+        name: fund.name || exactSymbol,
+        exchange: fund.profile?.exchange || fund.exchange || (fund.type === "Mutual Fund" ? "MUTF" : "ETF"),
+        exchangeFullName: fund.profile?.provider || fund.profile?.exchange || "",
+        type: fund.type || "ETF",
+        logo: fund.logo || getFinnhubLogoUrl(exactSymbol)
+      }) : null),
+      2600,
+      null
+    ).catch(() => null);
+    if (fundRow?.symbol) rows.unshift(fundRow);
+  }
+}
+
 const seen = new Set();
 const primaryExchangeRank = (exchange) => {
   const value = String(exchange || "").trim().toUpperCase();
@@ -22956,8 +22987,12 @@ const isStockSearchEquity = (item) => {
   const exchange = String(item?.exchange || "").trim().toUpperCase();
   const exchangeName = String(item?.exchangeFullName || "").trim().toLowerCase();
   if (!symbol || ["CRYPTO", "CCC", "FOREX", "FX"].includes(exchange)) return false;
-  if (type && !/(stock|equity|common)/i.test(type)) return false;
-  if (/\b(etf|etn|fund|income strategy|daily bear|daily bull|weeklypay|2x|3x|leveraged|inverse|forex)\b/i.test(name)) return false;
+  if (includeFunds) {
+    if (type && !/(stock|equity|common|etf|etn|fund|mutual)/i.test(type)) return false;
+  } else {
+    if (type && !/(stock|equity|common)/i.test(type)) return false;
+    if (/\b(etf|etn|fund|income strategy|daily bear|daily bull|weeklypay|2x|3x|leveraged|inverse|forex)\b/i.test(name)) return false;
+  }
   if (/\b(crypto|cryptocurrency|foreign exchange|forex)\b/i.test(exchangeName)) return false;
   if (/^[A-Z]{2,6}(USD|EUR|GBP|JPY|CAD|AUD|CHF)$/.test(symbol)) return false;
   return true;

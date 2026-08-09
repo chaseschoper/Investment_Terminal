@@ -203,6 +203,82 @@ const filterFinancialStatementByHistoryRange = (statementData, rangeId = "5", pe
 const historyRangeLabel = (rangeId) =>
   FUNDAMENTAL_HISTORY_RANGES.find((range) => range.id === rangeId)?.label || "5Y";
 
+const parsePeriodDate = (value) => {
+  const text = String(value || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  const date = new Date(`${text}T12:00:00Z`);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const fiscalPeriodStartDate = (period = {}, mode = "annual") => {
+  const endDate = parsePeriodDate(period.date || period.reportDate || period.fillingDate || period.acceptedDate);
+  if (!endDate) return null;
+  const startDate = new Date(endDate);
+  if (String(mode || "").toLowerCase().startsWith("q")) {
+    startDate.setUTCMonth(startDate.getUTCMonth() - 2);
+  } else {
+    startDate.setUTCFullYear(startDate.getUTCFullYear() - 1);
+    startDate.setUTCDate(startDate.getUTCDate() + 1);
+  }
+  return startDate;
+};
+
+const comparableFundamentalPeriod = (period = {}, mode = "annual") => {
+  const isQuarterly = String(mode || "").toLowerCase().startsWith("q");
+  const endDate = parsePeriodDate(period.date || period.reportDate || period.fillingDate || period.acceptedDate);
+  if (endDate && !isQuarterly) {
+    const endMonth = endDate.getUTCMonth();
+    const comparableYear = endDate.getUTCFullYear() - (endMonth <= 4 ? 1 : 0);
+    return {
+      key: `CY${comparableYear}`,
+      label: String(comparableYear),
+      sortValue: comparableYear * 10
+    };
+  }
+  const startDate = fiscalPeriodStartDate(period, mode);
+  if (startDate) {
+    const year = startDate.getUTCFullYear();
+    if (!isQuarterly) {
+      return {
+        key: `CY${year}`,
+        label: String(year),
+        sortValue: year * 10
+      };
+    }
+    const quarter = Math.floor(startDate.getUTCMonth() / 3) + 1;
+    return {
+      key: `${year}-Q${quarter}`,
+      label: `${year} Q${quarter}`,
+      sortValue: year * 10 + quarter
+    };
+  }
+
+  const rawLabel = String(period.label || period.key || "");
+  const year = Number(period.year || rawLabel.match(/\b(20\d{2}|19\d{2})\b/)?.[1]);
+  const quarter = Number(period.quarter || rawLabel.match(/Q([1-4])/i)?.[1]);
+  if (Number.isFinite(year) && year > 0) {
+    if (isQuarterly && Number.isFinite(quarter) && quarter >= 1 && quarter <= 4) {
+      return {
+        key: `${year}-Q${quarter}`,
+        label: `${year} Q${quarter}`,
+        sortValue: year * 10 + quarter
+      };
+    }
+    return {
+      key: `CY${year}`,
+      label: String(year),
+      sortValue: year * 10
+    };
+  }
+
+  const fallback = period.date || period.label || period.key || "Period";
+  return {
+    key: fallback,
+    label: fallback,
+    sortValue: historyRowSortValue(period) ?? 0
+  };
+};
+
 const FUNDAMENTAL_STATEMENT_FIELDS = {
   income: [
     "revenue",
@@ -4920,6 +4996,12 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
 
   const [etfSearchInput, setEtfSearchInput] =
     useState("SPY");
+  const [etfSearchSuggestions, setEtfSearchSuggestions] =
+    useState([]);
+  const [isEtfSearchSuggesting, setIsEtfSearchSuggesting] =
+    useState(false);
+  const [showEtfSearchSuggestions, setShowEtfSearchSuggestions] =
+    useState(false);
 
   const [etfTicker, setEtfTicker] =
     useState("SPY");
@@ -5240,6 +5322,39 @@ useEffect(() => {
     window.clearTimeout(timer);
   };
 }, [searchInput, activePage]);
+
+useEffect(() => {
+  const query = etfSearchInput.trim();
+  const canSuggest = activePage === "etfs" && query.length >= 2;
+
+  if (!canSuggest) {
+    setEtfSearchSuggestions([]);
+    setIsEtfSearchSuggesting(false);
+    return undefined;
+  }
+
+  let isActive = true;
+  const timer = window.setTimeout(async () => {
+    try {
+      setIsEtfSearchSuggesting(true);
+      const { data } = await axios.get(`${API_URL}/api/search-stocks`, {
+        params: { q: query, includeFunds: true },
+        timeout: 4500
+      });
+      if (!isActive) return;
+      setEtfSearchSuggestions(Array.isArray(data?.results) ? data.results : []);
+    } catch (error) {
+      if (isActive) setEtfSearchSuggestions([]);
+    } finally {
+      if (isActive) setIsEtfSearchSuggesting(false);
+    }
+  }, 180);
+
+  return () => {
+    isActive = false;
+    window.clearTimeout(timer);
+  };
+}, [etfSearchInput, activePage]);
 
 useEffect(() => {
   const query = calendarSearchInput.trim();
@@ -7977,17 +8092,19 @@ const fundamentalChartSeries = selectedFundamentalIndicatorDetails.map((indicato
         null;
       const value = getFundamentalIndicatorValue(period, indicator, previousPeriod);
       if (!isNumber(value)) return;
-      const periodKey = period.date || period.label || period.key;
+      const comparablePeriod = comparableFundamentalPeriod(period, fundamentalChartPeriod);
+      const periodKey = comparablePeriod.key;
       if (!rowMap.has(periodKey)) {
         rowMap.set(periodKey, {
           periodKey,
-          period: period.label || periodKey,
-          date: period.date || null
+          period: comparablePeriod.label,
+          date: period.date || null,
+          sortValue: comparablePeriod.sortValue
         });
       }
       rowMap.get(periodKey)[tickerResult.symbol] = value;
       latestValue = value;
-      latestPeriod = period.label || periodKey;
+      latestPeriod = comparablePeriod.label;
     });
 
     latestValues.push({
@@ -7998,6 +8115,9 @@ const fundamentalChartSeries = selectedFundamentalIndicatorDetails.map((indicato
   });
 
   const rows = [...rowMap.values()].sort((a, b) => {
+    if (a.sortValue !== undefined && b.sortValue !== undefined && a.sortValue !== b.sortValue) {
+      return a.sortValue - b.sortValue;
+    }
     const dateA = a.date ? new Date(`${a.date}T12:00:00`).getTime() : 0;
     const dateB = b.date ? new Date(`${b.date}T12:00:00`).getTime() : 0;
     if (dateA && dateB) return dateA - dateB;
@@ -10208,6 +10328,80 @@ const selectStockSearchSuggestion = (item, destinationPage = "overview") => {
   loadStock(symbol, 0, requestId);
 };
 
+const searchEtfSymbol = (symbol) => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  if (!cleanSymbol) return;
+  setEtfSearchInput(cleanSymbol);
+  setEtfSearchSuggestions([]);
+  setShowEtfSearchSuggestions(false);
+  setEtfData(null);
+  setEtfError("");
+  setEtfChartData({ points: [], latest: null });
+  setEtfChartError("");
+  setIsEtfLoading(true);
+  setEtfTicker(cleanSymbol);
+};
+
+const resolveEtfSearchInputToSymbol = async () => {
+  const value = etfSearchInput.trim();
+  if (!value) return "";
+  const normalizedValue = value.toUpperCase();
+  const exactSuggestion = etfSearchSuggestions.find(
+    (item) => String(item.symbol || "").toUpperCase() === normalizedValue
+  );
+  if (exactSuggestion?.symbol) return String(exactSuggestion.symbol).toUpperCase();
+  if (etfSearchSuggestions[0]?.symbol) return String(etfSearchSuggestions[0].symbol).toUpperCase();
+  return resolveSearchInputToSymbol(value);
+};
+
+const selectEtfSearchSuggestion = (item) => {
+  const symbol = String(item?.symbol || "").trim().toUpperCase();
+  if (!symbol) return;
+  searchEtfSymbol(symbol);
+};
+
+const renderEtfSearchSuggestions = () => {
+  const shouldShow =
+    showEtfSearchSuggestions &&
+    etfSearchInput.trim().length >= 2 &&
+    (etfSearchSuggestions.length || isEtfSearchSuggesting);
+
+  if (!shouldShow) return null;
+
+  return (
+    <div className="stock-search-suggestions" role="listbox">
+      {isEtfSearchSuggesting && !etfSearchSuggestions.length ? (
+        <div className="stock-search-suggestion muted">Searching...</div>
+      ) : (
+        etfSearchSuggestions.map((item) => (
+          <button
+            type="button"
+            className="stock-search-suggestion"
+            key={`etf-${item.symbol}-${item.exchange || ""}`}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => selectEtfSearchSuggestion(item)}
+          >
+            <span className="stock-search-logo-shell has-logo" aria-hidden="true">
+              <span>{String(item.symbol || "?").slice(0, 1)}</span>
+              <img
+                src={getDefaultCompanyLogoUrl(item.symbol) || item.logo}
+                data-provider-logo={item.logo || ""}
+                alt=""
+                onError={(event) => handleCompanyLogoError(event, item.symbol)}
+              />
+            </span>
+            <span className="stock-search-suggestion-copy">
+              <strong>{item.symbol}</strong>
+              <em>{item.name}</em>
+            </span>
+            {item.exchange && <small>{item.exchange}</small>}
+          </button>
+        ))
+      )}
+    </div>
+  );
+};
+
 const openStockOverviewSymbol = (symbol) => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
   if (!cleanSymbol) return;
@@ -11303,25 +11497,26 @@ return (
           </div>
           <form
             className="etf-search"
-            onSubmit={(event) => {
+            onSubmit={async (event) => {
               event.preventDefault();
-              const symbol = etfSearchInput.trim().toUpperCase();
+              const symbol = await resolveEtfSearchInputToSymbol();
               if (!symbol) return;
-              setEtfData(null);
-              setEtfError("");
-              setEtfChartData({ points: [], latest: null });
-              setEtfChartError("");
-              setIsEtfLoading(true);
-              setEtfTicker(symbol);
+              searchEtfSymbol(symbol);
             }}
           >
             <input
               value={etfSearchInput}
-              onChange={(event) => setEtfSearchInput(event.target.value.toUpperCase())}
+              onChange={(event) => {
+                setEtfSearchInput(event.target.value.toUpperCase());
+                setShowEtfSearchSuggestions(true);
+              }}
+              onFocus={() => setShowEtfSearchSuggestions(true)}
+              onBlur={() => window.setTimeout(() => setShowEtfSearchSuggestions(false), 120)}
               placeholder="Search ETF or fund ticker"
               aria-label="Search ETF or fund ticker"
             />
             <button type="submit">{isEtfLoading ? "Loading..." : "Search Fund"}</button>
+            {renderEtfSearchSuggestions()}
           </form>
         </div>
 
