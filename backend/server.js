@@ -16199,6 +16199,50 @@ async function buildSavedMoverRows(symbols = [], limit = 10) {
     .slice(0, limit);
 }
 
+async function fetchFmpTopVolumeStockRows(limit = 10) {
+  if (!process.env.FMP_API_KEY || !canUseFmp()) return [];
+  try {
+    const response = await getFmpAxios("https://financialmodelingprep.com/stable/company-screener", {
+      params: {
+        apikey: process.env.FMP_API_KEY,
+        isActivelyTrading: true,
+        isEtf: false,
+        isFund: false,
+        volumeMoreThan: 1000000,
+        limit: 500
+      },
+      timeout: 9000
+    });
+    const regularExchange = new Set(["NASDAQ", "NYSE", "AMEX"]);
+    const sourceRows = Array.isArray(response.data) ? response.data : [];
+    return sourceRows
+      .map((row) => normalizeMarketMoverRow({
+        symbol: row.symbol,
+        name: firstText(row.companyName, row.name, FALLBACK_COMPANY_NAMES[row.symbol], row.symbol),
+        price: row.price,
+        change: row.change,
+        changesPercentage: row.changePercentage,
+        volume: row.volume,
+        source: "FMP company screener volume"
+      }))
+      .filter((row) => {
+        const sourceRow = sourceRows.find((item) => String(item.symbol || "").toUpperCase() === row.symbol) || {};
+        const exchange = String(sourceRow.exchangeShortName || sourceRow.exchange || "").toUpperCase();
+        return row &&
+          regularExchange.has(exchange) &&
+          toNumberOrNull(row.price) !== null &&
+          toNumberOrNull(row.volume) !== null &&
+          !/\b(etf|fund|trust|warrant|rights|unit)\b/i.test(`${row.symbol} ${row.name}`);
+      })
+      .sort((a, b) => (toNumberOrNull(b.volume) || 0) - (toNumberOrNull(a.volume) || 0))
+      .slice(0, limit);
+  } catch (err) {
+    setFmpCooldown(err, "top volume screener", "top-volume");
+    console.log("FMP top volume screener skipped:", err.response?.status || err.message);
+    return [];
+  }
+}
+
 app.get("/api/market-movers", async (req, res) => {
   const cached = broadMarketMoversCache.get("latest");
   const cachedAge = cached ? Date.now() - cached.fetchedAt : Infinity;
@@ -16352,23 +16396,28 @@ app.get("/api/top-traded-stocks", async (req, res) => {
         });
       })
       .filter(Boolean)
+      .filter((row) => toNumberOrNull(row.volume) !== null)
       .sort((a, b) => {
         const volumeDiff = (toNumberOrNull(b.volume) ?? -Infinity) - (toNumberOrNull(a.volume) ?? -Infinity);
         if (volumeDiff !== 0 && Number.isFinite(volumeDiff)) return volumeDiff;
         return Math.abs(toNumberOrNull(b.percentChange) || 0) - Math.abs(toNumberOrNull(a.percentChange) || 0);
       })
       .slice(0, 10);
-    const hydratedTopTraded = await hydrateMoverRowsWithFmpFiveMinute(rawTopTraded, 10);
-    const topTraded = hydratedTopTraded.length
-      ? hydratedTopTraded
-      : await buildSavedMoverRows(["NVDA", "AAPL", "MSFT", "AMD", "TSLA", "AMZN", "META", "PLTR", "JPM", "BAC"], 10);
+    const topVolumeFallback = rawTopTraded.length >= 8
+      ? []
+      : await fetchFmpTopVolumeStockRows(10);
+    const hydratedTopTraded = await hydrateMoverRowsWithFmpFiveMinute(
+      rawTopTraded.length >= 8 ? rawTopTraded : topVolumeFallback,
+      10
+    );
+    const topTraded = hydratedTopTraded.filter((row) => toNumberOrNull(row.volume) !== null);
     const data = {
       stocks: topTraded,
       source: "Most active stocks",
       updatedAt: new Date().toISOString()
     };
 
-    if (topTraded.length) {
+    if (topTraded.length >= 8) {
       topTradedStocksCache.set("latest", {
         fetchedAt: Date.now(),
         data
@@ -16386,14 +16435,14 @@ app.get("/api/top-traded-stocks", async (req, res) => {
   }
 
   try {
-    const data = await resolveWithin(fetchFreshTopTraded(), 7000, null);
+    const data = await resolveWithin(fetchFreshTopTraded(), 22000, null);
     if (data?.stocks?.length) return res.json(data);
   } catch (err) {
     console.log("Top traded stocks refresh failed:", err.message);
   }
 
   if (cached?.data) return res.json({ ...cached.data, stale: true });
-  const fallbackTopTraded = await buildSavedMoverRows(["NVDA", "AAPL", "MSFT", "AMD", "TSLA", "AMZN", "META", "PLTR", "JPM", "BAC"], 10);
+  const fallbackTopTraded = await fetchFmpTopVolumeStockRows(10);
   if (fallbackTopTraded.length) {
     return res.json({
       stocks: fallbackTopTraded,
