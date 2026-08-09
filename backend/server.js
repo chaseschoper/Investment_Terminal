@@ -940,8 +940,14 @@ const buildCompanyLogoCandidateUrls = (symbol) => {
 
   const candidates = symbolVariants.flatMap((variant) => {
     const lower = encodeURIComponent(variant.toLowerCase());
+    const encoded = encodeURIComponent(variant);
     return [
-      `https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/${lower}.png`
+      `https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/${lower}.png`,
+      `https://financialmodelingprep.com/image-stock/${encoded}.png`,
+      `https://images.financialmodelingprep.com/symbol/${encoded}.png`,
+      `https://storage.googleapis.com/iex/api/logos/${encoded}.png`,
+      `https://eodhd.com/img/logos/US/${encoded}.png`,
+      `https://assets.parqet.com/logos/symbol/${encoded}?format=png`
     ];
   });
 
@@ -14743,6 +14749,37 @@ app.get("/api/prices", async (req, res) => {
     if (cached && cachedHasPercent && Date.now() - cached.fetchedAt < 45 * 1000 && !cachedNeedsOfficialClose) return;
 
     try {
+      const sharedQuote = await fetchWatchlistStyleMarketQuote(symbol, marketType, wantsLiveQuotes);
+      const sharedPrice = toNumberOrNull(sharedQuote?.price);
+      if (sharedPrice !== null && sharedPrice > 0) {
+        prices[symbol] = sharedPrice;
+        livePriceCache.set(symbol, {
+          price: sharedPrice,
+          name: sharedQuote.name || details[symbol]?.name || symbol,
+          logo: sharedQuote.logo || details[symbol]?.logo || null,
+          exchange: sharedQuote.exchange || details[symbol]?.exchange || null,
+          change: toNumberOrNull(sharedQuote.change),
+          percentChange: toNumberOrNull(sharedQuote.percentChange),
+          previousClose: toNumberOrNull(sharedQuote.previousClose),
+          extendedHours: null,
+          source: sharedQuote.source || null,
+          usedOfficialClose: Boolean(sharedQuote.usedOfficialClose),
+          fetchedAt: Date.now()
+        });
+        details[symbol] = {
+          ...details[symbol],
+          name: sharedQuote.name || details[symbol]?.name || symbol,
+          logo: sharedQuote.logo || details[symbol]?.logo || null,
+          exchange: sharedQuote.exchange || details[symbol]?.exchange || null,
+          change: toNumberOrNull(sharedQuote.change) ?? details[symbol]?.change,
+          extendedHours: null,
+          percentChange: toNumberOrNull(sharedQuote.percentChange) ?? details[symbol]?.percentChange,
+          marketType,
+          source: sharedQuote.source || details[symbol]?.source || null
+        };
+        return;
+      }
+
       if (marketType !== "stock") {
         const data = await resolveWithin(
           fetchFmpAlternativeMarketQuote(symbol, marketType),
@@ -14946,7 +14983,7 @@ app.get("/api/prices", async (req, res) => {
       const symbol = queue.shift();
       await refreshSymbolQuote(symbol);
     }
-  })), wantsLiveQuotes ? 4800 : 2200, null);
+  })), wantsLiveQuotes ? 9000 : 3200, null);
   symbols.forEach(hydrateSavedSymbol);
 
   const staleSymbols = symbols.filter((symbol) => {
@@ -15766,6 +15803,40 @@ app.get("/api/market-heatmap", async (req, res) => {
         previousClose: firstFiniteNumber(yahooQuote?.previousClose, liveQuote.previousClose, savedQuote.previousClose)
       });
     });
+    const focusHeatmapSymbols = [...new Set([
+      ...seededResults
+        .filter((company) => toNumberOrNull(company.percentChange) !== null)
+        .sort((a, b) => toNumberOrNull(b.percentChange) - toNumberOrNull(a.percentChange))
+        .slice(0, 20)
+        .map((company) => company.symbol),
+      ...seededResults
+        .filter((company) => toNumberOrNull(company.percentChange) !== null)
+        .sort((a, b) => toNumberOrNull(a.percentChange) - toNumberOrNull(b.percentChange))
+        .slice(0, 20)
+        .map((company) => company.symbol)
+    ])];
+    const focusQueue = [...focusHeatmapSymbols];
+    const focusQuoteRows = [];
+    await resolveWithin(Promise.all(Array.from({ length: Math.min(4, focusQueue.length) }, async () => {
+      while (focusQueue.length) {
+        const symbol = focusQueue.shift();
+        const quote = await fetchWatchlistStyleMarketQuote(symbol, "stock", true).catch(() => null);
+        if (quote && toNumberOrNull(quote.price) !== null) {
+          focusQuoteRows.push({ symbol, quote });
+        }
+      }
+    })), 7000, null);
+    const focusQuoteBySymbol = new Map(focusQuoteRows.map((row) => [row.symbol, row.quote]));
+    seededResults.forEach((company) => {
+      const quote = focusQuoteBySymbol.get(company.symbol);
+      if (!quote) return;
+      const normalized = normalizeHeatmapCompanyQuote(company, quote);
+      company.price = normalized.price;
+      company.marketCap = normalized.marketCap;
+      company.change = normalized.change;
+      company.previousClose = normalized.previousClose;
+      company.percentChange = normalized.percentChange;
+    });
     seededResults.forEach((company) => {
       if (toNumberOrNull(company.price) !== null) {
         livePriceCache.set(company.symbol, {
@@ -15893,10 +15964,102 @@ function normalizeMarketMoverRow(row = {}) {
   };
 }
 
+async function fetchWatchlistStyleMarketQuote(symbol, marketType = "stock", wantsLiveQuotes = true) {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  if (!cleanSymbol) return null;
+
+  if (marketType !== "stock") {
+    const data = await resolveWithin(
+      fetchFmpAlternativeMarketQuote(cleanSymbol, marketType),
+      wantsLiveQuotes ? 3600 : 3600,
+      null
+    ).catch(() => null);
+    const price = toNumberOrNull(data?.price);
+    if (price === null || price <= 0) return null;
+    return {
+      price,
+      name: data.name || cleanSymbol,
+      logo: data.logo || null,
+      exchange: data.exchange || null,
+      change: toNumberOrNull(data.change),
+      percentChange: toNumberOrNull(data.changePercentage),
+      previousClose: toNumberOrNull(data.previousClose),
+      source: data.source || `FMP ${marketType} quote`,
+      usedOfficialClose: !/5-minute chart/i.test(String(data.source || ""))
+    };
+  }
+
+  if (wantsLiveQuotes && !isLikelyUsMarketSession()) {
+    const fmpCloseQuote = await resolveWithin(
+      fetchFmpStableQuoteProfile(cleanSymbol),
+      1800,
+      null
+    ).catch(() => null);
+    const closePrice = toNumberOrNull(fmpCloseQuote?.price);
+    const previousClose = toNumberOrNull(fmpCloseQuote?.previousClose);
+    if (closePrice !== null && closePrice > 0) {
+      const change = previousClose > 0
+        ? closePrice - previousClose
+        : toNumberOrNull(fmpCloseQuote?.change);
+      return {
+        price: closePrice,
+        name: fmpCloseQuote?.name || cleanSymbol,
+        logo: fmpCloseQuote?.logo || getFinnhubLogoUrl(cleanSymbol),
+        exchange: fmpCloseQuote?.exchange || null,
+        change,
+        percentChange: change !== null && previousClose > 0
+          ? (change / previousClose) * 100
+          : toNumberOrNull(fmpCloseQuote?.percentChange),
+        previousClose,
+        source: "fmp-quote-close",
+        usedOfficialClose: true
+      };
+    }
+  }
+
+  if (wantsLiveQuotes) {
+    const intradayTick = await resolveWithin(
+      fetchFmpLatestIntradayTick(cleanSymbol),
+      2800,
+      null
+    ).catch(() => null);
+    const intradayPrice = toNumberOrNull(intradayTick?.price);
+    if (intradayPrice !== null && intradayPrice > 0) {
+      return {
+        price: intradayPrice,
+        change: toNumberOrNull(intradayTick.change),
+        percentChange: toNumberOrNull(intradayTick.percentChange),
+        previousClose: toNumberOrNull(intradayTick.previousClose),
+        source: intradayTick.usedOfficialClose ? "fmp-quote-close" : "fmp-5min-chart",
+        usedOfficialClose: Boolean(intradayTick.usedOfficialClose)
+      };
+    }
+  }
+
+  const finnhubQuote = await resolveWithin(
+    fetchFinnhubQuoteProfile(cleanSymbol),
+    wantsLiveQuotes ? 1400 : 1600,
+    null
+  ).catch(() => null);
+  const price = toNumberOrNull(finnhubQuote?.price);
+  if (price === null || price <= 0) return null;
+  return {
+    price,
+    name: finnhubQuote?.name || cleanSymbol,
+    logo: finnhubQuote?.logo || getFinnhubLogoUrl(cleanSymbol),
+    exchange: finnhubQuote?.exchange || null,
+    change: toNumberOrNull(finnhubQuote?.change),
+    percentChange: toNumberOrNull(finnhubQuote?.percentChange),
+    previousClose: toNumberOrNull(finnhubQuote?.previousClose),
+    source: "finnhub-quote",
+    usedOfficialClose: false
+  };
+}
+
 async function hydrateMoverRowWithFmpFiveMinute(row = {}) {
   const symbol = String(row.symbol || "").trim().toUpperCase();
   if (!symbol) return row;
-  const tick = await resolveWithin(fetchFmpLatestIntradayTick(symbol), 1800, null).catch(() => null);
+  const tick = await fetchWatchlistStyleMarketQuote(symbol, "stock", true);
   if (!tick || toNumberOrNull(tick.price) === null) return row;
   return {
     ...row,
@@ -15904,7 +16067,7 @@ async function hydrateMoverRowWithFmpFiveMinute(row = {}) {
     change: firstFiniteNumber(tick.change, row.change),
     percentChange: firstFiniteNumber(tick.percentChange, row.percentChange),
     previousClose: firstFiniteNumber(tick.previousClose, row.previousClose),
-    source: tick.usedOfficialClose ? "FMP quote close" : "FMP 5-minute chart"
+    source: tick.source || (tick.usedOfficialClose ? "FMP quote close" : "FMP 5-minute chart")
   };
 }
 

@@ -3742,6 +3742,31 @@ const BALANCE_SHEET_METRICS_VERSION = 14;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const MIN_DISPLAY_INTERIM_HISTORY_ROWS = 4;
 
+const getApiBaseUrl = () => {
+  const apiRoot = String(API_URL || "").replace(/\/$/, "");
+  return apiRoot.endsWith("/api") ? apiRoot : `${apiRoot}/api`;
+};
+
+const getCompanyLogoProxyUrl = (symbol) => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  return cleanSymbol ? `${getApiBaseUrl()}/company-logo/${encodeURIComponent(cleanSymbol)}` : "";
+};
+
+const getImageProxyUrl = (src) => {
+  if (!src || typeof src !== "string" || src.startsWith("/")) return src || "";
+  try {
+    const sourceUrl = new URL(src, window.location.origin);
+    const apiUrl = new URL(getApiBaseUrl(), window.location.origin);
+    const apiPath = apiUrl.pathname.replace(/\/$/, "");
+    if (sourceUrl.origin === apiUrl.origin && sourceUrl.pathname.startsWith(apiPath)) {
+      return src;
+    }
+  } catch {
+    return src;
+  }
+  return `${getApiBaseUrl()}/image-proxy?url=${encodeURIComponent(src)}`;
+};
+
 const getCompanyLogoCandidates = (symbol, providerLogo = "") => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
   if (!cleanSymbol) return [];
@@ -3756,6 +3781,7 @@ const getCompanyLogoCandidates = (symbol, providerLogo = "") => {
   const encodedVariants = symbolVariants.map((variant) => encodeURIComponent(variant));
   const lowerEncodedVariants = symbolVariants.map((variant) => encodeURIComponent(variant.toLowerCase()));
   return [
+    ...symbolVariants.map((variant) => getCompanyLogoProxyUrl(variant)),
     providerLogo,
     ...lowerEncodedVariants.map((variant) => `https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/${variant}.png`),
     ...encodedVariants.map((variant) => `https://financialmodelingprep.com/image-stock/${variant}.png`),
@@ -3771,8 +3797,36 @@ const getDefaultCompanyLogoUrl = (symbol) => getCompanyLogoCandidates(symbol)[0]
 const getFmpMarketSymbolLogoUrl = (symbol) => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
   return cleanSymbol
+    ? getImageProxyUrl(`https://images.financialmodelingprep.com/symbol/${encodeURIComponent(cleanSymbol)}.png`)
+    : "";
+};
+
+const getCryptoLogoCandidates = (symbol, providerLogo = "") => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  const fmpLogo = cleanSymbol
     ? `https://images.financialmodelingprep.com/symbol/${encodeURIComponent(cleanSymbol)}.png`
     : "";
+  return [
+    fmpLogo ? getImageProxyUrl(fmpLogo) : "",
+    providerLogo ? getImageProxyUrl(providerLogo) : "",
+    fmpLogo,
+    providerLogo
+  ].filter((url, index, list) => url && list.indexOf(url) === index);
+};
+
+const handleCryptoLogoError = (event, symbol) => {
+  const image = event.currentTarget;
+  const fallbackUrls = getCryptoLogoCandidates(symbol, image.dataset.providerLogo || "");
+  const stage = Number(image.dataset.logoFallbackStage || 0);
+  for (let index = stage; index < fallbackUrls.length; index += 1) {
+    const nextUrl = fallbackUrls[index];
+    if (nextUrl && nextUrl !== image.src) {
+      image.dataset.logoFallbackStage = String(index + 1);
+      image.src = nextUrl;
+      return;
+    }
+  }
+  image.style.display = "none";
 };
 
 const handleCompanyLogoError = (event, symbol) => {
@@ -10236,7 +10290,7 @@ const getMarketLogoUrl = (symbol, marketType) => {
     return getDefaultCompanyLogoUrl(cleanSymbol) || savedSymbolDetails[cleanSymbol]?.logo || "";
   }
   if (marketType === "crypto") {
-    return getFmpMarketSymbolLogoUrl(cleanSymbol);
+    return getCryptoLogoCandidates(cleanSymbol, savedSymbolDetails[cleanSymbol]?.logo)[0] || "";
   }
   return "";
 };
@@ -10444,9 +10498,14 @@ const renderAlternativeMarketSuggestions = (items, isLoading, show, inputValue, 
               <span>{String(item.symbol || "?").slice(0, 1)}</span>
               {item.logo && (
                 <img
-                  src={item.logo}
+                  src={item.type === "crypto" ? getCryptoLogoCandidates(item.symbol, item.logo)[0] : item.logo}
+                  data-provider-logo={item.logo || ""}
                   alt=""
                   onError={(event) => {
+                    if (item.type === "crypto") {
+                      handleCryptoLogoError(event, item.symbol);
+                      return;
+                    }
                     event.currentTarget.style.display = "none";
                   }}
                 />
@@ -10739,6 +10798,10 @@ return (
                           handleCompanyLogoError(event, item.symbol);
                           return;
                         }
+                        if (item.type === "crypto") {
+                          handleCryptoLogoError(event, item.symbol);
+                          return;
+                        }
                         event.currentTarget.style.display = "none";
                       }}
                     />
@@ -10788,6 +10851,10 @@ return (
                       onError={(event) => {
                         if (marketType === "stock") {
                           handleCompanyLogoError(event, item);
+                          return;
+                        }
+                        if (marketType === "crypto") {
+                          handleCryptoLogoError(event, item);
                           return;
                         }
                         event.currentTarget.style.display = "none";
@@ -11486,12 +11553,13 @@ return (
                 {cryptoData.logo ? (
                   <span className="etf-hero-logo-shell crypto-logo-shell" aria-hidden="true">
                     <img
-                      src={cryptoData.logo}
+                      src={getCryptoLogoCandidates(cryptoData.symbol, cryptoData.logo)[0] || cryptoData.logo}
+                      data-provider-logo={cryptoData.logo || ""}
                       alt=""
                       loading="eager"
                       decoding="async"
                       onError={(event) => {
-                        event.currentTarget.style.display = "none";
+                        handleCryptoLogoError(event, cryptoData.symbol);
                       }}
                     />
                     {renderMarketLogoMark(cryptoData.symbol, "crypto")}
@@ -15486,6 +15554,10 @@ return (
                             onError={(event) => {
                               if (marketType === "stock") {
                                 handleCompanyLogoError(event, symbol);
+                                return;
+                              }
+                              if (marketType === "crypto") {
+                                handleCryptoLogoError(event, symbol);
                                 return;
                               }
                               event.currentTarget.style.display = "none";
