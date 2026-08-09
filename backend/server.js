@@ -3441,6 +3441,81 @@ function warmPriceHistoryCache(ticker, requestedRange = "1D") {
   priceHistoryInFlight.set(cacheKey, historyPromise);
 }
 
+async function buildQuoteFallbackPriceHistory(symbol, requestedRange = "1D") {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  if (!cleanSymbol) return null;
+  const [quoteProfile, savedStock] = await Promise.all([
+    resolveWithin(fetchFmpStableQuoteProfile(cleanSymbol), 1800, null).catch(() => null),
+    Stock.findOne({ ticker: cleanSymbol })
+      .select("ticker data.price data.previousClose data.change data.percentChange data.open")
+      .lean()
+      .catch(() => null)
+  ]);
+  const savedData = savedStock?.data || {};
+  const price = firstFiniteNumber(quoteProfile?.price, savedData.price);
+  const previousClose = firstFiniteNumber(quoteProfile?.previousClose, savedData.previousClose);
+  const open = firstFiniteNumber(quoteProfile?.open, savedData.open, previousClose, price);
+  if (price === null || price <= 0) return null;
+  const now = new Date();
+  const start = new Date(now);
+  const rangeKey = String(requestedRange || "1D").toUpperCase();
+  if (rangeKey === "1W") start.setUTCDate(start.getUTCDate() - 7);
+  else if (rangeKey === "1M") start.setUTCMonth(start.getUTCMonth() - 1);
+  else if (rangeKey === "3M") start.setUTCMonth(start.getUTCMonth() - 3);
+  else if (rangeKey === "6M") start.setUTCMonth(start.getUTCMonth() - 6);
+  else if (rangeKey === "1Y") start.setUTCFullYear(start.getUTCFullYear() - 1);
+  else if (rangeKey === "5Y") start.setUTCFullYear(start.getUTCFullYear() - 5);
+  else start.setUTCHours(14, 30, 0, 0);
+  const startPrice = rangeKey === "1D" ? open : previousClose;
+  const base = firstFiniteNumber(startPrice, previousClose, price);
+  const change = firstFiniteNumber(
+    quoteProfile?.change,
+    savedData.change,
+    base !== null ? price - base : null
+  );
+  const percentChange = firstFiniteNumber(
+    quoteProfile?.percentChange,
+    savedData.percentChange,
+    change !== null && base > 0 ? (change / base) * 100 : null
+  );
+  const points = [
+    {
+      time: start.getTime(),
+      date: start.toISOString(),
+      price: base ?? price,
+      open: base ?? price,
+      close: base ?? price,
+      volume: null,
+      isFallback: true
+    },
+    {
+      time: now.getTime(),
+      date: now.toISOString(),
+      price,
+      close: price,
+      volume: null,
+      isFallback: true
+    }
+  ];
+  return {
+    symbol: cleanSymbol,
+    sourceSymbol: cleanSymbol,
+    range: rangeKey,
+    interval: "fallback",
+    source: "FMP quote fallback",
+    points,
+    latest: {
+      price,
+      change,
+      percentChange,
+      previousClose,
+      open
+    },
+    stale: true,
+    updatedAt: new Date().toISOString()
+  };
+}
+
 async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
   const symbol = String(ticker || "").trim().toUpperCase();
   const interval = FMP_INTRADAY_INTERVAL_BY_RANGE[requestedRange];
@@ -16862,6 +16937,10 @@ app.get("/api/price-history/:ticker", async (req, res) => {
       if (cached?.data) {
         return res.json({ ...cached.data, stale: true, refreshing: true });
       }
+      const fallbackHistory = await buildQuoteFallbackPriceHistory(ticker, requestedRange);
+      if (fallbackHistory?.points?.length) {
+        return res.json(cacheResolvedPriceHistory(fallbackHistory));
+      }
       return res.json(emptyPriceHistory());
     }
 
@@ -16890,6 +16969,12 @@ app.get("/api/price-history/:ticker", async (req, res) => {
       return res.json({ ...cached.data, stale: true, refreshing: true });
     }
 
+    const fallbackHistory = await buildQuoteFallbackPriceHistory(ticker, requestedRange);
+    if (fallbackHistory?.points?.length) {
+      const data = cacheResolvedPriceHistory(fallbackHistory);
+      return res.json(data);
+    }
+
     return res.json(emptyPriceHistory());
 
   } catch (err) {
@@ -16897,6 +16982,10 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     const cached = priceHistoryCache.get(`${ticker}:${requestedRange}`);
     if (cached?.data) {
       return res.json({ ...cached.data, stale: true });
+    }
+    const fallbackHistory = await buildQuoteFallbackPriceHistory(ticker, requestedRange).catch(() => null);
+    if (fallbackHistory?.points?.length) {
+      return res.json(fallbackHistory);
     }
     console.log("FMP price history failed:", req.params.ticker, err.response?.status || err.message);
     return res.json(emptyPriceHistory());
@@ -17176,11 +17265,13 @@ function isLikelyForexMarketOpen(date = new Date()) {
 
 async function fetchFmpAlternativeMarketQuote(symbol, marketType) {
   const normalizedSymbol = String(symbol || "").trim().toUpperCase();
-  const meta = await getFmpAlternativeMarketMeta(normalizedSymbol, marketType);
-  if (!meta) return null;
   const cacheKey = `${marketType}:quote:${normalizedSymbol}`;
   const cached = fmpDataCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.data;
+  const staleCachedData = cached?.data || null;
+  const meta = await getFmpAlternativeMarketMeta(normalizedSymbol, marketType);
+  if (!meta) return staleCachedData;
+  if (!process.env.FMP_API_KEY || !canUseFmp()) return staleCachedData;
 
   let quote = null;
   try {
@@ -17204,7 +17295,7 @@ async function fetchFmpAlternativeMarketQuote(symbol, marketType) {
   if (!quote || firstFiniteNumber(quote.price) === null) {
     const chartLatest = chartHistory?.latest;
     const chartPrice = firstFiniteNumber(chartLatest?.price);
-    if (chartPrice === null) return null;
+    if (chartPrice === null) return staleCachedData;
     const chartQuote = {
       price: chartPrice,
       change: firstFiniteNumber(chartLatest.change),
@@ -17264,11 +17355,13 @@ async function fetchFmpAlternativeMarketQuote(symbol, marketType) {
 async function fetchFmpAlternativeMarketPriceHistory(symbol, requestedRange = "1D", marketType = "crypto") {
   const normalizedSymbol = String(symbol || "").trim().toUpperCase();
   const rangeKey = String(requestedRange || "1D").trim().toUpperCase();
-  if (!normalizedSymbol || !process.env.FMP_API_KEY || !canUseFmp()) return null;
+  if (!normalizedSymbol) return null;
   const rangeConfig = PRICE_HISTORY_RANGES[rangeKey] || PRICE_HISTORY_RANGES["1D"];
   const cacheKey = `${marketType}:history:${normalizedSymbol}:${rangeKey}`;
   const cached = fmpDataCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.data;
+  const staleCachedData = cached?.data ? { ...cached.data, stale: true } : null;
+  if (!process.env.FMP_API_KEY || !canUseFmp()) return staleCachedData;
 
   if (rangeKey === "1D" || rangeKey === "1W") {
     let rows = [];
@@ -17283,7 +17376,7 @@ async function fetchFmpAlternativeMarketPriceHistory(symbol, requestedRange = "1
     } catch (err) {
       setFmpCooldown(err, `${marketType} intraday price history`, normalizedSymbol);
       console.log(`FMP ${marketType} intraday price history skipped:`, normalizedSymbol, rangeKey, err.response?.status || err.message);
-      return null;
+      return staleCachedData;
     }
     const allPoints = rows
       .map((row) => {
@@ -17305,7 +17398,7 @@ async function fetchFmpAlternativeMarketPriceHistory(symbol, requestedRange = "1
       })
       .filter(Boolean)
       .sort((a, b) => a.time - b.time);
-    if (allPoints.length < 2) return null;
+    if (allPoints.length < 2) return staleCachedData;
 
     const latestPoint = allPoints.at(-1);
     const latestDateKey = latestPoint.marketDateKey;
@@ -17313,7 +17406,7 @@ async function fetchFmpAlternativeMarketPriceHistory(symbol, requestedRange = "1
     const points = rangeKey === "1D"
       ? allPoints.filter((point) => point.marketDateKey === latestDateKey)
       : allPoints.filter((point) => point.time >= cutoff);
-    if (points.length < 2) return null;
+    if (points.length < 2) return staleCachedData;
     const firstPoint = points[0];
     const previousPoint = points.at(-2);
     const change = latestPoint.price !== null && firstPoint.price ? latestPoint.price - firstPoint.price : null;
@@ -17359,7 +17452,7 @@ async function fetchFmpAlternativeMarketPriceHistory(symbol, requestedRange = "1
   } catch (err) {
     setFmpCooldown(err, `${marketType} daily price history`, normalizedSymbol);
     console.log(`FMP ${marketType} daily price history skipped:`, normalizedSymbol, rangeKey, err.response?.status || err.message);
-    return null;
+    return staleCachedData;
   }
   const points = rows
     .map((row) => {
@@ -17375,7 +17468,7 @@ async function fetchFmpAlternativeMarketPriceHistory(symbol, requestedRange = "1
     })
     .filter(Boolean)
     .sort((a, b) => a.time - b.time);
-  if (points.length < 2) return null;
+  if (points.length < 2) return staleCachedData;
   const latestPoint = points.at(-1);
   const firstPoint = points[0];
   const previousPoint = points.at(-2);
@@ -22403,6 +22496,68 @@ const buildCalendarDates = (startValue) => {
   });
 };
 
+const emptyCalendarResponse = (type, dates, source = "FMP calendar") => ({
+  type,
+  weekStart: dates[0],
+  weekEnd: dates[6],
+  days: dates.map((date) => ({ date, events: [] })),
+  updatedAt: new Date().toISOString(),
+  source,
+  unavailable: true
+});
+
+const fetchFmpEarningsCalendarDays = async (dates) => {
+  const rows = await resolveWithin(
+    getFmpAxios("https://financialmodelingprep.com/stable/earnings-calendar", {
+      params: {
+        from: dates[0],
+        to: dates[6],
+        apikey: process.env.FMP_API_KEY
+      },
+      timeout: 5500,
+      fmpPriority: 6,
+      fmpQueueTimeoutMs: 7000
+    }).then((response) => response.data),
+    6500,
+    []
+  );
+  if (isFmpErrorPayload(rows)) {
+    const error = new Error(firstText(rows["Error Message"], rows.error, rows.Note, rows.Information) || "FMP earnings calendar unavailable");
+    error.response = { status: 429 };
+    throw error;
+  }
+  const eventsByDate = new Map();
+  (Array.isArray(rows) ? rows : rows ? [rows] : []).forEach((row) => {
+    const date = String(row.date || row.fiscalDateEnding || "").slice(0, 10);
+    if (!dates.includes(date)) return;
+    const symbol = String(row.symbol || "").trim().toUpperCase();
+    if (!symbol) return;
+    const event = {
+      date,
+      symbol,
+      company: firstText(row.name, row.companyName, row.company, FALLBACK_COMPANY_NAMES[symbol], symbol),
+      logo: getFinnhubLogoUrl(symbol),
+      marketCap: firstFiniteNumber(row.marketCap),
+      fiscalDateEnding: firstText(row.fiscalDateEnding),
+      epsEstimated: firstFiniteNumber(row.epsEstimated, row.epsEstimate, row.estimatedEps),
+      epsActual: firstFiniteNumber(row.epsActual, row.actualEps),
+      revenueEstimated: firstFiniteNumber(row.revenueEstimated, row.revenueEstimate),
+      revenueActual: firstFiniteNumber(row.revenueActual),
+      time: firstText(row.time),
+      source: "FMP earnings calendar"
+    };
+    const list = eventsByDate.get(date) || [];
+    list.push(event);
+    eventsByDate.set(date, list);
+  });
+  return dates.map((date) => ({
+    date,
+    events: (eventsByDate.get(date) || [])
+      .sort((a, b) => (b.marketCap || 0) - (a.marketCap || 0) || a.symbol.localeCompare(b.symbol))
+      .slice(0, 150)
+  }));
+};
+
 app.get("/api/calendar-events", async (req, res) => {
   const type = ["earnings", "dividends", "ipos", "economic"].includes(String(req.query.type || "").toLowerCase())
     ? String(req.query.type).toLowerCase()
@@ -22411,18 +22566,37 @@ app.get("/api/calendar-events", async (req, res) => {
   const cacheKey = `v3:${type}:${dates[0]}:${dates[6]}`;
   const cached = fmpCalendarCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return res.json(cached.data);
+  const staleCachedData = cached?.data || null;
 
   if (!process.env.FMP_API_KEY || !canUseFmp()) {
-    return res.status(503).json({ weekStart: dates[0], weekEnd: dates[6], type, days: [] });
+    return res.json(staleCachedData || emptyCalendarResponse(type, dates));
   }
 
   try {
     if (type === "earnings") {
-      const response = await axios.get(`http://127.0.0.1:${PORT}/api/earnings`, {
-        params: { start: dates[0] },
-        timeout: 9000
-      });
-      const responseData = { ...(response.data || {}), type: "earnings" };
+      let responseData = null;
+      const response = await resolveWithin(
+        axios.get(`http://127.0.0.1:${PORT}/api/earnings`, {
+          params: { start: dates[0] },
+          timeout: 6500
+        }),
+        7000,
+        null
+      );
+      if (response?.data?.days?.length) {
+        responseData = { ...(response.data || {}), type: "earnings" };
+      }
+      if (!responseData || !(responseData.days || []).some((day) => day.events?.length)) {
+        const days = await fetchFmpEarningsCalendarDays(dates);
+        responseData = {
+          type: "earnings",
+          weekStart: dates[0],
+          weekEnd: dates[6],
+          days,
+          updatedAt: new Date().toISOString(),
+          source: "FMP earnings calendar"
+        };
+      }
       const hasEvents = (responseData.days || []).some((day) => day.events?.length);
       fmpCalendarCache.set(cacheKey, {
         data: responseData,
@@ -22555,7 +22729,7 @@ app.get("/api/calendar-events", async (req, res) => {
   } catch (err) {
     setFmpCooldown(err, `${type} calendar`, "calendar");
     console.log(`FMP ${type} calendar skipped:`, err.response?.status || err.message);
-    return res.status(500).json({ weekStart: dates[0], weekEnd: dates[6], type, days: [] });
+    return res.json(staleCachedData || emptyCalendarResponse(type, dates));
   }
 });
 
@@ -22646,9 +22820,10 @@ app.get("/api/treasury-rates", async (req, res) => {
   const cacheKey = `${fromIso}:${toIso}`;
   const cached = treasuryRatesCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return res.json(cached.data);
+  const staleCachedData = cached?.data ? { ...cached.data, stale: true } : null;
 
   if (!process.env.FMP_API_KEY || !canUseFmp()) {
-    return res.status(503).json({ rows: [], latest: null, source: "FMP treasury rates" });
+    return res.json(staleCachedData || { from: fromIso, to: toIso, rows: [], latest: null, source: "FMP treasury rates", unavailable: true, updatedAt: new Date().toISOString() });
   }
 
   try {
@@ -22690,7 +22865,7 @@ app.get("/api/treasury-rates", async (req, res) => {
   } catch (err) {
     setFmpCooldown(err, "treasury rates", "treasury");
     console.log("FMP treasury rates skipped:", err.response?.status || err.message);
-    return res.status(500).json({ rows: [], latest: null, error: "Treasury rates are not available yet." });
+    return res.json(staleCachedData || { from: fromIso, to: toIso, rows: [], latest: null, source: "FMP treasury rates", unavailable: true, error: "Treasury rates are not available yet.", updatedAt: new Date().toISOString() });
   }
 });
 
@@ -22702,13 +22877,14 @@ app.get("/api/news", async (req, res) => {
   const cacheKey = `${isStockNews ? symbol : "general"}:${page}:${limit}`;
   const cached = fmpNewsCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now() && cached.data?.articles?.length) return res.json(cached.data);
+  const staleCachedData = cached?.data?.articles?.length ? { ...cached.data, stale: true } : null;
 
   if (isStockNews && !/^[A-Z0-9.-]{1,15}$/.test(symbol)) {
     return res.status(400).json({ error: "Invalid ticker", articles: [] });
   }
 
   if (!process.env.FMP_API_KEY || !canUseFmp()) {
-    return res.status(503).json({ articles: [], source: "FMP news" });
+    return res.json(staleCachedData || { symbol: isStockNews ? symbol : null, articles: [], source: isStockNews ? "FMP stock news" : "FMP general news", unavailable: true, updatedAt: new Date().toISOString() });
   }
 
   try {
@@ -22757,7 +22933,7 @@ app.get("/api/news", async (req, res) => {
   } catch (err) {
     setFmpCooldown(err, isStockNews ? "stock news" : "general news", symbol || "general");
     console.log("FMP news skipped:", symbol || "general", err.response?.status || err.message);
-    return res.status(500).json({ articles: [], error: "News is not available yet." });
+    return res.json(staleCachedData || { symbol: isStockNews ? symbol : null, articles: [], source: isStockNews ? "FMP stock news" : "FMP general news", unavailable: true, error: "News is not available yet.", updatedAt: new Date().toISOString() });
   }
 });
 
@@ -23133,8 +23309,6 @@ res.status(500).json({ results: [] });
 
 app.get("/api/stock-screener", async (req, res) => {
 try {
-if (!process.env.FMP_API_KEY || !canUseFmp()) return res.json({ results: [], updatedAt: new Date().toISOString() });
-
 const numericParam = (name, min = null, max = null) => {
   const value = toNumberOrNull(req.query[name]);
   if (value === null) return null;
@@ -23193,14 +23367,85 @@ if (assetType === "stocks") {
 const cacheKey = JSON.stringify(params);
 const cached = stockScreenerCache.get(cacheKey);
 if (cached && cached.expiresAt > Date.now()) return res.json(cached.data);
+const staleCachedData = cached?.data || null;
 
-const { data } = await getFmpAxios("https://financialmodelingprep.com/stable/company-screener", {
+const buildFallbackScreenerData = async (source = "local stock screener fallback") => {
+  const fallbackSymbols = [
+    "NVDA", "MSFT", "AAPL", "AMZN", "GOOGL", "META", "AVGO", "JPM", "AMD", "CAKE",
+    "CRM", "CELH", "SPY", "VOO", "QQQ", "VTI", "TSLA", "LLY", "COST", "NFLX",
+    "WMT", "ORCL", "MA", "V", "XOM", "UNH", "HD", "PG", "JNJ", "BAC"
+  ];
+  const savedStocks = await Stock.find({ ticker: { $in: fallbackSymbols } })
+    .select("ticker data.name data.marketCap data.sector data.industry data.beta data.price data.dividendYield data.lastDividend data.volume data.exchange data.country")
+    .lean()
+    .catch(() => []);
+  const savedBySymbol = new Map((savedStocks || []).map((stock) => [stock.ticker, stock.data || {}]));
+  const fallbackRows = fallbackSymbols
+    .map((symbol) => {
+      const data = savedBySymbol.get(symbol) || {};
+      const isEtf = ["SPY", "VOO", "QQQ", "VTI"].includes(symbol);
+      if (assetType === "stocks" && isEtf) return null;
+      if (assetType === "etfs" && !isEtf) return null;
+      if (assetType === "funds") return null;
+      return {
+        symbol,
+        companyName: firstText(data.name, FALLBACK_COMPANY_NAMES[symbol], symbol),
+        marketCap: toNumberOrNull(data.marketCap),
+        sector: firstText(data.sector),
+        industry: firstText(data.industry),
+        beta: toNumberOrNull(data.beta),
+        price: toNumberOrNull(data.price),
+        currentDividend: firstFiniteNumber(data.lastDividend, data.dividend),
+        lastDividend: firstFiniteNumber(data.lastDividend, data.dividend),
+        dividend: firstFiniteNumber(data.lastDividend, data.dividend),
+        volume: toNumberOrNull(data.volume),
+        exchange: firstText(data.exchange),
+        country: firstText(data.country),
+        assetType: isEtf ? "ETF" : "Stock",
+        isEtf,
+        isFund: false,
+        logo: getFinnhubLogoUrl(symbol)
+      };
+    })
+    .filter(Boolean)
+    .filter((row) => {
+      if (params.marketCapMoreThan && !(row.marketCap > params.marketCapMoreThan)) return false;
+      if (params.marketCapLowerThan && !(row.marketCap < params.marketCapLowerThan)) return false;
+      if (params.priceMoreThan && !(row.price > params.priceMoreThan)) return false;
+      if (params.priceLowerThan && !(row.price < params.priceLowerThan)) return false;
+      if (params.country && row.country && String(row.country).toUpperCase() !== String(params.country).toUpperCase()) return false;
+      if (params.exchange && row.exchange && String(row.exchange).toUpperCase() !== String(params.exchange).toUpperCase()) return false;
+      if (params.sector && row.sector && !String(row.sector).toLowerCase().includes(String(params.sector).toLowerCase())) return false;
+      if (params.industry && row.industry && !String(row.industry).toLowerCase().includes(String(params.industry).toLowerCase())) return false;
+      return true;
+    })
+    .sort((a, b) => (b.marketCap || 0) - (a.marketCap || 0))
+    .slice(0, limit);
+  return {
+    results: fallbackRows,
+    filters: params,
+    updatedAt: new Date().toISOString(),
+    source,
+    stale: Boolean(staleCachedData),
+    unavailable: !fallbackRows.length
+  };
+};
+
+if (!process.env.FMP_API_KEY || !canUseFmp()) {
+  return res.json(staleCachedData || await buildFallbackScreenerData());
+}
+
+const response = await resolveWithin(getFmpAxios("https://financialmodelingprep.com/stable/company-screener", {
   params: {
     ...params,
     apikey: process.env.FMP_API_KEY
   },
-  timeout: 20000
-});
+  timeout: 7000,
+  fmpPriority: 6,
+  fmpQueueTimeoutMs: 9000
+}), 8500, null);
+if (!response) return res.json(staleCachedData || await buildFallbackScreenerData());
+const { data } = response;
 
 const results = (Array.isArray(data) ? data : [])
   .filter(Boolean)
@@ -23413,6 +23658,189 @@ const normalizeFundamentalMetricRows = (keyMetricRows, ratioRows, period) => {
   }));
 
   return { periods, rows };
+};
+
+const savedFinancialPeriodMatches = (row, period) => {
+  if (!row) return false;
+  const isInterim = row.isInterim === true || String(row.period || "").toUpperCase().startsWith("Q");
+  return period === "quarter" ? isInterim : !isInterim;
+};
+
+const savedFinancialDate = (row, period) => {
+  const directDate = firstText(row?.date, row?.reportDate, row?.fillingDate, row?.acceptedDate);
+  if (directDate) return String(directDate).slice(0, 10);
+  const year = Number(row?.year || row?.fiscalYear || row?.calendarYear);
+  if (!Number.isFinite(year)) return "";
+  const quarter = String(row?.period || "").toUpperCase().match(/Q([1-4])/)?.[1];
+  if (period === "quarter" && quarter) {
+    return `${year}-${String(Number(quarter) * 3).padStart(2, "0")}-01`;
+  }
+  return `${year}-12-31`;
+};
+
+const savedFinancialCalendarYear = (row) => {
+  const year = Number(row?.year || row?.fiscalYear || row?.calendarYear || String(row?.date || "").slice(0, 4));
+  return Number.isFinite(year) ? String(year) : undefined;
+};
+
+const savedFinancialRows = (stockData, period, limit) => {
+  const rawRows = Array.isArray(stockData?.revenueData) ? stockData.revenueData : [];
+  const matchedRows = rawRows.filter((row) => savedFinancialPeriodMatches(row, period));
+  const rows = (matchedRows.length ? matchedRows : rawRows)
+    .filter(Boolean)
+    .sort((a, b) => financialRowSortValue(b) - financialRowSortValue(a))
+    .slice(0, limit);
+  return rows;
+};
+
+const buildSavedFinancialStatementFallback = async (symbol, statementType, period, limit) => {
+  const stock = await Stock.findOne({ ticker: symbol })
+    .select("ticker data.name data.revenueData data.marginHistory data.historicalPe data.price data.marketCap data.totalCash data.cashAndCashEquivalents data.operatingCashflow data.freeCashflow data.currentRatio data.quickRatio data.cashRatio data.totalDebt data.debtToEquityRatio data.debtToAssetsRatio data.bookValuePerShare data.sharesOutstanding data.totalAssets data.totalLiabilities")
+    .lean()
+    .catch(() => null);
+  const stockData = stock?.data || {};
+  const rows = savedFinancialRows(stockData, period, limit);
+  const statementRows = rows.map((row) => {
+    const date = savedFinancialDate(row, period);
+    const revenue = firstFiniteNumber(row.revenue);
+    const grossProfit = firstFiniteNumber(row.grossProfit);
+    const operatingIncome = firstFiniteNumber(row.operatingIncome, row.ebit);
+    const netIncome = firstFiniteNumber(row.netIncome, row.earnings);
+    const operatingCashFlow = firstFiniteNumber(row.operatingCashflow, row.operatingCashFlow);
+    const freeCashFlow = firstFiniteNumber(row.freeCashflow, row.freeCashFlow);
+    const shares = firstFiniteNumber(row.sharesOutstanding, stockData.sharesOutstanding);
+    const base = {
+      date,
+      symbol,
+      calendarYear: savedFinancialCalendarYear(row),
+      fiscalYear: savedFinancialCalendarYear(row),
+      period: period === "quarter" ? firstText(row.period) || "Q" : "FY",
+      reportedCurrency: firstText(row.sourceCurrency) || "USD"
+    };
+    if (statementType === "cashflow") {
+      return {
+        ...base,
+        netIncome,
+        netCashProvidedByOperatingActivities: operatingCashFlow,
+        operatingCashFlow,
+        capitalExpenditure: operatingCashFlow !== null && freeCashFlow !== null ? freeCashFlow - operatingCashFlow : null,
+        freeCashFlow
+      };
+    }
+    if (statementType === "balance") {
+      const cash = firstFiniteNumber(stockData.cashAndCashEquivalents, stockData.totalCash);
+      const totalDebt = firstFiniteNumber(stockData.totalDebt);
+      const totalAssets = firstFiniteNumber(stockData.totalAssets);
+      const totalLiabilities = firstFiniteNumber(stockData.totalLiabilities);
+      const equity = totalAssets !== null || totalLiabilities !== null ? (totalAssets || 0) - (totalLiabilities || 0) : null;
+      return {
+        ...base,
+        cashAndCashEquivalents: cash,
+        cashAndShortTermInvestments: cash,
+        totalDebt,
+        totalAssets,
+        totalLiabilities,
+        totalStockholdersEquity: equity,
+        totalEquity: equity,
+        totalLiabilitiesAndStockholdersEquity: totalAssets,
+        commonStock: shares
+      };
+    }
+    return {
+      ...base,
+      revenue,
+      grossProfit,
+      grossProfitRatio: divideNullable(grossProfit, revenue),
+      sellingGeneralAndAdministrativeExpenses: firstFiniteNumber(row.sgaExpense),
+      operatingIncome,
+      operatingIncomeRatio: divideNullable(operatingIncome, revenue),
+      ebitda: firstFiniteNumber(row.ebitda),
+      netIncome,
+      netIncomeRatio: divideNullable(netIncome, revenue),
+      eps: firstFiniteNumber(row.eps, row.epsBasic),
+      epsDiluted: firstFiniteNumber(row.epsDiluted, row.eps),
+      weightedAverageShsOut: shares,
+      weightedAverageShsOutDil: shares
+    };
+  });
+  const normalized = normalizeFinancialStatementRows(statementRows, statementType, period);
+  return {
+    symbol,
+    statement: statementType,
+    statementLabel: (FINANCIAL_STATEMENT_ENDPOINTS[statementType] || FINANCIAL_STATEMENT_ENDPOINTS.income).label,
+    period,
+    source: "Saved FMP financial data fallback",
+    updatedAt: new Date().toISOString(),
+    stale: true,
+    unavailable: !normalized.rows.length,
+    ...normalized
+  };
+};
+
+const buildSavedFundamentalMetricFallback = async (symbol, period, limit) => {
+  const stock = await Stock.findOne({ ticker: symbol })
+    .select("ticker data.revenueData data.marginHistory data.historicalPe data.price data.marketCap data.totalCash data.cashAndCashEquivalents data.totalDebt data.operatingCashflow data.freeCashflow data.currentRatio data.quickRatio data.cashRatio data.debtToEquityRatio data.debtToAssetsRatio data.bookValuePerShare data.sharesOutstanding")
+    .lean()
+    .catch(() => null);
+  const stockData = stock?.data || {};
+  const rows = savedFinancialRows(stockData, period, limit);
+  const margins = Array.isArray(stockData.marginHistory) ? stockData.marginHistory : [];
+  const peRows = Array.isArray(stockData.historicalPe) ? stockData.historicalPe : [];
+  const marginByKey = new Map(margins.map((row) => [`${row.year || ""}:${row.period || ""}`, row]));
+  const peByKey = new Map(peRows.map((row) => [`${row.year || ""}:${row.period || ""}`, row]));
+  const metricRows = rows.map((row) => {
+    const key = `${row.year || ""}:${row.period || ""}`;
+    const margin = marginByKey.get(key) || {};
+    const pe = peByKey.get(key) || {};
+    const shares = firstFiniteNumber(row.sharesOutstanding, stockData.sharesOutstanding);
+    const revenue = firstFiniteNumber(row.revenue);
+    const netIncome = firstFiniteNumber(row.netIncome, row.earnings);
+    const operatingCashFlow = firstFiniteNumber(row.operatingCashflow, row.operatingCashFlow);
+    const freeCashFlow = firstFiniteNumber(row.freeCashflow, row.freeCashFlow);
+    const price = firstFiniteNumber(pe.price, stockData.price);
+    const marketCap = firstFiniteNumber(stockData.marketCap, price !== null && shares !== null ? price * shares : null);
+    const totalDebt = firstFiniteNumber(stockData.totalDebt);
+    const cash = firstFiniteNumber(stockData.cashAndCashEquivalents, stockData.totalCash);
+    return {
+      date: savedFinancialDate(row, period),
+      symbol,
+      calendarYear: savedFinancialCalendarYear(row),
+      fiscalYear: savedFinancialCalendarYear(row),
+      period: period === "quarter" ? firstText(row.period) || "Q" : "FY",
+      reportedCurrency: firstText(row.sourceCurrency) || "USD",
+      marketCap,
+      enterpriseValue: marketCap !== null || totalDebt !== null || cash !== null ? (marketCap || 0) + (totalDebt || 0) - (cash || 0) : null,
+      priceToEarningsRatio: firstFiniteNumber(pe.pe),
+      revenuePerShare: divideNullable(revenue, shares),
+      netIncomePerShare: divideNullable(netIncome, shares),
+      operatingCashFlowPerShare: divideNullable(operatingCashFlow, shares),
+      freeCashFlowPerShare: divideNullable(freeCashFlow, shares),
+      cashPerShare: divideNullable(cash, shares),
+      bookValuePerShare: firstFiniteNumber(stockData.bookValuePerShare),
+      currentRatio: firstFiniteNumber(stockData.currentRatio),
+      quickRatio: firstFiniteNumber(stockData.quickRatio),
+      cashRatio: firstFiniteNumber(stockData.cashRatio),
+      debtToEquityRatio: firstFiniteNumber(stockData.debtToEquityRatio),
+      debtToAssetsRatio: firstFiniteNumber(stockData.debtToAssetsRatio),
+      grossProfitMargin: divideNullable(firstFiniteNumber(margin.grossMargin), 100) ?? divideNullable(row.grossProfit, revenue),
+      operatingProfitMargin: divideNullable(firstFiniteNumber(margin.operatingMargin), 100) ?? divideNullable(row.operatingIncome, revenue),
+      netProfitMargin: divideNullable(firstFiniteNumber(margin.profitMargin), 100) ?? divideNullable(netIncome, revenue),
+      freeCashFlowYield: divideNullable(freeCashFlow, marketCap),
+      earningsYield: divideNullable(netIncome, marketCap)
+    };
+  });
+  const normalized = normalizeFundamentalMetricRows(metricRows, [], period);
+  return {
+    symbol,
+    statement: "metrics",
+    statementLabel: "Key Metrics & Ratios",
+    period,
+    source: "Saved FMP fundamental data fallback",
+    updatedAt: new Date().toISOString(),
+    stale: true,
+    unavailable: !normalized.rows.length,
+    ...normalized
+  };
 };
 
 const divideNullable = (numerator, denominator) => {
@@ -23638,8 +24066,15 @@ async function buildDerivedQuarterlyFundamentalMetricRows(symbol, limit) {
 }
 
 app.get("/api/financial-statements/:ticker", async (req, res) => {
+  const symbol = String(req.params.ticker || "").trim().toUpperCase();
+  const statementType = FINANCIAL_STATEMENT_ENDPOINTS[req.query.statement] ? req.query.statement : "income";
+  const period = String(req.query.period || "annual").toLowerCase() === "quarter" ? "quarter" : "annual";
+  const requestedLimit = Number(req.query.limit);
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.min(Math.max(Math.round(requestedLimit), 1), period === "quarter" ? 80 : 40)
+    : period === "quarter" ? 80 : 40;
+  const config = FINANCIAL_STATEMENT_ENDPOINTS[statementType] || FINANCIAL_STATEMENT_ENDPOINTS.income;
   try {
-    const symbol = String(req.params.ticker || "").trim().toUpperCase();
     if (!symbol || !/^[A-Z0-9.-]{1,15}$/.test(symbol)) {
       return res.status(400).json({ error: "Invalid ticker" });
     }
@@ -23647,21 +24082,21 @@ app.get("/api/financial-statements/:ticker", async (req, res) => {
       return res.status(400).json({ error: "Use the crypto or FOREX page for that symbol" });
     }
     if (!process.env.FMP_API_KEY || !canUseFmp()) {
-      return res.status(503).json({ error: "Financial statements are not available yet." });
+      return res.json(await buildSavedFinancialStatementFallback(symbol, statementType, period, limit));
     }
 
-    const statementType = FINANCIAL_STATEMENT_ENDPOINTS[req.query.statement] ? req.query.statement : "income";
-    const period = String(req.query.period || "annual").toLowerCase() === "quarter" ? "quarter" : "annual";
-    const requestedLimit = Number(req.query.limit);
-    const limit = Number.isFinite(requestedLimit)
-      ? Math.min(Math.max(Math.round(requestedLimit), 1), period === "quarter" ? 80 : 40)
-      : period === "quarter" ? 80 : 40;
-    const config = FINANCIAL_STATEMENT_ENDPOINTS[statementType];
-    const data = await getFmpData(symbol, `financial statements ${statementType} ${period}`, [
-      `/stable/${config.path}?symbol={ticker}&period=${period}&limit=${limit}`
-    ]);
+    const data = await resolveWithin(
+      getFmpData(symbol, `financial statements ${statementType} ${period}`, [
+        `/stable/${config.path}?symbol={ticker}&period=${period}&limit=${limit}`
+      ]),
+      7500,
+      null
+    );
     const statementRows = Array.isArray(data) ? data : data ? [data] : [];
     const normalized = normalizeFinancialStatementRows(statementRows, statementType, period);
+    if (!normalized.rows.length) {
+      return res.json(await buildSavedFinancialStatementFallback(symbol, statementType, period, limit));
+    }
 
     res.json({
       symbol,
@@ -23675,11 +24110,9 @@ app.get("/api/financial-statements/:ticker", async (req, res) => {
   } catch (err) {
     setFmpCooldown(err, "financial statements", req.params.ticker);
     console.log("FMP financial statements skipped:", req.params.ticker, err.response?.status || err.message);
-    const symbol = String(req.params.ticker || "").trim().toUpperCase();
-    const statementType = FINANCIAL_STATEMENT_ENDPOINTS[req.query.statement] ? req.query.statement : "income";
-    const period = String(req.query.period || "annual").toLowerCase() === "quarter" ? "quarter" : "annual";
-    const config = FINANCIAL_STATEMENT_ENDPOINTS[statementType] || FINANCIAL_STATEMENT_ENDPOINTS.income;
-    res.json({
+    const fallback = await buildSavedFinancialStatementFallback(symbol, statementType, period, limit).catch(() => null);
+    if (fallback && fallback.rows?.length) return res.json(fallback);
+    return res.json({
       symbol,
       statement: statementType,
       statementLabel: config.label,
@@ -23695,8 +24128,13 @@ app.get("/api/financial-statements/:ticker", async (req, res) => {
 });
 
 app.get("/api/fundamental-metrics/:ticker", async (req, res) => {
+  const symbol = String(req.params.ticker || "").trim().toUpperCase();
+  const period = String(req.query.period || "annual").toLowerCase() === "quarter" ? "quarter" : "annual";
+  const requestedLimit = Number(req.query.limit);
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.min(Math.max(Math.round(requestedLimit), 1), period === "quarter" ? 80 : 40)
+    : period === "quarter" ? 80 : 40;
   try {
-    const symbol = String(req.params.ticker || "").trim().toUpperCase();
     if (!symbol || !/^[A-Z0-9.-]{1,15}$/.test(symbol)) {
       return res.status(400).json({ error: "Invalid ticker" });
     }
@@ -23704,18 +24142,15 @@ app.get("/api/fundamental-metrics/:ticker", async (req, res) => {
       return res.status(400).json({ error: "Use the crypto or FOREX page for that symbol" });
     }
     if (!process.env.FMP_API_KEY || !canUseFmp()) {
-      return res.status(503).json({ error: "Fundamental metrics are not available yet." });
+      return res.json(await buildSavedFundamentalMetricFallback(symbol, period, limit));
     }
 
-    const period = String(req.query.period || "annual").toLowerCase() === "quarter" ? "quarter" : "annual";
-    const requestedLimit = Number(req.query.limit);
-    const limit = Number.isFinite(requestedLimit)
-      ? Math.min(Math.max(Math.round(requestedLimit), 1), period === "quarter" ? 80 : 40)
-      : period === "quarter" ? 80 : 40;
-
     if (period === "quarter") {
-      const derivedRows = await buildDerivedQuarterlyFundamentalMetricRows(symbol, limit);
+      const derivedRows = await resolveWithin(buildDerivedQuarterlyFundamentalMetricRows(symbol, limit), 9000, []);
       const normalized = normalizeFundamentalMetricRows(derivedRows, [], period);
+      if (!normalized.rows.length) {
+        return res.json(await buildSavedFundamentalMetricFallback(symbol, period, limit));
+      }
 
       return res.json({
         symbol,
@@ -23729,15 +24164,15 @@ app.get("/api/fundamental-metrics/:ticker", async (req, res) => {
     }
 
     const [keyMetricsData, ratiosData] = await Promise.all([
-      getFmpData(symbol, `fundamental key metrics ${period}`, [
+      resolveWithin(getFmpData(symbol, `fundamental key metrics ${period}`, [
         `/stable/key-metrics?symbol={ticker}&period=${period}&limit=${limit}`
-      ]).catch((err) => {
+      ]), 6500, []).catch((err) => {
         console.log("FMP fundamental key metrics skipped:", symbol, err.response?.status || err.message);
         return [];
       }),
-      getFmpData(symbol, `fundamental ratios ${period}`, [
+      resolveWithin(getFmpData(symbol, `fundamental ratios ${period}`, [
         `/stable/ratios?symbol={ticker}&period=${period}&limit=${limit}`
-      ]).catch((err) => {
+      ]), 6500, []).catch((err) => {
         console.log("FMP fundamental ratios skipped:", symbol, err.response?.status || err.message);
         return [];
       })
@@ -23746,6 +24181,9 @@ app.get("/api/fundamental-metrics/:ticker", async (req, res) => {
     const keyMetricRows = Array.isArray(keyMetricsData) ? keyMetricsData : keyMetricsData ? [keyMetricsData] : [];
     const ratioRows = Array.isArray(ratiosData) ? ratiosData : ratiosData ? [ratiosData] : [];
     const normalized = normalizeFundamentalMetricRows(keyMetricRows, ratioRows, period);
+    if (!normalized.rows.length) {
+      return res.json(await buildSavedFundamentalMetricFallback(symbol, period, limit));
+    }
 
     res.json({
       symbol,
@@ -23759,9 +24197,9 @@ app.get("/api/fundamental-metrics/:ticker", async (req, res) => {
   } catch (err) {
     setFmpCooldown(err, "fundamental metrics", req.params.ticker);
     console.log("FMP fundamental metrics skipped:", req.params.ticker, err.response?.status || err.message);
-    const symbol = String(req.params.ticker || "").trim().toUpperCase();
-    const period = String(req.query.period || "annual").toLowerCase() === "quarter" ? "quarter" : "annual";
-    res.json({
+    const fallback = await buildSavedFundamentalMetricFallback(symbol, period, limit).catch(() => null);
+    if (fallback && fallback.rows?.length) return res.json(fallback);
+    return res.json({
       symbol,
       statement: "metrics",
       statementLabel: "Key Metrics & Ratios",
