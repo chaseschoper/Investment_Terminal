@@ -17,12 +17,11 @@ body {
 
 :root {
   --company-logo-tile:
-    linear-gradient(135deg, rgba(94, 234, 212, 0.34), rgba(56, 189, 248, 0.32) 48%, rgba(37, 99, 235, 0.3)),
-    radial-gradient(circle at 34% 28%, rgba(45, 212, 191, 0.26), transparent 58%),
-    radial-gradient(circle at 78% 76%, rgba(59, 130, 246, 0.36), transparent 54%),
-    linear-gradient(145deg, #0b1724, #02070f 58%, #071427);
-  --company-logo-tile-border: rgba(56, 189, 248, 0.5);
-  --company-logo-tile-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 0 32px rgba(14, 165, 233, 0.3);
+    radial-gradient(circle at 28% 18%, rgba(45, 212, 191, 0.14), transparent 42%),
+    radial-gradient(circle at 76% 82%, rgba(37, 99, 235, 0.14), transparent 46%),
+    linear-gradient(145deg, #050b12, #02040a 58%, #030812);
+  --company-logo-tile-border: rgba(56, 189, 248, 0.32);
+  --company-logo-tile-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), inset 0 0 18px rgba(14, 165, 233, 0.14);
 }
 
 .main {
@@ -1784,6 +1783,13 @@ body {
 .guest-market-tape-logo.has-logo > .market-logo-mark,
 .crypto-logo-shell.has-logo > .market-logo-mark {
   display: none;
+}
+
+.company-logo-light-mark {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  filter: brightness(0) invert(1) drop-shadow(0 0 5px rgba(125, 211, 252, 0.35));
 }
 
 .stock-search-suggestion-copy {

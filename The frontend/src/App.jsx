@@ -3906,6 +3906,54 @@ const handleCryptoLogoError = (event, symbol) => {
   image.style.display = "none";
 };
 
+const handleCompanyLogoLoad = (event) => {
+  const image = event.currentTarget;
+  image.classList.remove("company-logo-light-mark");
+  if (!image.complete || !image.naturalWidth || !image.naturalHeight) return;
+
+  try {
+    const sampleSize = 24;
+    const canvas = document.createElement("canvas");
+    canvas.width = sampleSize;
+    canvas.height = sampleSize;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return;
+
+    context.clearRect(0, 0, sampleSize, sampleSize);
+    context.drawImage(image, 0, 0, sampleSize, sampleSize);
+    const pixels = context.getImageData(0, 0, sampleSize, sampleSize).data;
+    let visible = 0;
+    let dark = 0;
+    let colorful = 0;
+    let lumaTotal = 0;
+
+    for (let index = 0; index < pixels.length; index += 4) {
+      const alpha = pixels[index + 3];
+      if (alpha < 32) continue;
+      const red = pixels[index];
+      const green = pixels[index + 1];
+      const blue = pixels[index + 2];
+      const luma = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+      const saturation = Math.max(red, green, blue) - Math.min(red, green, blue);
+      visible += 1;
+      lumaTotal += luma;
+      if (luma < 82) dark += 1;
+      if (saturation > 36) colorful += 1;
+    }
+
+    if (!visible) return;
+    const visibleRatio = visible / (sampleSize * sampleSize);
+    const averageLuma = lumaTotal / visible;
+    const darkRatio = dark / visible;
+    const colorfulRatio = colorful / visible;
+    if (visibleRatio > 0.035 && averageLuma < 88 && darkRatio > 0.62 && colorfulRatio < 0.45) {
+      image.classList.add("company-logo-light-mark");
+    }
+  } catch {
+    // Cross-origin fallback images cannot always be sampled. Keep the original logo in that case.
+  }
+};
+
 const handleCompanyLogoError = (event, symbol) => {
   const image = event.currentTarget;
   const fallbackUrls = getCompanyLogoCandidates(symbol, image.dataset.providerLogo || "");
@@ -10387,6 +10435,7 @@ const renderEtfSearchSuggestions = () => {
                 src={getDefaultCompanyLogoUrl(item.symbol) || item.logo}
                 data-provider-logo={item.logo || ""}
                 alt=""
+                onLoad={(event) => handleCompanyLogoLoad(event)}
                 onError={(event) => handleCompanyLogoError(event, item.symbol)}
               />
             </span>
@@ -10579,6 +10628,7 @@ const renderStockSearchSuggestions = (destinationPage = "overview") => {
                 src={getDefaultCompanyLogoUrl(item.symbol) || item.logo}
                 data-provider-logo={item.logo || ""}
                 alt=""
+                onLoad={(event) => handleCompanyLogoLoad(event)}
                 onError={(event) => handleCompanyLogoError(event, item.symbol)}
               />
             </span>
@@ -10660,6 +10710,7 @@ const renderCalendarSearchSuggestions = () => {
                 src={getDefaultCompanyLogoUrl(item.symbol) || item.logo}
                 data-provider-logo={item.logo || ""}
                 alt=""
+                onLoad={(event) => handleCompanyLogoLoad(event)}
                 onError={(event) => handleCompanyLogoError(event, item.symbol)}
               />
             </span>
@@ -11018,6 +11069,9 @@ return (
                       alt=""
                       loading="eager"
                       decoding="async"
+                      onLoad={(event) => {
+                        if (item.type === "stock") handleCompanyLogoLoad(event);
+                      }}
                       onError={(event) => {
                         if (item.type === "stock") {
                           handleCompanyLogoError(event, item.symbol);
@@ -11073,6 +11127,9 @@ return (
                       alt=""
                       loading="eager"
                       decoding="async"
+                      onLoad={(event) => {
+                        if (marketType === "stock") handleCompanyLogoLoad(event);
+                      }}
                       onError={(event) => {
                         if (marketType === "stock") {
                           handleCompanyLogoError(event, item);
@@ -11536,6 +11593,7 @@ return (
                       alt=""
                       loading="eager"
                       decoding="async"
+                      onLoad={(event) => handleCompanyLogoLoad(event)}
                       onError={(event) => handleCompanyLogoError(event, etfData.symbol)}
                     />
                   </span>
@@ -12378,6 +12436,7 @@ return (
                               src={getDefaultCompanyLogoUrl(row.symbol) || row.logo}
                               data-provider-logo={row.logo || ""}
                               alt=""
+                              onLoad={(event) => handleCompanyLogoLoad(event)}
                               onError={(event) => handleCompanyLogoError(event, row.symbol)}
                             />
                           </span>
@@ -13067,6 +13126,7 @@ return (
             alt=""
             loading="eager"
             decoding="async"
+            onLoad={(event) => handleCompanyLogoLoad(event)}
             onError={(event) => handleCompanyLogoError(event, ticker)}
           />
         </span>
@@ -14940,6 +15000,7 @@ return (
           src={getDefaultCompanyLogoUrl(stockData.symbol || ticker) || stockData.logo}
           data-provider-logo={stockData.logo || ""}
           alt={`${stockData.symbol || ticker} logo`}
+          onLoad={(event) => handleCompanyLogoLoad(event)}
           onError={(event) => handleCompanyLogoError(event, stockData.symbol || ticker)}
         />
       )}
@@ -15433,6 +15494,7 @@ return (
               src={getDefaultCompanyLogoUrl(position.symbol) || savedSymbolDetails[position.symbol]?.logo || ""}
               data-provider-logo={savedSymbolDetails[position.symbol]?.logo || ""}
               alt=""
+              onLoad={(event) => handleCompanyLogoLoad(event)}
               onError={(event) =>
                 handleCompanyLogoError(event, position.symbol)
               }
@@ -15774,6 +15836,9 @@ return (
                             className="named-watchlist-logo"
                             src={logoUrl}
                             alt=""
+                            onLoad={(event) => {
+                              if (marketType === "stock") handleCompanyLogoLoad(event);
+                            }}
                             onError={(event) => {
                               if (marketType === "stock") {
                                 handleCompanyLogoError(event, symbol);
@@ -16071,6 +16136,7 @@ return (
                         src={getDefaultCompanyLogoUrl(event.symbol) || event.logo}
                         data-provider-logo={event.logo || ""}
                         alt=""
+                        onLoad={(imageEvent) => handleCompanyLogoLoad(imageEvent)}
                         onError={(imageEvent) =>
                           handleCompanyLogoError(imageEvent, event.symbol)
                         }
@@ -16253,6 +16319,7 @@ return (
                             src={getDefaultCompanyLogoUrl(symbol) || event.logo}
                             data-provider-logo={event.logo || ""}
                             alt=""
+                            onLoad={(imageEvent) => handleCompanyLogoLoad(imageEvent)}
                             onError={(imageEvent) =>
                               handleCompanyLogoError(imageEvent, symbol)
                             }
