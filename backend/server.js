@@ -1022,7 +1022,7 @@ app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
     service: "investment-terminal-api",
-    version: "fmp-search-after-hours-2026-08-09",
+    version: "sp500-stock-search-2026-08-09",
     yahooProviderEnabled: YAHOO_PROVIDER_ENABLED,
     timestamp: new Date().toISOString()
   });
@@ -22950,6 +22950,49 @@ if (!rows.length) {
   if (exact) rows = [exact];
 }
 
+if (!fundsOnly) {
+  const searchTokens = cleanQuery
+    .toLowerCase()
+    .split(/[^a-z0-9]+/i)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 1);
+  const normalizedQuerySymbol = normalizeSp500Symbol(cleanQuery);
+  const compactQuerySymbol = normalizedQuerySymbol.replace(/[^A-Z0-9]/g, "");
+  const sp500Rows = await resolveWithin(
+    fetchSp500Constituents().then((companies) =>
+      (companies || [])
+        .filter((company) => {
+          const symbol = normalizeSp500Symbol(company.symbol);
+          const compactSymbol = symbol.replace(/[^A-Z0-9]/g, "");
+          const nameWords = String(company.name || "")
+            .toLowerCase()
+            .split(/[^a-z0-9]+/i)
+            .filter(Boolean);
+          if (symbol === normalizedQuerySymbol || compactSymbol === compactQuerySymbol) return true;
+          if (symbol.startsWith(normalizedQuerySymbol) || compactSymbol.startsWith(compactQuerySymbol)) return true;
+          if (!searchTokens.length) return false;
+          return searchTokens.every((token) =>
+            symbol.toLowerCase().startsWith(token) ||
+            compactSymbol.toLowerCase().startsWith(token) ||
+            nameWords.some((word) => word.startsWith(token))
+          );
+        })
+        .slice(0, 30)
+        .map((company) => ({
+          symbol: normalizeSp500Symbol(company.symbol),
+          name: company.name,
+          exchange: "S&P 500",
+          exchangeFullName: "S&P 500",
+          type: "Common Stock",
+          isSp500Constituent: true
+        }))
+    ),
+    2200,
+    []
+  ).catch(() => []);
+  if (sp500Rows.length) rows.unshift(...sp500Rows);
+}
+
 if (includeFunds && /^[A-Z0-9.-]{1,12}$/.test(cleanQuery.toUpperCase())) {
   const exactSymbol = cleanQuery.toUpperCase();
   const fundRow = await resolveWithin(
@@ -23053,6 +23096,7 @@ const results = rows
       type,
       isEtf: rowIsEtf,
       isFund: rowIsFund,
+      isSp500Constituent: row.isSp500Constituent === true,
       logo: getFinnhubLogoUrl(symbol),
       logoFallbacks: [
         getFinnhubLogoUrl(symbol),
@@ -23067,9 +23111,19 @@ const results = rows
   .filter(isStockSearchEquity)
   .filter(matchesStockSearchQuery)
   .sort((a, b) => {
-    const exactA = a.symbol === cleanQuery.toUpperCase() ? -1 : 0;
-    const exactB = b.symbol === cleanQuery.toUpperCase() ? -1 : 0;
+    const normalizedQuerySymbol = normalizeSp500Symbol(cleanQuery);
+    const compactQuerySymbol = normalizedQuerySymbol.replace(/[^A-Z0-9]/g, "");
+    const compactA = a.symbol.replace(/[^A-Z0-9]/g, "");
+    const compactB = b.symbol.replace(/[^A-Z0-9]/g, "");
+    const exactA = a.symbol === normalizedQuerySymbol || compactA === compactQuerySymbol ? -1 : 0;
+    const exactB = b.symbol === normalizedQuerySymbol || compactB === compactQuerySymbol ? -1 : 0;
     if (exactA !== exactB) return exactA - exactB;
+    const sp500A = a.isSp500Constituent ? -1 : 0;
+    const sp500B = b.isSp500Constituent ? -1 : 0;
+    if (sp500A !== sp500B) return sp500A - sp500B;
+    const prefixA = a.symbol.startsWith(normalizedQuerySymbol) || compactA.startsWith(compactQuerySymbol) ? -1 : 0;
+    const prefixB = b.symbol.startsWith(normalizedQuerySymbol) || compactB.startsWith(compactQuerySymbol) ? -1 : 0;
+    if (prefixA !== prefixB) return prefixA - prefixB;
     const rankA = primaryExchangeRank(a.exchange);
     const rankB = primaryExchangeRank(b.exchange);
     if (rankA !== rankB) return rankA - rankB;
