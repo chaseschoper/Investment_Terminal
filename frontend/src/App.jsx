@@ -3826,6 +3826,7 @@ const handleCryptoLogoError = (event, symbol) => {
       return;
     }
   }
+  image.closest(".has-logo")?.classList.remove("has-logo");
   image.style.display = "none";
 };
 
@@ -3843,6 +3844,7 @@ const handleCompanyLogoError = (event, symbol) => {
     }
   }
 
+  image.closest(".has-logo")?.classList.remove("has-logo");
   image.style.display = "none";
 };
 
@@ -10348,7 +10350,7 @@ const renderStockSearchSuggestions = (destinationPage = "overview") => {
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => selectStockSearchSuggestion(item, destinationPage)}
           >
-            <span className="stock-search-logo-shell" aria-hidden="true">
+            <span className="stock-search-logo-shell has-logo" aria-hidden="true">
               <span>{String(item.symbol || "?").slice(0, 1)}</span>
               <img
                 src={getDefaultCompanyLogoUrl(item.symbol) || item.logo}
@@ -10429,7 +10431,7 @@ const renderCalendarSearchSuggestions = () => {
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => openCalendarSearchResult(item)}
           >
-            <span className="stock-search-logo-shell" aria-hidden="true">
+            <span className="stock-search-logo-shell has-logo" aria-hidden="true">
               <span>{String(item.symbol || "?").slice(0, 1)}</span>
               <img
                 src={getDefaultCompanyLogoUrl(item.symbol) || item.logo}
@@ -10494,7 +10496,7 @@ const renderAlternativeMarketSuggestions = (items, isLoading, show, inputValue, 
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => onSelect(item.symbol)}
           >
-            <span className="stock-search-logo-shell" aria-hidden="true">
+            <span className={`stock-search-logo-shell${item.logo ? " has-logo" : ""}`} aria-hidden="true">
               <span>{String(item.symbol || "?").slice(0, 1)}</span>
               {item.logo && (
                 <img
@@ -10785,7 +10787,7 @@ return (
                 key={`${item.type}-${item.symbol}-${index}`}
                 onClick={() => openGuestMarketTapeItem(item)}
               >
-                <span className={`guest-market-tape-logo ${item.type}`} aria-hidden="true">
+                <span className={`guest-market-tape-logo ${item.type}${getMarketLogoUrl(item.symbol, item.type) ? " has-logo" : ""}`} aria-hidden="true">
                   {getMarketLogoUrl(item.symbol, item.type) ? (
                     <>
                     <img
@@ -10837,7 +10839,7 @@ return (
                 onClick={() => openWatchlistSymbol(item)}
               >
 
-                <span className="watch-logo-shell" aria-hidden="true">
+                <span className={`watch-logo-shell${logoUrl ? " has-logo" : ""}`} aria-hidden="true">
                   <span className={`watch-logo-fallback watch-logo-fallback-${marketType}`}>
                     {renderMarketLogoMark(item, marketType)}
                   </span>
@@ -11558,7 +11560,7 @@ return (
             <div className="etf-hero-panel">
               <div className="etf-hero-main">
                 {cryptoData.logo ? (
-                  <span className="etf-hero-logo-shell crypto-logo-shell" aria-hidden="true">
+                  <span className="etf-hero-logo-shell crypto-logo-shell has-logo" aria-hidden="true">
                     <img
                       src={getCryptoLogoCandidates(cryptoData.symbol, cryptoData.logo)[0] || cryptoData.logo}
                       data-provider-logo={cryptoData.logo || ""}
@@ -12146,7 +12148,7 @@ return (
                     >
                       <td>
                         <span className="screener-symbol-cell">
-                          <span className="stock-search-logo-shell" aria-hidden="true">
+                          <span className="stock-search-logo-shell has-logo" aria-hidden="true">
                             <span>{String(row.symbol || "?").slice(0, 1)}</span>
                             <img
                               src={getDefaultCompanyLogoUrl(row.symbol) || row.logo}
@@ -15194,7 +15196,7 @@ return (
     >
 
       <span className="portfolio-company">
-        <span className="portfolio-logo-shell" aria-hidden="true">
+        <span className={`portfolio-logo-shell${(position.symbol || savedSymbolDetails[position.symbol]?.logo) ? " has-logo" : ""}`} aria-hidden="true">
           <span className="portfolio-logo-fallback">
             {position.symbol.slice(0, 1)}
           </span>
@@ -15536,7 +15538,7 @@ return (
                     }}
                   >
                     <span className="named-watchlist-identity">
-                      <span className="named-watchlist-logo-shell" aria-hidden="true">
+                      <span className={`named-watchlist-logo-shell${logoUrl ? " has-logo" : ""}`} aria-hidden="true">
                         <span className={`named-watchlist-logo-fallback named-watchlist-logo-fallback-${marketType}`}>
                           {renderMarketLogoMark(symbol, marketType)}
                         </span>
@@ -15832,7 +15834,7 @@ return (
                 </span>
               ) : (
                 <span className="calendar-company-identity">
-                  <span className="calendar-company-logo-shell" aria-hidden="true">
+                  <span className={`calendar-company-logo-shell${(event.symbol || event.logo) ? " has-logo" : ""}`} aria-hidden="true">
                     <span className="calendar-company-logo-fallback">
                       {event.symbol.slice(0, 1)}
                     </span>
@@ -16014,7 +16016,7 @@ return (
                       type="button"
                       onClick={() => openCalendarEarningsReport(event)}
                     >
-                      <span className="earnings-snapshot-logo-shell" aria-hidden="true">
+                      <span className={`earnings-snapshot-logo-shell${symbol ? " has-logo" : ""}`} aria-hidden="true">
                         <span className="earnings-snapshot-logo-fallback">
                           {symbol.slice(0, 1)}
                         </span>
