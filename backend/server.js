@@ -1022,7 +1022,7 @@ app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
     service: "investment-terminal-api",
-    version: "sp500-stock-search-2026-08-09",
+    version: "fmp-full-heatmap-quotes-2026-08-09",
     yahooProviderEnabled: YAHOO_PROVIDER_ENABLED,
     timestamp: new Date().toISOString()
   });
@@ -2844,6 +2844,54 @@ async function fetchFmpBatchQuotes(symbols = [], options = {}) {
     }
   }));
   return quoteRows.filter(Boolean);
+}
+
+async function fetchFmpStableQuoteRows(symbols = [], {
+  concurrency = 3,
+  timeout = 3000,
+  pacingMs = 220
+} = {}) {
+  if (!process.env.FMP_API_KEY || !canUseFmp() || !symbols.length) return [];
+  const uniqueSymbols = [...new Set((symbols || [])
+    .map((symbol) => normalizeSp500Symbol(symbol))
+    .filter(Boolean))];
+  const results = [];
+  let cursor = 0;
+  const workerCount = Math.min(Math.max(concurrency, 1), uniqueSymbols.length);
+  const fetchOneQuote = async (symbol, attempt = 0) => {
+    try {
+      const response = await getFmpAxios("https://financialmodelingprep.com/stable/quote", {
+        params: { symbol, apikey: process.env.FMP_API_KEY },
+        timeout
+      });
+      const row = Array.isArray(response.data) ? response.data[0] : response.data;
+      if (row && typeof row === "object" && !isFmpErrorPayload(row)) {
+        results.push({ ...row, symbol: normalizeSp500Symbol(row.symbol || symbol), source: "FMP stable quote" });
+      }
+    } catch (err) {
+      if (err.response?.status === 429 && attempt < 2) {
+        await wait(900 + attempt * 900);
+        return fetchOneQuote(symbol, attempt + 1);
+      }
+      if (isFmpRestrictedStatus(err.response?.status)) {
+        setFmpEndpointCooldown("stable-quote-single", err.response?.status, "stable quote", symbol);
+      } else if (![404, 429].includes(Number(err.response?.status))) {
+        setFmpCooldown(err, "stable quote", symbol);
+      }
+    }
+    return null;
+  };
+
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (cursor < uniqueSymbols.length) {
+      const symbol = uniqueSymbols[cursor];
+      cursor += 1;
+      await fetchOneQuote(symbol);
+      if (pacingMs > 0) await wait(pacingMs);
+    }
+  }));
+
+  return results;
 }
 
 function normalizeFmpDailyOhlcRows(payload) {
@@ -15085,6 +15133,8 @@ function normalizeHeatmapCompanyQuote(company = {}, quote = {}) {
   const change = firstFiniteNumber(providerChange, computedChange);
   const percentChange = firstFiniteNumber(
     quote.percentChange,
+    quote.changePercentage,
+    quote.changesPercentage,
     quote.dp,
     company.percentChange,
     change !== null && previousClose > 0 ? (change / previousClose) * 100 : null
@@ -15854,23 +15904,48 @@ app.get("/api/market-heatmap", async (req, res) => {
   const fetchFreshHeatmap = async () => {
     const heatmapCompanies = await fetchSp500Constituents();
     const heatmapSymbols = heatmapCompanies.map((company) => company.symbol);
-    const [yahooSparkQuotes, savedBySymbol] = await Promise.all([
-      resolveWithin(fetchYahooSparkQuotes(heatmapSymbols), 8500, []),
-      resolveWithin(getSavedHeatmapQuotes(heatmapSymbols), 1300, new Map())
-    ]);
-    const yahooBySymbol = new Map((Array.isArray(yahooSparkQuotes) ? yahooSparkQuotes : [])
-      .map((quote) => [String(quote.symbol || "").toUpperCase(), quote]));
-    const seededResults = heatmapCompanies.map((company) => {
-      const yahooQuote = yahooBySymbol.get(company.symbol);
+    const savedBySymbol = await resolveWithin(getSavedHeatmapQuotes(heatmapSymbols), 1300, new Map());
+    const cachedSeedResults = heatmapCompanies.map((company) => {
       const liveQuote = livePriceCache.get(company.symbol) || {};
       const savedQuote = savedBySymbol.get(company.symbol) || {};
       return normalizeHeatmapCompanyQuote(company, {
-        price: firstFiniteNumber(yahooQuote?.price, liveQuote.price, savedQuote.price),
-        marketCap: firstFiniteNumber(yahooQuote?.marketCap, liveQuote.marketCap, savedQuote.marketCap),
-        change: firstFiniteNumber(yahooQuote?.change, liveQuote.change, savedQuote.change),
-        percentChange: firstFiniteNumber(yahooQuote?.percentChange, liveQuote.percentChange, savedQuote.percentChange),
-        previousClose: firstFiniteNumber(yahooQuote?.previousClose, liveQuote.previousClose, savedQuote.previousClose),
-        source: firstText(yahooQuote?.source, liveQuote.source, savedQuote.source)
+        price: firstFiniteNumber(liveQuote.price, savedQuote.price),
+        marketCap: firstFiniteNumber(liveQuote.marketCap, savedQuote.marketCap),
+        change: firstFiniteNumber(liveQuote.change, savedQuote.change),
+        percentChange: firstFiniteNumber(liveQuote.percentChange, savedQuote.percentChange),
+        previousClose: firstFiniteNumber(liveQuote.previousClose, savedQuote.previousClose),
+        source: firstText(liveQuote.source, savedQuote.source)
+      });
+    });
+    const cachedCompleteCount = countCompleteQuotes({ companies: cachedSeedResults });
+    const blankSymbols = cachedSeedResults
+      .filter((company) => !hasCompleteHeatmapQuote(company))
+      .map((company) => company.symbol);
+    const quoteSymbols = cachedCompleteCount >= 300 && blankSymbols.length
+      ? blankSymbols
+      : heatmapSymbols;
+    const fmpQuoteRows = await resolveWithin(
+      fetchFmpStableQuoteRows(quoteSymbols, {
+        concurrency: quoteSymbols.length > 120 ? 3 : 2,
+        timeout: 3600,
+        pacingMs: quoteSymbols.length > 120 ? 220 : 360
+      }),
+      quoteSymbols.length > 120 ? 52000 : 36000,
+      []
+    );
+    const fmpBySymbol = new Map((Array.isArray(fmpQuoteRows) ? fmpQuoteRows : [])
+      .map((quote) => [String(quote.symbol || "").toUpperCase(), quote]));
+    const seededResults = heatmapCompanies.map((company) => {
+      const fmpQuote = fmpBySymbol.get(company.symbol);
+      const liveQuote = livePriceCache.get(company.symbol) || {};
+      const savedQuote = savedBySymbol.get(company.symbol) || {};
+      return normalizeHeatmapCompanyQuote(company, {
+        price: firstFiniteNumber(fmpQuote?.price, liveQuote.price, savedQuote.price),
+        marketCap: firstFiniteNumber(fmpQuote?.marketCap, liveQuote.marketCap, savedQuote.marketCap),
+        change: firstFiniteNumber(fmpQuote?.change, liveQuote.change, savedQuote.change),
+        percentChange: firstFiniteNumber(fmpQuote?.changePercentage, fmpQuote?.changesPercentage, liveQuote.percentChange, savedQuote.percentChange),
+        previousClose: firstFiniteNumber(fmpQuote?.previousClose, liveQuote.previousClose, savedQuote.previousClose),
+        source: firstText(fmpQuote?.source, liveQuote.source, savedQuote.source)
       });
     });
     seededResults.forEach((company) => {
@@ -15901,7 +15976,7 @@ app.get("/api/market-heatmap", async (req, res) => {
     ));
     const data = buildMarketHeatmapPayload(companies, false);
 
-    if (companies.length >= 450 && countCompleteQuotes({ companies }) >= 300) {
+    if (companies.length >= 450 && countCompleteQuotes({ companies }) >= 490) {
       marketHeatmapCache.set("sp500", {
         fetchedAt: Date.now(),
         data
@@ -15921,14 +15996,14 @@ app.get("/api/market-heatmap", async (req, res) => {
   const cachedFallbackData = await resolveWithin(buildFromFallbackCache(), 950, null);
 
   const [data, slowCachedFallbackData] = await Promise.all([
-    resolveWithin(startHeatmapRefresh(), 9000, null),
+    resolveWithin(startHeatmapRefresh(), 56000, null),
     resolveWithin(buildFromFallbackCache(), 700, null)
   ]);
   const bestData = countCompleteQuotes(data) >= countCompleteQuotes(slowCachedFallbackData)
     ? data
     : slowCachedFallbackData;
   if (hasFullHeatmapPayload(bestData)) {
-    if (countCompleteQuotes(bestData) >= 450) {
+    if (countCompleteQuotes(bestData) >= 490) {
       marketHeatmapCache.set("sp500", {
         fetchedAt: Date.now(),
         data: buildMarketHeatmapPayload(bestData.companies, Boolean(bestData.stale))
@@ -22477,7 +22552,7 @@ app.get("/api/calendar-events", async (req, res) => {
 });
 
 app.get("/api/earnings-report/:symbol", async (req, res) => {
-  const symbol = String(req.params.symbol || "").trim().toUpperCase();
+  const symbol = normalizeSp500Symbol(req.params.symbol);
   const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 12, 1), 40);
   if (!symbol) return res.status(400).json({ symbol, rows: [] });
   if (!process.env.FMP_API_KEY || !canUseFmp()) {

@@ -3732,6 +3732,13 @@ const normalizeSymbolList = (symbols = []) =>
     .map((symbol) => String(symbol || "").trim().toUpperCase())
     .filter(Boolean))];
 
+const normalizeStockSearchSymbol = (symbol) => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  return /^[A-Z]{1,5}\.[A-Z]$/.test(cleanSymbol)
+    ? cleanSymbol.replace(".", "-")
+    : cleanSymbol;
+};
+
 const getUserStorageId = (user) =>
   String(user?._id || user?.id || "");
 
@@ -10303,7 +10310,7 @@ const comparisonSection = (
 );
 
 const selectStockSearchSuggestion = (item, destinationPage = "overview") => {
-  const symbol = String(item?.symbol || "").trim().toUpperCase();
+  const symbol = normalizeStockSearchSymbol(item?.symbol);
   if (!symbol) return;
   if (warnStockOnlySymbol(symbol)) return;
 
@@ -10418,7 +10425,7 @@ const renderEtfSearchSuggestions = () => {
 };
 
 const openStockOverviewSymbol = (symbol) => {
-  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  const cleanSymbol = normalizeStockSearchSymbol(symbol);
   if (!cleanSymbol) return;
   if (warnStockOnlySymbol(cleanSymbol)) return;
 
@@ -10545,12 +10552,12 @@ const formatWatchlistMarketPrice = (symbol, marketType) => {
 const resolveSearchInputToSymbol = async (rawInput) => {
   const value = String(rawInput || "").trim();
   if (!value) return "";
-  const normalizedValue = value.toUpperCase();
+  const normalizedValue = normalizeStockSearchSymbol(value);
   const exactSuggestion = stockSearchSuggestions.find(
-    (item) => String(item.symbol || "").toUpperCase() === normalizedValue
+    (item) => normalizeStockSearchSymbol(item.symbol) === normalizedValue
   );
-  if (exactSuggestion?.symbol) return exactSuggestion.symbol.toUpperCase();
-  if (stockSearchSuggestions[0]?.symbol) return stockSearchSuggestions[0].symbol.toUpperCase();
+  if (exactSuggestion?.symbol) return normalizeStockSearchSymbol(exactSuggestion.symbol);
+  if (stockSearchSuggestions[0]?.symbol) return normalizeStockSearchSymbol(stockSearchSuggestions[0].symbol);
   if (/^[A-Z0-9.-]{1,12}$/.test(normalizedValue) && !/\s/.test(value)) return normalizedValue;
 
   try {
@@ -10610,7 +10617,7 @@ const renderStockSearchSuggestions = (destinationPage = "overview") => {
 };
 
 const openCalendarSearchResult = async (item) => {
-  const symbol = String(item?.symbol || "").trim().toUpperCase();
+  const symbol = normalizeStockSearchSymbol(item?.symbol);
   if (!symbol || warnStockOnlySymbol(symbol)) return;
   const event = {
     symbol,
@@ -10628,8 +10635,9 @@ const handleCalendarSearchSubmit = async (event) => {
   event.preventDefault();
   const value = calendarSearchInput.trim();
   if (!value) return;
+  const normalizedValue = normalizeStockSearchSymbol(value);
   const exactSuggestion = calendarSearchSuggestions.find(
-    (item) => String(item.symbol || "").toUpperCase() === value.toUpperCase()
+    (item) => normalizeStockSearchSymbol(item.symbol) === normalizedValue
   );
   const selectedSuggestion = exactSuggestion || calendarSearchSuggestions[0];
   if (selectedSuggestion?.symbol) {
