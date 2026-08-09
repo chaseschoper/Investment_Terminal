@@ -88,12 +88,13 @@ const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const alphaVantageFundamentalCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 161;
+const FINANCIAL_HISTORY_VERSION = 162;
 const HISTORICAL_PE_VERSION = 3;
 const STOCK_ESTIMATE_VERSION = 23;
 const MIN_FULL_HISTORICAL_PE_ROWS = 10;
-const INTERIM_HISTORY_VERSION = 6;
+const INTERIM_HISTORY_VERSION = 7;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
+const MIN_RESPONSE_INTERIM_HISTORY_ROWS = 4;
 const BALANCE_SHEET_METRICS_VERSION = 14;
 const VALUATION_METRICS_VERSION = 23;
 const FOREIGN_CURRENCY_CONVERSION_VERSION = 2;
@@ -14346,6 +14347,7 @@ async function publishFastFinancialHistorySnapshot(ticker) {
 
 async function hydrateQuarterlyHistoryForResponse(ticker, previousData = {}, timeoutMs = 1800, options = {}) {
   if (!options.forceRefresh && hasUsableInterimHistory(previousData)) return previousData;
+  const minimumInterimRows = options.minimumInterimRows || MIN_RESPONSE_INTERIM_HISTORY_ROWS;
 
   const fmpRows = await resolveWithin(
     fetchFmpFinancialHistory(ticker),
@@ -14361,7 +14363,7 @@ async function hydrateQuarterlyHistoryForResponse(ticker, previousData = {}, tim
     mergeHistoricalFinancials(financialRows, previousData.revenueData || [], Infinity),
     previousData.sharesOutstanding || null
   ));
-  if (interimHistoryPointCount({ revenueData }) < MIN_USABLE_INTERIM_HISTORY_ROWS) return previousData;
+  if (interimHistoryPointCount({ revenueData }) < minimumInterimRows) return previousData;
 
   const revenueHistory = revenueData
     .filter((row) => !row?.isInterim && !row?.isCurrent)
@@ -18021,7 +18023,7 @@ app.get("/api/stock/:ticker", async (req, res) => {
         ticker,
         initialData,
         STOCK_FAST_CHART_HYDRATION_WAIT_MS,
-        { waitForInterimHistory: wantsQuarterlyHistory }
+        { waitForInterimHistory: true }
       );
       const responseData = await prepareCachedStockResponseDataFast(ticker, hydrated.data || initialData, { wantsQuarterlyHistory });
       maybeEnqueueMarketActivitySnapshot(ticker, responseData);
@@ -18061,16 +18063,23 @@ app.get("/api/stock/:ticker", async (req, res) => {
       if (stock.data && Object.keys(stock.data).length) {
         const hasStaleFinancialHistory =
           stock.data?.financialHistoryVersion !== FINANCIAL_HISTORY_VERSION;
+        const hasWeakInterimRows =
+          interimHistoryPointCount(stock.data || {}) < MIN_RESPONSE_INTERIM_HISTORY_ROWS;
         const needsFastHydration =
           hasStaleFinancialHistory ||
           !(wantsQuarterlyHistory ? hasCompleteChartHistory(stock) : hasAnnualCoreChartHistory(stock)) ||
+          !(
+            stock.data?.interimHistoryVersion === INTERIM_HISTORY_VERSION &&
+            stock.data?.interimHistoryCheckedAt &&
+            !hasWeakInterimRows
+          ) ||
           (wantsQuarterlyHistory && !hasUsableInterimHistory(stock.data || {}));
         const hydrated = needsFastHydration
           ? await getHydratedStockDataForFirstResponse(
               ticker,
               stock.data,
               STOCK_FAST_CHART_HYDRATION_WAIT_MS,
-              { waitForInterimHistory: wantsQuarterlyHistory }
+              { waitForInterimHistory: true }
             )
           : { stock, data: stock.data };
         const responseData = await prepareCachedStockResponseDataFast(ticker, hydrated.data || stock.data, { wantsQuarterlyHistory });
@@ -18155,15 +18164,22 @@ app.get("/api/stock/:ticker", async (req, res) => {
         } else {
           startFullStockRefresh(ticker);
         }
+        const hasWeakInterimRows =
+          interimHistoryPointCount(stock.data || {}) < MIN_RESPONSE_INTERIM_HISTORY_ROWS;
         const needsFastHydration =
           isCoreIncomplete ||
+          hasWeakInterimRows ||
+          !(
+            stock.data?.interimHistoryVersion === INTERIM_HISTORY_VERSION &&
+            stock.data?.interimHistoryCheckedAt
+          ) ||
           (wantsQuarterlyHistory && !hasUsableInterimHistory(stock.data || {}));
         const hydrated = needsFastHydration
           ? await getHydratedStockDataForFirstResponse(
                 ticker,
                 stock.data || {},
                 STOCK_FAST_CHART_HYDRATION_WAIT_MS,
-                { waitForInterimHistory: wantsQuarterlyHistory }
+                { waitForInterimHistory: true }
               )
           : { stock, data: stock.data || {} };
         const responseData = await prepareCachedStockResponseDataFast(ticker, hydrated.data || stock.data || {}, { wantsQuarterlyHistory });
