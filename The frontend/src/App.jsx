@@ -5424,15 +5424,15 @@ useEffect(() => {
             return ordered;
           });
           setIsMarketLoading(false);
-          nextRefreshMs = response.data?.stale || response.data?.refreshing ? 3500 : 8 * 1000;
+          nextRefreshMs = response.data?.stale || response.data?.refreshing ? 15000 : 30 * 1000;
         } else {
-          nextRefreshMs = 2500;
+          nextRefreshMs = 15000;
           setIsMarketLoading(true);
         }
       }
     } catch (error) {
       console.error("Market indices failed", error);
-      nextRefreshMs = hasLoadedIndices ? 5000 : 2200;
+      nextRefreshMs = hasLoadedIndices ? 30000 : 15000;
     } finally {
       if (isActive) {
         refreshTimer = window.setTimeout(loadMarketIndices, nextRefreshMs);
@@ -5551,7 +5551,7 @@ useEffect(() => {
     setEtfError("");
 
     try {
-      const response = await axios.get(`${API_URL}/api/etf/${etfTicker}`);
+      const response = await axios.get(`${API_URL}/api/etf/${etfTicker}`, { timeout: 8500 });
       if (!isActive) return;
       setEtfData(response.data);
     } catch (error) {
@@ -5583,10 +5583,16 @@ useEffect(() => {
     try {
       const response = await axios.get(
         `${API_URL}/api/price-history/${encodeURIComponent(etfTicker)}`,
-        { params: { range: etfChartRange } }
+        {
+          params: { range: etfChartRange },
+          timeout: etfChartRange === "1D" ? 6000 : 7000
+        }
       );
       if (!isActive) return;
       setEtfChartData(response.data || { points: [], latest: null });
+      if (response.data?.unavailable) {
+        setEtfChartError(response.data.error || "FMP price chart is not available right now.");
+      }
     } catch (error) {
       console.error("Fund chart failed", error);
       if (!isActive) return;
@@ -5613,7 +5619,7 @@ useEffect(() => {
     setCryptoError("");
 
     try {
-      const response = await axios.get(`${API_URL}/api/crypto/${encodeURIComponent(cryptoSymbol)}`);
+      const response = await axios.get(`${API_URL}/api/crypto/${encodeURIComponent(cryptoSymbol)}`, { timeout: 7000 });
       if (!isActive) return;
       setCryptoData(response.data);
     } catch (error) {
@@ -5644,7 +5650,10 @@ useEffect(() => {
     try {
       const response = await axios.get(
         `${API_URL}/api/crypto-price-history/${encodeURIComponent(cryptoSymbol)}`,
-        { params: { range: cryptoChartRange } }
+        {
+          params: { range: cryptoChartRange },
+          timeout: cryptoChartRange === "1D" ? 7000 : 8500
+        }
       );
       if (!isActive) return;
       setCryptoChartData(response.data || { points: [], latest: null });
@@ -5674,7 +5683,7 @@ useEffect(() => {
     setForexError("");
 
     try {
-      const response = await axios.get(`${API_URL}/api/forex/${encodeURIComponent(forexSymbol)}`);
+      const response = await axios.get(`${API_URL}/api/forex/${encodeURIComponent(forexSymbol)}`, { timeout: 7000 });
       if (!isActive) return;
       setForexData(response.data);
     } catch (error) {
@@ -5705,7 +5714,10 @@ useEffect(() => {
     try {
       const response = await axios.get(
         `${API_URL}/api/forex-price-history/${encodeURIComponent(forexSymbol)}`,
-        { params: { range: forexChartRange } }
+        {
+          params: { range: forexChartRange },
+          timeout: forexChartRange === "1D" ? 7000 : 8500
+        }
       );
       if (!isActive) return;
       setForexChartData(response.data || { points: [], latest: null });
@@ -6194,6 +6206,14 @@ useEffect(() => {
 
       const points = response.data.points || [];
       const latest = response.data.latest || null;
+      if (response.data.unavailable) {
+        setStockChartData([]);
+        setStockChartMeta(latest);
+        setStockChartError(response.data.error || "FMP chart history is not available right now.");
+        keepLoading = false;
+        scheduleRetry(attempt);
+        return;
+      }
       const isFallbackHistory =
         response.data.stale && (
           response.data.interval === "fallback" ||

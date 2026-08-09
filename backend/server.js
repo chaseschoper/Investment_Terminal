@@ -69,8 +69,8 @@ const fmpFastDataInFlight = new Map();
 const fmpAfterHoursTradeCache = new Map();
 const FMP_DATA_CACHE_TTL_MS = 10 * 60 * 1000;
 const FMP_FAST_DATA_CACHE_TTL_MS = 10 * 60 * 1000;
-const FMP_MAX_CONCURRENT_REQUESTS = 3;
-const FMP_REQUEST_SPACING_MS = 60;
+const FMP_MAX_CONCURRENT_REQUESTS = 2;
+const FMP_REQUEST_SPACING_MS = 180;
 let fmpActiveRequestCount = 0;
 let fmpLastRequestStartedAt = 0;
 const fmpRequestQueue = [];
@@ -3407,10 +3407,6 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
     }
   ];
   const endpoints = endpointCandidates;
-  const dailyRowsPromise = requestedRange === "1D"
-    ? fetchFmpRecentDailyOhlc(symbol).catch(() => [])
-    : Promise.resolve([]);
-
   const endpointPayloads = [];
   for (const endpoint of endpoints) {
     try {
@@ -3431,8 +3427,11 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
     }
   }
 
-  const dailyRowsForOneDay = requestedRange === "1D"
-    ? await resolveWithin(dailyRowsPromise, 3600, [])
+  const hasIntradayRows = endpointPayloads.some((result) =>
+    result.status === "fulfilled" && Array.isArray(result.value) && result.value.length
+  );
+  const dailyRowsForOneDay = requestedRange === "1D" && hasIntradayRows
+    ? await resolveWithin(fetchFmpRecentDailyOhlc(symbol).catch(() => []), 2600, [])
     : [];
 
   const endpointResults = endpointPayloads.map((result) => {
@@ -14800,10 +14799,11 @@ app.get("/api/prices", async (req, res) => {
       const cached = livePriceCache.get(symbol);
       const cachedPrice = toNumberOrNull(cached?.price);
       const cachedPercentChange = toNumberOrNull(cached?.percentChange);
+      const fallbackLogo = getFmpSymbolImageUrl(symbol);
       prices[symbol] = cachedPrice !== null && cachedPrice > 0 ? cachedPrice : prices[symbol];
       details[symbol] = {
         name: cached?.name || symbol,
-        logo: cached?.logo || null,
+        logo: cached?.logo || fallbackLogo,
         sector: null,
         industry: null,
         country: null,
@@ -15094,7 +15094,7 @@ app.get("/api/prices", async (req, res) => {
     );
   });
   const queue = [...symbolsNeedingLive];
-  const workerCount = Math.min(wantsLiveQuotes ? 8 : 4, queue.length);
+  const workerCount = Math.min(wantsLiveQuotes ? 3 : 2, queue.length);
   await resolveWithin(Promise.all(Array.from({ length: workerCount }, async () => {
     while (queue.length) {
       const symbol = queue.shift();
@@ -16734,10 +16734,22 @@ app.get("/api/market-indices", async (req, res) => {
 });
 
 app.get("/api/price-history/:ticker", async (req, res) => {
+  const requestedTicker = String(req.params.ticker || "").trim().toUpperCase();
+  const ticker = TICKER_ALIASES[requestedTicker] || requestedTicker;
+  const requestedRange = String(req.query.range || "1D").trim().toUpperCase();
+  const emptyPriceHistory = (message = "FMP price history unavailable") => ({
+    symbol: requestedTicker,
+    sourceSymbol: ticker,
+    range: requestedRange,
+    interval: requestedRange === "1D" || requestedRange === "1W" ? "5min" : "1d",
+    source: "FMP price history",
+    points: [],
+    latest: null,
+    unavailable: true,
+    error: message,
+    updatedAt: new Date().toISOString()
+  });
   try {
-    const requestedTicker = req.params.ticker.trim().toUpperCase();
-    const ticker = TICKER_ALIASES[requestedTicker] || requestedTicker;
-    const requestedRange = String(req.query.range || "1D").trim().toUpperCase();
     const rangeConfig = PRICE_HISTORY_RANGES[requestedRange] || PRICE_HISTORY_RANGES["1D"];
 
     if (!/^[A-Z0-9=._-]{1,16}$/.test(ticker)) {
@@ -16786,7 +16798,7 @@ app.get("/api/price-history/:ticker", async (req, res) => {
       if (cached?.data) {
         return res.json({ ...cached.data, stale: true, refreshing: true });
       }
-      return res.status(502).json({ error: "FMP price history unavailable" });
+      return res.json(emptyPriceHistory());
     }
 
     const historyPromise = fetchFmpPriceHistory(ticker, requestedRange)
@@ -16814,16 +16826,16 @@ app.get("/api/price-history/:ticker", async (req, res) => {
       return res.json({ ...cached.data, stale: true, refreshing: true });
     }
 
-    return res.status(502).json({ error: "FMP price history unavailable" });
+    return res.json(emptyPriceHistory());
 
   } catch (err) {
     setFmpCooldown(err, "price history", req.params.ticker);
-    const cached = priceHistoryCache.get(`${req.params.ticker.trim().toUpperCase()}:${String(req.query.range || "1D").trim().toUpperCase()}`);
+    const cached = priceHistoryCache.get(`${ticker}:${requestedRange}`);
     if (cached?.data) {
       return res.json({ ...cached.data, stale: true });
     }
     console.log("FMP price history failed:", req.params.ticker, err.response?.status || err.message);
-    return res.status(502).json({ error: "FMP price history unavailable" });
+    return res.json(emptyPriceHistory());
   }
 });
 
@@ -17106,11 +17118,18 @@ async function fetchFmpAlternativeMarketQuote(symbol, marketType) {
   const cached = fmpDataCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.data;
 
-  const response = await getFmpAxios("https://financialmodelingprep.com/stable/quote", {
-    params: { symbol: normalizedSymbol, apikey: process.env.FMP_API_KEY },
-    timeout: 2500
-  });
-  const quote = Array.isArray(response.data) ? response.data[0] : response.data;
+  let quote = null;
+  try {
+    const response = await getFmpAxios("https://financialmodelingprep.com/stable/quote", {
+      params: { symbol: normalizedSymbol, apikey: process.env.FMP_API_KEY },
+      timeout: 2200
+    });
+    quote = Array.isArray(response.data) ? response.data[0] : response.data;
+  } catch (err) {
+    setFmpCooldown(err, `${marketType} quote`, normalizedSymbol);
+    console.log(`FMP ${marketType} quote skipped:`, normalizedSymbol, err.response?.status || err.message);
+    return null;
+  }
   if (!quote || firstFiniteNumber(quote.price) === null) return null;
 
   const chartHistory = await resolveWithin(
@@ -17155,11 +17174,18 @@ async function fetchFmpAlternativeMarketPriceHistory(symbol, requestedRange = "1
   if (cached && cached.expiresAt > Date.now()) return cached.data;
 
   if (rangeKey === "1D" || rangeKey === "1W") {
-    const response = await getFmpAxios("https://financialmodelingprep.com/stable/historical-chart/5min", {
-      params: { symbol: normalizedSymbol, apikey: process.env.FMP_API_KEY },
-      timeout: 3500
-    });
-    const rows = Array.isArray(response.data) ? response.data : [];
+    let rows = [];
+    try {
+      const response = await getFmpAxios("https://financialmodelingprep.com/stable/historical-chart/5min", {
+        params: { symbol: normalizedSymbol, apikey: process.env.FMP_API_KEY },
+        timeout: 2800
+      });
+      rows = Array.isArray(response.data) ? response.data : [];
+    } catch (err) {
+      setFmpCooldown(err, `${marketType} intraday price history`, normalizedSymbol);
+      console.log(`FMP ${marketType} intraday price history skipped:`, normalizedSymbol, rangeKey, err.response?.status || err.message);
+      return null;
+    }
     const allPoints = rows
       .map((row) => {
         const rawDate = firstText(row.date, row.datetime, row.timestamp);
@@ -17217,16 +17243,23 @@ async function fetchFmpAlternativeMarketPriceHistory(symbol, requestedRange = "1
 
   const range = getFmpPriceHistoryDateRange(rangeKey);
   if (!range) return null;
-  const response = await getFmpAxios("https://financialmodelingprep.com/stable/historical-price-eod/light", {
-    params: {
-      symbol: normalizedSymbol,
-      from: range.from,
-      to: range.to,
-      apikey: process.env.FMP_API_KEY
-    },
-    timeout: 3500
-  });
-  const rows = Array.isArray(response.data) ? response.data : [];
+  let rows = [];
+  try {
+    const response = await getFmpAxios("https://financialmodelingprep.com/stable/historical-price-eod/light", {
+      params: {
+        symbol: normalizedSymbol,
+        from: range.from,
+        to: range.to,
+        apikey: process.env.FMP_API_KEY
+      },
+      timeout: 3000
+    });
+    rows = Array.isArray(response.data) ? response.data : [];
+  } catch (err) {
+    setFmpCooldown(err, `${marketType} daily price history`, normalizedSymbol);
+    console.log(`FMP ${marketType} daily price history skipped:`, normalizedSymbol, rangeKey, err.response?.status || err.message);
+    return null;
+  }
   const points = rows
     .map((row) => {
       const price = firstFiniteNumber(row.price, row.close, row.adjClose);
@@ -17287,7 +17320,7 @@ app.get("/api/crypto/:symbol", async (req, res) => {
     if (!/^[A-Z0-9._-]{2,20}$/.test(symbol)) {
       return res.status(400).json({ error: "Invalid crypto symbol" });
     }
-    const data = await fetchFmpAlternativeMarketQuote(symbol, "crypto");
+    const data = await resolveWithin(fetchFmpAlternativeMarketQuote(symbol, "crypto"), 5200, null);
     if (!data) return res.status(404).json({ error: "Crypto data not found yet" });
     return res.json(data);
   } catch (err) {
@@ -17306,7 +17339,7 @@ app.get("/api/crypto-price-history/:symbol", async (req, res) => {
     const meta = await getFmpAlternativeMarketMeta(symbol, "crypto");
     if (!meta) return res.status(404).json({ error: "That symbol is not in FMP's cryptocurrency list" });
     const requestedRange = String(req.query.range || "1D").trim().toUpperCase();
-    const history = await fetchFmpAlternativeMarketPriceHistory(symbol, requestedRange, "crypto");
+    const history = await resolveWithin(fetchFmpAlternativeMarketPriceHistory(symbol, requestedRange, "crypto"), 5200, null);
     if (!history?.points?.length) return res.status(404).json({ error: "Crypto price history unavailable" });
     return res.json(history);
   } catch (err) {
@@ -17334,7 +17367,7 @@ app.get("/api/forex/:symbol", async (req, res) => {
     if (!/^[A-Z]{6,12}$/.test(symbol)) {
       return res.status(400).json({ error: "Invalid forex symbol" });
     }
-    const data = await fetchFmpAlternativeMarketQuote(symbol, "forex");
+    const data = await resolveWithin(fetchFmpAlternativeMarketQuote(symbol, "forex"), 5200, null);
     if (!data) return res.status(404).json({ error: "Forex data not found yet" });
     return res.json(data);
   } catch (err) {
@@ -17353,7 +17386,7 @@ app.get("/api/forex-price-history/:symbol", async (req, res) => {
     const meta = await getFmpAlternativeMarketMeta(symbol, "forex");
     if (!meta) return res.status(404).json({ error: "That symbol is not in FMP's forex list" });
     const requestedRange = String(req.query.range || "1D").trim().toUpperCase();
-    const history = await fetchFmpAlternativeMarketPriceHistory(symbol, requestedRange, "forex");
+    const history = await resolveWithin(fetchFmpAlternativeMarketPriceHistory(symbol, requestedRange, "forex"), 5200, null);
     if (!history?.points?.length) return res.status(404).json({ error: "Forex price history unavailable" });
     return res.json(history);
   } catch (err) {
@@ -17573,8 +17606,9 @@ async function getFmpCommodityMeta(symbol) {
 }
 
 app.get("/api/commodity-price-history/:symbol", async (req, res) => {
+  const symbol = String(req.params.symbol || "").trim().toUpperCase();
+  const requestedRange = String(req.query.range || "1D").trim().toUpperCase();
   try {
-    const symbol = String(req.params.symbol || "").trim().toUpperCase();
     if (!/^[A-Z0-9=._-]{1,16}$/.test(symbol)) {
       return res.status(400).json({ error: "Invalid commodity symbol" });
     }
@@ -17582,21 +17616,42 @@ app.get("/api/commodity-price-history/:symbol", async (req, res) => {
     if (!commodityMeta) {
       return res.status(404).json({ error: "That symbol is not in FMP's commodities list" });
     }
-    const requestedRange = String(req.query.range || "1D").trim().toUpperCase();
     const history = await fetchFmpCommodityPriceHistory(symbol, requestedRange);
     if (!history?.points?.length) {
-      return res.status(404).json({ error: "Commodity price history unavailable" });
+      return res.json({
+        symbol,
+        sourceSymbol: symbol,
+        range: requestedRange,
+        interval: "5min",
+        source: "FMP commodity price history",
+        points: [],
+        latest: null,
+        unavailable: true,
+        error: "Commodity price history unavailable",
+        updatedAt: new Date().toISOString()
+      });
     }
     return res.json(history);
   } catch (err) {
     console.log("Commodity price history failed:", req.params.symbol, err.response?.status || err.message);
-    return res.status(502).json({ error: "Commodity price history unavailable" });
+    return res.json({
+      symbol,
+      sourceSymbol: symbol,
+      range: requestedRange,
+      interval: "5min",
+      source: "FMP commodity price history",
+      points: [],
+      latest: null,
+      unavailable: true,
+      error: "Commodity price history unavailable",
+      updatedAt: new Date().toISOString()
+    });
   }
 });
 
 app.get("/api/commodities/:symbol", async (req, res) => {
+  const symbol = String(req.params.symbol || "").trim().toUpperCase();
   try {
-    const symbol = String(req.params.symbol || "").trim().toUpperCase();
     if (!/^[A-Z0-9=._-]{1,16}$/.test(symbol)) {
       return res.status(400).json({ error: "Invalid commodity symbol" });
     }
@@ -17623,7 +17678,29 @@ app.get("/api/commodities/:symbol", async (req, res) => {
     const dailyRows = Array.isArray(dailyResponse?.data) ? dailyResponse.data : [];
     const points = Array.isArray(chartHistory?.points) ? chartHistory.points : [];
     if (!points.length && !dailyRows.length) {
-      return res.status(404).json({ error: "Commodity data not found yet" });
+      const emptyData = {
+        symbol,
+        name: firstText(commodityMeta.name) || symbol,
+        price: null,
+        changePercentage: null,
+        change: null,
+        volume: null,
+        dayLow: null,
+        dayHigh: null,
+        yearHigh: null,
+        yearLow: null,
+        priceAvg50: null,
+        priceAvg200: null,
+        currency: firstText(commodityMeta.currency),
+        tradeMonth: firstText(commodityMeta.tradeMonth),
+        open: null,
+        previousClose: null,
+        updatedAt: new Date().toISOString(),
+        source: "FMP commodity data",
+        unavailable: true,
+        error: "Commodity data not found yet"
+      };
+      return res.json(emptyData);
     }
 
     const latestPoint = points.at(-1) || {};
@@ -17677,7 +17754,28 @@ app.get("/api/commodities/:symbol", async (req, res) => {
   } catch (err) {
     setFmpCooldown(err, "commodity quote", req.params.symbol);
     console.log("Commodity data failed:", req.params.symbol, err.response?.status || err.message);
-    return res.status(502).json({ error: "Commodity data not found yet" });
+    return res.json({
+      symbol,
+      name: symbol,
+      price: null,
+      changePercentage: null,
+      change: null,
+      volume: null,
+      dayLow: null,
+      dayHigh: null,
+      yearHigh: null,
+      yearLow: null,
+      priceAvg50: null,
+      priceAvg200: null,
+      currency: null,
+      tradeMonth: null,
+      open: null,
+      previousClose: null,
+      updatedAt: new Date().toISOString(),
+      source: "FMP commodity data",
+      unavailable: true,
+      error: "Commodity data not found yet"
+    });
   }
 });
 
@@ -23050,7 +23148,14 @@ res.json(responseData);
 } catch (err) {
 setFmpCooldown(err, "stock screener", "screener");
 console.log("FMP stock screener skipped:", err.response?.status || err.message);
-res.status(500).json({ results: [], error: "Stock screener data is not available yet." });
+res.json({
+  results: [],
+  filters: {},
+  updatedAt: new Date().toISOString(),
+  source: "FMP stock screener",
+  unavailable: true,
+  error: "Stock screener data is not available yet."
+});
 }
 });
 
@@ -23469,7 +23574,22 @@ app.get("/api/financial-statements/:ticker", async (req, res) => {
   } catch (err) {
     setFmpCooldown(err, "financial statements", req.params.ticker);
     console.log("FMP financial statements skipped:", req.params.ticker, err.response?.status || err.message);
-    res.status(500).json({ error: "Financial statements are not available yet." });
+    const symbol = String(req.params.ticker || "").trim().toUpperCase();
+    const statementType = FINANCIAL_STATEMENT_ENDPOINTS[req.query.statement] ? req.query.statement : "income";
+    const period = String(req.query.period || "annual").toLowerCase() === "quarter" ? "quarter" : "annual";
+    const config = FINANCIAL_STATEMENT_ENDPOINTS[statementType] || FINANCIAL_STATEMENT_ENDPOINTS.income;
+    res.json({
+      symbol,
+      statement: statementType,
+      statementLabel: config.label,
+      period,
+      source: "FMP financial statements",
+      updatedAt: new Date().toISOString(),
+      periods: [],
+      rows: [],
+      unavailable: true,
+      error: "Financial statements are not available yet."
+    });
   }
 });
 
@@ -23538,7 +23658,20 @@ app.get("/api/fundamental-metrics/:ticker", async (req, res) => {
   } catch (err) {
     setFmpCooldown(err, "fundamental metrics", req.params.ticker);
     console.log("FMP fundamental metrics skipped:", req.params.ticker, err.response?.status || err.message);
-    res.status(500).json({ error: "Fundamental metrics are not available yet." });
+    const symbol = String(req.params.ticker || "").trim().toUpperCase();
+    const period = String(req.query.period || "annual").toLowerCase() === "quarter" ? "quarter" : "annual";
+    res.json({
+      symbol,
+      statement: "metrics",
+      statementLabel: "Key Metrics & Ratios",
+      period,
+      source: "FMP key metrics and financial ratios",
+      updatedAt: new Date().toISOString(),
+      periods: [],
+      rows: [],
+      unavailable: true,
+      error: "Fundamental metrics are not available yet."
+    });
   }
 });
 
