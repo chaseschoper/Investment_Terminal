@@ -22916,7 +22916,7 @@ if (cleanQuery.length < 2) return res.json({ results: [] });
 const includeFunds = String(req.query.includeFunds || "").toLowerCase() === "true";
 const fundsOnly = String(req.query.fundsOnly || "").toLowerCase() === "true";
 
-const cacheKey = `${cleanQuery.toLowerCase()}:${fundsOnly ? "funds-only-v2" : includeFunds ? "funds" : "stocks"}`;
+const cacheKey = `${cleanQuery.toLowerCase()}:${fundsOnly ? "funds-only-v2" : includeFunds ? "funds-v2" : "stocks-v2"}`;
 const cached = stockSearchCache.get(cacheKey);
 if (cached && cached.expiresAt > Date.now()) return res.json({ results: cached.results });
 
