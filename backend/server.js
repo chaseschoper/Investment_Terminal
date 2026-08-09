@@ -3537,7 +3537,7 @@ async function fetchYahooSparkQuotes(symbols = []) {
         const response = await axios.get(`https://${host}/v8/finance/spark`, {
           params: {
             symbols: chunk.join(","),
-            range: "5d",
+            range: "1d",
             interval: "1d"
           },
           headers: {
@@ -3560,7 +3560,7 @@ async function fetchYahooSparkQuotes(symbols = []) {
       const fallbackResponse = await axios.get("https://query1.finance.yahoo.com/v7/finance/spark", {
         params: {
           symbols: chunk.join(","),
-          range: "5d",
+          range: "1d",
           interval: "1d"
         },
         headers: {
@@ -3597,7 +3597,8 @@ async function fetchYahooSparkQuotes(symbols = []) {
           marketCap: firstFiniteNumber(meta.marketCap),
           change,
           percentChange: change !== null && previousClose > 0 ? (change / previousClose) * 100 : null,
-          previousClose
+          previousClose,
+          source: "Yahoo Spark 1D"
         });
       });
     }
@@ -15003,6 +15004,70 @@ const hasCompleteHeatmapQuote = (company = {}) =>
   toNumberOrNull(company.price) !== null &&
   toNumberOrNull(company.percentChange) !== null;
 
+function normalizeFmpQuoteRow(row = {}) {
+  const symbol = String(row.symbol || "").trim().toUpperCase();
+  const price = firstFiniteNumber(row.price);
+  const previousClose = firstFiniteNumber(row.previousClose);
+  const providerChange = firstFiniteNumber(row.change);
+  const change = firstFiniteNumber(
+    providerChange,
+    price !== null && previousClose > 0 ? price - previousClose : null
+  );
+  const percentChange = firstFiniteNumber(
+    row.changePercentage,
+    row.changesPercentage,
+    change !== null && previousClose > 0 ? (change / previousClose) * 100 : null
+  );
+  if (!symbol || price === null) return null;
+  return {
+    symbol,
+    name: firstText(row.name),
+    price,
+    change,
+    percentChange,
+    previousClose,
+    marketCap: firstFiniteNumber(row.marketCap),
+    volume: firstFiniteNumber(row.volume),
+    source: "FMP stable quote"
+  };
+}
+
+async function fetchFmpStableQuoteRow(symbol) {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  if (!cleanSymbol || !process.env.FMP_API_KEY || !canUseFmp()) return null;
+  const rows = await getFmpFastData(
+    `stable-quote-row:${cleanSymbol}`,
+    "https://financialmodelingprep.com/stable/quote",
+    {
+      params: { symbol: cleanSymbol },
+      timeout: 2600,
+      ttlMs: 45 * 1000,
+      emptyTtlMs: 45 * 1000
+    }
+  );
+  const row = Array.isArray(rows) ? rows[0] : rows;
+  return normalizeFmpQuoteRow(row);
+}
+
+async function fetchFmpStableQuoteMap(symbols = [], timeoutMs = 30000) {
+  const uniqueSymbols = [...new Set((symbols || [])
+    .map((symbol) => String(symbol || "").trim().toUpperCase())
+    .filter((symbol) => /^[A-Z0-9.-]{1,12}$/.test(symbol)))];
+  const quoteMap = new Map();
+  const queue = [...uniqueSymbols];
+  const workerCount = Math.min(14, queue.length);
+
+  await resolveWithin(Promise.all(Array.from({ length: workerCount }, async () => {
+    while (queue.length) {
+      const symbol = queue.shift();
+      const quote = await fetchFmpStableQuoteRow(symbol).catch(() => null);
+      if (quote) quoteMap.set(symbol, quote);
+    }
+  })), timeoutMs, null);
+
+  return quoteMap;
+}
+
 function normalizeHeatmapCompanyQuote(company = {}, quote = {}) {
   const price = firstFiniteNumber(quote.price, quote.c, company.price);
   const marketCap = firstFiniteNumber(quote.marketCap, quote.mktCap, company.marketCap);
@@ -15026,7 +15091,8 @@ function normalizeHeatmapCompanyQuote(company = {}, quote = {}) {
     weight: marketCap ? Math.max(toNumberOrNull(company.weight) || 1, marketCap / 100000000000) : company.weight,
     change,
     previousClose,
-    percentChange
+    percentChange,
+    source: firstText(quote.source, company.source)
   };
 }
 
@@ -15800,42 +15866,9 @@ app.get("/api/market-heatmap", async (req, res) => {
         marketCap: firstFiniteNumber(yahooQuote?.marketCap, liveQuote.marketCap, savedQuote.marketCap),
         change: firstFiniteNumber(yahooQuote?.change, liveQuote.change, savedQuote.change),
         percentChange: firstFiniteNumber(yahooQuote?.percentChange, liveQuote.percentChange, savedQuote.percentChange),
-        previousClose: firstFiniteNumber(yahooQuote?.previousClose, liveQuote.previousClose, savedQuote.previousClose)
+        previousClose: firstFiniteNumber(yahooQuote?.previousClose, liveQuote.previousClose, savedQuote.previousClose),
+        source: firstText(yahooQuote?.source, liveQuote.source, savedQuote.source)
       });
-    });
-    const focusHeatmapSymbols = [...new Set([
-      ...seededResults
-        .filter((company) => toNumberOrNull(company.percentChange) !== null)
-        .sort((a, b) => toNumberOrNull(b.percentChange) - toNumberOrNull(a.percentChange))
-        .slice(0, 20)
-        .map((company) => company.symbol),
-      ...seededResults
-        .filter((company) => toNumberOrNull(company.percentChange) !== null)
-        .sort((a, b) => toNumberOrNull(a.percentChange) - toNumberOrNull(b.percentChange))
-        .slice(0, 20)
-        .map((company) => company.symbol)
-    ])];
-    const focusQueue = [...focusHeatmapSymbols];
-    const focusQuoteRows = [];
-    await resolveWithin(Promise.all(Array.from({ length: Math.min(4, focusQueue.length) }, async () => {
-      while (focusQueue.length) {
-        const symbol = focusQueue.shift();
-        const quote = await fetchWatchlistStyleMarketQuote(symbol, "stock", true).catch(() => null);
-        if (quote && toNumberOrNull(quote.price) !== null) {
-          focusQuoteRows.push({ symbol, quote });
-        }
-      }
-    })), 7000, null);
-    const focusQuoteBySymbol = new Map(focusQuoteRows.map((row) => [row.symbol, row.quote]));
-    seededResults.forEach((company) => {
-      const quote = focusQuoteBySymbol.get(company.symbol);
-      if (!quote) return;
-      const normalized = normalizeHeatmapCompanyQuote(company, quote);
-      company.price = normalized.price;
-      company.marketCap = normalized.marketCap;
-      company.change = normalized.change;
-      company.previousClose = normalized.previousClose;
-      company.percentChange = normalized.percentChange;
     });
     seededResults.forEach((company) => {
       if (toNumberOrNull(company.price) !== null) {
@@ -15846,6 +15879,8 @@ app.get("/api/market-heatmap", async (req, res) => {
           percentChange: company.percentChange,
           previousClose: company.previousClose,
           extendedHours: null,
+          source: company.source || "Yahoo Spark 1D",
+          usedOfficialClose: true,
           fetchedAt: Date.now()
         });
       }
@@ -15881,20 +15916,6 @@ app.get("/api/market-heatmap", async (req, res) => {
   }
 
   const cachedFallbackData = await resolveWithin(buildFromFallbackCache(), 950, null);
-  if (
-    hasReadyHeatmapPayload(cachedFallbackData) ||
-    (hasFullHeatmapPayload(cachedFallbackData) && countCompleteQuotes(cachedFallbackData) >= 450)
-  ) {
-    marketHeatmapCache.set("sp500", {
-      fetchedAt: Date.now(),
-      data: buildMarketHeatmapPayload(cachedFallbackData.companies, true)
-    });
-    return res.json({
-      ...cachedFallbackData,
-      stale: true,
-      refreshing: true
-    });
-  }
 
   const [data, slowCachedFallbackData] = await Promise.all([
     resolveWithin(startHeatmapRefresh(), 9000, null),
