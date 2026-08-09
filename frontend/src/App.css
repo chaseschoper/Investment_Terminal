@@ -3065,6 +3065,20 @@ body {
   box-shadow: var(--company-logo-tile-shadow);
 }
 
+.etf-hero-logo-fallback {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  color: #67e8f9;
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.etf-hero-logo-shell.has-logo .etf-hero-logo-fallback {
+  display: none;
+}
+
 .crypto-logo-shell,
 .forex-logo-shell {
   background:
@@ -6747,13 +6761,20 @@ body {
   overflow: hidden;
 }
 
+.watch-logo-shell.has-logo,
+.named-watchlist-logo-shell.has-logo {
+  background: var(--company-logo-tile);
+  border: 1px solid var(--company-logo-tile-border);
+  box-shadow: var(--company-logo-tile-shadow);
+}
+
 .watch-logo {
   position: absolute;
   inset: 0;
   z-index: 2;
-  background: var(--company-logo-tile);
-  border: 1px solid var(--company-logo-tile-border);
-  box-shadow: var(--company-logo-tile-shadow);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
   object-fit: contain;
   padding: 3px;
 }
@@ -7313,9 +7334,9 @@ body {
   position: absolute;
   inset: 0;
   z-index: 2;
-  background: var(--company-logo-tile);
-  border: 1px solid var(--company-logo-tile-border);
-  box-shadow: var(--company-logo-tile-shadow);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
   object-fit: contain;
   padding: 3px;
 }

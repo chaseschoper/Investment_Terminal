@@ -10445,32 +10445,37 @@ const renderEtfSearchSuggestions = () => {
       {isEtfSearchSuggesting && !etfSearchSuggestions.length ? (
         <div className="stock-search-suggestion muted">Searching...</div>
       ) : (
-        etfSearchSuggestions.map((item) => (
-          <button
-            type="button"
-            className="stock-search-suggestion"
-            key={`etf-${item.symbol}-${item.exchange || ""}`}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => selectEtfSearchSuggestion(item)}
-          >
-            <span className="stock-search-logo-shell has-logo" aria-hidden="true">
-              <span>{String(item.symbol || "?").slice(0, 1)}</span>
-              <img
-                src={getDisplayCompanyLogoUrl(item.symbol, item.logo)}
-                data-provider-logo={item.logo || ""}
-                alt=""
-                crossOrigin="anonymous"
-                onLoad={(event) => handleCompanyLogoLoad(event)}
-                onError={(event) => handleCompanyLogoError(event, item.symbol)}
-              />
-            </span>
-            <span className="stock-search-suggestion-copy">
-              <strong>{item.symbol}</strong>
-              <em>{item.name}</em>
-            </span>
-            {item.exchange && <small>{item.exchange}</small>}
-          </button>
-        ))
+        etfSearchSuggestions.map((item) => {
+          const logoUrl = getDisplayCompanyLogoUrl(item.symbol, item.logo);
+          return (
+            <button
+              type="button"
+              className="stock-search-suggestion"
+              key={`etf-${item.symbol}-${item.exchange || ""}`}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => selectEtfSearchSuggestion(item)}
+            >
+              <span className={`stock-search-logo-shell${logoUrl ? " has-logo" : ""}`} aria-hidden="true">
+                <span>{String(item.symbol || "?").slice(0, 1)}</span>
+                {logoUrl && (
+                  <img
+                    src={logoUrl}
+                    data-provider-logo={item.logo || ""}
+                    alt=""
+                    crossOrigin="anonymous"
+                    onLoad={(event) => handleCompanyLogoLoad(event)}
+                    onError={(event) => handleCompanyLogoError(event, item.symbol)}
+                  />
+                )}
+              </span>
+              <span className="stock-search-suggestion-copy">
+                <strong>{item.symbol}</strong>
+                <em>{item.name}</em>
+              </span>
+              {item.exchange && <small>{item.exchange}</small>}
+            </button>
+          );
+        })
       )}
     </div>
   );
@@ -11614,8 +11619,11 @@ return (
           <>
             <div className="etf-hero-panel">
               <div className="etf-hero-main">
-                {getDisplayCompanyLogoUrl(etfData.symbol, etfData.logo) && (
-                  <span className="etf-hero-logo-shell" aria-hidden="true">
+                <span className={`etf-hero-logo-shell${getDisplayCompanyLogoUrl(etfData.symbol, etfData.logo) ? " has-logo" : ""}`} aria-hidden="true">
+                  <span className="etf-hero-logo-fallback">
+                    {String(etfData.symbol || "?").slice(0, 1)}
+                  </span>
+                  {getDisplayCompanyLogoUrl(etfData.symbol, etfData.logo) && (
                     <img
                       src={getDisplayCompanyLogoUrl(etfData.symbol, etfData.logo)}
                       data-provider-logo={etfData.logo || ""}
@@ -11626,8 +11634,8 @@ return (
                       onLoad={(event) => handleCompanyLogoLoad(event)}
                       onError={(event) => handleCompanyLogoError(event, etfData.symbol)}
                     />
-                  </span>
-                )}
+                  )}
+                </span>
                 <span className="etf-symbol">{etfData.symbol}</span>
                 <h3>{etfData.name}</h3>
                 {etfData.type && <strong className="etf-type-badge">{etfData.type}</strong>}
