@@ -1757,8 +1757,11 @@ body {
   height: 100%;
   place-items: center;
   color: #67e8f9;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1;
+  text-align: center;
 }
 
 .stock-search-logo-shell img {
@@ -3071,8 +3074,11 @@ body {
   height: 100%;
   place-items: center;
   color: #67e8f9;
-  font-size: 22px;
+  font-size: 16px;
   font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1;
+  text-align: center;
 }
 
 .etf-hero-logo-shell.has-logo .etf-hero-logo-fallback {
@@ -6412,10 +6418,11 @@ body {
   place-items: center;
   border-radius: inherit;
   color: #67e8f9;
-  font-size: 13px;
+  font-size: 10px;
   font-weight: 950;
   letter-spacing: 0;
   line-height: 1;
+  text-align: center;
 }
 
 .market-logo-mark-crypto {
@@ -6757,8 +6764,10 @@ body {
 .watch-logo-shell,
 .named-watchlist-logo-shell {
   position: relative;
-  display: block;
+  display: grid;
+  place-items: center;
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 .watch-logo-shell.has-logo,
@@ -6770,12 +6779,16 @@ body {
 
 .watch-logo {
   position: absolute;
-  inset: 0;
+  inset: 1px;
   z-index: 2;
+  width: calc(100% - 2px);
+  height: calc(100% - 2px);
+  box-sizing: border-box;
   background: transparent;
   border: 0;
   box-shadow: none;
   object-fit: contain;
+  object-position: center center;
   padding: 3px;
 }
 
@@ -6786,6 +6799,9 @@ body {
   color: #dbeafe;
   font-size: 11px;
   font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+  text-align: center;
 }
 
 .watch-logo-fallback .market-logo-mark,
@@ -7332,12 +7348,16 @@ body {
 
 .named-watchlist-logo {
   position: absolute;
-  inset: 0;
+  inset: 1px;
   z-index: 2;
+  width: calc(100% - 2px);
+  height: calc(100% - 2px);
+  box-sizing: border-box;
   background: transparent;
   border: 0;
   box-shadow: none;
   object-fit: contain;
+  object-position: center center;
   padding: 3px;
 }
 
@@ -7348,6 +7368,9 @@ body {
   color: #dbeafe;
   font-size: 11px;
   font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+  text-align: center;
 }
 
 .named-watchlist-quote {

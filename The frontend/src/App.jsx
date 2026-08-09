@@ -3879,6 +3879,12 @@ const getDisplayCompanyLogoUrl = (symbol, providerLogo = "") => {
   return getDefaultCompanyLogoUrl(cleanSymbol) || providerLogo || "";
 };
 
+const getLogoFallbackText = (symbol) => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  if (!cleanSymbol) return "?";
+  return cleanSymbol.length <= 4 ? cleanSymbol : cleanSymbol.slice(0, 1);
+};
+
 const getFmpMarketSymbolLogoUrl = (symbol) => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
   return cleanSymbol
@@ -10456,7 +10462,7 @@ const renderEtfSearchSuggestions = () => {
               onClick={() => selectEtfSearchSuggestion(item)}
             >
               <span className={`stock-search-logo-shell${logoUrl ? " has-logo" : ""}`} aria-hidden="true">
-                <span>{String(item.symbol || "?").slice(0, 1)}</span>
+                <span>{getLogoFallbackText(item.symbol)}</span>
                 {logoUrl && (
                   <img
                     src={logoUrl}
@@ -10555,7 +10561,7 @@ const getAlternativeMarketIcon = (symbol, marketType) => {
   if (marketType === "forex") {
     return FOREX_TAPE_ICONS[cleanSymbol] || `${cleanSymbol.slice(0, 3)}/${cleanSymbol.slice(3, 6)}`;
   }
-  return cleanSymbol.slice(0, 1);
+  return getLogoFallbackText(cleanSymbol);
 };
 
 const getForexCurrencyFlag = (currencyCode) => {
@@ -10644,32 +10650,37 @@ const renderStockSearchSuggestions = (destinationPage = "overview") => {
       {isStockSearchSuggesting && !stockSearchSuggestions.length ? (
         <div className="stock-search-suggestion muted">Searching...</div>
       ) : (
-        stockSearchSuggestions.map((item) => (
-          <button
-            type="button"
-            className="stock-search-suggestion"
-            key={`${item.symbol}-${item.exchange || ""}`}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => selectStockSearchSuggestion(item, destinationPage)}
-          >
-            <span className="stock-search-logo-shell has-logo" aria-hidden="true">
-              <span>{String(item.symbol || "?").slice(0, 1)}</span>
-              <img
-                src={getDisplayCompanyLogoUrl(item.symbol, item.logo)}
-                data-provider-logo={item.logo || ""}
-                alt=""
-                crossOrigin="anonymous"
-                onLoad={(event) => handleCompanyLogoLoad(event)}
-                onError={(event) => handleCompanyLogoError(event, item.symbol)}
-              />
-            </span>
-            <span className="stock-search-suggestion-copy">
-              <strong>{item.symbol}</strong>
-              <em>{item.name}</em>
-            </span>
-            {item.exchange && <small>{item.exchange}</small>}
-          </button>
-        ))
+        stockSearchSuggestions.map((item) => {
+          const logoUrl = getDisplayCompanyLogoUrl(item.symbol, item.logo);
+          return (
+            <button
+              type="button"
+              className="stock-search-suggestion"
+              key={`${item.symbol}-${item.exchange || ""}`}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => selectStockSearchSuggestion(item, destinationPage)}
+            >
+              <span className={`stock-search-logo-shell${logoUrl ? " has-logo" : ""}`} aria-hidden="true">
+                <span>{getLogoFallbackText(item.symbol)}</span>
+                {logoUrl && (
+                  <img
+                    src={logoUrl}
+                    data-provider-logo={item.logo || ""}
+                    alt=""
+                    crossOrigin="anonymous"
+                    onLoad={(event) => handleCompanyLogoLoad(event)}
+                    onError={(event) => handleCompanyLogoError(event, item.symbol)}
+                  />
+                )}
+              </span>
+              <span className="stock-search-suggestion-copy">
+                <strong>{item.symbol}</strong>
+                <em>{item.name}</em>
+              </span>
+              {item.exchange && <small>{item.exchange}</small>}
+            </button>
+          );
+        })
       )}
     </div>
   );
@@ -10727,32 +10738,37 @@ const renderCalendarSearchSuggestions = () => {
       {isCalendarSearchSuggesting && !calendarSearchSuggestions.length ? (
         <div className="stock-search-suggestion muted">Searching stocks...</div>
       ) : (
-        calendarSearchSuggestions.map((item) => (
-          <button
-            type="button"
-            className="stock-search-suggestion"
-            key={`calendar-${item.symbol}-${item.exchange || ""}`}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => openCalendarSearchResult(item)}
-          >
-            <span className="stock-search-logo-shell has-logo" aria-hidden="true">
-              <span>{String(item.symbol || "?").slice(0, 1)}</span>
-              <img
-                src={getDisplayCompanyLogoUrl(item.symbol, item.logo)}
-                data-provider-logo={item.logo || ""}
-                alt=""
-                crossOrigin="anonymous"
-                onLoad={(event) => handleCompanyLogoLoad(event)}
-                onError={(event) => handleCompanyLogoError(event, item.symbol)}
-              />
-            </span>
-            <span className="stock-search-suggestion-copy">
-              <strong>{item.symbol}</strong>
-              <em>{item.name}</em>
-            </span>
-            {item.exchange && <small>{item.exchange}</small>}
-          </button>
-        ))
+        calendarSearchSuggestions.map((item) => {
+          const logoUrl = getDisplayCompanyLogoUrl(item.symbol, item.logo);
+          return (
+            <button
+              type="button"
+              className="stock-search-suggestion"
+              key={`calendar-${item.symbol}-${item.exchange || ""}`}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => openCalendarSearchResult(item)}
+            >
+              <span className={`stock-search-logo-shell${logoUrl ? " has-logo" : ""}`} aria-hidden="true">
+                <span>{getLogoFallbackText(item.symbol)}</span>
+                {logoUrl && (
+                  <img
+                    src={logoUrl}
+                    data-provider-logo={item.logo || ""}
+                    alt=""
+                    crossOrigin="anonymous"
+                    onLoad={(event) => handleCompanyLogoLoad(event)}
+                    onError={(event) => handleCompanyLogoError(event, item.symbol)}
+                  />
+                )}
+              </span>
+              <span className="stock-search-suggestion-copy">
+                <strong>{item.symbol}</strong>
+                <em>{item.name}</em>
+              </span>
+              {item.exchange && <small>{item.exchange}</small>}
+            </button>
+          );
+        })
       )}
     </div>
   );
@@ -10803,7 +10819,7 @@ const renderAlternativeMarketSuggestions = (items, isLoading, show, inputValue, 
             onClick={() => onSelect(item.symbol)}
           >
             <span className={`stock-search-logo-shell${item.logo ? " has-logo" : ""}`} aria-hidden="true">
-              <span>{String(item.symbol || "?").slice(0, 1)}</span>
+              <span>{getLogoFallbackText(item.symbol)}</span>
               {item.logo && (
                 <img
                   src={item.type === "crypto" ? getCryptoLogoCandidates(item.symbol, item.logo)[0] : item.logo}
@@ -11621,7 +11637,7 @@ return (
               <div className="etf-hero-main">
                 <span className={`etf-hero-logo-shell${getDisplayCompanyLogoUrl(etfData.symbol, etfData.logo) ? " has-logo" : ""}`} aria-hidden="true">
                   <span className="etf-hero-logo-fallback">
-                    {String(etfData.symbol || "?").slice(0, 1)}
+                    {getLogoFallbackText(etfData.symbol)}
                   </span>
                   {getDisplayCompanyLogoUrl(etfData.symbol, etfData.logo) && (
                     <img
@@ -12450,7 +12466,9 @@ return (
                   </tr>
                 </thead>
                 <tbody>
-                  {screenerResults.map((row) => (
+                  {screenerResults.map((row) => {
+                    const logoUrl = getDisplayCompanyLogoUrl(row.symbol, row.logo);
+                    return (
                     <tr
                       key={`${row.symbol}-${row.exchange}`}
                       onClick={() => {
@@ -12468,16 +12486,18 @@ return (
                     >
                       <td>
                         <span className="screener-symbol-cell">
-                          <span className="stock-search-logo-shell has-logo" aria-hidden="true">
-                            <span>{String(row.symbol || "?").slice(0, 1)}</span>
-                            <img
-                              src={getDisplayCompanyLogoUrl(row.symbol, row.logo)}
-                              data-provider-logo={row.logo || ""}
-                              alt=""
-                              crossOrigin="anonymous"
-                              onLoad={(event) => handleCompanyLogoLoad(event)}
-                              onError={(event) => handleCompanyLogoError(event, row.symbol)}
-                            />
+                          <span className={`stock-search-logo-shell${logoUrl ? " has-logo" : ""}`} aria-hidden="true">
+                            <span>{getLogoFallbackText(row.symbol)}</span>
+                            {logoUrl && (
+                              <img
+                                src={logoUrl}
+                                data-provider-logo={row.logo || ""}
+                                alt=""
+                                crossOrigin="anonymous"
+                                onLoad={(event) => handleCompanyLogoLoad(event)}
+                                onError={(event) => handleCompanyLogoError(event, row.symbol)}
+                              />
+                            )}
                           </span>
                           <strong>{row.symbol}</strong>
                         </span>
@@ -12493,7 +12513,8 @@ return (
                       <td>{formatLargeNumber(row.volume)}</td>
                       <td>{row.exchange || "N/A"}</td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
