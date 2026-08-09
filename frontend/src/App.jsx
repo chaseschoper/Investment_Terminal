@@ -10241,6 +10241,13 @@ const getMarketLogoUrl = (symbol, marketType) => {
   return "";
 };
 
+const formatWatchlistMarketPrice = (symbol, marketType) => {
+  const value = portfolioPrices[String(symbol || "").trim().toUpperCase()];
+  if (!isNumber(value)) return "--";
+  if (marketType === "forex") return formatPlain(value);
+  return formatPrice(value);
+};
+
 const resolveSearchInputToSymbol = async (rawInput) => {
   const value = String(rawInput || "").trim();
   if (!value) return "";
@@ -10435,7 +10442,15 @@ const renderAlternativeMarketSuggestions = (items, isLoading, show, inputValue, 
           >
             <span className="stock-search-logo-shell" aria-hidden="true">
               <span>{String(item.symbol || "?").slice(0, 1)}</span>
-              {item.logo && <img src={item.logo} alt="" />}
+              {item.logo && (
+                <img
+                  src={item.logo}
+                  alt=""
+                  onError={(event) => {
+                    event.currentTarget.style.display = "none";
+                  }}
+                />
+              )}
             </span>
             <span className="stock-search-suggestion-copy">
               <strong>{item.symbol}</strong>
@@ -10786,9 +10801,7 @@ return (
                 </span>
 
                 <span className="watch-price">
-                  $
-                  {portfolioPrices[item]
-                    ?.toFixed(2) || "--"}
+                  {formatWatchlistMarketPrice(item, marketType)}
                 </span>
 
                 <span className={`watch-session-change ${
@@ -11472,7 +11485,16 @@ return (
               <div className="etf-hero-main">
                 {cryptoData.logo ? (
                   <span className="etf-hero-logo-shell crypto-logo-shell" aria-hidden="true">
-                    <img src={cryptoData.logo} alt="" loading="eager" decoding="async" />
+                    <img
+                      src={cryptoData.logo}
+                      alt=""
+                      loading="eager"
+                      decoding="async"
+                      onError={(event) => {
+                        event.currentTarget.style.display = "none";
+                      }}
+                    />
+                    {renderMarketLogoMark(cryptoData.symbol, "crypto")}
                   </span>
                 ) : (
                   <span className="asset-symbol-orb crypto-orb" aria-hidden="true">{cryptoData.symbol?.slice(0, 3)}</span>
@@ -11656,7 +11678,16 @@ return (
               <div className="etf-hero-main">
                 {forexData.logo ? (
                   <span className="etf-hero-logo-shell forex-logo-shell" aria-hidden="true">
-                    <img src={forexData.logo} alt="" loading="eager" decoding="async" />
+                    <img
+                      src={forexData.logo}
+                      alt=""
+                      loading="eager"
+                      decoding="async"
+                      onError={(event) => {
+                        event.currentTarget.style.display = "none";
+                      }}
+                    />
+                    {renderMarketLogoMark(forexData.symbol, "forex")}
                   </span>
                 ) : (
                   <span className="asset-symbol-orb forex-orb" aria-hidden="true">{forexData.fromCurrency || forexData.symbol?.slice(0, 3)}</span>
@@ -15466,7 +15497,7 @@ return (
                     </span>
                     <span className="named-watchlist-quote">
                       <span className="named-watchlist-price">
-                        {formatPrice(portfolioPrices[symbol])}
+                        {formatWatchlistMarketPrice(symbol, marketType)}
                       </span>
                       <span className={`named-watchlist-change ${
                         savedSymbolDetails[symbol]?.percentChange > 0
