@@ -5657,6 +5657,9 @@ useEffect(() => {
       );
       if (!isActive) return;
       setCryptoChartData(response.data || { points: [], latest: null });
+      if (response.data?.unavailable) {
+        setCryptoChartError(response.data.error || "FMP price chart is not available right now.");
+      }
     } catch (error) {
       console.error("Crypto chart failed", error);
       if (!isActive) return;
@@ -5721,6 +5724,9 @@ useEffect(() => {
       );
       if (!isActive) return;
       setForexChartData(response.data || { points: [], latest: null });
+      if (response.data?.unavailable) {
+        setForexChartError(response.data.error || "FMP price chart is not available right now.");
+      }
     } catch (error) {
       console.error("Forex chart failed", error);
       if (!isActive) return;
@@ -6198,7 +6204,7 @@ useEffect(() => {
           params: {
             range: stockChartRange
           },
-          timeout: stockChartRange === "1D" ? 4500 : 5500
+          timeout: stockChartRange === "1D" ? 8000 : 10000
         }
       );
 
@@ -6745,7 +6751,8 @@ useEffect(() => {
         setIsTreasuryRatesLoading(true);
         setTreasuryRatesError("");
         const response = await axios.get(`${API_URL}/api/treasury-rates`, {
-          params: { _: Date.now() }
+          params: { _: Date.now() },
+          timeout: 9000
         });
         if (!isActive) return;
         setTreasuryRates(response.data || { rows: [], latest: null });
@@ -6773,7 +6780,8 @@ useEffect(() => {
         setIsGeneralNewsLoading(true);
         setGeneralNewsError("");
         const response = await axios.get(`${API_URL}/api/news`, {
-          params: { limit: 36, _: Date.now() }
+          params: { limit: 36, _: Date.now() },
+          timeout: 9000
         });
         if (!isActive) return;
         setGeneralNews(response.data || { articles: [] });
@@ -6801,7 +6809,8 @@ useEffect(() => {
       try {
         setIsStockNewsLoading(true);
         const response = await axios.get(`${API_URL}/api/news`, {
-          params: { symbol: ticker, limit: 12, _: Date.now() }
+          params: { symbol: ticker, limit: 12, _: Date.now() },
+          timeout: 9000
         });
         if (!isActive) return;
         setStockNews(response.data || { articles: [] });
@@ -7168,7 +7177,7 @@ const loadUserData = async () => {
         await axios.get(
 
     `${API_URL}/api/calendar-events`,
-          { params: { type: mode, start: weekStart, _: Date.now() } }
+          { params: { type: mode, start: weekStart, _: Date.now() }, timeout: 9000 }
         );
 
       const calendar = earningsRes.data || { days: [] };
@@ -15223,8 +15232,8 @@ return (
           {(position.symbol || savedSymbolDetails[position.symbol]?.logo) && (
             <img
               className="portfolio-logo"
-              src={getDefaultCompanyLogoUrl(position.symbol) || savedSymbolDetails[position.symbol].logo}
-              data-provider-logo={savedSymbolDetails[position.symbol].logo || ""}
+              src={getDefaultCompanyLogoUrl(position.symbol) || savedSymbolDetails[position.symbol]?.logo || ""}
+              data-provider-logo={savedSymbolDetails[position.symbol]?.logo || ""}
               alt=""
               onError={(event) =>
                 handleCompanyLogoError(event, position.symbol)

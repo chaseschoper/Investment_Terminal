@@ -968,7 +968,7 @@ const inferLogoContentType = (buffer) => {
 const fetchCompanyLogoImage = async (url) => {
   const response = await axios.get(url, {
     responseType: "arraybuffer",
-    timeout: 9000,
+    timeout: 3200,
     maxRedirects: 4,
     maxContentLength: 2 * 1024 * 1024,
     headers: {
@@ -986,6 +986,17 @@ const fetchCompanyLogoImage = async (url) => {
   return { buffer, contentType };
 };
 
+const fetchFirstCompanyLogoImage = async (candidates) => {
+  const batchSize = 4;
+  for (let index = 0; index < candidates.length; index += batchSize) {
+    const batch = candidates.slice(index, index + batchSize);
+    const results = await Promise.allSettled(batch.map((url) => fetchCompanyLogoImage(url)));
+    const match = results.find((result) => result.status === "fulfilled");
+    if (match) return match.value;
+  }
+  return null;
+};
+
 app.options("/api/company-logo/:symbol", (req, res) => {
   setImageProxyCorsHeaders(res);
   return res.sendStatus(204);
@@ -994,15 +1005,15 @@ app.options("/api/company-logo/:symbol", (req, res) => {
 app.get("/api/company-logo/:symbol", async (req, res) => {
   setImageProxyCorsHeaders(res);
   const candidates = buildCompanyLogoCandidateUrls(req.params.symbol);
-  for (const url of candidates) {
-    try {
-      const { buffer, contentType } = await fetchCompanyLogoImage(url);
-      res.setHeader("Content-Type", contentType);
+  try {
+    const logo = await fetchFirstCompanyLogoImage(candidates);
+    if (logo) {
+      res.setHeader("Content-Type", logo.contentType);
       res.setHeader("Cache-Control", "public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800");
-      return res.send(buffer);
-    } catch {
-      // Try the next known logo provider.
+      return res.send(logo.buffer);
     }
+  } catch {
+    // Fall through to the shared unavailable response.
   }
   return res.status(404).send("Logo unavailable");
 });
@@ -1204,9 +1215,19 @@ const sendPasswordResetEmail = async ({ to, resetUrl }) => {
 // =========================
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function runQueuedFmpRequest(task) {
+function runQueuedFmpRequest(task, priority = 0) {
   return new Promise((resolve, reject) => {
-    fmpRequestQueue.push({ task, resolve, reject });
+    const queued = { task, resolve, reject, priority, queuedAt: Date.now() };
+    if (priority > 0) {
+      const insertIndex = fmpRequestQueue.findIndex((item) => (item.priority || 0) < priority);
+      if (insertIndex === -1) {
+        fmpRequestQueue.push(queued);
+      } else {
+        fmpRequestQueue.splice(insertIndex, 0, queued);
+      }
+    } else {
+      fmpRequestQueue.push(queued);
+    }
     drainFmpRequestQueue();
   });
 }
@@ -1233,7 +1254,10 @@ function drainFmpRequestQueue() {
 }
 
 function getFmpAxios(url, config = {}) {
-  return runQueuedFmpRequest(() => axios.get(url, config));
+  const priority = Number(config.fmpPriority) || 0;
+  const axiosConfig = { ...config };
+  delete axiosConfig.fmpPriority;
+  return runQueuedFmpRequest(() => axios.get(url, axiosConfig), priority);
 }
 
 const isRateLimitError = (err) => err?.response?.status === 429;
@@ -3412,7 +3436,8 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
     try {
       const response = await getFmpAxios(endpoint.url, {
         params: endpoint.params,
-        timeout: requestedRange === "1D" ? 3200 : 2600
+        timeout: requestedRange === "1D" ? 3200 : 2600,
+        fmpPriority: requestedRange === "1D" || requestedRange === "1W" ? 10 : 7
       });
       const rows = Array.isArray(response.data) ? response.data : [];
       if (rows.length) {
@@ -17122,7 +17147,8 @@ async function fetchFmpAlternativeMarketQuote(symbol, marketType) {
   try {
     const response = await getFmpAxios("https://financialmodelingprep.com/stable/quote", {
       params: { symbol: normalizedSymbol, apikey: process.env.FMP_API_KEY },
-      timeout: 2200
+      timeout: 2200,
+      fmpPriority: 9
     });
     quote = Array.isArray(response.data) ? response.data[0] : response.data;
   } catch (err) {
@@ -17178,7 +17204,8 @@ async function fetchFmpAlternativeMarketPriceHistory(symbol, requestedRange = "1
     try {
       const response = await getFmpAxios("https://financialmodelingprep.com/stable/historical-chart/5min", {
         params: { symbol: normalizedSymbol, apikey: process.env.FMP_API_KEY },
-        timeout: 2800
+        timeout: 2800,
+        fmpPriority: 10
       });
       rows = Array.isArray(response.data) ? response.data : [];
     } catch (err) {
@@ -17252,7 +17279,8 @@ async function fetchFmpAlternativeMarketPriceHistory(symbol, requestedRange = "1
         to: range.to,
         apikey: process.env.FMP_API_KEY
       },
-      timeout: 3000
+      timeout: 3000,
+      fmpPriority: 7
     });
     rows = Array.isArray(response.data) ? response.data : [];
   } catch (err) {
