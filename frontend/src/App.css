@@ -15,6 +15,13 @@ body {
   font-family: Inter, sans-serif;
 }
 
+:root {
+  --company-logo-tile: radial-gradient(circle at 28% 20%, rgba(94, 234, 212, 0.2), transparent 42%),
+    linear-gradient(145deg, #d7e0ea, #8fa0b2);
+  --company-logo-tile-border: rgba(94, 234, 212, 0.32);
+  --company-logo-tile-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+
 .main {
   display: flex;
   flex-direction: column;
@@ -1760,9 +1767,9 @@ body {
   height: 100%;
   object-fit: contain;
   padding: 5px;
-  background: #f8fafc;
-  border: 1px solid rgba(148, 163, 184, 0.38);
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
+  background: var(--company-logo-tile);
+  border: 1px solid var(--company-logo-tile-border);
+  box-shadow: var(--company-logo-tile-shadow);
 }
 
 .stock-search-logo-shell.has-logo > span,
@@ -1777,9 +1784,9 @@ body {
 }
 
 img[data-logo-tone="light-on-dark"] {
-  background: transparent;
-  border-color: transparent;
-  box-shadow: none;
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
   filter: brightness(0) invert(1);
 }
 
@@ -3058,9 +3065,9 @@ img[data-logo-tone="light-on-dark"] {
   height: 100%;
   padding: 9px;
   object-fit: contain;
-  background: #f8fafc;
-  border: 1px solid rgba(148, 163, 184, 0.38);
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
+  background: var(--company-logo-tile);
+  border: 1px solid var(--company-logo-tile-border);
+  box-shadow: var(--company-logo-tile-shadow);
 }
 
 .crypto-logo-shell,
@@ -4519,9 +4526,9 @@ img[data-logo-tone="light-on-dark"] {
   width: 100%;
   height: 100%;
   padding: 3px;
-  background: #f8fafc;
-  border: 1px solid rgba(148, 163, 184, 0.38);
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
+  background: var(--company-logo-tile);
+  border: 1px solid var(--company-logo-tile-border);
+  box-shadow: var(--company-logo-tile-shadow);
   object-fit: contain;
 }
 
@@ -5259,9 +5266,9 @@ img[data-logo-tone="light-on-dark"] {
   width: 100%;
   height: 100%;
   padding: 4px;
-  background: #f8fafc;
-  border: 1px solid rgba(148, 163, 184, 0.38);
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
+  background: var(--company-logo-tile);
+  border: 1px solid var(--company-logo-tile-border);
+  box-shadow: var(--company-logo-tile-shadow);
   object-fit: contain;
 }
 
@@ -6588,9 +6595,9 @@ img[data-logo-tone="light-on-dark"] {
 }
 
 .stock-hero-logo-shell {
-  background: #f8fafc;
-  border-color: rgba(148, 163, 184, 0.45);
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.05), 0 14px 32px rgba(14, 165, 233, 0.12);
+  background: var(--company-logo-tile);
+  border-color: var(--company-logo-tile-border);
+  box-shadow: var(--company-logo-tile-shadow), 0 14px 32px rgba(14, 165, 233, 0.12);
 }
 
 .stock-overview-price-card {
@@ -6604,9 +6611,9 @@ img[data-logo-tone="light-on-dark"] {
 }
 
 .stock-hero-logo-shell img {
-  background: #f8fafc;
-  border: 1px solid rgba(148, 163, 184, 0.38);
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
+  background: var(--company-logo-tile);
+  border: 1px solid var(--company-logo-tile-border);
+  box-shadow: var(--company-logo-tile-shadow);
 }
 
 .stock-hero-after-hours {
@@ -6747,9 +6754,9 @@ img[data-logo-tone="light-on-dark"] {
   position: absolute;
   inset: 0;
   z-index: 2;
-  background: #f8fafc;
-  border: 1px solid rgba(148, 163, 184, 0.38);
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
+  background: var(--company-logo-tile);
+  border: 1px solid var(--company-logo-tile-border);
+  box-shadow: var(--company-logo-tile-shadow);
   object-fit: contain;
   padding: 3px;
 }
@@ -7309,9 +7316,9 @@ img[data-logo-tone="light-on-dark"] {
   position: absolute;
   inset: 0;
   z-index: 2;
-  background: #f8fafc;
-  border: 1px solid rgba(148, 163, 184, 0.38);
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
+  background: var(--company-logo-tile);
+  border: 1px solid var(--company-logo-tile-border);
+  box-shadow: var(--company-logo-tile-shadow);
   object-fit: contain;
   padding: 3px;
 }
