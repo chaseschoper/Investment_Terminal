@@ -3835,8 +3835,6 @@ const getCompanyLogoProxyUrl = (symbol) => {
   return cleanSymbol ? `${getApiBaseUrl()}/company-logo/${encodeURIComponent(cleanSymbol)}` : "";
 };
 
-const SYMBOLS_WITH_MISLEADING_LOGOS = new Set(["SPCX"]);
-
 const getImageProxyUrl = (src) => {
   if (!src || typeof src !== "string" || src.startsWith("/")) return src || "";
   try {
@@ -3855,7 +3853,6 @@ const getImageProxyUrl = (src) => {
 const getCompanyLogoCandidates = (symbol, providerLogo = "") => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
   if (!cleanSymbol) return [];
-  if (SYMBOLS_WITH_MISLEADING_LOGOS.has(cleanSymbol)) return [];
   const symbolVariants = [...new Set([
     cleanSymbol,
     cleanSymbol.replace(/\./g, "-"),
@@ -3882,7 +3879,7 @@ const getDefaultCompanyLogoUrl = (symbol) => getCompanyLogoCandidates(symbol)[0]
 
 const getDisplayCompanyLogoUrl = (symbol, providerLogo = "") => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
-  if (!cleanSymbol || SYMBOLS_WITH_MISLEADING_LOGOS.has(cleanSymbol)) return "";
+  if (!cleanSymbol) return "";
   return getDefaultCompanyLogoUrl(cleanSymbol) || providerLogo || "";
 };
 
