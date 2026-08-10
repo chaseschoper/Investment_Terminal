@@ -1045,7 +1045,7 @@ const HOME_FEATURES = [
     icon: "market",
     label: "Market Overview",
     title: "See the whole market first",
-    text: "Check the major indexes, market clock, and a heat map view of leading S&P 500 companies before diving into one stock."
+    text: "Check the major indexes, market clock, broad-market movers, and top traded stocks before diving into one company."
   },
   {
     id: "overview",
@@ -1221,8 +1221,8 @@ const HOME_TOUR_SECTIONS = [
     label: "Market Overview",
     eyebrow: "Market dashboard",
     title: "Start with the market before the stock.",
-    text: "Track index cards, the market clock, S&P 500 heat map, top movers, and top traded stocks from a dedicated market overview page.",
-    bullets: ["Index cards and countdown", "S&P 500 heat map", "Top gainers, losers, and traded names"],
+    text: "Track index cards, the market clock, top movers, and top traded stocks from a dedicated market overview page.",
+    bullets: ["Index cards and countdown", "Top gainers and losers", "Most actively traded names"],
     snapshot: "market"
   },
   {
@@ -1753,7 +1753,7 @@ const renderHomeTourSnapshot = (snapshot) => {
     projections: { title: "Bull / Base / Bear", layout: "scenario", chips: ["Bull", "Base", "Bear"] },
     compare: { title: "Company Comparison", layout: "comparison", chips: ["Valuation", "Margins", "Cash"] },
     screener: { title: "Market Ideas", layout: "screener", chips: ["Sector", "Beta", "Volume"] },
-    market: { title: "Market Heat Map", layout: "heatmap", chips: ["Indexes", "Heat Map", "Movers"] },
+    market: { title: "Market Movers", layout: "screener", chips: ["Indexes", "Gainers", "Traded"] },
     funds: { title: "ETF Exposure", layout: "funds", chips: ["Holdings", "Fees", "Yield"] },
     watchlists: { title: "Watchlist", layout: "watchlist", chips: ["AMD", "NKE", "CRM"] },
     portfolio: { title: "Portfolio Allocation", layout: "portfolio", chips: ["Value", "Country", "Industry"] },
@@ -2517,31 +2517,6 @@ const getMarketIndexTone = (percentChange) => {
   if (percentChange >= 1.5) return "rally";
   if (percentChange <= -1.5) return "selloff";
   return "neutral";
-};
-
-const getHeatMapTone = (percentChange) => {
-  if (!isNumber(percentChange)) return "heat-neutral";
-  if (percentChange >= 0.05) return "heat-positive";
-  if (percentChange <= -0.05) return "heat-negative";
-  return "heat-neutral";
-};
-
-const getHeatMapTileStyle = (company = {}) => {
-  const percentChange = isNumber(company.percentChange) ? company.percentChange : 0;
-  const intensity = Math.min(Math.abs(percentChange) / 4, 1);
-  const green = `rgba(16, 185, 129, ${0.26 + intensity * 0.58})`;
-  const red = `rgba(244, 63, 94, ${0.24 + intensity * 0.6})`;
-  const neutral = "rgba(17, 24, 39, 0.92)";
-  const weight = isNumber(company.weight) ? company.weight : 1;
-
-  return {
-    flex: `${Math.max(1, Math.min(weight, 8))} 1 ${Math.max(98, Math.min(260, weight * 38))}px`,
-    background: percentChange > 0.05
-      ? `linear-gradient(135deg, ${green}, rgba(6, 78, 59, 0.92))`
-      : percentChange < -0.05
-        ? `linear-gradient(135deg, ${red}, rgba(88, 28, 46, 0.92))`
-        : `linear-gradient(135deg, ${neutral}, rgba(15, 23, 42, 0.95))`
-  };
 };
 
 const PROJECTION_YEARS = [2026, 2027, 2028, 2029, 2030];
@@ -5062,12 +5037,6 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [isMarketLoading, setIsMarketLoading] =
     useState(() => !marketIndices.length);
 
-  const [marketHeatmap, setMarketHeatmap] =
-    useState({ companies: [], sectors: [], updatedAt: null });
-
-  const [isMarketHeatmapLoading, setIsMarketHeatmapLoading] =
-    useState(true);
-
   const [broadMarketMovers, setBroadMarketMovers] =
     useState({ gainers: [], losers: [], updatedAt: null });
 
@@ -5647,57 +5616,6 @@ useEffect(() => {
     window.clearTimeout(refreshTimer);
   };
 }, []);
-
-useEffect(() => {
-  if (activePage !== "market-overview") return;
-
-  let isActive = true;
-  let refreshTimer;
-  let startTimer;
-
-  const loadMarketHeatmap = async () => {
-    if (!(marketHeatmap.companies || []).length) {
-      setIsMarketHeatmapLoading(true);
-    }
-    let nextRefreshMs = 90 * 1000;
-    try {
-      const response = await axios.get(`${API_URL}/api/market-heatmap`, {
-        timeout: 9500,
-      });
-      if (isActive) {
-        const companies = Array.isArray(response.data?.companies) ? response.data.companies : [];
-        const hasMissingQuotes = companies.some((company) =>
-          !isNumber(company.price) || !isNumber(company.percentChange)
-        );
-        nextRefreshMs = hasMissingQuotes || response.data?.refreshing ? 15000 : 90 * 1000;
-        setMarketHeatmap((previous) => {
-          if (!companies.length && (previous.companies || []).length) return previous;
-          return {
-            companies,
-            sectors: Array.isArray(response.data?.sectors) ? response.data.sectors : [],
-            updatedAt: response.data?.updatedAt || null
-          };
-        });
-      }
-    } catch (error) {
-      console.error("Market heat map failed", error);
-      nextRefreshMs = 5000;
-    } finally {
-      if (isActive) {
-        setIsMarketHeatmapLoading(false);
-        refreshTimer = window.setTimeout(loadMarketHeatmap, nextRefreshMs);
-      }
-    }
-  };
-
-  startTimer = window.setTimeout(loadMarketHeatmap, 0);
-
-  return () => {
-    isActive = false;
-    window.clearTimeout(startTimer);
-    window.clearTimeout(refreshTimer);
-  };
-}, [activePage]);
 
 useEffect(() => {
   if (activePage !== "market-overview") return;
@@ -9688,24 +9606,6 @@ const displayedMarketIndices = MARKET_INDEX_ORDER.map((item) => ({
   ...item,
   ...(marketIndices.find((index) => index.key === item.key) || {})
 }));
-const heatmapCompanies = marketHeatmap.companies || [];
-const heatmapSectors = marketHeatmap.sectors || [];
-const heatmapMovers = heatmapCompanies
-  .filter((company) => isNumber(company.percentChange))
-  .sort((a, b) => b.percentChange - a.percentChange);
-const heatmapTopGainers = heatmapMovers.slice(0, 6);
-const heatmapTopLosers = [...heatmapMovers].reverse().slice(0, 6);
-const heatmapSectorGroups = heatmapSectors.map((sector) => ({
-  ...sector,
-  id: `heatmap-sector-${String(sector.name || "other").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
-  companies: heatmapCompanies
-    .filter((company) => (company.sector || "Other") === sector.name)
-    .sort((a, b) => {
-      const weightDiff = (b.weight || 1) - (a.weight || 1);
-      if (weightDiff !== 0) return weightDiff;
-      return String(a.symbol).localeCompare(String(b.symbol));
-    })
-})).filter((sector) => sector.companies.length);
 const etfStats = etfData?.stats || {};
 const etfProfile = etfData?.profile || {};
 const topEtfHoldings = etfData?.holdings || [];
@@ -11514,104 +11414,30 @@ return (
           <div>
             <div className="welcome-kicker">Market dashboard</div>
             <h2 id="market-overview-title">Market Overview</h2>
-            <p>Track the major indexes, the next market session, and where leadership is moving across the S&P 500.</p>
+            <p>Track the major indexes, the next market session, broad-market movers, and the most actively traded stocks.</p>
           </div>
-          {marketHeatmap.updatedAt && (
+          {broadMarketMovers.updatedAt && (
             <span className="market-overview-updated">
-              Updated {new Date(marketHeatmap.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+              Updated {new Date(broadMarketMovers.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
             </span>
           )}
         </div>
 
         {marketOverviewStrip}
 
-        <section className="sp500-heatmap-section" aria-labelledby="sp500-heatmap-title">
-          <div className="heatmap-header">
-            <div>
-              <span className="home-feature-label">S&P 500 Heat Map</span>
-              <h3 id="sp500-heatmap-title">Sector leadership at a glance</h3>
-            </div>
-            <div className="heatmap-legend" aria-label="Heat map color legend">
-              <span className="legend-down">Down</span>
-              <span className="legend-flat">Flat</span>
-              <span className="legend-up">Up</span>
-            </div>
+        <section className="market-movers-block" aria-labelledby="market-movers-overview-title">
+          <div className="market-movers-block-heading">
+            <span id="market-movers-overview-title">Entire Market Movers</span>
+            {broadMarketMovers.updatedAt && (
+              <strong>
+                Updated {new Date(broadMarketMovers.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+              </strong>
+            )}
           </div>
-
-          {isMarketHeatmapLoading && !heatmapCompanies.length ? (
-            <div className="heatmap-loading">Loading market map...</div>
-          ) : heatmapCompanies.length ? (
-            <>
-              <div className="heatmap-sector-summary">
-                {heatmapSectors.map((sector) => (
-                  <button
-                    className={`heatmap-sector-pill ${getHeatMapTone(sector.averagePercentChange)}`}
-                    key={sector.name}
-                    type="button"
-                    onClick={() => {
-                      const id = `heatmap-sector-${String(sector.name || "other").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
-                      document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-                    }}
-                  >
-                    {sector.name}
-                    <strong>{formatSignedPercent(sector.averagePercentChange)}</strong>
-                  </button>
-                ))}
-              </div>
-              <div className="sp500-heatmap-grid">
-                {heatmapSectorGroups.map((sector) => (
-                  <section className="heatmap-sector-block" id={sector.id} key={sector.name}>
-                    <div className="heatmap-sector-title">
-                      <span>{sector.name}</span>
-                      <strong>{formatSignedPercent(sector.averagePercentChange)}</strong>
-                      <small>{sector.count} stocks</small>
-                    </div>
-                    <div className="heatmap-sector-tiles">
-                      {sector.companies.map((company) => (
-                        <button
-                          className={`sp500-heatmap-tile ${getHeatMapTone(company.percentChange)}`}
-                          key={company.symbol}
-                          type="button"
-                          style={getHeatMapTileStyle(company)}
-                          onClick={() => {
-                            setSearchInput(company.symbol);
-                            setTicker(company.symbol);
-                            setActivePage("overview");
-                          }}
-                          title={`${company.name} ${isNumber(company.percentChange) ? formatSignedPercent(company.percentChange) : "Quote pending"}`}
-                        >
-                          <span className="heatmap-symbol">{company.symbol}</span>
-                          <span className="heatmap-name">{company.name}</span>
-                          <strong>{isNumber(company.percentChange) ? formatSignedPercent(company.percentChange) : "--"}</strong>
-                          <small>{isNumber(company.price) ? formatPrice(company.price) : "Quote pending"}</small>
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                ))}
-              </div>
-              <div className="market-movers-grid">
-                {renderMarketMoverPanel("Top Gainers", heatmapTopGainers, "positive", "S&P 500", isMarketHeatmapLoading)}
-                {renderMarketMoverPanel("Top Losers", heatmapTopLosers, "negative", "S&P 500", isMarketHeatmapLoading)}
-              </div>
-              <div className="market-movers-block">
-                <div className="market-movers-block-heading">
-                  <span>Entire Market Movers</span>
-                  {broadMarketMovers.updatedAt && (
-                    <strong>
-                      Updated {new Date(broadMarketMovers.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
-                    </strong>
-                  )}
-                </div>
-                <div className="market-movers-grid">
-                  {renderMarketMoverPanel("Top Gainers", broadMarketMovers.gainers || [], "positive", "All Stocks", isBroadMarketMoversLoading)}
-                  {renderMarketMoverPanel("Top Losers", broadMarketMovers.losers || [], "negative", "All Stocks", isBroadMarketMoversLoading)}
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="heatmap-loading">Market map is loading. Try again in a moment.</div>
-          )}
+          <div className="market-movers-grid">
+            {renderMarketMoverPanel("Top Gainers", broadMarketMovers.gainers || [], "positive", "All Stocks", isBroadMarketMoversLoading)}
+            {renderMarketMoverPanel("Top Losers", broadMarketMovers.losers || [], "negative", "All Stocks", isBroadMarketMoversLoading)}
+          </div>
         </section>
         {renderTopTradedStocks()}
       </section>
