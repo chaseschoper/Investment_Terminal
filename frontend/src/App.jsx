@@ -2456,12 +2456,15 @@ const COMMODITY_GROUPS = [
   }
 ];
 
-const formatStockChartAxisLabel = (value, range) => {
+const STOCK_CHART_MARKET_TIME_ZONE = "America/New_York";
+
+const formatStockChartAxisLabel = (value, range, timeZone = undefined) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
 
   if (range === "1D") {
     return date.toLocaleTimeString([], {
+      timeZone,
       hour: "numeric",
       minute: "2-digit"
     });
@@ -2469,23 +2472,26 @@ const formatStockChartAxisLabel = (value, range) => {
 
   if (range === "1W" || range === "1M" || range === "YTD") {
     return date.toLocaleDateString([], {
+      timeZone,
       month: "short",
       day: "numeric"
     });
   }
 
   return date.toLocaleDateString([], {
+    timeZone,
     month: "short",
     year: "2-digit"
   });
 };
 
-const formatStockChartTooltipLabel = (value, range) => {
+const formatStockChartTooltipLabel = (value, range, timeZone = undefined) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
 
   if (range === "1D" || range === "1W") {
     return date.toLocaleString([], {
+      timeZone,
       month: "short",
       day: "numeric",
       hour: "numeric",
@@ -2494,6 +2500,7 @@ const formatStockChartTooltipLabel = (value, range) => {
   }
 
   return date.toLocaleDateString([], {
+    timeZone,
     month: "short",
     day: "numeric",
     year: "numeric"
@@ -6341,6 +6348,8 @@ useEffect(() => {
       const isFallbackHistory =
         response.data.stale && (
           response.data.interval === "fallback" ||
+          response.data.interval === "quote" ||
+          response.data.source === "FMP quote fallback" ||
           (
             stockChartRange === "1D" &&
             response.data.source === "FMP daily price" &&
@@ -13128,7 +13137,7 @@ return (
           <CartesianGrid stroke="#223049" strokeDasharray="3 3" />
           <XAxis
             dataKey="time"
-            tickFormatter={(value) => formatStockChartAxisLabel(value, stockChartRange)}
+            tickFormatter={(value) => formatStockChartAxisLabel(value, stockChartRange, STOCK_CHART_MARKET_TIME_ZONE)}
             stroke="#8ea0bd"
             tick={{ fill: "#9ca3af", fontSize: 12 }}
             minTickGap={28}
@@ -13147,7 +13156,7 @@ return (
               borderRadius: "12px",
               color: "#f8fafc"
             }}
-            labelFormatter={(value) => formatStockChartTooltipLabel(value, stockChartRange)}
+            labelFormatter={(value) => formatStockChartTooltipLabel(value, stockChartRange, STOCK_CHART_MARKET_TIME_ZONE)}
             formatter={(value) => [formatPrice(value), "Price"]}
           />
           <Line
