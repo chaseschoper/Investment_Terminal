@@ -15216,13 +15216,13 @@ app.get("/api/prices", async (req, res) => {
     );
   });
   const queue = [...symbolsNeedingLive];
-  const workerCount = Math.min(wantsLiveQuotes ? 8 : 4, queue.length);
+  const workerCount = Math.min(wantsLiveQuotes ? 3 : 4, queue.length);
   await resolveWithin(Promise.all(Array.from({ length: workerCount }, async () => {
     while (queue.length) {
       const symbol = queue.shift();
       await refreshSymbolQuote(symbol);
     }
-  })), wantsLiveQuotes ? 4800 : 2200, null);
+  })), wantsLiveQuotes ? 8500 : 2200, null);
   symbols.forEach(hydrateSavedSymbol);
 
   const staleSymbols = symbols.filter((symbol) => {
@@ -17839,53 +17839,75 @@ async function fetchFmpLatestIntradayTick(symbol) {
   if (!normalizedSymbol || !process.env.FMP_API_KEY || !canUseFmp()) return null;
 
   const cached = latestIntradayTickCache.get(normalizedSymbol);
+  const cacheTtl = isLikelyUsMarketSession() ? WATCHLIST_LIVE_QUOTE_TTL_MS : WATCHLIST_IDLE_QUOTE_TTL_MS;
   if (
     cached &&
-    Date.now() - cached.fetchedAt < 15 * 1000 &&
+    Date.now() - cached.fetchedAt < cacheTtl &&
     (cached.data?.usedOfficialClose || isLikelyUsMarketSession())
   ) {
     return cached.data;
   }
 
-  const chartCacheKey = `${normalizedSymbol}:1D`;
-  const cachedChartHistory = priceHistoryCache.get(chartCacheKey);
-  const chartHistory = cachedChartHistory?.data?.points?.length &&
-    Date.now() - cachedChartHistory.fetchedAt < PRICE_HISTORY_RANGES["1D"].ttl
-      ? cachedChartHistory.data
-      : await fetchFmpPriceHistory(normalizedSymbol, "1D");
-  const latest = chartHistory?.latest || {};
-  let price = toNumberOrNull(latest.price);
+  const [intradayResponse, quoteProfile] = await Promise.all([
+    getFmpAxios("https://financialmodelingprep.com/stable/historical-chart/5min", {
+      params: {
+        symbol: normalizedSymbol,
+        apikey: process.env.FMP_API_KEY
+      },
+      timeout: 2200
+    }).catch((err) => {
+      setFmpCooldown(err, "watchlist 5-minute quote", normalizedSymbol);
+      return null;
+    }),
+    resolveWithin(fetchFmpStableQuoteProfile(normalizedSymbol), 1800, null).catch(() => null)
+  ]);
+
+  const rows = Array.isArray(intradayResponse?.data) ? intradayResponse.data : [];
+  const points = rows
+    .map((row) => {
+      const rawDate = firstText(row.date, row.datetime, row.timestamp);
+      const parsed = parseFmpMarketDateTime(rawDate);
+      const price = firstFiniteNumber(row.close, row.price, row.adjClose);
+      if (price === null || !parsed || Number.isNaN(parsed.getTime())) return null;
+      return {
+        time: parsed.getTime(),
+        date: parsed.toISOString(),
+        marketDateKey: /^\d{4}-\d{2}-\d{2}/.test(String(rawDate || ""))
+          ? String(rawDate).slice(0, 10)
+          : getNewYorkDateKey(parsed),
+        price,
+        open: firstFiniteNumber(row.open),
+        close: price
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.time - b.time);
+
+  const todayKey = getNewYorkDateKey();
+  const regularPoints = points.filter((point) =>
+    point.marketDateKey === todayKey && isRegularUsMarketPoint(point)
+  );
+  const latestPoint = (isLikelyUsMarketSession() && regularPoints.length ? regularPoints : points).at(-1);
+
+  let price = toNumberOrNull(latestPoint?.price);
+  if (price === null || price <= 0) price = toNumberOrNull(quoteProfile?.price);
   if (price === null || price <= 0) return null;
-  let change = toNumberOrNull(latest.change);
-  let percentChange = toNumberOrNull(latest.percentChange);
-  let previousClose = toNumberOrNull(latest.previousClose);
-  const latestPoint = Array.isArray(chartHistory?.points) ? chartHistory.points.at(-1) : null;
-  let usedOfficialClose = Boolean(latestPoint?.isOfficialClose);
-  const latestDateKey = latestPoint?.marketDateKey || latestPoint?.date?.slice(0, 10);
-  if (latestDateKey && isRegularSessionCompleteForDate(latestDateKey)) {
-    const dailyRows = await resolveWithin(fetchFmpRecentDailyOhlc(normalizedSymbol), 2200, []).catch(() => []);
-    const latestDailyRow = dailyRows.find((row) => row?.date === latestDateKey);
-    const previousDailyClose = [...dailyRows]
-      .filter((row) => row?.date && row.date < latestDateKey)
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .at(-1)?.close;
-    const officialClose = toNumberOrNull(latestDailyRow?.close);
-    const officialPreviousClose = toNumberOrNull(previousDailyClose);
-    if (officialClose !== null && officialClose > 0) {
-      price = officialClose;
-      previousClose = officialPreviousClose ?? previousClose;
-      change = previousClose > 0 ? price - previousClose : change;
-      percentChange = change !== null && previousClose > 0 ? (change / previousClose) * 100 : percentChange;
-      usedOfficialClose = true;
-    }
-  }
+
+  const previousClose = toNumberOrNull(quoteProfile?.previousClose);
+  const change = previousClose > 0
+    ? price - previousClose
+    : toNumberOrNull(quoteProfile?.change);
+  const percentChange = change !== null && previousClose > 0
+    ? (change / previousClose) * 100
+    : toNumberOrNull(quoteProfile?.percentChange);
+  const usedOfficialClose = !isLikelyUsMarketSession();
 
   const data = {
     price,
     change,
     percentChange,
     previousClose,
-    open: toNumberOrNull(latest.open),
+    open: toNumberOrNull(latestPoint?.open),
     usedOfficialClose,
     updatedAt: new Date().toISOString()
   };
