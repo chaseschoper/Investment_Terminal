@@ -5243,6 +5243,9 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [fundamentalHoveredPoint, setFundamentalHoveredPoint] =
     useState(null);
 
+  const [maximizedFundamentalChartKey, setMaximizedFundamentalChartKey] =
+    useState("");
+
   const [isFundamentalChartLoading, setIsFundamentalChartLoading] =
     useState(false);
 
@@ -6165,6 +6168,20 @@ useEffect(() => {
     isActive = false;
   };
 }, [activePage, fundamentalChartTickers, fundamentalChartPeriod]);
+
+useEffect(() => {
+  if (!maximizedFundamentalChartKey) return;
+  const previousOverflow = document.body.style.overflow;
+  const handleKeyDown = (event) => {
+    if (event.key === "Escape") setMaximizedFundamentalChartKey("");
+  };
+  document.body.style.overflow = "hidden";
+  window.addEventListener("keydown", handleKeyDown);
+  return () => {
+    document.body.style.overflow = previousOverflow;
+    window.removeEventListener("keydown", handleKeyDown);
+  };
+}, [maximizedFundamentalChartKey]);
 
 useEffect(() => {
   if (activePage !== "market-overview") return;
@@ -8127,6 +8144,74 @@ const fundamentalChartSeries = selectedFundamentalIndicatorDetails.map((indicato
     latestValues
   };
 });
+
+const maximizedFundamentalChart = maximizedFundamentalChartKey
+  ? fundamentalChartSeries.find((series) => series.indicator.key === maximizedFundamentalChartKey)
+  : null;
+
+const getFundamentalCompanyMeta = (symbol) => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  const details = savedSymbolDetails[cleanSymbol] || {};
+  return {
+    symbol: cleanSymbol,
+    name: details.name || cleanSymbol,
+    logo: getDisplayCompanyLogoUrl(cleanSymbol, details.logo)
+  };
+};
+
+const renderFundamentalLineChart = (series, height = 320) => (
+  <ResponsiveContainer width="100%" height={height}>
+    <LineChart
+      data={series.rows}
+      margin={{ top: 12, right: 18, left: 8, bottom: 8 }}
+    >
+      <CartesianGrid stroke="#1f2937" strokeDasharray="4 4" />
+      <XAxis
+        dataKey="period"
+        tick={{ fill: "#94a3b8", fontSize: 12 }}
+        minTickGap={18}
+      />
+      <YAxis
+        tick={{ fill: "#94a3b8", fontSize: 12 }}
+        tickFormatter={(value) => formatFundamentalAxisValue(value, series.indicator)}
+        width={76}
+      />
+      <Tooltip
+        shared={false}
+        content={(
+          <FundamentalChartTooltip
+            indicator={series.indicator}
+            hoveredPoint={fundamentalHoveredPoint}
+          />
+        )}
+      />
+      {fundamentalChartTickers.map((symbol, index) => {
+        const color = PORTFOLIO_COLORS[index % PORTFOLIO_COLORS.length];
+        return (
+          <Line
+            key={`${series.indicator.key}-${symbol}`}
+            type="monotone"
+            dataKey={symbol}
+            stroke={color}
+            strokeWidth={2.4}
+            dot={(props) => renderFundamentalChartDot(props, {
+              indicator: series.indicator,
+              symbol,
+              color
+            })}
+            activeDot={(props) => renderFundamentalChartDot(props, {
+              indicator: series.indicator,
+              symbol,
+              color,
+              active: true
+            })}
+            connectNulls
+          />
+        );
+      })}
+    </LineChart>
+  </ResponsiveContainer>
+);
 const renderFundamentalChartDot = (props, options = {}) => {
   const { cx, cy, value, payload } = props || {};
   const { indicator, symbol, color, active = false } = options;
@@ -12751,63 +12836,24 @@ return (
                       <span>{series.indicator.groupLabel}</span>
                       <h3>{series.indicator.label}</h3>
                     </div>
-                    <strong>
-                      {historyRangeLabel(fundamentalChartRange)} · {fundamentalChartPeriod === "annual" ? "Annual" : "Quarterly"}
-                    </strong>
+                    <div className="fundamental-chart-card-actions">
+                      <strong>
+                        {historyRangeLabel(fundamentalChartRange)} · {fundamentalChartPeriod === "annual" ? "Annual" : "Quarterly"}
+                      </strong>
+                      <button
+                        type="button"
+                        className="fundamental-chart-maximize"
+                        aria-label={`Maximize ${series.indicator.label} chart`}
+                        title={`Maximize ${series.indicator.label}`}
+                        onClick={() => setMaximizedFundamentalChartKey(series.indicator.key)}
+                      >
+                        <span aria-hidden="true" />
+                      </button>
+                    </div>
                   </div>
 
                   {series.rows.length ? (
-                    <ResponsiveContainer width="100%" height={320}>
-                      <LineChart
-                        data={series.rows}
-                        margin={{ top: 12, right: 18, left: 8, bottom: 8 }}
-                      >
-                        <CartesianGrid stroke="#1f2937" strokeDasharray="4 4" />
-                        <XAxis
-                          dataKey="period"
-                          tick={{ fill: "#94a3b8", fontSize: 12 }}
-                          minTickGap={18}
-                        />
-                        <YAxis
-                          tick={{ fill: "#94a3b8", fontSize: 12 }}
-                          tickFormatter={(value) => formatFundamentalAxisValue(value, series.indicator)}
-                          width={76}
-                        />
-                        <Tooltip
-                          shared={false}
-                          content={(
-                            <FundamentalChartTooltip
-                              indicator={series.indicator}
-                              hoveredPoint={fundamentalHoveredPoint}
-                            />
-                          )}
-                        />
-                        {fundamentalChartTickers.map((symbol, index) => {
-                          const color = PORTFOLIO_COLORS[index % PORTFOLIO_COLORS.length];
-                          return (
-                            <Line
-                              key={`${series.indicator.key}-${symbol}`}
-                              type="monotone"
-                              dataKey={symbol}
-                              stroke={color}
-                              strokeWidth={2.4}
-                              dot={(props) => renderFundamentalChartDot(props, {
-                                indicator: series.indicator,
-                                symbol,
-                                color
-                              })}
-                              activeDot={(props) => renderFundamentalChartDot(props, {
-                                indicator: series.indicator,
-                                symbol,
-                                color,
-                                active: true
-                              })}
-                              connectNulls
-                            />
-                          );
-                        })}
-                      </LineChart>
-                    </ResponsiveContainer>
+                    renderFundamentalLineChart(series)
                   ) : (
                     <div className="heatmap-loading">No data yet for this indicator.</div>
                   )}
@@ -12857,6 +12903,67 @@ return (
         )}
       </section>
     )}
+
+
+    {maximizedFundamentalChart?.rows?.length ? createPortal(
+      <div className="fundamental-chart-modal" role="dialog" aria-modal="true" aria-labelledby="fundamental-chart-modal-title">
+        <div className="fundamental-chart-modal-panel">
+          <div className="fundamental-chart-modal-header">
+            <div>
+              <span className="home-feature-label">{maximizedFundamentalChart.indicator.groupLabel}</span>
+              <h2 id="fundamental-chart-modal-title">{maximizedFundamentalChart.indicator.label}</h2>
+              <p>
+                Showing {maximizedFundamentalChart.indicator.label} · {historyRangeLabel(fundamentalChartRange)} · {fundamentalChartPeriod === "annual" ? "Annual" : "Quarterly"}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="fundamental-chart-modal-close"
+              aria-label="Close maximized chart"
+              title="Close"
+              onClick={() => setMaximizedFundamentalChartKey("")}
+            >
+              ×
+            </button>
+          </div>
+
+          <div className="fundamental-chart-modal-companies" aria-label="Companies shown on this chart">
+            {fundamentalChartTickers.map((symbol, index) => {
+              const company = getFundamentalCompanyMeta(symbol);
+              const color = PORTFOLIO_COLORS[index % PORTFOLIO_COLORS.length];
+              return (
+                <div className="fundamental-chart-modal-company" key={`modal-company-${symbol}`}>
+                  <span className="fundamental-chart-modal-logo" style={{ "--series-color": color }} aria-hidden="true">
+                    {company.logo ? (
+                      <img
+                        src={company.logo}
+                        alt=""
+                        loading="eager"
+                        decoding="async"
+                        crossOrigin="anonymous"
+                        onLoad={(event) => handleCompanyLogoLoad(event)}
+                        onError={(event) => handleCompanyLogoError(event, company.symbol)}
+                      />
+                    ) : (
+                      company.symbol.slice(0, 1)
+                    )}
+                  </span>
+                  <span>
+                    <strong>{company.symbol}</strong>
+                    <small>{company.name}</small>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="fundamental-chart-modal-chart">
+            {renderFundamentalLineChart(maximizedFundamentalChart, "100%")}
+          </div>
+        </div>
+      </div>,
+      document.body
+    ) : null}
 
 
     {activePage === "treasury-rates" && (

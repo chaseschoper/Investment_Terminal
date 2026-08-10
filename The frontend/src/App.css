@@ -10513,6 +10513,235 @@ body {
   text-transform: uppercase;
 }
 
+.fundamental-chart-card-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.fundamental-chart-maximize {
+  width: 34px;
+  height: 34px;
+  position: relative;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 0;
+  border: 1px solid rgba(56, 189, 248, 0.36);
+  border-radius: 8px;
+  background: rgba(8, 17, 31, 0.82);
+  color: #bfdbfe;
+  cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.fundamental-chart-maximize:hover,
+.fundamental-chart-maximize:focus-visible {
+  transform: translateY(-1px);
+  border-color: rgba(103, 232, 249, 0.82);
+  background: rgba(14, 116, 144, 0.22);
+  outline: none;
+}
+
+.fundamental-chart-maximize span,
+.fundamental-chart-maximize::before,
+.fundamental-chart-maximize::after {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-left: 0;
+  border-bottom: 0;
+  border-radius: 2px;
+}
+
+.fundamental-chart-maximize span {
+  display: block;
+}
+
+.fundamental-chart-maximize::before,
+.fundamental-chart-maximize::after {
+  content: "";
+  position: absolute;
+}
+
+.fundamental-chart-maximize::before {
+  transform: rotate(180deg);
+}
+
+.fundamental-chart-maximize::after {
+  display: none;
+}
+
+.fundamental-chart-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  padding: 22px;
+  background:
+    radial-gradient(circle at 18% 8%, rgba(20, 184, 166, 0.18), transparent 32%),
+    radial-gradient(circle at 82% 12%, rgba(37, 99, 235, 0.18), transparent 34%),
+    rgba(2, 6, 12, 0.94);
+  backdrop-filter: blur(16px);
+}
+
+.fundamental-chart-modal-panel {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 16px;
+  padding: 22px;
+  border: 1px solid rgba(56, 189, 248, 0.34);
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(20, 184, 166, 0.16), transparent 34%),
+    linear-gradient(145deg, rgba(8, 13, 24, 0.98), rgba(3, 7, 13, 0.98));
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.48);
+}
+
+.fundamental-chart-modal-header {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.fundamental-chart-modal-header h2 {
+  margin: 5px 0 6px;
+  color: #ffffff;
+  font-size: clamp(30px, 4vw, 54px);
+  line-height: 1.02;
+}
+
+.fundamental-chart-modal-header p {
+  margin: 0;
+  color: #9ca3af;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.fundamental-chart-modal-close {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 0;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.82);
+  color: #e5e7eb;
+  font-size: 28px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.fundamental-chart-modal-close:hover,
+.fundamental-chart-modal-close:focus-visible {
+  border-color: rgba(103, 232, 249, 0.78);
+  color: #ffffff;
+  outline: none;
+}
+
+.fundamental-chart-modal-companies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.fundamental-chart-modal-company {
+  min-width: 180px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(56, 189, 248, 0.24);
+  border-radius: 8px;
+  background: rgba(8, 17, 31, 0.82);
+}
+
+.fundamental-chart-modal-logo {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--series-color, rgba(56, 189, 248, 0.7));
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 38% 24%, rgba(45, 212, 191, 0.32), transparent 48%),
+    rgba(2, 6, 12, 0.94);
+  color: #e0f2fe;
+  font-size: 16px;
+  font-weight: 950;
+  overflow: hidden;
+}
+
+.fundamental-chart-modal-logo img {
+  width: 72%;
+  height: 72%;
+  object-fit: contain;
+}
+
+.fundamental-chart-modal-company strong,
+.fundamental-chart-modal-company small {
+  display: block;
+}
+
+.fundamental-chart-modal-company strong {
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.fundamental-chart-modal-company small {
+  max-width: 190px;
+  overflow: hidden;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fundamental-chart-modal-chart {
+  min-height: 360px;
+  height: 100%;
+}
+
+@media (max-width: 720px) {
+  .fundamental-chart-card-header,
+  .fundamental-chart-modal-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .fundamental-chart-card-actions {
+    justify-content: space-between;
+  }
+
+  .fundamental-chart-modal {
+    padding: 10px;
+  }
+
+  .fundamental-chart-modal-panel {
+    padding: 14px;
+  }
+
+  .fundamental-chart-modal-company {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .fundamental-chart-modal-chart {
+    min-height: 320px;
+  }
+}
+
 .fundamental-summary-table td span,
 .fundamental-summary-table td small {
   display: block;
