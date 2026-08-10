@@ -10623,6 +10623,41 @@ body {
   font-weight: 800;
 }
 
+.fundamental-chart-modal-header-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.fundamental-chart-modal-brand {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 11px;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 18% 20%, rgba(45, 212, 191, 0.2), transparent 48%),
+    rgba(8, 17, 31, 0.84);
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.fundamental-chart-modal-brand img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.fundamental-chart-modal-brand strong {
+  color: #e0f2fe;
+  font-weight: 950;
+}
+
 .fundamental-chart-modal-close {
   width: 42px;
   height: 42px;
@@ -10722,6 +10757,14 @@ body {
 
   .fundamental-chart-card-actions {
     justify-content: space-between;
+  }
+
+  .fundamental-chart-modal-header-actions {
+    justify-content: space-between;
+  }
+
+  .fundamental-chart-modal-brand {
+    white-space: normal;
   }
 
   .fundamental-chart-modal {

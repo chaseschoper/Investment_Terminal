@@ -12942,15 +12942,21 @@ return (
                 Showing {maximizedFundamentalChart.indicator.label} · {historyRangeLabel(fundamentalChartRange)} · {fundamentalChartPeriod === "annual" ? "Annual" : "Quarterly"}
               </p>
             </div>
-            <button
-              type="button"
-              className="fundamental-chart-modal-close"
-              aria-label="Close maximized chart"
-              title="Close"
-              onClick={() => setMaximizedFundamentalChartKey("")}
-            >
-              ×
-            </button>
+            <div className="fundamental-chart-modal-header-actions">
+              <div className="fundamental-chart-modal-brand" aria-label="Powered by MrktRally">
+                <img src="/mrktrally-icon.png" alt="" />
+                <span>Powered by <strong>MrktRally</strong></span>
+              </div>
+              <button
+                type="button"
+                className="fundamental-chart-modal-close"
+                aria-label="Close maximized chart"
+                title="Close"
+                onClick={() => setMaximizedFundamentalChartKey("")}
+              >
+                ×
+              </button>
+            </div>
           </div>
 
           <div className="fundamental-chart-modal-companies" aria-label="Companies shown on this chart">
