@@ -408,6 +408,8 @@ let fmpCooldownUntil = 0;
 let stockAnalysisCooldownUntil = 0;
 let secTickerMapPromise;
 let secTickerMapRetryAfter = 0;
+const WATCHLIST_LIVE_QUOTE_TTL_MS = 4.5 * 60 * 1000;
+const WATCHLIST_IDLE_QUOTE_TTL_MS = 15 * 60 * 1000;
 const COMMON_SEC_CIKS = new Map(Object.entries({
   AAPL: "0000320193",
   MSFT: "0000789019",
@@ -15016,7 +15018,10 @@ app.get("/api/prices", async (req, res) => {
     const cached = livePriceCache.get(symbol);
     const cachedIsFreshForRequest =
       cached &&
-      (!wantsLiveQuotes || Date.now() - (cached.fetchedAt || 0) < 45 * 1000);
+      (!wantsLiveQuotes ||
+        Date.now() - (cached.fetchedAt || 0) < (
+          isLikelyUsMarketSession() ? WATCHLIST_LIVE_QUOTE_TTL_MS : WATCHLIST_IDLE_QUOTE_TTL_MS
+        ));
     if (cachedIsFreshForRequest) {
       prices[symbol] = cached.price;
       details[symbol] = {
@@ -15038,7 +15043,10 @@ app.get("/api/prices", async (req, res) => {
       cached &&
       cached.usedOfficialClose !== true &&
       !isLikelyUsMarketSession();
-    if (cached && cachedHasPercent && Date.now() - cached.fetchedAt < 45 * 1000 && !cachedNeedsOfficialClose) return;
+    const cachedLiveTtl = isLikelyUsMarketSession()
+      ? WATCHLIST_LIVE_QUOTE_TTL_MS
+      : WATCHLIST_IDLE_QUOTE_TTL_MS;
+    if (cached && cachedHasPercent && Date.now() - cached.fetchedAt < cachedLiveTtl && !cachedNeedsOfficialClose) return;
 
     try {
       if (marketType !== "stock") {
@@ -15079,36 +15087,39 @@ app.get("/api/prices", async (req, res) => {
         }
         return;
       }
-      if (wantsLiveQuotes && !isLikelyUsMarketSession()) {
-        const dailyRows = await resolveWithin(fetchFmpRecentDailyOhlc(symbol), 2400, []).catch(() => []);
-        const latestDaily = dailyRows.at(-1);
-        const previousDaily = dailyRows.length > 1 ? dailyRows.at(-2) : null;
-        const closePrice = toNumberOrNull(latestDaily?.close);
-        const previousClosePrice = toNumberOrNull(previousDaily?.close);
-        if (closePrice !== null && closePrice > 0) {
-          const change = previousClosePrice > 0
-            ? closePrice - previousClosePrice
-            : toNumberOrNull(latestDaily?.change);
-          const percentChange = change !== null && previousClosePrice > 0
-            ? (change / previousClosePrice) * 100
-            : toNumberOrNull(latestDaily?.percentChange);
-          prices[symbol] = closePrice;
+
+      if (wantsLiveQuotes) {
+        const watchlistQuote = await resolveWithin(
+          fetchWatchlistStyleMarketQuote(symbol, "stock", true),
+          3600,
+          null
+        ).catch(() => null);
+        const livePrice = toNumberOrNull(watchlistQuote?.price);
+        const livePercentChange = toNumberOrNull(watchlistQuote?.percentChange);
+        if (livePrice !== null && livePrice > 0) {
+          prices[symbol] = livePrice;
           livePriceCache.set(symbol, {
-            price: closePrice,
-            change,
-            percentChange,
-            previousClose: previousClosePrice,
+            price: livePrice,
+            name: watchlistQuote?.name || details[symbol]?.name || symbol,
+            logo: watchlistQuote?.logo || details[symbol]?.logo || getFinnhubLogoUrl(symbol),
+            exchange: watchlistQuote?.exchange || details[symbol]?.exchange || null,
+            change: toNumberOrNull(watchlistQuote?.change),
+            percentChange: livePercentChange,
+            previousClose: toNumberOrNull(watchlistQuote?.previousClose),
             extendedHours: null,
-            source: "fmp-daily-close",
-            usedOfficialClose: true,
+            source: watchlistQuote?.source || "fmp-5min-chart",
+            usedOfficialClose: Boolean(watchlistQuote?.usedOfficialClose),
             fetchedAt: Date.now()
           });
           details[symbol] = {
             ...details[symbol],
-            change: change ?? details[symbol].change,
+            name: watchlistQuote?.name || details[symbol]?.name || symbol,
+            logo: watchlistQuote?.logo || details[symbol]?.logo || getFinnhubLogoUrl(symbol),
+            exchange: watchlistQuote?.exchange || details[symbol]?.exchange || null,
+            change: toNumberOrNull(watchlistQuote?.change) ?? details[symbol].change,
             extendedHours: null,
-            percentChange: percentChange ?? details[symbol].percentChange,
-            source: "fmp-daily-close"
+            percentChange: livePercentChange ?? details[symbol].percentChange,
+            source: watchlistQuote?.source || "fmp-5min-chart"
           };
           return;
         }
@@ -15219,7 +15230,9 @@ app.get("/api/prices", async (req, res) => {
     return (
       !cached ||
       toNumberOrNull(cached.percentChange) === null ||
-      Date.now() - cached.fetchedAt >= 45 * 1000
+      Date.now() - cached.fetchedAt >= (
+        isLikelyUsMarketSession() ? WATCHLIST_LIVE_QUOTE_TTL_MS : WATCHLIST_IDLE_QUOTE_TTL_MS
+      )
     );
   });
   runBackgroundQuoteRefresh(staleSymbols);
