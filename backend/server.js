@@ -3481,10 +3481,6 @@ function buildFmpQuoteFallbackPriceHistory(ticker, requestedRange = "1D", quoteD
   };
 }
 
-function isQuoteFallbackPriceHistory(history = {}) {
-  return history?.interval === "quote" || history?.source === "FMP quote fallback";
-}
-
 function isLikelyUsMarketSession(date = new Date()) {
   const { weekday, hour, minute } = getNewYorkClockParts(date);
   if (weekday === "Sat" || weekday === "Sun" || !Number.isFinite(hour) || !Number.isFinite(minute)) {
@@ -3631,7 +3627,7 @@ async function fetchFmpIntradayPriceHistory(ticker, requestedRange) {
     try {
       const response = await getFmpAxios(endpoint.url, {
         params: endpoint.params,
-        timeout: requestedRange === "1D" ? 6500 : 3200
+        timeout: requestedRange === "1D" ? 3200 : 2600
       });
       const rows = Array.isArray(response.data) ? response.data : [];
       if (rows.length) {
@@ -16930,18 +16926,15 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     const cached = priceHistoryCache.get(cacheKey);
     const cacheResolvedPriceHistory = (history) => {
       if (!history?.points?.length) return null;
-      const isOneDayQuoteFallback = requestedRange === "1D" && isQuoteFallbackPriceHistory(history);
       const data = {
         ...history,
         symbol: requestedTicker,
         sourceSymbol: ticker
       };
-      if (!isOneDayQuoteFallback) {
-        priceHistoryCache.set(cacheKey, {
-          fetchedAt: Date.now(),
-          data
-        });
-      }
+      priceHistoryCache.set(cacheKey, {
+        fetchedAt: Date.now(),
+        data
+      });
       return data;
     };
     const looksLikeMutualFund = /^[A-Z]{4,5}X$/.test(ticker);
@@ -16967,9 +16960,7 @@ app.get("/api/price-history/:ticker", async (req, res) => {
         }));
       }
     }
-    if (cached && isQuoteFallbackPriceHistory(cached.data) && requestedRange === "1D") {
-      priceHistoryCache.delete(cacheKey);
-    } else if (cached && Date.now() - cached.fetchedAt < rangeConfig.ttl) {
+    if (cached && Date.now() - cached.fetchedAt < rangeConfig.ttl) {
       return res.json(cached.data);
     }
     const staleChartMaxAge = requestedRange === "1D" ? 2 * 60 * 1000 : 15 * 60 * 1000;
@@ -16984,7 +16975,7 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     if (priceHistoryInFlight.has(cacheKey)) {
       const inFlightData = await resolveWithin(
         priceHistoryInFlight.get(cacheKey),
-        requestedRange === "1D" ? 7000 : 3600,
+        requestedRange === "1D" ? 3400 : 3200,
         null
       );
       if (inFlightData?.points?.length) {
@@ -17037,7 +17028,7 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     priceHistoryInFlight.set(cacheKey, historyPromise);
     const fmpHistory = await resolveWithin(
       historyPromise,
-      requestedRange === "1D" ? 7000 : 3600,
+      requestedRange === "1D" ? 3400 : 3200,
       null
     );
     const resolvedHistory = fmpHistory;
