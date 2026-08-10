@@ -5535,6 +5535,7 @@ useEffect(() => {
 
   const refreshPrices = async () => {
     if (!isActive) return;
+    const marketIsOpen = getMarketClock(new Date()).tone === "open";
     if (!initialSavedPricesLoaded.current) {
       initialSavedPricesLoaded.current = true;
       loadSavedPrices(symbols, 0, { live: true });
@@ -5546,7 +5547,7 @@ useEffect(() => {
     }
     refreshTimer = window.setTimeout(
       refreshPrices,
-      5 * 60 * 1000
+      marketIsOpen ? 15 * 1000 : 90 * 1000
     );
   };
 

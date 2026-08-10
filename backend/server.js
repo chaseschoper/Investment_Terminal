@@ -408,8 +408,6 @@ let fmpCooldownUntil = 0;
 let stockAnalysisCooldownUntil = 0;
 let secTickerMapPromise;
 let secTickerMapRetryAfter = 0;
-const WATCHLIST_LIVE_QUOTE_TTL_MS = 4.5 * 60 * 1000;
-const WATCHLIST_IDLE_QUOTE_TTL_MS = 15 * 60 * 1000;
 const COMMON_SEC_CIKS = new Map(Object.entries({
   AAPL: "0000320193",
   MSFT: "0000789019",
@@ -15018,10 +15016,7 @@ app.get("/api/prices", async (req, res) => {
     const cached = livePriceCache.get(symbol);
     const cachedIsFreshForRequest =
       cached &&
-      (!wantsLiveQuotes ||
-        Date.now() - (cached.fetchedAt || 0) < (
-          isLikelyUsMarketSession() ? WATCHLIST_LIVE_QUOTE_TTL_MS : WATCHLIST_IDLE_QUOTE_TTL_MS
-        ));
+      (!wantsLiveQuotes || Date.now() - (cached.fetchedAt || 0) < 45 * 1000);
     if (cachedIsFreshForRequest) {
       prices[symbol] = cached.price;
       details[symbol] = {
@@ -15043,10 +15038,7 @@ app.get("/api/prices", async (req, res) => {
       cached &&
       cached.usedOfficialClose !== true &&
       !isLikelyUsMarketSession();
-    const cachedLiveTtl = isLikelyUsMarketSession()
-      ? WATCHLIST_LIVE_QUOTE_TTL_MS
-      : WATCHLIST_IDLE_QUOTE_TTL_MS;
-    if (cached && cachedHasPercent && Date.now() - cached.fetchedAt < cachedLiveTtl && !cachedNeedsOfficialClose) return;
+    if (cached && cachedHasPercent && Date.now() - cached.fetchedAt < 45 * 1000 && !cachedNeedsOfficialClose) return;
 
     try {
       if (marketType !== "stock") {
@@ -15087,39 +15079,36 @@ app.get("/api/prices", async (req, res) => {
         }
         return;
       }
-
-      if (wantsLiveQuotes) {
-        const watchlistQuote = await resolveWithin(
-          fetchWatchlistStyleMarketQuote(symbol, "stock", true),
-          3600,
-          null
-        ).catch(() => null);
-        const livePrice = toNumberOrNull(watchlistQuote?.price);
-        const livePercentChange = toNumberOrNull(watchlistQuote?.percentChange);
-        if (livePrice !== null && livePrice > 0) {
-          prices[symbol] = livePrice;
+      if (wantsLiveQuotes && !isLikelyUsMarketSession()) {
+        const dailyRows = await resolveWithin(fetchFmpRecentDailyOhlc(symbol), 2400, []).catch(() => []);
+        const latestDaily = dailyRows.at(-1);
+        const previousDaily = dailyRows.length > 1 ? dailyRows.at(-2) : null;
+        const closePrice = toNumberOrNull(latestDaily?.close);
+        const previousClosePrice = toNumberOrNull(previousDaily?.close);
+        if (closePrice !== null && closePrice > 0) {
+          const change = previousClosePrice > 0
+            ? closePrice - previousClosePrice
+            : toNumberOrNull(latestDaily?.change);
+          const percentChange = change !== null && previousClosePrice > 0
+            ? (change / previousClosePrice) * 100
+            : toNumberOrNull(latestDaily?.percentChange);
+          prices[symbol] = closePrice;
           livePriceCache.set(symbol, {
-            price: livePrice,
-            name: watchlistQuote?.name || details[symbol]?.name || symbol,
-            logo: watchlistQuote?.logo || details[symbol]?.logo || getFinnhubLogoUrl(symbol),
-            exchange: watchlistQuote?.exchange || details[symbol]?.exchange || null,
-            change: toNumberOrNull(watchlistQuote?.change),
-            percentChange: livePercentChange,
-            previousClose: toNumberOrNull(watchlistQuote?.previousClose),
+            price: closePrice,
+            change,
+            percentChange,
+            previousClose: previousClosePrice,
             extendedHours: null,
-            source: watchlistQuote?.source || "fmp-5min-chart",
-            usedOfficialClose: Boolean(watchlistQuote?.usedOfficialClose),
+            source: "fmp-daily-close",
+            usedOfficialClose: true,
             fetchedAt: Date.now()
           });
           details[symbol] = {
             ...details[symbol],
-            name: watchlistQuote?.name || details[symbol]?.name || symbol,
-            logo: watchlistQuote?.logo || details[symbol]?.logo || getFinnhubLogoUrl(symbol),
-            exchange: watchlistQuote?.exchange || details[symbol]?.exchange || null,
-            change: toNumberOrNull(watchlistQuote?.change) ?? details[symbol].change,
+            change: change ?? details[symbol].change,
             extendedHours: null,
-            percentChange: livePercentChange ?? details[symbol].percentChange,
-            source: watchlistQuote?.source || "fmp-5min-chart"
+            percentChange: percentChange ?? details[symbol].percentChange,
+            source: "fmp-daily-close"
           };
           return;
         }
@@ -15216,13 +15205,13 @@ app.get("/api/prices", async (req, res) => {
     );
   });
   const queue = [...symbolsNeedingLive];
-  const workerCount = Math.min(wantsLiveQuotes ? 3 : 4, queue.length);
+  const workerCount = Math.min(wantsLiveQuotes ? 8 : 4, queue.length);
   await resolveWithin(Promise.all(Array.from({ length: workerCount }, async () => {
     while (queue.length) {
       const symbol = queue.shift();
       await refreshSymbolQuote(symbol);
     }
-  })), wantsLiveQuotes ? 8500 : 2200, null);
+  })), wantsLiveQuotes ? 4800 : 2200, null);
   symbols.forEach(hydrateSavedSymbol);
 
   const staleSymbols = symbols.filter((symbol) => {
@@ -15230,9 +15219,7 @@ app.get("/api/prices", async (req, res) => {
     return (
       !cached ||
       toNumberOrNull(cached.percentChange) === null ||
-      Date.now() - cached.fetchedAt >= (
-        isLikelyUsMarketSession() ? WATCHLIST_LIVE_QUOTE_TTL_MS : WATCHLIST_IDLE_QUOTE_TTL_MS
-      )
+      Date.now() - cached.fetchedAt >= 45 * 1000
     );
   });
   runBackgroundQuoteRefresh(staleSymbols);
@@ -17839,75 +17826,53 @@ async function fetchFmpLatestIntradayTick(symbol) {
   if (!normalizedSymbol || !process.env.FMP_API_KEY || !canUseFmp()) return null;
 
   const cached = latestIntradayTickCache.get(normalizedSymbol);
-  const cacheTtl = isLikelyUsMarketSession() ? WATCHLIST_LIVE_QUOTE_TTL_MS : WATCHLIST_IDLE_QUOTE_TTL_MS;
   if (
     cached &&
-    Date.now() - cached.fetchedAt < cacheTtl &&
+    Date.now() - cached.fetchedAt < 15 * 1000 &&
     (cached.data?.usedOfficialClose || isLikelyUsMarketSession())
   ) {
     return cached.data;
   }
 
-  const [intradayResponse, quoteProfile] = await Promise.all([
-    getFmpAxios("https://financialmodelingprep.com/stable/historical-chart/5min", {
-      params: {
-        symbol: normalizedSymbol,
-        apikey: process.env.FMP_API_KEY
-      },
-      timeout: 2200
-    }).catch((err) => {
-      setFmpCooldown(err, "watchlist 5-minute quote", normalizedSymbol);
-      return null;
-    }),
-    resolveWithin(fetchFmpStableQuoteProfile(normalizedSymbol), 1800, null).catch(() => null)
-  ]);
-
-  const rows = Array.isArray(intradayResponse?.data) ? intradayResponse.data : [];
-  const points = rows
-    .map((row) => {
-      const rawDate = firstText(row.date, row.datetime, row.timestamp);
-      const parsed = parseFmpMarketDateTime(rawDate);
-      const price = firstFiniteNumber(row.close, row.price, row.adjClose);
-      if (price === null || !parsed || Number.isNaN(parsed.getTime())) return null;
-      return {
-        time: parsed.getTime(),
-        date: parsed.toISOString(),
-        marketDateKey: /^\d{4}-\d{2}-\d{2}/.test(String(rawDate || ""))
-          ? String(rawDate).slice(0, 10)
-          : getNewYorkDateKey(parsed),
-        price,
-        open: firstFiniteNumber(row.open),
-        close: price
-      };
-    })
-    .filter(Boolean)
-    .sort((a, b) => a.time - b.time);
-
-  const todayKey = getNewYorkDateKey();
-  const regularPoints = points.filter((point) =>
-    point.marketDateKey === todayKey && isRegularUsMarketPoint(point)
-  );
-  const latestPoint = (isLikelyUsMarketSession() && regularPoints.length ? regularPoints : points).at(-1);
-
-  let price = toNumberOrNull(latestPoint?.price);
-  if (price === null || price <= 0) price = toNumberOrNull(quoteProfile?.price);
+  const chartCacheKey = `${normalizedSymbol}:1D`;
+  const cachedChartHistory = priceHistoryCache.get(chartCacheKey);
+  const chartHistory = cachedChartHistory?.data?.points?.length &&
+    Date.now() - cachedChartHistory.fetchedAt < PRICE_HISTORY_RANGES["1D"].ttl
+      ? cachedChartHistory.data
+      : await fetchFmpPriceHistory(normalizedSymbol, "1D");
+  const latest = chartHistory?.latest || {};
+  let price = toNumberOrNull(latest.price);
   if (price === null || price <= 0) return null;
-
-  const previousClose = toNumberOrNull(quoteProfile?.previousClose);
-  const change = previousClose > 0
-    ? price - previousClose
-    : toNumberOrNull(quoteProfile?.change);
-  const percentChange = change !== null && previousClose > 0
-    ? (change / previousClose) * 100
-    : toNumberOrNull(quoteProfile?.percentChange);
-  const usedOfficialClose = !isLikelyUsMarketSession();
+  let change = toNumberOrNull(latest.change);
+  let percentChange = toNumberOrNull(latest.percentChange);
+  let previousClose = toNumberOrNull(latest.previousClose);
+  const latestPoint = Array.isArray(chartHistory?.points) ? chartHistory.points.at(-1) : null;
+  let usedOfficialClose = Boolean(latestPoint?.isOfficialClose);
+  const latestDateKey = latestPoint?.marketDateKey || latestPoint?.date?.slice(0, 10);
+  if (latestDateKey && isRegularSessionCompleteForDate(latestDateKey)) {
+    const dailyRows = await resolveWithin(fetchFmpRecentDailyOhlc(normalizedSymbol), 2200, []).catch(() => []);
+    const latestDailyRow = dailyRows.find((row) => row?.date === latestDateKey);
+    const previousDailyClose = [...dailyRows]
+      .filter((row) => row?.date && row.date < latestDateKey)
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .at(-1)?.close;
+    const officialClose = toNumberOrNull(latestDailyRow?.close);
+    const officialPreviousClose = toNumberOrNull(previousDailyClose);
+    if (officialClose !== null && officialClose > 0) {
+      price = officialClose;
+      previousClose = officialPreviousClose ?? previousClose;
+      change = previousClose > 0 ? price - previousClose : change;
+      percentChange = change !== null && previousClose > 0 ? (change / previousClose) * 100 : percentChange;
+      usedOfficialClose = true;
+    }
+  }
 
   const data = {
     price,
     change,
     percentChange,
     previousClose,
-    open: toNumberOrNull(latestPoint?.open),
+    open: toNumberOrNull(latest.open),
     usedOfficialClose,
     updatedAt: new Date().toISOString()
   };
