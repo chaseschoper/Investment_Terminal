@@ -4611,6 +4611,7 @@ function App() {
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
   const [marketEventToast, setMarketEventToast] = useState(null);
   const googleButtonRef = useRef(null);
+  const [isGoogleButtonReady, setIsGoogleButtonReady] = useState(false);
 const [isLogin, setIsLogin] = useState(true);
 
 const [username, setUsername] = useState("");
@@ -4843,7 +4844,20 @@ useEffect(() => {
 }, []);
 
 useEffect(() => {
+  if (!GOOGLE_CLIENT_ID) return;
+  if (window.google?.accounts?.id) return;
+  if (document.querySelector("script[src='https://accounts.google.com/gsi/client']")) return;
+
+  const script = document.createElement("script");
+  script.src = "https://accounts.google.com/gsi/client";
+  script.async = true;
+  script.defer = true;
+  document.body.appendChild(script);
+}, [GOOGLE_CLIENT_ID]);
+
+useEffect(() => {
   if (!showAuth || isRecoveringPassword || !GOOGLE_CLIENT_ID || !googleButtonRef.current) return;
+  setIsGoogleButtonReady(false);
 
   const renderGoogleButton = () => {
     if (!window.google?.accounts?.id || !googleButtonRef.current) return;
@@ -4860,6 +4874,7 @@ useEffect(() => {
       width: 330,
       text: "continue_with"
     });
+    setIsGoogleButtonReady(true);
   };
 
   if (window.google?.accounts?.id) {
@@ -16849,8 +16864,23 @@ return (
           {GOOGLE_CLIENT_ID ? (
             <div
               className={`google-auth-button ${!isLogin && !acceptedPolicies ? "google-auth-button-disabled" : ""}`}
-              ref={googleButtonRef}
-            />
+            >
+              <div
+                className="google-auth-official-button"
+                ref={googleButtonRef}
+              />
+              {!isGoogleButtonReady && (
+                <button
+                  type="button"
+                  className="google-auth-fallback-button"
+                  disabled={!isLogin && !acceptedPolicies}
+                  onClick={() => setAuthMessage("Google sign-in is loading. Try again in a moment.")}
+                >
+                  <span aria-hidden="true">G</span>
+                  Continue with Google
+                </button>
+              )}
+            </div>
           ) : (
             <div className="auth-required-message">
               Google sign-in needs a Google Client ID added first.

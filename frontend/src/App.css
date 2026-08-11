@@ -8199,6 +8199,47 @@ body {
   place-items: center;
 }
 
+.google-auth-official-button {
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+}
+
+.google-auth-fallback-button {
+  width: 100%;
+  min-height: 44px;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.34) !important;
+  border-radius: 8px !important;
+  background: #ffffff !important;
+  color: #1f2937 !important;
+  font-size: 14px !important;
+  font-weight: 800 !important;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
+}
+
+.google-auth-fallback-button span {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: #4285f4;
+  font-size: 16px;
+  font-weight: 950;
+  font-family: Arial, sans-serif;
+}
+
+.google-auth-fallback-button:hover,
+.google-auth-fallback-button:focus-visible {
+  background: #f8fafc !important;
+  color: #111827 !important;
+  outline: none;
+}
+
 .google-auth-button-disabled {
   opacity: 0.48;
   pointer-events: none;
