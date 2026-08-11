@@ -3336,7 +3336,9 @@ function trimOneDayPointsToCurrentRegularSession(points = [], dateKey = null) {
     const pointTime = toNumberOrNull(point.time);
     if (pointTime === null) return false;
     if (point?.isSyntheticClose || point?.isOfficialClose) {
-      return pointTime <= latestRealTime || !isLikelyUsMarketSession();
+      return pointTime <= latestRealTime ||
+        isRegularSessionCompleteForDate(sessionDateKey) ||
+        !isLikelyUsMarketSession();
     }
     return pointTime <= latestRealTime;
   });
