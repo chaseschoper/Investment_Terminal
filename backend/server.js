@@ -67,10 +67,17 @@ const fmpDataInFlight = new Map();
 const fmpFastDataCache = new Map();
 const fmpFastDataInFlight = new Map();
 const fmpAfterHoursTradeCache = new Map();
+const backendWarmupState = {
+  inFlight: null,
+  lastStartedAt: 0,
+  lastFinishedAt: 0,
+  lastResults: []
+};
 const FMP_DATA_CACHE_TTL_MS = 10 * 60 * 1000;
 const FMP_FAST_DATA_CACHE_TTL_MS = 10 * 60 * 1000;
 const FMP_MAX_CONCURRENT_REQUESTS = 3;
 const FMP_REQUEST_SPACING_MS = 60;
+const BACKEND_WARMUP_MIN_INTERVAL_MS = 4 * 60 * 1000;
 let fmpActiveRequestCount = 0;
 let fmpLastRequestStartedAt = 0;
 const fmpRequestQueue = [];
@@ -24470,11 +24477,133 @@ projections: req.user.projections || {}
 });
 });
 
+const buildBackendWarmupTargets = () => [
+  { label: "health", path: "/health", timeout: 2200 },
+  { label: "market indices", path: "/api/market-indices", timeout: 5200 },
+  { label: "market movers", path: "/api/market-movers", timeout: 9000 },
+  { label: "top traded stocks", path: "/api/top-traded-stocks", timeout: 12000 },
+  { label: "earnings calendar", path: "/api/calendar-events?type=earnings", timeout: 11000 },
+  { label: "dividends calendar", path: "/api/calendar-events?type=dividends", timeout: 8500 },
+  { label: "ipo calendar", path: "/api/calendar-events?type=ipos", timeout: 8500 },
+  { label: "economic calendar", path: "/api/calendar-events?type=economic", timeout: 8500 },
+  { label: "treasury rates", path: "/api/treasury-rates", timeout: 8500 },
+  { label: "general news", path: "/api/news?limit=20", timeout: 8500 },
+  { label: "NVDA 1D chart", path: "/api/price-history/NVDA?range=1D", timeout: 6500 },
+  { label: "SPY 1D chart", path: "/api/price-history/SPY?range=1D", timeout: 6500 },
+  { label: "crypto search", path: "/api/crypto-search?q=BTC", timeout: 6500 },
+  { label: "forex search", path: "/api/forex-search?q=EUR", timeout: 6500 }
+];
+
+const runWarmupWithConcurrency = async (targets, concurrency = 3) => {
+  const results = [];
+  let cursor = 0;
+
+  const worker = async () => {
+    while (cursor < targets.length) {
+      const target = targets[cursor];
+      cursor += 1;
+      const startedAt = Date.now();
+      try {
+        const response = await axios.get(`http://127.0.0.1:${PORT}${target.path}`, {
+          timeout: target.timeout || 7000,
+          validateStatus: () => true
+        });
+        results.push({
+          label: target.label,
+          status: response.status,
+          ok: response.status < 400,
+          ms: Date.now() - startedAt
+        });
+      } catch (err) {
+        results.push({
+          label: target.label,
+          status: 0,
+          ok: false,
+          error: err.code || err.message,
+          ms: Date.now() - startedAt
+        });
+      }
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, targets.length) }, () => worker())
+  );
+  return results.sort((a, b) => targets.findIndex((target) => target.label === a.label) - targets.findIndex((target) => target.label === b.label));
+};
+
+const startBackendWarmup = ({ force = false } = {}) => {
+  const now = Date.now();
+  if (backendWarmupState.inFlight) {
+    return { started: false, reason: "already-running", promise: backendWarmupState.inFlight };
+  }
+  if (!force && backendWarmupState.lastFinishedAt && now - backendWarmupState.lastFinishedAt < BACKEND_WARMUP_MIN_INTERVAL_MS) {
+    return { started: false, reason: "recent", promise: Promise.resolve(backendWarmupState.lastResults) };
+  }
+
+  backendWarmupState.lastStartedAt = now;
+  backendWarmupState.inFlight = runWarmupWithConcurrency(buildBackendWarmupTargets())
+    .then((results) => {
+      backendWarmupState.lastResults = results;
+      return results;
+    })
+    .catch((err) => {
+      const result = [{
+        label: "warmup",
+        status: 0,
+        ok: false,
+        error: err.message,
+        ms: Date.now() - now
+      }];
+      backendWarmupState.lastResults = result;
+      return result;
+    })
+    .finally(() => {
+      backendWarmupState.lastFinishedAt = Date.now();
+      backendWarmupState.inFlight = null;
+    });
+
+  return { started: true, reason: "started", promise: backendWarmupState.inFlight };
+};
+
+app.get("/api/warmup", async (req, res) => {
+  const waitForResults = String(req.query.wait || "") === "1";
+  const force = String(req.query.force || "") === "1";
+  const warmup = startBackendWarmup({ force });
+
+  if (!waitForResults) {
+    return res.json({
+      status: "warming",
+      started: warmup.started,
+      reason: warmup.reason,
+      lastStartedAt: backendWarmupState.lastStartedAt ? new Date(backendWarmupState.lastStartedAt).toISOString() : null,
+      lastFinishedAt: backendWarmupState.lastFinishedAt ? new Date(backendWarmupState.lastFinishedAt).toISOString() : null,
+      lastResults: backendWarmupState.lastResults
+    });
+  }
+
+  const results = await resolveWithin(warmup.promise, 25000, backendWarmupState.lastResults);
+  return res.json({
+    status: "ok",
+    started: warmup.started,
+    reason: warmup.reason,
+    lastStartedAt: backendWarmupState.lastStartedAt ? new Date(backendWarmupState.lastStartedAt).toISOString() : null,
+    lastFinishedAt: backendWarmupState.lastFinishedAt ? new Date(backendWarmupState.lastFinishedAt).toISOString() : null,
+    results
+  });
+});
+
 // =========================
 // HEALTH
 // =========================
 app.get("/health", (req, res) => {
-res.json({ status: "ok" });
+res.json({
+  status: "ok",
+  warmup: {
+    running: Boolean(backendWarmupState.inFlight),
+    lastFinishedAt: backendWarmupState.lastFinishedAt ? new Date(backendWarmupState.lastFinishedAt).toISOString() : null
+  }
+});
 });
 
 // =========================

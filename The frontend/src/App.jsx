@@ -4731,6 +4731,22 @@ useEffect(() => {
 }, []);
 
 useEffect(() => {
+  const controller = new AbortController();
+  const warmupTimer = window.setTimeout(() => {
+    axios.get(`${API_URL}/api/warmup`, {
+      params: { source: "client" },
+      signal: controller.signal,
+      timeout: 3500
+    }).catch(() => {});
+  }, 500);
+
+  return () => {
+    window.clearTimeout(warmupTimer);
+    controller.abort();
+  };
+}, []);
+
+useEffect(() => {
   if (!showAuth || isRecoveringPassword || !GOOGLE_CLIENT_ID || !googleButtonRef.current) return;
 
   const renderGoogleButton = () => {
