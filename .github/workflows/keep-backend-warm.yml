@@ -1,0 +1,16 @@
+name: Keep Backend Warm
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  warmup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Warm MrktRally backend
+        run: |
+          curl --fail --silent --show-error --max-time 45 \
+            "https://investment-terminal-jtng.onrender.com/api/warmup?wait=1"
