@@ -78,6 +78,7 @@ const FMP_FAST_DATA_CACHE_TTL_MS = 10 * 60 * 1000;
 const FMP_MAX_CONCURRENT_REQUESTS = 3;
 const FMP_REQUEST_SPACING_MS = 60;
 const BACKEND_WARMUP_MIN_INTERVAL_MS = 4 * 60 * 1000;
+const BACKEND_WARMUP_REFRESH_MS = 5 * 60 * 1000;
 let fmpActiveRequestCount = 0;
 let fmpLastRequestStartedAt = 0;
 const fmpRequestQueue = [];
@@ -24367,7 +24368,7 @@ res.status(500).json({ sectors: [], industries: [], exchanges: [], countries: []
 // SAVE USER DATA
 app.post("/api/save-data", authMiddleware, async (req, res) => {
 try {
-const { watchlist, portfolio, portfolios, activePortfolioId, namedWatchlists, projections } = req.body;
+const { watchlist, portfolio, portfolios, activePortfolioId, namedWatchlists, projections, profileSettings } = req.body;
 const cleanSymbols = (symbols, limit = 100) => [...new Set((Array.isArray(symbols) ? symbols : [])
   .map((symbol) => String(symbol).trim().toUpperCase())
   .filter((symbol) => /^[A-Z0-9.-]{1,10}$/.test(symbol)))]
@@ -24426,6 +24427,9 @@ const cleanPortfolios = Array.isArray(portfolios)
   ? portfolios.slice(0, 20).map((item, index) => ({
       id: String(item?.id || `portfolio-${index}`).slice(0, 80),
       name: String(item?.name || `Portfolio ${index + 1}`).trim().slice(0, 60),
+      cash: Number.isFinite(Number(item?.cash)) && Number(item.cash) >= 0
+        ? Number(item.cash)
+        : 0,
       positions: cleanPositions(item?.positions)
     }))
   : [];
@@ -24445,6 +24449,9 @@ const cleanNamedWatchlists = Array.isArray(namedWatchlists)
     }))
   : [];
 const cleanSavedProjections = cleanProjections(projections);
+const cleanProfileSettings = {
+  watchlistTapeMoves: Boolean(profileSettings?.watchlistTapeMoves)
+};
 
 req.user.watchlist = cleanSymbols(watchlist);
 req.user.portfolios = savedPortfolios;
@@ -24454,6 +24461,7 @@ req.user.portfolio = savedPortfolios.find(
 )?.positions || [];
 req.user.namedWatchlists = cleanNamedWatchlists;
 req.user.projections = cleanSavedProjections;
+req.user.profileSettings = cleanProfileSettings;
 
 await req.user.save();
 
@@ -24473,7 +24481,8 @@ portfolio: req.user.portfolio || [],
 portfolios: req.user.portfolios || [],
 activePortfolioId: req.user.activePortfolioId || "",
 namedWatchlists: req.user.namedWatchlists || [],
-projections: req.user.projections || {}
+projections: req.user.projections || {},
+profileSettings: req.user.profileSettings || {}
 });
 });
 
@@ -24613,4 +24622,14 @@ const PORT = process.env.PORT || 5001;
 
 app.listen(PORT, () => {
 console.log(`Server running on port ${PORT}`);
+setInterval(() => {
+  startBackendWarmup().promise.catch((err) => {
+    console.log("Scheduled backend warmup skipped:", err.message);
+  });
+}, BACKEND_WARMUP_REFRESH_MS);
+setTimeout(() => {
+  startBackendWarmup({ force: true }).promise.catch((err) => {
+    console.log("Startup backend warmup skipped:", err.message);
+  });
+}, 5000);
 });

@@ -3695,6 +3695,8 @@ const DEFAULT_PORTFOLIO = {
 };
 const SAVED_LISTS_STORAGE_KEY = "mrktrally-saved-lists";
 const MARKET_INDICES_STORAGE_KEY = "mrktrally-market-indices";
+const SAVED_QUOTES_STORAGE_KEY = "mrktrally-saved-quotes";
+const SAVED_QUOTES_TTL_MS = 4 * 60 * 60 * 1000;
 const MARKET_INDEX_ORDER = [
   { key: "sp500", label: "S&P 500" },
   { key: "dow", label: "Dow Jones" },
@@ -3780,6 +3782,57 @@ const mergeNamedWatchlists = (localLists = [], remoteLists = []) => {
     });
 
   return [...merged.values()];
+};
+
+const readLocalJsonStorage = (key, fallback) => {
+  try {
+    return JSON.parse(localStorage.getItem(key) || "null") ?? fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const readSavedUserSnapshot = () => readLocalJsonStorage("user", null);
+
+const readSavedListsSnapshot = () => {
+  const savedLists = readLocalJsonStorage(SAVED_LISTS_STORAGE_KEY, {});
+  const portfolios = normalizePortfolios(savedLists.portfolios || []);
+  const activePortfolioId = portfolios.some((item) => item.id === savedLists.activePortfolioId)
+    ? savedLists.activePortfolioId
+    : (portfolios[0]?.id || DEFAULT_PORTFOLIO.id);
+
+  return {
+    watchlist: normalizeSymbolList(savedLists.watchlist || []),
+    portfolios: portfolios.length ? portfolios : [DEFAULT_PORTFOLIO],
+    activePortfolioId,
+    namedWatchlists: mergeNamedWatchlists(savedLists.namedWatchlists || [], []),
+    projections: normalizeStockProjections(savedLists.projections || {}),
+    profileSettings: savedLists.profileSettings || {}
+  };
+};
+
+const readSavedQuoteSnapshot = () => {
+  const snapshot = readLocalJsonStorage(SAVED_QUOTES_STORAGE_KEY, {});
+  if (!snapshot?.savedAt || Date.now() - Date.parse(snapshot.savedAt) > SAVED_QUOTES_TTL_MS) {
+    return { prices: {}, details: {} };
+  }
+  return {
+    prices: snapshot.prices && typeof snapshot.prices === "object" ? snapshot.prices : {},
+    details: snapshot.details && typeof snapshot.details === "object" ? snapshot.details : {}
+  };
+};
+
+const mergeSavedQuoteSnapshot = (prices = {}, details = {}) => {
+  if (!Object.keys(prices).length && !Object.keys(details).length) return;
+  const existing = readSavedQuoteSnapshot();
+  localStorage.setItem(
+    SAVED_QUOTES_STORAGE_KEY,
+    JSON.stringify({
+      savedAt: new Date().toISOString(),
+      prices: { ...existing.prices, ...prices },
+      details: { ...existing.details, ...details }
+    })
+  );
 };
 import axios from "axios";
 const API_URL =
@@ -4509,6 +4562,12 @@ function App() {
   const speechQueueRef = useRef([]);
   const speechIndexRef = useRef(0);
   const speechUtteranceRef = useRef(null);
+  const initialSavedListsRef = useRef(null);
+  const initialSavedUserRef = useRef(null);
+  const initialSavedQuotesRef = useRef(null);
+  if (!initialSavedListsRef.current) initialSavedListsRef.current = readSavedListsSnapshot();
+  if (!initialSavedUserRef.current) initialSavedUserRef.current = readSavedUserSnapshot();
+  if (!initialSavedQuotesRef.current) initialSavedQuotesRef.current = readSavedQuoteSnapshot();
   const [showAuth, setShowAuth] = useState(false);
   const [authPrompt, setAuthPrompt] = useState("");
   const [authMessage, setAuthMessage] = useState("");
@@ -4789,59 +4848,25 @@ useEffect(() => {
 
 
 const [user, setUser] =
-  useState(null);
+  useState(() => initialSavedUserRef.current);
 const [hasLoadedSavedLists, setHasLoadedSavedLists] =
-  useState(false);
+  useState(true);
 const [hasLoadedRemoteUserData, setHasLoadedRemoteUserData] =
   useState(false);
 const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
-  useState(false);
+  useState(() => {
+    const savedLists = initialSavedListsRef.current;
+    return Boolean(
+      savedLists.watchlist.length ||
+      hasPortfolioPositions(savedLists.portfolios) ||
+      savedLists.namedWatchlists.some((list) => (list.symbols || []).length) ||
+      Object.keys(savedLists.projections || {}).length ||
+      savedLists.profileSettings.watchlistTapeMoves
+    );
+  });
   useEffect(() => {
 
-  const savedUser =
-    localStorage.getItem("user");
-
-  try {
-    const savedLists = JSON.parse(
-      localStorage.getItem(SAVED_LISTS_STORAGE_KEY) || "{}"
-    );
-    if (Array.isArray(savedLists.watchlist)) {
-      setWatchlist(savedLists.watchlist);
-    }
-    if (Array.isArray(savedLists.portfolios) && savedLists.portfolios.length) {
-      setPortfolios(normalizePortfolios(savedLists.portfolios));
-    }
-    if (savedLists.activePortfolioId) {
-      setActivePortfolioId(savedLists.activePortfolioId);
-    }
-    if (Array.isArray(savedLists.namedWatchlists)) {
-      setNamedWatchlists(savedLists.namedWatchlists);
-    }
-    if (typeof savedLists.profileSettings?.watchlistTapeMoves === "boolean") {
-      setWatchlistTapeMoves(savedLists.profileSettings.watchlistTapeMoves);
-    }
-    setSavedProjections(normalizeStockProjections(savedLists.projections || {}));
-    setHasMeaningfulSavedLists(
-      Boolean(
-        (savedLists.watchlist || []).length ||
-        hasPortfolioPositions(savedLists.portfolios || []) ||
-        (savedLists.namedWatchlists || []).some((list) => (list.symbols || []).length) ||
-        Object.keys(savedLists.projections || {}).length ||
-        savedLists.profileSettings
-      )
-    );
-  } catch (error) {
-    console.error("Saved lists restore failed", error);
-  } finally {
-    setHasLoadedSavedLists(true);
-  }
-
-  if (savedUser) {
-
-    setUser(
-      JSON.parse(savedUser)
-    );
-
+  if (initialSavedUserRef.current) {
     loadUserData();
   }
 
@@ -4861,7 +4886,7 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [activePage, setActivePage] =
     useState("home");
   const [savedProjections, setSavedProjections] =
-    useState({});
+    useState(() => initialSavedListsRef.current.projections);
 
   let [stockData, setStockData] =
     useState(null);
@@ -4951,16 +4976,21 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
     useState("");
 
    const [watchlist, setWatchlist] =
-  useState([]);
+  useState(() => initialSavedListsRef.current.watchlist);
 
   const [watchlistTapeMoves, setWatchlistTapeMoves] =
-  useState(() => localStorage.getItem("mrktrallyWatchlistTapeMoves") === "true");
+  useState(() => {
+    const savedValue = initialSavedListsRef.current.profileSettings.watchlistTapeMoves;
+    return typeof savedValue === "boolean"
+      ? savedValue
+      : localStorage.getItem("mrktrallyWatchlistTapeMoves") === "true";
+  });
 
   const [newTicker, setNewTicker] =
   useState("");
 
   const [namedWatchlists, setNamedWatchlists] =
-  useState([]);
+  useState(() => initialSavedListsRef.current.namedWatchlists);
 
   const [newWatchlistName, setNewWatchlistName] =
   useState("");
@@ -4969,10 +4999,10 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   useState({});
 
   const [portfolios, setPortfolios] =
-  useState([DEFAULT_PORTFOLIO]);
+  useState(() => initialSavedListsRef.current.portfolios);
 
   const [activePortfolioId, setActivePortfolioId] =
-  useState(DEFAULT_PORTFOLIO.id);
+  useState(() => initialSavedListsRef.current.activePortfolioId);
 
   const [newPortfolioName, setNewPortfolioName] =
   useState("");
@@ -5028,10 +5058,10 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   };
 
   const [portfolioPrices, setPortfolioPrices] =
-    useState({});
+    useState(() => initialSavedQuotesRef.current.prices);
 
   const [savedSymbolDetails, setSavedSymbolDetails] =
-    useState({});
+    useState(() => initialSavedQuotesRef.current.details);
 
   const [marketIndices, setMarketIndices] =
     useState(() => {
@@ -7393,6 +7423,7 @@ const loadUserData = async () => {
     if (!symbols.length) return;
 
     const applyPricePayload = (receivedPrices = {}, receivedDetails = {}) => {
+      mergeSavedQuoteSnapshot(receivedPrices, receivedDetails);
       setPortfolioPrices((prev) => ({ ...prev, ...receivedPrices }));
       setSavedSymbolDetails((prev) => {
         const next = { ...prev };
