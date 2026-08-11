@@ -16217,18 +16217,45 @@ return (
           onClick={(event) => event.stopPropagation()}
         >
           <div className="calendar-report-heading">
-            <div>
-              <span className="home-feature-label">Earnings Report</span>
-              <h3>{selectedCalendarEvent.symbol}</h3>
-              <p>{selectedCalendarEvent.company}</p>
+            <div className="calendar-report-title">
+              <span
+                className={`calendar-report-logo-shell${getDisplayCompanyLogoUrl(selectedCalendarEvent.symbol, selectedCalendarEvent.logo) ? " has-logo" : ""}`}
+                aria-hidden="true"
+              >
+                <span className="calendar-company-logo-fallback">
+                  {getLogoFallbackText(selectedCalendarEvent.symbol)}
+                </span>
+                {getDisplayCompanyLogoUrl(selectedCalendarEvent.symbol, selectedCalendarEvent.logo) && (
+                  <img
+                    className="calendar-company-logo"
+                    src={getDisplayCompanyLogoUrl(selectedCalendarEvent.symbol, selectedCalendarEvent.logo)}
+                    data-provider-logo={selectedCalendarEvent.logo || ""}
+                    alt=""
+                    crossOrigin="anonymous"
+                    onLoad={(event) => handleCompanyLogoLoad(event)}
+                    onError={(event) => handleCompanyLogoError(event, selectedCalendarEvent.symbol)}
+                  />
+                )}
+              </span>
+              <div>
+                <span className="home-feature-label">Earnings Report</span>
+                <h3>{selectedCalendarEvent.symbol}</h3>
+                <p>{selectedCalendarEvent.company}</p>
+              </div>
             </div>
-            <button
-              type="button"
-              aria-label="Close earnings report"
-              onClick={() => setSelectedCalendarEvent(null)}
-            >
-              Close
-            </button>
+            <div className="calendar-report-heading-actions">
+              <div className="calendar-report-brand" aria-label="Powered by MrktRally">
+                <img src="/mrktrally-icon.png" alt="" />
+                <span>Powered by <strong>MrktRally</strong></span>
+              </div>
+              <button
+                type="button"
+                aria-label="Close earnings report"
+                onClick={() => setSelectedCalendarEvent(null)}
+              >
+                Close
+              </button>
+            </div>
           </div>
 
           {loadingCalendarReportSymbol === selectedCalendarSymbol && !selectedCalendarReport?.rows?.length ? (

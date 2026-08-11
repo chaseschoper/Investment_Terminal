@@ -5495,6 +5495,63 @@ body {
   font-weight: 800;
 }
 
+.calendar-report-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.calendar-report-logo-shell {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid rgba(45, 212, 191, 0.34);
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 28% 22%, rgba(45, 212, 191, 0.28), transparent 52%),
+    rgba(2, 6, 12, 0.94);
+}
+
+.calendar-report-heading-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.calendar-report-brand {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 11px;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 18% 20%, rgba(45, 212, 191, 0.2), transparent 48%),
+    rgba(8, 17, 31, 0.84);
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.calendar-report-brand img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.calendar-report-brand strong {
+  color: #e0f2fe;
+  font-weight: 950;
+}
+
 .calendar-report-heading button {
   flex: 0 0 auto;
   border: 1px solid rgba(96, 165, 250, 0.42);
@@ -5716,11 +5773,30 @@ body {
   }
 
   .calendar-report-heading {
+    align-items: stretch;
+    flex-direction: column;
     padding: 18px;
+  }
+
+  .calendar-report-title {
+    align-items: flex-start;
+  }
+
+  .calendar-report-logo-shell {
+    width: 54px;
+    height: 54px;
   }
 
   .calendar-report-heading h3 {
     font-size: clamp(28px, 12vw, 44px);
+  }
+
+  .calendar-report-heading-actions {
+    justify-content: space-between;
+  }
+
+  .calendar-report-brand {
+    white-space: normal;
   }
 
   .calendar-report-heading button {
