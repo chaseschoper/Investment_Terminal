@@ -2419,7 +2419,7 @@ async function fetchFmpStableBalanceSheetMetrics(ticker) {
       combinedDebt,
       row.longTermDebt
     );
-    const shares = firstFiniteNumber(row.commonStockSharesOutstanding, row.weightedAverageShsOut, row.weightedAverageShsOutDil);
+    const shares = firstFiniteNumber(row.commonStockSharesOutstanding, row.weightedAverageShsOutDil);
 
     return {
       totalCash,
@@ -9588,14 +9588,14 @@ async function fetchFmpIncomeStatementHistory(ticker) {
         epsBasic: toNumberOrNull(row.eps),
         epsDiluted: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
         sharesOutstanding: toNumberOrNull(
-          row.weightedAverageShsOut ??
           row.weightedAverageShsOutDil ??
-          row.weightedAverageShsOutDiluted
+          row.weightedAverageShsOutDiluted ??
+          row.weightedAverageShsOut
         )
           ? toNumberOrNull(
-              row.weightedAverageShsOut ??
               row.weightedAverageShsOutDil ??
-              row.weightedAverageShsOutDiluted
+              row.weightedAverageShsOutDiluted ??
+              row.weightedAverageShsOut
             ) / 1000000
           : null,
         sourceCurrency: firstText(row.reportedCurrency, row.currency) || null,
@@ -9704,14 +9704,14 @@ async function fetchFmpQuarterlyFinancialHistory(ticker) {
           epsBasic: toNumberOrNull(row.eps),
           epsDiluted: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
           sharesOutstanding: toNumberOrNull(
-            row.weightedAverageShsOut ??
-              row.weightedAverageShsOutDil ??
-              row.weightedAverageShsOutDiluted
+            row.weightedAverageShsOutDil ??
+              row.weightedAverageShsOutDiluted ??
+              row.weightedAverageShsOut
           )
             ? toNumberOrNull(
-                row.weightedAverageShsOut ??
-                  row.weightedAverageShsOutDil ??
-                  row.weightedAverageShsOutDiluted
+                row.weightedAverageShsOutDil ??
+                  row.weightedAverageShsOutDiluted ??
+                  row.weightedAverageShsOut
               ) / 1000000
             : null,
           sourceCurrency: firstText(row.reportedCurrency, row.currency) || null,
@@ -24021,7 +24021,7 @@ async function buildDerivedQuarterlyFundamentalMetricRows(symbol, limit) {
     const balance = balanceByDate.get(date) || {};
     const cashflow = cashflowByDate.get(date) || {};
     const price = firstFiniteNumber(pricesByDate.get(date)?.price);
-    const shares = firstFiniteNumber(income.weightedAverageShsOut, income.weightedAverageShsOutDil);
+    const shares = firstFiniteNumber(income.weightedAverageShsOutDil, income.weightedAverageShsOut);
     const marketCap = price !== null && shares !== null ? price * shares : null;
     const cash = firstFiniteNumber(balance.cashAndShortTermInvestments, balance.cashAndCashEquivalents);
     const totalDebt = firstFiniteNumber(
