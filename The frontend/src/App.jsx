@@ -2072,6 +2072,36 @@ const FundamentalChartTooltip = ({ active, label, payload, indicator, hoveredPoi
   );
 };
 
+const CombinedFundamentalChartTooltip = ({ active, label, payload, lines }) => {
+  if (!active || !Array.isArray(payload) || !payload.length) return null;
+
+  const rows = payload
+    .filter((item) => isNumber(item.value))
+    .map((item) => {
+      const line = lines.find((candidate) => candidate.key === item.dataKey || candidate.key === item.name);
+      return line ? { ...line, value: item.value } : null;
+    })
+    .filter(Boolean);
+
+  if (!rows.length) return null;
+
+  return (
+    <div className="fundamental-tooltip fundamental-tooltip-combined">
+      <span>{label}</span>
+      {rows.map((row) => (
+        <div className="fundamental-tooltip-row" key={`${row.key}-${label}`}>
+          <i style={{ background: row.color }} />
+          <strong>
+            {row.symbol}
+            <small>{row.indicator.label}</small>
+          </strong>
+          <em>{formatFundamentalChartValue(row.value, row.indicator)}</em>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 const OverviewChartTooltip = ({ active, label, payload, formatter, valueLabel, symbol, color }) => {
   if (!active || !Array.isArray(payload) || !payload.length) return null;
   const point = payload.find((item) => isNumber(item.value));
@@ -8266,6 +8296,45 @@ const getFundamentalCompanyMeta = (symbol) => {
   };
 };
 
+const renderFundamentalChartCompanies = (prefix = "chart") => (
+  <div className="fundamental-chart-card-companies" aria-label="Companies shown on this chart">
+    {fundamentalChartTickers.map((symbol, index) => {
+      const company = getFundamentalCompanyMeta(symbol);
+      const color = PORTFOLIO_COLORS[index % PORTFOLIO_COLORS.length];
+      return (
+        <span className="fundamental-chart-card-company" key={`${prefix}-company-${symbol}`}>
+          <span className="fundamental-chart-card-logo" style={{ "--series-color": color }} aria-hidden="true">
+            {company.logo ? (
+              <img
+                src={company.logo}
+                alt=""
+                loading="lazy"
+                decoding="async"
+                crossOrigin="anonymous"
+                onLoad={(event) => handleCompanyLogoLoad(event)}
+                onError={(event) => handleCompanyLogoError(event, company.symbol)}
+              />
+            ) : (
+              company.symbol.slice(0, 1)
+            )}
+          </span>
+          <span>
+            <strong>{company.symbol}</strong>
+            <small>{company.name}</small>
+          </span>
+        </span>
+      );
+    })}
+  </div>
+);
+
+const renderFundamentalChartBrand = () => (
+  <div className="fundamental-chart-card-brand" aria-label="Powered by MrktRally">
+    <img src="/mrktrally-icon.png" alt="" />
+    <span>Powered by <strong>MrktRally</strong></span>
+  </div>
+);
+
 const renderFundamentalLineChart = (series, height = 320) => (
   <ResponsiveContainer width="100%" height={height}>
     <LineChart
@@ -8337,20 +8406,7 @@ const renderCombinedFundamentalLineChart = (height = 560) => (
         width={82}
       />
       <Tooltip
-        formatter={(value, name) => {
-          const line = combinedFundamentalChartLines.find((item) => item.key === name);
-          return [
-            formatFundamentalChartValue(value, line?.indicator || {}),
-            line?.label || name
-          ];
-        }}
-        labelStyle={{ color: "#e5e7eb" }}
-        contentStyle={{
-          background: "rgba(8, 17, 31, 0.96)",
-          border: "1px solid rgba(56, 189, 248, 0.34)",
-          borderRadius: 8,
-          color: "#e5e7eb"
-        }}
+        content={<CombinedFundamentalChartTooltip lines={combinedFundamentalChartLines} />}
       />
       {combinedFundamentalChartLines.map((line) => (
         <Line
@@ -13065,6 +13121,10 @@ return (
                     </strong>
                   </div>
                 </div>
+                <div className="fundamental-chart-card-meta">
+                  {renderFundamentalChartCompanies("combined")}
+                  {renderFundamentalChartBrand()}
+                </div>
 
                 {combinedFundamentalChartRows.length ? (
                   <>
@@ -13105,6 +13165,10 @@ return (
                             <span aria-hidden="true" />
                           </button>
                         </div>
+                      </div>
+                      <div className="fundamental-chart-card-meta">
+                        {renderFundamentalChartCompanies(series.indicator.key)}
+                        {renderFundamentalChartBrand()}
                       </div>
 
                       {series.rows.length ? (
