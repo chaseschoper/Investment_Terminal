@@ -96,7 +96,7 @@ const mrRallyStatementCache = new Map();
 const mrRallyWebContextCache = new Map();
 const fxRateCache = new Map();
 const alphaVantageFundamentalCache = new Map();
-const FINANCIAL_HISTORY_VERSION = 162;
+const FINANCIAL_HISTORY_VERSION = 163;
 const HISTORICAL_PE_VERSION = 3;
 const STOCK_ESTIMATE_VERSION = 23;
 const MIN_FULL_HISTORICAL_PE_ROWS = 10;
@@ -7338,6 +7338,8 @@ function mergeHistoricalFinancials(primary = [], fallback = [], limit = Infinity
       operatingCashflow: row.operatingCashflow ?? existing.operatingCashflow ?? null,
       freeCashflow: row.freeCashflow ?? existing.freeCashflow ?? null,
       sharesOutstanding: row.sharesOutstanding ?? existing.sharesOutstanding ?? null,
+      weightedAverageShares: row.weightedAverageShares ?? existing.weightedAverageShares ?? null,
+      weightedAverageDilutedShares: row.weightedAverageDilutedShares ?? existing.weightedAverageDilutedShares ?? null,
       date: firstText(row.date, existing.date) || null,
       reportDate: firstText(row.reportDate, existing.reportDate) || null,
       fillingDate: firstText(row.fillingDate, row.filingDate, existing.fillingDate) || null,
@@ -7361,7 +7363,9 @@ function mergeHistoricalFinancials(primary = [], fallback = [], limit = Infinity
       row.sgaExpense !== null ||
       row.operatingCashflow !== null ||
       row.freeCashflow !== null ||
-      row.sharesOutstanding !== null
+      row.sharesOutstanding !== null ||
+      row.weightedAverageShares !== null ||
+      row.weightedAverageDilutedShares !== null
     )
     .sort((a, b) => {
       const yearDiff = a.year - b.year;
@@ -7413,6 +7417,8 @@ function mergeSupplementalHistoricalFields(baseRows = [], supplementalRows = [],
       operatingCashflow: existing.operatingCashflow ?? row.operatingCashflow ?? null,
       freeCashflow: existing.freeCashflow ?? row.freeCashflow ?? null,
       sharesOutstanding: existing.sharesOutstanding ?? row.sharesOutstanding ?? null,
+      weightedAverageShares: existing.weightedAverageShares ?? row.weightedAverageShares ?? null,
+      weightedAverageDilutedShares: existing.weightedAverageDilutedShares ?? row.weightedAverageDilutedShares ?? null,
       date: firstText(existing.date, row.date) || null,
       reportDate: firstText(existing.reportDate, row.reportDate) || null,
       fillingDate: firstText(existing.fillingDate, existing.filingDate, row.fillingDate, row.filingDate) || null,
@@ -7433,7 +7439,9 @@ function mergeSupplementalHistoricalFields(baseRows = [], supplementalRows = [],
       row.sgaExpense !== null ||
       row.operatingCashflow !== null ||
       row.freeCashflow !== null ||
-      row.sharesOutstanding !== null
+      row.sharesOutstanding !== null ||
+      row.weightedAverageShares !== null ||
+      row.weightedAverageDilutedShares !== null
     )
     .sort((a, b) => {
       const yearDiff = Number(a.year) - Number(b.year);
@@ -7658,6 +7666,14 @@ function finalizeFinancialHistory(rows, sharesOutstanding) {
     sgaExpense: toNumberOrNull(row.sgaExpense),
     operatingCashflow: toNumberOrNull(row.operatingCashflow),
     freeCashflow: toNumberOrNull(row.freeCashflow),
+    weightedAverageShares: normalizeHistoricalShares(
+      row.weightedAverageShares,
+      sharesOutstanding
+    ),
+    weightedAverageDilutedShares: normalizeHistoricalShares(
+      row.weightedAverageDilutedShares,
+      sharesOutstanding
+    ),
     sharesOutstanding: normalizeHistoricalShares(
       firstFiniteNumber(
         row.sharesOutstanding,
@@ -9587,6 +9603,18 @@ async function fetchFmpIncomeStatementHistory(ticker) {
         eps: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
         epsBasic: toNumberOrNull(row.eps),
         epsDiluted: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
+        weightedAverageShares: toNumberOrNull(row.weightedAverageShsOut)
+          ? toNumberOrNull(row.weightedAverageShsOut) / 1000000
+          : null,
+        weightedAverageDilutedShares: toNumberOrNull(
+          row.weightedAverageShsOutDil ??
+          row.weightedAverageShsOutDiluted
+        )
+          ? toNumberOrNull(
+              row.weightedAverageShsOutDil ??
+              row.weightedAverageShsOutDiluted
+            ) / 1000000
+          : null,
         sharesOutstanding: toNumberOrNull(
           row.weightedAverageShsOutDil ??
           row.weightedAverageShsOutDiluted ??
@@ -9703,6 +9731,18 @@ async function fetchFmpQuarterlyFinancialHistory(ticker) {
           eps: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
           epsBasic: toNumberOrNull(row.eps),
           epsDiluted: toNumberOrNull(row.epsDiluted ?? row.epsdiluted ?? row.eps),
+          weightedAverageShares: toNumberOrNull(row.weightedAverageShsOut)
+            ? toNumberOrNull(row.weightedAverageShsOut) / 1000000
+            : null,
+          weightedAverageDilutedShares: toNumberOrNull(
+            row.weightedAverageShsOutDil ??
+              row.weightedAverageShsOutDiluted
+          )
+            ? toNumberOrNull(
+                row.weightedAverageShsOutDil ??
+                  row.weightedAverageShsOutDiluted
+              ) / 1000000
+            : null,
           sharesOutstanding: toNumberOrNull(
             row.weightedAverageShsOutDil ??
               row.weightedAverageShsOutDiluted ??

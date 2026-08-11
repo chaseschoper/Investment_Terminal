@@ -3838,7 +3838,7 @@ import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://investment-terminal-jtng.onrender.com";
-const FINANCIAL_HISTORY_VERSION = 161;
+const FINANCIAL_HISTORY_VERSION = 163;
 const STOCK_ESTIMATE_VERSION = 23;
 const INTERIM_HISTORY_VERSION = 6;
 const VALUATION_METRICS_VERSION = 23;
@@ -7759,12 +7759,12 @@ const latestOperatingCashflowMetricValue =
 const sharesOutstandingHistory =
   chartRowsWithCurrentFallbackForMode(
     filterRowsByHistoryRange(
-      filterChartRowsByMode(buildChartRows(financialHistory, "sharesOutstanding"), financialChartMode),
+      filterChartRowsByMode(buildChartRows(financialHistory, "weightedAverageShares"), financialChartMode),
       financialChartRange,
       financialChartMode
     ),
-    "sharesOutstanding",
-    stockData?.sharesOutstanding
+    "weightedAverageShares",
+    firstNumber(stockData?.weightedAverageShares, stockData?.sharesOutstanding)
   );
 const historicalPeHistoryBase = (stockData?.historicalPe || [])
   .map((row) => ({ ...row, period: row.period || String(row.year) }))
@@ -8353,22 +8353,23 @@ const getProjectionInputValue = (caseId, key, year) => {
 
   return getProjectionAssumptionValue(caseSettings, key, year);
 };
-const projectionSharesHistoryRows = buildChartRows(financialHistory, "sharesOutstanding");
+const projectionSharesHistoryRows = buildChartRows(financialHistory, "weightedAverageShares");
 const latestQuarterlySharesOutstandingFromChart = latestQuarterlyMetricValue(
   projectionSharesHistoryRows,
-  "sharesOutstanding"
+  "weightedAverageShares"
 );
 const latestSharesOutstandingFromChart = [...projectionSharesHistoryRows]
-  .filter((row) => isNumber(row?.sharesOutstanding))
+  .filter((row) => isNumber(row?.weightedAverageShares))
   .sort((a, b) => {
     const yearDiff = Number(a.year || 0) - Number(b.year || 0);
     if (yearDiff !== 0) return yearDiff;
     return String(a.period || "").localeCompare(String(b.period || ""), undefined, { numeric: true });
   })
-  .at(-1)?.sharesOutstanding;
+  .at(-1)?.weightedAverageShares;
 const projectionShareBaseMillions = firstNumber(
   latestQuarterlySharesOutstandingFromChart,
   latestSharesOutstandingFromChart,
+  stockData?.weightedAverageShares,
   stockData?.sharesOutstanding
 );
 const projectionShareBase =
@@ -14022,12 +14023,12 @@ return (
     mode={financialChartMode}
   />
   <HistoricalLineChart
-    title="Shares Outstanding History"
+    title="Weighted Avg Shares History"
     data={readyHistoryRows(sharesOutstandingHistory)}
-    dataKey="sharesOutstanding"
+    dataKey="weightedAverageShares"
     color="#f472b6"
     formatter={formatSharesMillions}
-    valueLabel="Shares"
+    valueLabel="Weighted Avg Shares"
     loading={shouldShowHistoryLoading(sharesOutstandingHistory)}
     mode={financialChartMode}
   />
@@ -15171,7 +15172,7 @@ return (
                 ))}
               </tr>
               <tr>
-                <th>Shares Outstanding</th>
+                <th>Weighted Avg Shares</th>
                 {projectionCase.rows.map((row) => (
                   <td key={row.year}>
                     {row.year === PROJECTION_YEARS[0] ? (
