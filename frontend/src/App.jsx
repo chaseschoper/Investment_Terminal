@@ -2140,7 +2140,7 @@ function calculateFundamentalMetricFallback(period, field) {
   const income = period?.income || {};
   const balance = period?.balance || {};
   const cashflow = period?.cashflow || {};
-  const shares = firstNumber(income.weightedAverageShsOutDil, income.weightedAverageShsOut);
+  const shares = firstNumber(income.weightedAverageShsOut, income.weightedAverageShsOutDil);
   const revenue = firstNumber(income.revenue);
   const grossProfit = firstNumber(income.grossProfit);
   const operatingIncome = firstNumber(income.operatingIncome);
@@ -14048,12 +14048,12 @@ return (
     mode={financialChartMode}
   />
   <HistoricalLineChart
-    title="Shares Outstanding History"
+    title="Weighted Avg Shares History"
     data={readyHistoryRows(sharesOutstandingHistory)}
     dataKey="sharesOutstanding"
     color="#f472b6"
     formatter={formatSharesMillions}
-    valueLabel="Shares"
+    valueLabel="Weighted Avg Shares"
     loading={shouldShowHistoryLoading(sharesOutstandingHistory)}
     mode={financialChartMode}
   />
@@ -15197,7 +15197,7 @@ return (
                 ))}
               </tr>
               <tr>
-                <th>Shares Outstanding</th>
+                <th>Weighted Avg Shares</th>
                 {projectionCase.rows.map((row) => (
                   <td key={row.year}>
                     {row.year === PROJECTION_YEARS[0] ? (
