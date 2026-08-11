@@ -5287,6 +5287,12 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [selectedFundamentalIndicators, setSelectedFundamentalIndicators] =
     useState(DEFAULT_FUNDAMENTAL_INDICATORS);
 
+  const [fundamentalMetricSearch, setFundamentalMetricSearch] =
+    useState("");
+
+  const [isFundamentalFocusMode, setIsFundamentalFocusMode] =
+    useState(false);
+
   const [activeFundamentalIndicatorGroup, setActiveFundamentalIndicatorGroup] =
     useState("income");
 
@@ -8106,6 +8112,20 @@ const activeFundamentalIndicatorGroupDetails =
   availableFundamentalIndicatorGroups.find((group) => group.id === activeFundamentalIndicatorGroup) ||
   availableFundamentalIndicatorGroups[0] ||
   null;
+const normalizedFundamentalMetricSearch = fundamentalMetricSearch.trim().toLowerCase();
+const searchedFundamentalIndicators = normalizedFundamentalMetricSearch
+  ? FUNDAMENTAL_CHART_INDICATORS.filter((indicator) =>
+      [
+        indicator.label,
+        indicator.groupLabel,
+        indicator.field,
+        indicator.key,
+        ...(indicator.aliases || [])
+      ]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(normalizedFundamentalMetricSearch))
+    ).slice(0, 16)
+  : [];
 const selectedFundamentalIndicatorDetails = selectedFundamentalIndicators
   .map((key) => FUNDAMENTAL_CHART_INDICATORS.find((indicator) => indicator.key === key))
   .filter(Boolean);
@@ -8202,6 +8222,46 @@ const fundamentalChartSeries = selectedFundamentalIndicatorDetails.map((indicato
 const maximizedFundamentalChart = maximizedFundamentalChartKey
   ? fundamentalChartSeries.find((series) => series.indicator.key === maximizedFundamentalChartKey)
   : null;
+const combinedFundamentalChartRows = (() => {
+  const rowMap = new Map();
+  fundamentalChartSeries.forEach((series) => {
+    series.rows.forEach((row) => {
+      if (!rowMap.has(row.periodKey)) {
+        rowMap.set(row.periodKey, {
+          periodKey: row.periodKey,
+          period: row.period,
+          date: row.date || null,
+          sortValue: row.sortValue
+        });
+      }
+      const next = rowMap.get(row.periodKey);
+      fundamentalChartTickers.forEach((symbol) => {
+        if (isNumber(row[symbol])) {
+          next[`${symbol}__${series.indicator.key}`] = row[symbol];
+        }
+      });
+    });
+  });
+
+  return [...rowMap.values()].sort((a, b) => {
+    if (a.sortValue !== undefined && b.sortValue !== undefined && a.sortValue !== b.sortValue) {
+      return a.sortValue - b.sortValue;
+    }
+    const dateA = a.date ? new Date(`${a.date}T12:00:00`).getTime() : 0;
+    const dateB = b.date ? new Date(`${b.date}T12:00:00`).getTime() : 0;
+    if (dateA && dateB) return dateA - dateB;
+    return String(a.period).localeCompare(String(b.period));
+  });
+})();
+const combinedFundamentalChartLines = fundamentalChartSeries.flatMap((series, metricIndex) =>
+  fundamentalChartTickers.map((symbol, symbolIndex) => ({
+    key: `${symbol}__${series.indicator.key}`,
+    symbol,
+    indicator: series.indicator,
+    label: `${symbol} · ${series.indicator.label}`,
+    color: PORTFOLIO_COLORS[(metricIndex * Math.max(fundamentalChartTickers.length, 1) + symbolIndex) % PORTFOLIO_COLORS.length]
+  }))
+);
 
 const getFundamentalCompanyMeta = (symbol) => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
@@ -8263,6 +8323,55 @@ const renderFundamentalLineChart = (series, height = 320) => (
           />
         );
       })}
+    </LineChart>
+  </ResponsiveContainer>
+);
+const renderCombinedFundamentalLineChart = (height = 560) => (
+  <ResponsiveContainer width="100%" height={height}>
+    <LineChart
+      data={combinedFundamentalChartRows}
+      margin={{ top: 14, right: 22, left: 8, bottom: 8 }}
+    >
+      <CartesianGrid stroke="#1f2937" strokeDasharray="4 4" />
+      <XAxis
+        dataKey="period"
+        tick={{ fill: "#94a3b8", fontSize: 12 }}
+        minTickGap={18}
+      />
+      <YAxis
+        tick={{ fill: "#94a3b8", fontSize: 12 }}
+        tickFormatter={formatLargeNumber}
+        width={82}
+      />
+      <Tooltip
+        formatter={(value, name) => {
+          const line = combinedFundamentalChartLines.find((item) => item.key === name);
+          return [
+            formatFundamentalChartValue(value, line?.indicator || {}),
+            line?.label || name
+          ];
+        }}
+        labelStyle={{ color: "#e5e7eb" }}
+        contentStyle={{
+          background: "rgba(8, 17, 31, 0.96)",
+          border: "1px solid rgba(56, 189, 248, 0.34)",
+          borderRadius: 8,
+          color: "#e5e7eb"
+        }}
+      />
+      {combinedFundamentalChartLines.map((line) => (
+        <Line
+          key={line.key}
+          type="monotone"
+          dataKey={line.key}
+          name={line.key}
+          stroke={line.color}
+          strokeWidth={2.2}
+          dot={false}
+          activeDot={{ r: 5, fill: "#08111f", stroke: line.color, strokeWidth: 2 }}
+          connectNulls
+        />
+      ))}
     </LineChart>
   </ResponsiveContainer>
 );
@@ -10878,7 +10987,7 @@ const renderAlternativeMarketSuggestions = (items, isLoading, show, inputValue, 
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => onSelect(item.symbol)}
             >
-              <span className={`stock-search-logo-shell${item.logo && !isForexSuggestion ? " has-logo" : ""}`} aria-hidden="true">
+              <span className={`stock-search-logo-shell${isForexSuggestion ? " forex-search-logo-shell" : ""}${item.logo && !isForexSuggestion ? " has-logo" : ""}`} aria-hidden="true">
                 {isForexSuggestion ? (
                   renderMarketLogoMark(item.symbol, "forex")
                 ) : (
@@ -11043,6 +11152,13 @@ const toggleFundamentalIndicator = (indicatorKey) => {
     current.includes(indicatorKey)
       ? current.filter((key) => key !== indicatorKey)
       : [...current, indicatorKey]
+  );
+};
+
+const addFundamentalIndicator = (indicatorKey) => {
+  if (!indicatorKey) return;
+  setSelectedFundamentalIndicators((current) =>
+    current.includes(indicatorKey) ? current : [...current, indicatorKey]
   );
 };
 
@@ -12852,6 +12968,23 @@ return (
             setFundamentalChartRange,
             "Fundamental chart history range"
           )}
+
+          <div className="fundamental-view-toggle" role="group" aria-label="Fundamental chart layout">
+            <button
+              type="button"
+              className={!isFundamentalFocusMode ? "active" : ""}
+              onClick={() => setIsFundamentalFocusMode(false)}
+            >
+              Grid
+            </button>
+            <button
+              type="button"
+              className={isFundamentalFocusMode ? "active" : ""}
+              onClick={() => setIsFundamentalFocusMode(true)}
+            >
+              Big Chart
+            </button>
+          </div>
         </div>
 
         <div className="fundamental-indicator-panel">
@@ -12886,11 +13019,42 @@ return (
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSelectedFundamentalIndicators(DEFAULT_FUNDAMENTAL_INDICATORS)}
+                  onClick={() => setSelectedFundamentalIndicators([])}
                 >
                   Reset
                 </button>
               </div>
+            </div>
+
+            <div className="fundamental-metric-search">
+              <input
+                value={fundamentalMetricSearch}
+                onChange={(event) => setFundamentalMetricSearch(event.target.value)}
+                placeholder="Search metrics: revenue, ROIC, free cash flow..."
+                aria-label="Search fundamental chart metrics"
+              />
+              {normalizedFundamentalMetricSearch && (
+                <div className="fundamental-metric-suggestions">
+                  {searchedFundamentalIndicators.length ? (
+                    searchedFundamentalIndicators.map((indicator) => (
+                      <button
+                        key={`metric-search-${indicator.key}`}
+                        type="button"
+                        className={selectedFundamentalIndicators.includes(indicator.key) ? "selected" : ""}
+                        onClick={() => {
+                          addFundamentalIndicator(indicator.key);
+                          setActiveFundamentalIndicatorGroup(indicator.groupId);
+                        }}
+                      >
+                        <span>{indicator.label}</span>
+                        <small>{indicator.groupLabel}</small>
+                      </button>
+                    ))
+                  ) : (
+                    <span>No matching metrics</span>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="fundamental-indicator-grid">
@@ -12914,75 +13078,108 @@ return (
           <div className="heatmap-loading">Loading fundamental charts...</div>
         ) : selectedFundamentalIndicatorDetails.length ? (
           <>
-            <div className="fundamental-chart-grid">
-              {fundamentalChartSeries.map((series) => (
-                <div className="fundamental-chart-card" key={series.indicator.key}>
-                  <div className="fundamental-chart-card-header">
-                    <div>
-                      <span>{series.indicator.groupLabel}</span>
-                      <h3>{series.indicator.label}</h3>
-                    </div>
-                    <div className="fundamental-chart-card-actions">
-                      <strong>
-                        {historyRangeLabel(fundamentalChartRange)} · {fundamentalChartPeriod === "annual" ? "Annual" : "Quarterly"}
-                      </strong>
-                      <button
-                        type="button"
-                        className="fundamental-chart-maximize"
-                        aria-label={`Maximize ${series.indicator.label} chart`}
-                        title={`Maximize ${series.indicator.label}`}
-                        onClick={() => setMaximizedFundamentalChartKey(series.indicator.key)}
-                      >
-                        <span aria-hidden="true" />
-                      </button>
-                    </div>
+            {isFundamentalFocusMode ? (
+              <div className="fundamental-chart-card fundamental-chart-card-wide">
+                <div className="fundamental-chart-card-header">
+                  <div>
+                    <span>Combined Chart</span>
+                    <h3>Selected Metrics</h3>
                   </div>
-
-                  {series.rows.length ? (
-                    renderFundamentalLineChart(series)
-                  ) : (
-                    <div className="heatmap-loading">No data yet for this indicator.</div>
-                  )}
+                  <div className="fundamental-chart-card-actions">
+                    <strong>
+                      {selectedFundamentalIndicatorDetails.length} metrics · {fundamentalChartTickers.length} companies
+                    </strong>
+                  </div>
                 </div>
-              ))}
-            </div>
 
-            <div className="financial-statement-table-panel">
-              <div className="screener-results-heading">
-                <span>Latest Selected Fundamentals</span>
-                <strong>
-                  {historyRangeLabel(fundamentalChartRange)} · {fundamentalChartPeriod === "annual" ? "Latest annual period" : "Latest quarter"}
-                </strong>
-              </div>
-              <div className="financial-statement-table-wrap">
-                <table className="financial-statement-table fundamental-summary-table">
-                  <thead>
-                    <tr>
-                      <th>Indicator</th>
-                      {fundamentalChartTickers.map((symbol) => (
-                        <th key={symbol}>{symbol}</th>
+                {combinedFundamentalChartRows.length ? (
+                  <>
+                    {renderCombinedFundamentalLineChart()}
+                    <div className="fundamental-combined-legend">
+                      {combinedFundamentalChartLines.map((line) => (
+                        <span key={`legend-${line.key}`} style={{ "--series-color": line.color }}>
+                          {line.label}
+                        </span>
                       ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {fundamentalChartSeries.map((series) => (
-                      <tr key={`summary-${series.indicator.key}`}>
-                        <th>{series.indicator.label}</th>
-                        {fundamentalChartTickers.map((symbol) => {
-                          const latest = series.latestValues.find((value) => value.symbol === symbol);
-                          return (
-                            <td key={`${series.indicator.key}-${symbol}`}>
-                              <span>{formatFundamentalChartValue(latest?.value, series.indicator)}</span>
-                              {latest?.period && <small>{latest.period}</small>}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </div>
+                  </>
+                ) : (
+                  <div className="heatmap-loading">No data yet for these selected metrics.</div>
+                )}
               </div>
-            </div>
+            ) : (
+              <>
+                <div className="fundamental-chart-grid">
+                  {fundamentalChartSeries.map((series) => (
+                    <div className="fundamental-chart-card" key={series.indicator.key}>
+                      <div className="fundamental-chart-card-header">
+                        <div>
+                          <span>{series.indicator.groupLabel}</span>
+                          <h3>{series.indicator.label}</h3>
+                        </div>
+                        <div className="fundamental-chart-card-actions">
+                          <strong>
+                            {historyRangeLabel(fundamentalChartRange)} · {fundamentalChartPeriod === "annual" ? "Annual" : "Quarterly"}
+                          </strong>
+                          <button
+                            type="button"
+                            className="fundamental-chart-maximize"
+                            aria-label={`Maximize ${series.indicator.label} chart`}
+                            title={`Maximize ${series.indicator.label}`}
+                            onClick={() => setMaximizedFundamentalChartKey(series.indicator.key)}
+                          >
+                            <span aria-hidden="true" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {series.rows.length ? (
+                        renderFundamentalLineChart(series)
+                      ) : (
+                        <div className="heatmap-loading">No data yet for this indicator.</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="financial-statement-table-panel">
+                  <div className="screener-results-heading">
+                    <span>Latest Selected Fundamentals</span>
+                    <strong>
+                      {historyRangeLabel(fundamentalChartRange)} · {fundamentalChartPeriod === "annual" ? "Latest annual period" : "Latest quarter"}
+                    </strong>
+                  </div>
+                  <div className="financial-statement-table-wrap">
+                    <table className="financial-statement-table fundamental-summary-table">
+                      <thead>
+                        <tr>
+                          <th>Indicator</th>
+                          {fundamentalChartTickers.map((symbol) => (
+                            <th key={symbol}>{symbol}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {fundamentalChartSeries.map((series) => (
+                          <tr key={`summary-${series.indicator.key}`}>
+                            <th>{series.indicator.label}</th>
+                            {fundamentalChartTickers.map((symbol) => {
+                              const latest = series.latestValues.find((value) => value.symbol === symbol);
+                              return (
+                                <td key={`${series.indicator.key}-${symbol}`}>
+                                  <span>{formatFundamentalChartValue(latest?.value, series.indicator)}</span>
+                                  {latest?.period && <small>{latest.period}</small>}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )}
           </>
         ) : (
           <div className="heatmap-loading">Select at least one indicator to build charts.</div>

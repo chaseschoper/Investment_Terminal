@@ -1777,6 +1777,16 @@ body {
   box-shadow: var(--company-logo-tile-shadow);
 }
 
+.stock-search-logo-shell.forex-search-logo-shell {
+  display: grid;
+  place-items: center;
+}
+
+.stock-search-logo-shell.forex-search-logo-shell .market-logo-forex-flags {
+  width: 27px;
+  height: 21px;
+}
+
 .stock-search-logo-shell.has-logo > span,
 .portfolio-logo-shell.has-logo .portfolio-logo-fallback,
 .calendar-company-logo-shell.has-logo .calendar-company-logo-fallback,
@@ -10530,6 +10540,103 @@ body {
   color: #93c5fd;
 }
 
+.fundamental-view-toggle {
+  display: inline-flex;
+  width: fit-content;
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 8px;
+  background: rgba(8, 17, 31, 0.78);
+}
+
+.fundamental-view-toggle button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #94a3b8;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.fundamental-view-toggle button.active {
+  border-color: rgba(45, 212, 191, 0.58);
+  background: rgba(20, 184, 166, 0.18);
+  color: #ffffff;
+}
+
+.fundamental-metric-search {
+  position: relative;
+}
+
+.fundamental-metric-search input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 13px;
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  border-radius: 8px;
+  background: rgba(2, 6, 12, 0.52);
+  color: #e5e7eb;
+  font-size: 14px;
+  font-weight: 850;
+  outline: none;
+}
+
+.fundamental-metric-search input:focus {
+  border-color: rgba(45, 212, 191, 0.72);
+  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.12);
+}
+
+.fundamental-metric-suggestions {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  max-height: 320px;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 8px;
+  background: rgba(5, 11, 22, 0.98);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.42);
+}
+
+.fundamental-metric-suggestions button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid rgba(96, 165, 250, 0.22);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #e5e7eb;
+  text-align: left;
+  cursor: pointer;
+}
+
+.fundamental-metric-suggestions button.selected {
+  border-color: rgba(45, 212, 191, 0.64);
+  background: rgba(20, 184, 166, 0.18);
+}
+
+.fundamental-metric-suggestions button span {
+  font-weight: 950;
+}
+
+.fundamental-metric-suggestions button small,
+.fundamental-metric-suggestions > span {
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 850;
+}
+
 .fundamental-indicator-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -10552,6 +10659,39 @@ body {
   min-width: 0;
   overflow: hidden;
   padding: 18px;
+}
+
+.fundamental-chart-card-wide {
+  min-height: 680px;
+}
+
+.fundamental-combined-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.fundamental-combined-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 1px solid rgba(96, 165, 250, 0.2);
+  border-radius: 8px;
+  background: rgba(8, 17, 31, 0.7);
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.fundamental-combined-legend span::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--series-color);
+  box-shadow: 0 0 10px var(--series-color);
 }
 
 .fundamental-chart-card-header {
