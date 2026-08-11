@@ -10788,7 +10788,7 @@ const activateForexSymbol = (symbol) => {
   setForexSymbol(cleanSymbol);
 };
 
-const renderAlternativeMarketSuggestions = (items, isLoading, show, inputValue, onSelect, loadingLabel) => {
+const renderAlternativeMarketSuggestions = (items, isLoading, show, inputValue, onSelect, loadingLabel, marketType = "") => {
   const shouldShow = show && inputValue.trim().length >= 1 && (items.length || isLoading);
   if (!shouldShow) return null;
   return (
@@ -10796,42 +10796,52 @@ const renderAlternativeMarketSuggestions = (items, isLoading, show, inputValue, 
       {isLoading && !items.length ? (
         <div className="stock-search-suggestion muted">{loadingLabel}</div>
       ) : (
-        items.map((item) => (
-          <button
-            type="button"
-            className="stock-search-suggestion"
-            key={`${item.type}-${item.symbol}`}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => onSelect(item.symbol)}
-          >
-            <span className={`stock-search-logo-shell${item.logo ? " has-logo" : ""}`} aria-hidden="true">
-              <span>{getLogoFallbackText(item.symbol)}</span>
-              {item.logo && (
-                <img
-                  src={item.type === "crypto" ? getCryptoLogoCandidates(item.symbol, item.logo)[0] : item.logo}
-                  data-provider-logo={item.logo || ""}
-                  alt=""
-                  onError={(event) => {
-                    if (item.type === "crypto") {
-                      handleCryptoLogoError(event, item.symbol);
-                      return;
-                    }
-                    event.currentTarget.style.display = "none";
-                  }}
-                />
-              )}
-            </span>
-            <span className="stock-search-suggestion-copy">
-              <strong>{item.symbol}</strong>
-              <em>{item.name}</em>
-            </span>
-            {item.fromCurrency && item.toCurrency ? (
-              <small>{item.fromCurrency}/{item.toCurrency}</small>
-            ) : item.exchange ? (
-              <small>{item.exchange}</small>
-            ) : null}
-          </button>
-        ))
+        items.map((item) => {
+          const resolvedMarketType = item.type || marketType;
+          const isForexSuggestion = resolvedMarketType === "forex";
+          return (
+            <button
+              type="button"
+              className="stock-search-suggestion"
+              key={`${resolvedMarketType || "market"}-${item.symbol}`}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => onSelect(item.symbol)}
+            >
+              <span className={`stock-search-logo-shell${item.logo && !isForexSuggestion ? " has-logo" : ""}`} aria-hidden="true">
+                {isForexSuggestion ? (
+                  renderMarketLogoMark(item.symbol, "forex")
+                ) : (
+                  <>
+                    <span>{getLogoFallbackText(item.symbol)}</span>
+                    {item.logo && (
+                      <img
+                        src={resolvedMarketType === "crypto" ? getCryptoLogoCandidates(item.symbol, item.logo)[0] : item.logo}
+                        data-provider-logo={item.logo || ""}
+                        alt=""
+                        onError={(event) => {
+                          if (resolvedMarketType === "crypto") {
+                            handleCryptoLogoError(event, item.symbol);
+                            return;
+                          }
+                          event.currentTarget.style.display = "none";
+                        }}
+                      />
+                    )}
+                  </>
+                )}
+              </span>
+              <span className="stock-search-suggestion-copy">
+                <strong>{item.symbol}</strong>
+                <em>{item.name}</em>
+              </span>
+              {item.fromCurrency && item.toCurrency ? (
+                <small>{item.fromCurrency}/{item.toCurrency}</small>
+              ) : item.exchange ? (
+                <small>{item.exchange}</small>
+              ) : null}
+            </button>
+          );
+        })
       )}
     </div>
   );
@@ -11778,7 +11788,8 @@ return (
                 showCryptoSearchSuggestions,
                 cryptoSearchInput,
                 activateCryptoSymbol,
-                "Searching crypto..."
+                "Searching crypto...",
+                "crypto"
               )}
             </div>
             <button type="submit">{isCryptoLoading ? "Loading..." : "Search Crypto"}</button>
@@ -11972,7 +11983,8 @@ return (
                 showForexSearchSuggestions,
                 forexSearchInput,
                 activateForexSymbol,
-                "Searching FOREX..."
+                "Searching FOREX...",
+                "forex"
               )}
             </div>
             <button type="submit">{isForexLoading ? "Loading..." : "Search FOREX"}</button>
