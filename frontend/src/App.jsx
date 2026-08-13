@@ -1982,6 +1982,22 @@ const formatLargeDollars = (value) => {
   return `$${value.toFixed(0)}`;
 };
 
+const formatFullStatementDollars = (value) => {
+  if (!isNumber(value)) return "N/A";
+  const absolute = Math.abs(value);
+  const formatted = absolute.toLocaleString(undefined, {
+    maximumFractionDigits: absolute < 100 ? 2 : 0
+  });
+  return `${value < 0 ? "-" : ""}$${formatted}`;
+};
+
+const formatFullStatementNumber = (value) => {
+  if (!isNumber(value)) return "N/A";
+  return value.toLocaleString(undefined, {
+    maximumFractionDigits: Math.abs(value) < 100 ? 2 : 0
+  });
+};
+
 const formatLargeNumber = (value) => {
   if (!isNumber(value)) return "N/A";
   if (Math.abs(value) >= 1e9) return `${(value / 1e9).toFixed(2)}B`;
@@ -2009,9 +2025,9 @@ const formatStatementValue = (value, row = {}) => {
     return value.toFixed(2);
   }
   if (format === "shares" || label.includes("shares")) {
-    return formatSharesCount(value);
+    return formatFullStatementNumber(value);
   }
-  return formatLargeDollars(value);
+  return formatFullStatementDollars(value);
 };
 
 const formatFundamentalChartValue = (value, indicator = {}) => {
@@ -3682,6 +3698,20 @@ const formatCalendarShares = (value, missingLabel = "N/A") => {
   if (absolute >= 1e3) return `${sign}${(absolute / 1e3).toFixed(1)}K`;
   return `${sign}${absolute.toLocaleString()}`;
 };
+
+const isUsLiveEarningsEvent = (event = {}) => {
+  const symbol = String(event.symbol || "").trim().toUpperCase();
+  const exchange = String(event.exchange || "").trim().toUpperCase();
+  if (!symbol || symbol.endsWith("F") || symbol.endsWith("Y")) return false;
+  if (/[.=]/.test(symbol)) return false;
+  if (/^(NASDAQ|NYSE|AMEX|NYSEAMERICAN|NYSE ARCA|ARCA|BATS|CBOE|IEX|NASDAQGM|NASDAQGS|NASDAQCM)$/.test(exchange)) return true;
+  if (!exchange) return /^[A-Z]{1,5}$/.test(symbol);
+  return false;
+};
+
+const getUsLiveEarningsEvents = (day = {}) =>
+  (Array.isArray(day.liveEvents) && day.liveEvents.length ? day.liveEvents : day.events || [])
+    .filter(isUsLiveEarningsEvent);
 
 const formatCalendarValue = (value, unit = "", missingLabel = "N/A") => {
   if (!isNumber(value)) return missingLabel;
@@ -7051,7 +7081,7 @@ useEffect(() => {
   useEffect(() => {
     if (activePage !== "earnings-calendar" || calendarMode !== "live-earnings") return;
     const today = toLocalIsoDate(new Date());
-    const todayEvents = (earnings?.days || []).find((day) => day.date === today)?.events || [];
+    const todayEvents = getUsLiveEarningsEvents((earnings?.days || []).find((day) => day.date === today));
     if (!selectedLiveEarningsEvent?.symbol && todayEvents[0]?.symbol) {
       openLiveEarningsEvent(todayEvents[0]);
     }
@@ -9444,7 +9474,7 @@ const selectedCalendarReport = selectedCalendarSymbol
   : null;
 const liveEarningsToday = toLocalIsoDate(new Date());
 const liveEarningsDay = displayedCalendarDays.find((day) => day.date === liveEarningsToday) || { date: liveEarningsToday, events: [] };
-const liveEarningsEvents = calendarMode === "live-earnings" ? (liveEarningsDay.events || []) : [];
+const liveEarningsEvents = calendarMode === "live-earnings" ? getUsLiveEarningsEvents(liveEarningsDay) : [];
 const selectedLiveEarningsSymbol = String(selectedLiveEarningsEvent?.symbol || "").toUpperCase();
 const selectedLiveEarningsResult = selectedLiveEarningsSymbol
   ? liveEarningsResults[selectedLiveEarningsSymbol] || {

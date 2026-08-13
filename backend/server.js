@@ -5130,8 +5130,18 @@ const parseLiveEarningsMoney = (rawValue = "", scaleHint = "") => {
     ? 1000000000
     : /million|mm\b/.test(hint)
       ? 1000000
-      : 1;
+      : /thousand|000/.test(hint)
+        ? 1000
+        : 1;
   return (negative ? -Math.abs(number) : number) * multiplier;
+};
+
+const liveEarningsScaleHintFromContext = (context = "") => {
+  const text = String(context || "").toLowerCase();
+  if (/in\s+thousands|amounts?\s+in\s+thousands|\$000/.test(text)) return "thousand";
+  if (/in\s+millions|amounts?\s+in\s+millions|\$mm/.test(text)) return "million";
+  if (/in\s+billions|amounts?\s+in\s+billions|\$bn/.test(text)) return "billion";
+  return "";
 };
 
 const parseLiveEarningsEps = (rawValue = "") => {
@@ -5143,7 +5153,34 @@ const parseLiveEarningsEps = (rawValue = "") => {
   return negative ? -Math.abs(number) : number;
 };
 
-const findLiveEarningsRevenueActual = (text = "") => {
+const chooseLiveEarningsCandidate = (candidates = [], estimate, type = "eps") => {
+  const cleanCandidates = candidates
+    .map((candidate) => ({
+      ...candidate,
+      value: toNumberOrNull(candidate.value)
+    }))
+    .filter((candidate) =>
+      candidate.value !== null &&
+      isLiveEarningsActualPlausible(candidate.value, estimate, type)
+    );
+  if (!cleanCandidates.length) return null;
+  const estimateNumber = toNumberOrNull(estimate);
+  if (type === "revenue" && estimateNumber === null) {
+    return cleanCandidates
+      .filter((candidate) => Math.abs(candidate.value) >= 1000000)
+      .sort((a, b) => (b.score || 0) - (a.score || 0))[0]?.value ?? null;
+  }
+  if (estimateNumber === null || estimateNumber === 0) {
+    return cleanCandidates.sort((a, b) => (b.score || 0) - (a.score || 0))[0].value;
+  }
+  return cleanCandidates
+    .sort((a, b) =>
+      Math.abs(a.value - estimateNumber) - Math.abs(b.value - estimateNumber) ||
+      (b.score || 0) - (a.score || 0)
+    )[0].value;
+};
+
+const findLiveEarningsRevenueActual = (text = "", estimate = null) => {
   const normalized = normalizeLiveEarningsText(text);
   const focusedSections = normalized
     .split(/(?=condensed consolidated|consolidated statements|financial results|quarterly results|results of operations|three months ended|quarter ended)/i)
@@ -5156,17 +5193,31 @@ const findLiveEarningsRevenueActual = (text = "") => {
     /\b(?:net\s+)?sales\b.{0,120}?\$?\s*([([]?-?\d+(?:,\d{3})*(?:\.\d+)?[)]?)(?:\s*(million|billion|bn|mm))?/i,
     /\brevenue(?:s)?\s+(?:was|were|of|totaled|increased|decreased)\b.{0,80}?\$?\s*([([]?-?\d+(?:,\d{3})*(?:\.\d+)?[)]?)(?:\s*(million|billion|bn|mm))?/i
   ];
-  for (const sourceText of [...focusedSections, normalized]) {
+  const candidates = [];
+  for (const [sectionIndex, sourceText] of [...focusedSections, normalized].entries()) {
     for (const pattern of patterns) {
-      const match = sourceText.match(pattern);
-      const value = parseLiveEarningsMoney(match?.[1], match?.[2]);
-      if (value !== null && Math.abs(value) > 1000) return value;
+      for (const match of sourceText.matchAll(new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`))) {
+        const context = liveEarningsCandidateContext(sourceText, match.index);
+        if (isLiveEarningsGuidanceContext(context)) continue;
+        if (/\b(full[-\s]?year|fiscal year|year ended|twelve months|annual)\b/i.test(context)) continue;
+        const value = parseLiveEarningsMoney(match?.[1], match?.[2] || liveEarningsScaleHintFromContext(context));
+        if (value !== null && Math.abs(value) > 1000) {
+          candidates.push({
+            value,
+            score:
+              (sectionIndex < focusedSections.length ? 10 : 0) +
+              (/quarter|three months|financial results/i.test(sourceText) ? 24 : 0) -
+              (/six months|nine months/i.test(context) ? 20 : 0) -
+              (/six months|nine months|year ended|fiscal year|full year/i.test(context) ? 14 : 0)
+          });
+        }
+      }
     }
   }
-  return null;
+  return chooseLiveEarningsCandidate(candidates, estimate, "revenue");
 };
 
-const findLiveEarningsEpsActual = (text = "") => {
+const findLiveEarningsEpsActual = (text = "", estimate = null) => {
   const normalized = normalizeLiveEarningsText(text);
   const focusedSections = normalized
     .split(/(?=condensed consolidated|consolidated statements|financial results|quarterly results|results of operations|three months ended|quarter ended|earnings per share)/i)
@@ -5179,14 +5230,27 @@ const findLiveEarningsEpsActual = (text = "") => {
     /\b(?:diluted\s+)?EPS\b.{0,120}?\$?\s*([([]?-?\d+(?:\.\d+)?[)]?)/i,
     /\bGAAP\s+(?:diluted\s+)?EPS\b.{0,120}?\$?\s*([([]?-?\d+(?:\.\d+)?[)]?)/i
   ];
-  for (const sourceText of [...focusedSections, normalized]) {
+  const candidates = [];
+  for (const [sectionIndex, sourceText] of [...focusedSections, normalized].entries()) {
     for (const pattern of patterns) {
-      const match = sourceText.match(pattern);
-      const value = parseLiveEarningsEps(match?.[1]);
-      if (value !== null && Math.abs(value) < 1000) return value;
+      for (const match of sourceText.matchAll(new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`))) {
+        const context = liveEarningsCandidateContext(sourceText, match.index);
+        if (isLiveEarningsGuidanceContext(context)) continue;
+        const value = parseLiveEarningsEps(match?.[1]);
+        if (value !== null && Math.abs(value) < 1000) {
+          candidates.push({
+            value,
+            score:
+              (sectionIndex < focusedSections.length ? 10 : 0) +
+              (/adjusted|non-gaap/i.test(context) ? 30 : 0) +
+              (/diluted/i.test(context) ? 6 : 0) -
+              (/six months|nine months|year ended|fiscal year|full year/i.test(context) ? 18 : 0)
+          });
+        }
+      }
     }
   }
-  return null;
+  return chooseLiveEarningsCandidate(candidates, estimate, "eps");
 };
 
 async function fetchLiveEarningsDocumentText(document) {
@@ -5223,12 +5287,72 @@ const liveEarningsSurprisePercent = (actual, estimate) => {
   return ((actualNumber - estimateNumber) / Math.abs(estimateNumber)) * 100;
 };
 
+const isLiveEarningsActualPlausible = (actual, estimate, type = "eps") => {
+  const actualNumber = toNumberOrNull(actual);
+  const estimateNumber = toNumberOrNull(estimate);
+  if (actualNumber === null) return false;
+  if (estimateNumber === null || estimateNumber === 0) return true;
+  const estimateAbs = Math.abs(estimateNumber);
+  const actualAbs = Math.abs(actualNumber);
+  const ratio = actualAbs / estimateAbs;
+  if (type === "revenue") {
+    return ratio >= 0.35 && ratio <= 2.5;
+  }
+  return ratio >= 0.25 && ratio <= 3.5;
+};
+
+const liveEarningsCandidateContext = (text = "", index = 0, before = 180, after = 220) =>
+  String(text || "").slice(Math.max(0, index - before), index + after);
+
+const isLiveEarningsGuidanceContext = (context = "") =>
+  /\b(outlook|guidance|forecast|expects?|expected|anticipates?|projects?|projected|estimate[sd]?|business outlook|next quarter|third quarter|fourth quarter|full[-\s]?year outlook|fiscal \d{4} outlook|will be|are expected to be)\b/i.test(context);
+
+const LIVE_EARNINGS_US_EXCHANGES = new Set([
+  "NASDAQ",
+  "NASDAQGM",
+  "NASDAQGS",
+  "NASDAQCM",
+  "NYSE",
+  "NYSE ARCA",
+  "NYSEAMERICAN",
+  "AMEX",
+  "ARCA",
+  "BATS",
+  "CBOE",
+  "IEX"
+]);
+
+const isUsLiveEarningsSymbolShape = (symbol = "") => {
+  const normalized = String(symbol || "").trim().toUpperCase();
+  if (!/^[A-Z][A-Z0-9.-]{0,11}$/.test(normalized)) return false;
+  if (/[.=]/.test(normalized)) return false;
+  if (normalized.endsWith("F") || normalized.endsWith("Y")) return false;
+  if (/^[A-Z]{2,6}(USD|EUR|GBP|JPY|CAD|AUD|CHF)$/.test(normalized)) return false;
+  return true;
+};
+
+const isUsLiveEarningsCalendarEvent = (event = {}) => {
+  const symbol = String(event.symbol || "").trim().toUpperCase();
+  if (!isUsLiveEarningsSymbolShape(symbol)) return false;
+  const exchange = String(event.exchange || "").trim().toUpperCase();
+  if (!exchange) return /^[A-Z]{1,5}$/.test(symbol);
+  return LIVE_EARNINGS_US_EXCHANGES.has(exchange);
+};
+
+const filterUsLiveEarningsEvents = (events = []) =>
+  (Array.isArray(events) ? events : []).filter(isUsLiveEarningsCalendarEvent);
+
 async function fetchLiveEarningsResult(symbol, estimateContext = {}) {
   const ticker = String(symbol || "").trim().toUpperCase();
   if (!ticker) return null;
-  const cacheKey = `${ticker}:${String(estimateContext.date || "").slice(0, 10) || "today"}`;
   const epsEstimate = toNumberOrNull(estimateContext.epsEstimate);
   const revenueEstimate = toNumberOrNull(estimateContext.revenueEstimate);
+  const cacheKey = [
+    ticker,
+    String(estimateContext.date || "").slice(0, 10) || "today",
+    epsEstimate === null ? "eps:none" : `eps:${epsEstimate}`,
+    revenueEstimate === null ? "rev:none" : `rev:${revenueEstimate}`
+  ].join(":");
   const cached = liveEarningsResultCache.get(cacheKey);
   if (cached && Date.now() - cached.fetchedAt < (cached.data?.status === "reported" ? 10 * 60 * 1000 : 60 * 1000)) {
     return {
@@ -5275,8 +5399,8 @@ async function fetchLiveEarningsResult(symbol, estimateContext = {}) {
     for (const document of candidateDocuments) {
       const text = await fetchLiveEarningsDocumentText(document);
       if (!text || !/earnings|results|revenue|sales|per share|EPS/i.test(text)) continue;
-      const revenueActual = findLiveEarningsRevenueActual(text);
-      const epsActual = findLiveEarningsEpsActual(text);
+      const revenueActual = findLiveEarningsRevenueActual(text, result.revenueEstimate);
+      const epsActual = findLiveEarningsEpsActual(text, result.epsEstimate);
       if (revenueActual === null && epsActual === null) continue;
       result.status = "reported";
       result.revenueActual = revenueActual;
@@ -5286,7 +5410,9 @@ async function fetchLiveEarningsResult(symbol, estimateContext = {}) {
       result.sources = [{
         title: document.title || "Earnings release",
         url: document.url,
-        source: document.source || "SEC filing",
+        source: /sec\.gov/i.test(String(document.url || ""))
+          ? "SEC filing"
+          : "Primary earnings document",
         filingDate: document.filingDate || null,
         form: document.form || null
       }];
@@ -22788,6 +22914,7 @@ app.get("/api/earnings", async (req, res) => {
         symbol,
         company: row.name || row.company || stockAnalysisRow.company || symbol,
         logo: getFinnhubLogoUrl(symbol),
+        exchange: firstText(row.exchange, row.exchangeShortName, stockAnalysisRow.exchange),
         marketCap: firstFiniteNumber(
           fmpMarketCapBySymbol.get(symbol),
           row.marketCap
@@ -22818,7 +22945,21 @@ app.get("/api/earnings", async (req, res) => {
           a.symbol.localeCompare(b.symbol)
         )
         .slice(0, 80);
-      return { date, events };
+      const uniqueLiveEvents = new Map();
+      filterUsLiveEarningsEvents(eventsByDate.get(date) || []).forEach((event) => {
+        const existing = uniqueLiveEvents.get(event.symbol);
+        if (!existing || (event.marketCap || 0) > (existing.marketCap || 0)) {
+          uniqueLiveEvents.set(event.symbol, event);
+        }
+      });
+      const liveEvents = [...uniqueLiveEvents.values()]
+        .sort((a, b) =>
+          (b.marketCap || 0) - (a.marketCap || 0) ||
+          (b.revenueEstimate || b.revenueActual || 0) - (a.revenueEstimate || a.revenueActual || 0) ||
+          a.symbol.localeCompare(b.symbol)
+        )
+        .slice(0, 80);
+      return { date, events, liveEvents };
     });
     const responseData = {
       weekStart: dates[0],
