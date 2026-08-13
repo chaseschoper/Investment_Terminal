@@ -5096,30 +5096,46 @@ const parseLiveEarningsEps = (rawValue = "") => {
 
 const findLiveEarningsRevenueActual = (text = "") => {
   const normalized = normalizeLiveEarningsText(text);
+  const focusedSections = normalized
+    .split(/(?=condensed consolidated|consolidated statements|financial results|quarterly results|results of operations|three months ended|quarter ended)/i)
+    .filter((section) => /revenue|net sales|total sales/i.test(section))
+    .slice(0, 8);
   const patterns = [
+    /\b(?:total\s+)?(?:net\s+)?revenue(?:s)?\b\s+\$?\s*([([]?-?\d+(?:,\d{3})*(?:\.\d+)?[)]?)(?:\s*(million|billion|bn|mm))?/i,
+    /\b(?:net\s+)?sales\b\s+\$?\s*([([]?-?\d+(?:,\d{3})*(?:\.\d+)?[)]?)(?:\s*(million|billion|bn|mm))?/i,
     /\b(?:total\s+)?(?:net\s+)?revenue(?:s)?\b.{0,120}?\$?\s*([([]?-?\d+(?:,\d{3})*(?:\.\d+)?[)]?)(?:\s*(million|billion|bn|mm))?/i,
     /\b(?:net\s+)?sales\b.{0,120}?\$?\s*([([]?-?\d+(?:,\d{3})*(?:\.\d+)?[)]?)(?:\s*(million|billion|bn|mm))?/i,
     /\brevenue(?:s)?\s+(?:was|were|of|totaled|increased|decreased)\b.{0,80}?\$?\s*([([]?-?\d+(?:,\d{3})*(?:\.\d+)?[)]?)(?:\s*(million|billion|bn|mm))?/i
   ];
-  for (const pattern of patterns) {
-    const match = normalized.match(pattern);
-    const value = parseLiveEarningsMoney(match?.[1], match?.[2]);
-    if (value !== null && Math.abs(value) > 1000) return value;
+  for (const sourceText of [...focusedSections, normalized]) {
+    for (const pattern of patterns) {
+      const match = sourceText.match(pattern);
+      const value = parseLiveEarningsMoney(match?.[1], match?.[2]);
+      if (value !== null && Math.abs(value) > 1000) return value;
+    }
   }
   return null;
 };
 
 const findLiveEarningsEpsActual = (text = "") => {
   const normalized = normalizeLiveEarningsText(text);
+  const focusedSections = normalized
+    .split(/(?=condensed consolidated|consolidated statements|financial results|quarterly results|results of operations|three months ended|quarter ended|earnings per share)/i)
+    .filter((section) => /per share|EPS|earnings/i.test(section))
+    .slice(0, 10);
   const patterns = [
+    /\b(?:diluted\s+)?(?:earnings|income)\s+per\s+(?:common\s+)?share\b\s+\$?\s*([([]?-?\d+(?:\.\d+)?[)]?)/i,
+    /\b(?:diluted\s+)?EPS\b\s+\$?\s*([([]?-?\d+(?:\.\d+)?[)]?)/i,
     /\b(?:diluted\s+)?(?:earnings|income)\s+per\s+(?:common\s+)?share\b.{0,140}?\$?\s*([([]?-?\d+(?:\.\d+)?[)]?)/i,
     /\b(?:diluted\s+)?EPS\b.{0,120}?\$?\s*([([]?-?\d+(?:\.\d+)?[)]?)/i,
     /\bGAAP\s+(?:diluted\s+)?EPS\b.{0,120}?\$?\s*([([]?-?\d+(?:\.\d+)?[)]?)/i
   ];
-  for (const pattern of patterns) {
-    const match = normalized.match(pattern);
-    const value = parseLiveEarningsEps(match?.[1]);
-    if (value !== null && Math.abs(value) < 1000) return value;
+  for (const sourceText of [...focusedSections, normalized]) {
+    for (const pattern of patterns) {
+      const match = sourceText.match(pattern);
+      const value = parseLiveEarningsEps(match?.[1]);
+      if (value !== null && Math.abs(value) < 1000) return value;
+    }
   }
   return null;
 };
@@ -5162,16 +5178,24 @@ async function fetchLiveEarningsResult(symbol, estimateContext = {}) {
   const ticker = String(symbol || "").trim().toUpperCase();
   if (!ticker) return null;
   const cacheKey = `${ticker}:${String(estimateContext.date || "").slice(0, 10) || "today"}`;
+  const epsEstimate = toNumberOrNull(estimateContext.epsEstimate);
+  const revenueEstimate = toNumberOrNull(estimateContext.revenueEstimate);
   const cached = liveEarningsResultCache.get(cacheKey);
   if (cached && Date.now() - cached.fetchedAt < (cached.data?.status === "reported" ? 10 * 60 * 1000 : 60 * 1000)) {
-    return cached.data;
+    return {
+      ...cached.data,
+      epsEstimate,
+      revenueEstimate,
+      epsSurprisePercent: liveEarningsSurprisePercent(cached.data?.epsActual, epsEstimate),
+      revenueSurprisePercent: liveEarningsSurprisePercent(cached.data?.revenueActual, revenueEstimate)
+    };
   }
 
   const result = {
     symbol: ticker,
     status: "watching",
-    epsEstimate: toNumberOrNull(estimateContext.epsEstimate),
-    revenueEstimate: toNumberOrNull(estimateContext.revenueEstimate),
+    epsEstimate,
+    revenueEstimate,
     epsActual: null,
     revenueActual: null,
     epsSurprisePercent: null,
@@ -22986,7 +23010,7 @@ app.get("/api/live-earnings/:symbol", async (req, res) => {
       percentChange,
       previousClose,
       extendedHours: afterHoursTrade,
-      estimateSource: "FMP earnings calendar",
+      estimateSource: "Consensus earnings calendar",
       actualsSource: liveResult?.sources?.length ? "Primary earnings document" : "Waiting for primary document"
     });
   } catch (err) {

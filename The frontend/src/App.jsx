@@ -4601,6 +4601,7 @@ function App() {
   const latestComparisonRequest = useRef(0);
   const latestAiRequest = useRef(0);
   const latestEarningsCallRequest = useRef(0);
+  const liveEarningsHydratedRef = useRef("");
   const initialSavedPricesLoaded = useRef(false);
   const firstStockLoadSettled = useRef(false);
   const previousMarketEventRef = useRef(null);
@@ -7041,6 +7042,23 @@ useEffect(() => {
   }, [activePage, calendarMode, selectedLiveEarningsEvent, liveEarningsResults]);
 
   useEffect(() => {
+    if (activePage !== "earnings-calendar" || calendarMode !== "live-earnings") return;
+    const today = toLocalIsoDate(new Date());
+    const todayEvents = (earnings?.days || []).find((day) => day.date === today)?.events || [];
+    const symbols = todayEvents
+      .map((event) => String(event?.symbol || "").trim().toUpperCase())
+      .filter(Boolean)
+      .slice(0, 18);
+    const hydrateKey = `${today}:${symbols.join(",")}`;
+    if (!symbols.length || liveEarningsHydratedRef.current === hydrateKey) return;
+    liveEarningsHydratedRef.current = hydrateKey;
+    symbols.forEach((symbol, index) => {
+      const event = todayEvents.find((item) => String(item?.symbol || "").trim().toUpperCase() === symbol);
+      window.setTimeout(() => loadLiveEarningsResult(event, { silent: true }), index * 350);
+    });
+  }, [activePage, calendarMode, earnings]);
+
+  useEffect(() => {
     if (activePage !== "treasury-rates") return;
 
     let isActive = true;
@@ -7557,11 +7575,11 @@ const loadUserData = async () => {
     await loadLiveEarningsResult(event);
   };
 
-  const loadLiveEarningsResult = async (event) => {
+  const loadLiveEarningsResult = async (event, options = {}) => {
     const symbol = String(event?.symbol || "").trim().toUpperCase();
     if (!symbol) return;
     try {
-      setLoadingLiveEarningsSymbol(symbol);
+      if (!options.silent) setLoadingLiveEarningsSymbol(symbol);
       const response = await axios.get(
         `${API_URL}/api/live-earnings/${encodeURIComponent(symbol)}`,
         {
@@ -7592,7 +7610,7 @@ const loadUserData = async () => {
         }
       }));
     } finally {
-      setLoadingLiveEarningsSymbol("");
+      if (!options.silent) setLoadingLiveEarningsSymbol("");
     }
   };
 
@@ -16634,7 +16652,7 @@ return (
           <div>
             <span className="home-feature-label">Primary-source actuals</span>
             <h3>Live Earnings</h3>
-            <p>Choose a company reporting today. Estimates come from FMP; actuals are pulled from SEC filings or earnings release documents once they appear.</p>
+            <p>Choose a company reporting today. Actuals are pulled from SEC filings or earnings release documents once they appear.</p>
           </div>
           <span>{formatShortDate(liveEarningsToday)}</span>
         </div>
@@ -16675,7 +16693,7 @@ return (
                       <small>{event.company || "Company"}</small>
                     </span>
                     <em className={result?.status === "reported" ? "reported" : ""}>
-                      {result?.status === "reported" ? "Reported" : "Watching"}
+                      {result?.status === "reported" ? "Reported" : result ? "Checked" : "Checking"}
                     </em>
                   </button>
                 );
@@ -16708,7 +16726,7 @@ return (
                     <article>
                       <span>Revenue estimate</span>
                       <strong>{formatCalendarMoney(selectedLiveEarningsResult?.revenueEstimate, "No estimate")}</strong>
-                      <small>FMP earnings calendar</small>
+                      <small>Consensus estimate</small>
                     </article>
                     <article>
                       <span>Revenue actual</span>
@@ -16720,7 +16738,7 @@ return (
                     <article>
                       <span>EPS estimate</span>
                       <strong>{formatCalendarEps(selectedLiveEarningsResult?.epsEstimate, "No estimate")}</strong>
-                      <small>FMP earnings calendar</small>
+                      <small>Consensus estimate</small>
                     </article>
                     <article>
                       <span>EPS actual</span>
@@ -16734,7 +16752,6 @@ return (
                   <div className="live-earnings-sources">
                     <div>
                       <strong>{loadingLiveEarningsSymbol === selectedLiveEarningsSymbol ? "Checking primary sources..." : selectedLiveEarningsResult?.message || "Waiting for release documents."}</strong>
-                      <small>Actuals are not filled from delayed FMP actuals in this tab.</small>
                     </div>
                     {selectedLiveEarningsResult?.sources?.length ? (
                       selectedLiveEarningsResult.sources.map((source, index) => (
