@@ -7045,16 +7045,18 @@ useEffect(() => {
     if (activePage !== "earnings-calendar" || calendarMode !== "live-earnings") return;
     const today = toLocalIsoDate(new Date());
     const todayEvents = (earnings?.days || []).find((day) => day.date === today)?.events || [];
+    if (!selectedLiveEarningsEvent?.symbol && todayEvents[0]?.symbol) {
+      openLiveEarningsEvent(todayEvents[0]);
+    }
     const symbols = todayEvents
       .map((event) => String(event?.symbol || "").trim().toUpperCase())
-      .filter(Boolean)
-      .slice(0, 18);
+      .filter(Boolean);
     const hydrateKey = `${today}:${symbols.join(",")}`;
     if (!symbols.length || liveEarningsHydratedRef.current === hydrateKey) return;
     liveEarningsHydratedRef.current = hydrateKey;
     symbols.forEach((symbol, index) => {
       const event = todayEvents.find((item) => String(item?.symbol || "").trim().toUpperCase() === symbol);
-      window.setTimeout(() => loadLiveEarningsResult(event, { silent: true }), index * 350);
+      window.setTimeout(() => loadLiveEarningsResult(event, { silent: true }), index * 900);
     });
   }, [activePage, calendarMode, earnings]);
 
@@ -16665,6 +16667,7 @@ return (
               {liveEarningsEvents.map((event, eventIndex) => {
                 const symbol = String(event.symbol || "").toUpperCase();
                 const result = liveEarningsResults[symbol];
+                const hasLiveActuals = isNumber(result?.epsActual) || isNumber(result?.revenueActual);
                 return (
                   <button
                     className={`live-earnings-item${selectedLiveEarningsSymbol === symbol ? " active" : ""}`}
@@ -16692,8 +16695,8 @@ return (
                       <strong>{symbol}</strong>
                       <small>{event.company || "Company"}</small>
                     </span>
-                    <em className={result?.status === "reported" ? "reported" : ""}>
-                      {result?.status === "reported" ? "Reported" : result ? "Checked" : "Checking"}
+                    <em className={hasLiveActuals ? "reported" : ""}>
+                      {hasLiveActuals ? "Reported" : result ? "Waiting" : "Checking"}
                     </em>
                   </button>
                 );
@@ -16751,7 +16754,7 @@ return (
 
                   <div className="live-earnings-sources">
                     <div>
-                      <strong>{loadingLiveEarningsSymbol === selectedLiveEarningsSymbol ? "Checking primary sources..." : selectedLiveEarningsResult?.message || "Waiting for release documents."}</strong>
+                      <strong>{loadingLiveEarningsSymbol === selectedLiveEarningsSymbol ? "Checking primary sources..." : selectedLiveEarningsResult?.message || "Waiting for earnings release documents."}</strong>
                     </div>
                     {selectedLiveEarningsResult?.sources?.length ? (
                       selectedLiveEarningsResult.sources.map((source, index) => (

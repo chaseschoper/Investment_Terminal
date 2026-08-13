@@ -5064,6 +5064,55 @@ async function fetchSecFilingExhibits(cik, filing) {
   }
 }
 
+async function fetchRecentSecEarningsDocuments(symbol, targetDate = "") {
+  const ticker = String(symbol || "").trim().toUpperCase();
+  const cik = await resolveSecCikForTicker(ticker);
+  if (!cik) return [];
+  try {
+    const response = await axios.get(`https://data.sec.gov/submissions/CIK${cik}.json`, {
+      headers: { "User-Agent": "InvestmentTerminal/1.0 contact@investmentterminal.app" },
+      timeout: 9000
+    });
+    const target = String(targetDate || "").slice(0, 10);
+    const targetTime = /^\d{4}-\d{2}-\d{2}$/.test(target)
+      ? new Date(`${target}T12:00:00Z`).getTime()
+      : Date.now();
+    const filings = normalizeSecRecentFilings(response.data?.filings?.recent || {})
+      .filter((filing) => /^8-K|^10-Q|^10-K/i.test(filing.form || ""))
+      .filter((filing) => {
+        const filingTime = new Date(`${filing.filingDate || filing.reportDate || ""}T12:00:00Z`).getTime();
+        if (Number.isNaN(filingTime)) return true;
+        return Math.abs(filingTime - targetTime) <= 10 * 24 * 60 * 60 * 1000 || filingTime >= targetTime;
+      })
+      .slice(0, 12);
+    const documentGroups = await Promise.all(filings.map(async (filing) => {
+      const primary = buildSecDocumentItem(filing, cik, `${filing.form} filing`);
+      const exhibits = await fetchSecFilingExhibits(cik, filing);
+      return [
+        ...exhibits,
+        {
+          ...primary,
+          title: primary.title || `${filing.form} filing`,
+          source: "SEC EDGAR",
+          score:
+            (/8-K/i.test(filing.form || "") ? 10 : 0) +
+            (/2\.02|9\.01|results|earnings|financial/i.test(`${filing.items || ""} ${filing.primaryDocDescription || ""}`) ? 22 : 0)
+        }
+      ];
+    }));
+    return documentGroups
+      .flat()
+      .filter((document, index, list) =>
+        document?.url && list.findIndex((item) => item?.url === document.url) === index
+      )
+      .sort((a, b) => (b.score || 0) - (a.score || 0))
+      .slice(0, 12);
+  } catch (err) {
+    console.log("Live earnings SEC lookup skipped:", ticker, err.response?.status || err.message);
+    return [];
+  }
+}
+
 const normalizeLiveEarningsText = (value = "") =>
   String(value || "")
     .replace(/&nbsp;/gi, " ")
@@ -5206,8 +5255,12 @@ async function fetchLiveEarningsResult(symbol, estimateContext = {}) {
   };
 
   try {
-    const documents = await fetchCompanyDocuments(ticker, { forceRefresh: true });
+    const [secDocuments, documents] = await Promise.all([
+      resolveWithin(fetchRecentSecEarningsDocuments(ticker, estimateContext.date), 12000, []),
+      resolveWithin(fetchCompanyDocuments(ticker, { forceRefresh: true }), 7000, null)
+    ]);
     const candidateDocuments = [
+      ...(secDocuments || []),
       ...(documents?.earningsExhibits || []),
       ...(documents?.resultDocuments || []),
       documents?.filings?.earningsRelease,
