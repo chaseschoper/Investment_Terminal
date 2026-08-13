@@ -41,6 +41,7 @@ let marketActivityWorkerRunning = false;
 const yahooSupplementalFetches = new Map();
 const earningsCallCache = new Map();
 const earningsCalendarCache = new Map();
+const liveEarningsResultCache = new Map();
 const earningsEstimateCalendarCache = new Map();
 const nasdaqEarningsDateCache = new Map();
 const marketIndexCache = new Map();
@@ -5061,6 +5062,168 @@ async function fetchSecFilingExhibits(cik, filing) {
     console.log("SEC exhibits skipped:", filing.form, err.response?.status || err.message);
     return [];
   }
+}
+
+const normalizeLiveEarningsText = (value = "") =>
+  String(value || "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const parseLiveEarningsMoney = (rawValue = "", scaleHint = "") => {
+  const text = String(rawValue || "").replace(/,/g, "").trim();
+  if (!text || /^[-–—]$/.test(text)) return null;
+  const negative = /^\(.*\)$/.test(text) || /^-/.test(text);
+  const number = Number(text.replace(/[()$]/g, ""));
+  if (!Number.isFinite(number)) return null;
+  const hint = String(scaleHint || "").toLowerCase();
+  const multiplier = /billion|bn\b/.test(hint)
+    ? 1000000000
+    : /million|mm\b/.test(hint)
+      ? 1000000
+      : 1;
+  return (negative ? -Math.abs(number) : number) * multiplier;
+};
+
+const parseLiveEarningsEps = (rawValue = "") => {
+  const text = String(rawValue || "").replace(/,/g, "").trim();
+  if (!text || /^[-–—]$/.test(text)) return null;
+  const negative = /^\(.*\)$/.test(text) || /^-/.test(text);
+  const number = Number(text.replace(/[()$]/g, ""));
+  if (!Number.isFinite(number)) return null;
+  return negative ? -Math.abs(number) : number;
+};
+
+const findLiveEarningsRevenueActual = (text = "") => {
+  const normalized = normalizeLiveEarningsText(text);
+  const patterns = [
+    /\b(?:total\s+)?(?:net\s+)?revenue(?:s)?\b.{0,120}?\$?\s*([([]?-?\d+(?:,\d{3})*(?:\.\d+)?[)]?)(?:\s*(million|billion|bn|mm))?/i,
+    /\b(?:net\s+)?sales\b.{0,120}?\$?\s*([([]?-?\d+(?:,\d{3})*(?:\.\d+)?[)]?)(?:\s*(million|billion|bn|mm))?/i,
+    /\brevenue(?:s)?\s+(?:was|were|of|totaled|increased|decreased)\b.{0,80}?\$?\s*([([]?-?\d+(?:,\d{3})*(?:\.\d+)?[)]?)(?:\s*(million|billion|bn|mm))?/i
+  ];
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    const value = parseLiveEarningsMoney(match?.[1], match?.[2]);
+    if (value !== null && Math.abs(value) > 1000) return value;
+  }
+  return null;
+};
+
+const findLiveEarningsEpsActual = (text = "") => {
+  const normalized = normalizeLiveEarningsText(text);
+  const patterns = [
+    /\b(?:diluted\s+)?(?:earnings|income)\s+per\s+(?:common\s+)?share\b.{0,140}?\$?\s*([([]?-?\d+(?:\.\d+)?[)]?)/i,
+    /\b(?:diluted\s+)?EPS\b.{0,120}?\$?\s*([([]?-?\d+(?:\.\d+)?[)]?)/i,
+    /\bGAAP\s+(?:diluted\s+)?EPS\b.{0,120}?\$?\s*([([]?-?\d+(?:\.\d+)?[)]?)/i
+  ];
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    const value = parseLiveEarningsEps(match?.[1]);
+    if (value !== null && Math.abs(value) < 1000) return value;
+  }
+  return null;
+};
+
+async function fetchLiveEarningsDocumentText(document) {
+  if (!document?.url) return "";
+  try {
+    const response = await axios.get(document.url, {
+      headers: {
+        "User-Agent": "InvestmentTerminal/1.0 contact@investmentterminal.app",
+        Accept: "text/html,application/xhtml+xml,text/plain,application/pdf;q=0.9,*/*;q=0.8"
+      },
+      timeout: 9000,
+      responseType: /\.pdf(?:$|\?)/i.test(document.url) ? "arraybuffer" : "text",
+      transformResponse: [(data) => data]
+    });
+    const contentType = String(response.headers["content-type"] || "").toLowerCase();
+    if (/pdf/i.test(contentType) || /\.pdf(?:$|\?)/i.test(document.url)) {
+      const parsed = await new PDFParse({ data: Buffer.from(response.data) }).getText();
+      return normalizeLiveEarningsText(parsed?.text || "");
+    }
+    const html = String(response.data || "");
+    const $ = cheerio.load(html);
+    $("script,style,noscript").remove();
+    return normalizeLiveEarningsText($("body").text() || $.text() || html);
+  } catch (err) {
+    console.log("Live earnings document text skipped:", document.url, err.response?.status || err.message);
+    return "";
+  }
+}
+
+const liveEarningsSurprisePercent = (actual, estimate) => {
+  const actualNumber = toNumberOrNull(actual);
+  const estimateNumber = toNumberOrNull(estimate);
+  if (actualNumber === null || estimateNumber === null || estimateNumber === 0) return null;
+  return ((actualNumber - estimateNumber) / Math.abs(estimateNumber)) * 100;
+};
+
+async function fetchLiveEarningsResult(symbol, estimateContext = {}) {
+  const ticker = String(symbol || "").trim().toUpperCase();
+  if (!ticker) return null;
+  const cacheKey = `${ticker}:${String(estimateContext.date || "").slice(0, 10) || "today"}`;
+  const cached = liveEarningsResultCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < (cached.data?.status === "reported" ? 10 * 60 * 1000 : 60 * 1000)) {
+    return cached.data;
+  }
+
+  const result = {
+    symbol: ticker,
+    status: "watching",
+    epsEstimate: toNumberOrNull(estimateContext.epsEstimate),
+    revenueEstimate: toNumberOrNull(estimateContext.revenueEstimate),
+    epsActual: null,
+    revenueActual: null,
+    epsSurprisePercent: null,
+    revenueSurprisePercent: null,
+    sources: [],
+    updatedAt: new Date().toISOString(),
+    message: "Watching SEC filings and earnings release documents for actuals."
+  };
+
+  try {
+    const documents = await fetchCompanyDocuments(ticker, { forceRefresh: true });
+    const candidateDocuments = [
+      ...(documents?.earningsExhibits || []),
+      ...(documents?.resultDocuments || []),
+      documents?.filings?.earningsRelease,
+      documents?.filings?.latest8K
+    ]
+      .filter(Boolean)
+      .filter((document, index, list) =>
+        document.url && list.findIndex((item) => item?.url === document.url) === index
+      )
+      .slice(0, 8);
+
+    for (const document of candidateDocuments) {
+      const text = await fetchLiveEarningsDocumentText(document);
+      if (!text || !/earnings|results|revenue|sales|per share|EPS/i.test(text)) continue;
+      const revenueActual = findLiveEarningsRevenueActual(text);
+      const epsActual = findLiveEarningsEpsActual(text);
+      if (revenueActual === null && epsActual === null) continue;
+      result.status = "reported";
+      result.revenueActual = revenueActual;
+      result.epsActual = epsActual;
+      result.revenueSurprisePercent = liveEarningsSurprisePercent(revenueActual, result.revenueEstimate);
+      result.epsSurprisePercent = liveEarningsSurprisePercent(epsActual, result.epsEstimate);
+      result.sources = [{
+        title: document.title || "Earnings release",
+        url: document.url,
+        source: document.source || "SEC filing",
+        filingDate: document.filingDate || null,
+        form: document.form || null
+      }];
+      result.message = "Actuals extracted from primary-source earnings document.";
+      break;
+    }
+  } catch (err) {
+    result.status = "error";
+    result.message = "Live earnings actuals are temporarily unavailable.";
+    console.log("Live earnings result skipped:", ticker, err.response?.status || err.message);
+  }
+
+  liveEarningsResultCache.set(cacheKey, { data: result, fetchedAt: Date.now() });
+  return result;
 }
 
 async function fetchCompanyDocuments(ticker, { forceRefresh = false } = {}) {
@@ -22780,6 +22943,62 @@ app.get("/api/calendar-events", async (req, res) => {
     setFmpCooldown(err, `${type} calendar`, "calendar");
     console.log(`FMP ${type} calendar skipped:`, err.response?.status || err.message);
     return res.status(500).json({ weekStart: dates[0], weekEnd: dates[6], type, days: [] });
+  }
+});
+
+app.get("/api/live-earnings/:symbol", async (req, res) => {
+  const symbol = String(req.params.symbol || "").trim().toUpperCase();
+  if (!/^[A-Z0-9.-]{1,12}$/.test(symbol)) {
+    return res.status(400).json({ error: "Invalid symbol" });
+  }
+  const date = String(req.query.date || calendarIsoDate(new Date())).slice(0, 10);
+  const estimateContext = {
+    date,
+    epsEstimate: parseApiNumber(req.query.epsEstimate),
+    revenueEstimate: parseApiNumber(req.query.revenueEstimate)
+  };
+
+  try {
+    const [liveResult, quote] = await Promise.all([
+      fetchLiveEarningsResult(symbol, estimateContext),
+      resolveWithin(fetchFmpStableQuoteProfile(symbol), 2400, {})
+    ]);
+    const price = firstFiniteNumber(quote?.price, quote?.regularMarketPrice);
+    const previousClose = firstFiniteNumber(quote?.previousClose, quote?.regularMarketPreviousClose);
+    const change = firstFiniteNumber(quote?.change, price !== null && previousClose ? price - previousClose : null);
+    const percentChange = firstFiniteNumber(
+      quote?.changesPercentage,
+      quote?.percentChange,
+      change !== null && previousClose ? (change / previousClose) * 100 : null
+    );
+    const afterHoursTrade = await resolveWithin(
+      fetchFmpAfterHoursTrade(symbol).then((trade) => buildAfterHoursSessionQuote(trade, price)),
+      2200,
+      null
+    ).catch(() => null);
+
+    return res.json({
+      ...liveResult,
+      company: firstText(quote?.name, quote?.companyName, symbol),
+      logo: getFinnhubLogoUrl(symbol),
+      price,
+      change,
+      percentChange,
+      previousClose,
+      extendedHours: afterHoursTrade,
+      estimateSource: "FMP earnings calendar",
+      actualsSource: liveResult?.sources?.length ? "Primary earnings document" : "Waiting for primary document"
+    });
+  } catch (err) {
+    console.log("Live earnings endpoint failed:", symbol, err.response?.status || err.message);
+    return res.status(500).json({
+      symbol,
+      status: "error",
+      message: "Live earnings data is temporarily unavailable.",
+      epsEstimate: estimateContext.epsEstimate,
+      revenueEstimate: estimateContext.revenueEstimate,
+      sources: []
+    });
   }
 });
 

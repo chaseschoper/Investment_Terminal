@@ -905,6 +905,7 @@ const DEFAULT_FUNDAMENTAL_INDICATORS = ["income_revenue", "income_netIncome", "i
 
 const CALENDAR_MODES = [
   { id: "earnings", label: "Earnings" },
+  { id: "live-earnings", label: "Live Earnings" },
   { id: "dividends", label: "Dividends" },
   { id: "ipos", label: "IPOs" },
   { id: "economic", label: "Economic" }
@@ -5416,6 +5417,15 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [loadingCalendarReportSymbol, setLoadingCalendarReportSymbol] =
     useState("");
 
+  const [selectedLiveEarningsEvent, setSelectedLiveEarningsEvent] =
+    useState(null);
+
+  const [liveEarningsResults, setLiveEarningsResults] =
+    useState({});
+
+  const [loadingLiveEarningsSymbol, setLoadingLiveEarningsSymbol] =
+    useState("");
+
   const [earningsWeekStart, setEarningsWeekStart] =
   useState(() => getWeekStartIso());
 
@@ -7027,6 +7037,17 @@ useEffect(() => {
   }, [activePage, earningsWeekStart, calendarMode]);
 
   useEffect(() => {
+    if (activePage !== "earnings-calendar" || calendarMode !== "live-earnings" || !selectedLiveEarningsEvent?.symbol) return;
+    const symbol = String(selectedLiveEarningsEvent.symbol || "").trim().toUpperCase();
+    const currentResult = liveEarningsResults[symbol];
+    if (currentResult?.status === "reported") return;
+    const timer = window.setInterval(() => {
+      loadLiveEarningsResult(selectedLiveEarningsEvent);
+    }, 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [activePage, calendarMode, selectedLiveEarningsEvent, liveEarningsResults]);
+
+  useEffect(() => {
     if (activePage !== "treasury-rates") return;
 
     let isActive = true;
@@ -7453,23 +7474,29 @@ const loadUserData = async () => {
   const loadEarnings = async (weekStart, mode = calendarMode) => {
 
     try {
-      const cacheKey = `${mode}:${weekStart}`;
+      const requestMode = mode === "live-earnings" ? "earnings" : mode;
+      const requestStart = mode === "live-earnings" ? getWeekStartIso(toLocalIsoDate(new Date())) : weekStart;
+      const cacheKey = `${mode}:${requestStart}`;
       const cachedCalendar = calendarDataCache[cacheKey];
       const cachedCalendarHasEvents = cachedCalendar?.days?.some((day) => day.events?.length);
       if (cachedCalendarHasEvents) {
         setEarnings(cachedCalendar);
       }
       setIsEarningsLoading(true);
-      setSelectedEarningsDate(weekStart);
+      setSelectedEarningsDate(mode === "live-earnings" ? toLocalIsoDate(new Date()) : weekStart);
 
       const earningsRes =
         await axios.get(
 
     `${API_URL}/api/calendar-events`,
-          { params: { type: mode, start: weekStart, _: Date.now() }, timeout: 9000 }
+          { params: { type: requestMode, start: requestStart, _: Date.now() }, timeout: 9000 }
         );
 
-      const calendar = earningsRes.data || { days: [] };
+      const calendar = {
+        ...(earningsRes.data || { days: [] }),
+        type: mode,
+        sourceType: requestMode
+      };
       setEarnings(calendar);
       if ((calendar.days || []).some((day) => day.events?.length)) {
         setCalendarDataCache((cache) => ({
@@ -7484,6 +7511,7 @@ const loadUserData = async () => {
           calendar.days.find((day) => day.date === date)?.events?.length
         );
         const currentDay = calendar.days.find((day) => day.date === current);
+        if (mode === "live-earnings") return today;
         if (mode !== "earnings" && currentDay && !currentDay.events?.length && firstEventDate) {
           return firstEventDate;
         }
@@ -7526,6 +7554,52 @@ const loadUserData = async () => {
       }));
     } finally {
       setLoadingCalendarReportSymbol("");
+    }
+  };
+
+  const openLiveEarningsEvent = async (event) => {
+    const symbol = String(event?.symbol || "").trim().toUpperCase();
+    if (!symbol) return;
+    setSelectedLiveEarningsEvent(event);
+    await loadLiveEarningsResult(event);
+  };
+
+  const loadLiveEarningsResult = async (event) => {
+    const symbol = String(event?.symbol || "").trim().toUpperCase();
+    if (!symbol) return;
+    try {
+      setLoadingLiveEarningsSymbol(symbol);
+      const response = await axios.get(
+        `${API_URL}/api/live-earnings/${encodeURIComponent(symbol)}`,
+        {
+          params: {
+            date: event.date,
+            epsEstimate: event.epsEstimate,
+            revenueEstimate: event.revenueEstimate,
+            _: Date.now()
+          },
+          timeout: 14000
+        }
+      );
+      setLiveEarningsResults((results) => ({
+        ...results,
+        [symbol]: response.data || { symbol, status: "watching" }
+      }));
+    } catch (err) {
+      console.error("Live earnings result failed", err);
+      setLiveEarningsResults((results) => ({
+        ...results,
+        [symbol]: {
+          symbol,
+          status: "error",
+          message: "Live earnings actuals are temporarily unavailable.",
+          epsEstimate: event.epsEstimate,
+          revenueEstimate: event.revenueEstimate,
+          sources: []
+        }
+      }));
+    } finally {
+      setLoadingLiveEarningsSymbol("");
     }
   };
 
@@ -9347,6 +9421,19 @@ const activeCalendarConfig = CALENDAR_MODES.find((mode) => mode.id === calendarM
 const selectedCalendarSymbol = String(selectedCalendarEvent?.symbol || "").toUpperCase();
 const selectedCalendarReport = selectedCalendarSymbol
   ? calendarEarningsReports[selectedCalendarSymbol] || { symbol: selectedCalendarSymbol, rows: [] }
+  : null;
+const liveEarningsToday = toLocalIsoDate(new Date());
+const liveEarningsDay = displayedCalendarDays.find((day) => day.date === liveEarningsToday) || { date: liveEarningsToday, events: [] };
+const liveEarningsEvents = calendarMode === "live-earnings" ? (liveEarningsDay.events || []) : [];
+const selectedLiveEarningsSymbol = String(selectedLiveEarningsEvent?.symbol || "").toUpperCase();
+const selectedLiveEarningsResult = selectedLiveEarningsSymbol
+  ? liveEarningsResults[selectedLiveEarningsSymbol] || {
+      symbol: selectedLiveEarningsSymbol,
+      status: "watching",
+      epsEstimate: selectedLiveEarningsEvent?.epsEstimate,
+      revenueEstimate: selectedLiveEarningsEvent?.revenueEstimate,
+      sources: []
+    }
   : null;
 const earningsWeekLabel = displayedCalendar?.weekStart && displayedCalendar?.weekEnd
   ? `${new Date(`${displayedCalendar.weekStart}T12:00:00`).toLocaleDateString(undefined, {
@@ -16567,6 +16654,134 @@ return (
     )}
     <div className="calendar-week-label">{earningsWeekLabel}</div>
 
+    {calendarMode === "live-earnings" ? (
+      <div className="live-earnings-panel">
+        <div className="live-earnings-intro">
+          <div>
+            <span className="home-feature-label">Primary-source actuals</span>
+            <h3>Live Earnings</h3>
+            <p>Choose a company reporting today. Estimates come from FMP; actuals are pulled from SEC filings or earnings release documents once they appear.</p>
+          </div>
+          <span>{formatShortDate(liveEarningsToday)}</span>
+        </div>
+
+        {isEarningsLoading && !liveEarningsEvents.length ? (
+          <div className="calendar-empty">Loading today&apos;s earnings reporters...</div>
+        ) : liveEarningsEvents.length ? (
+          <div className="live-earnings-layout">
+            <div className="live-earnings-list">
+              {liveEarningsEvents.map((event, eventIndex) => {
+                const symbol = String(event.symbol || "").toUpperCase();
+                const result = liveEarningsResults[symbol];
+                return (
+                  <button
+                    className={`live-earnings-item${selectedLiveEarningsSymbol === symbol ? " active" : ""}`}
+                    key={`live-${liveEarningsToday}-${symbol}-${eventIndex}`}
+                    type="button"
+                    onClick={() => openLiveEarningsEvent(event)}
+                  >
+                    <span className={`calendar-company-logo-shell${symbol ? " has-logo" : ""}`} aria-hidden="true">
+                      <span className="calendar-company-logo-fallback">
+                        {symbol.slice(0, 1)}
+                      </span>
+                      {symbol && (
+                        <img
+                          className="calendar-company-logo"
+                          src={getDisplayCompanyLogoUrl(symbol, event.logo)}
+                          data-provider-logo={event.logo || ""}
+                          alt=""
+                          crossOrigin="anonymous"
+                          onLoad={(event) => handleCompanyLogoLoad(event)}
+                          onError={(imageEvent) => handleCompanyLogoError(imageEvent, symbol)}
+                        />
+                      )}
+                    </span>
+                    <span>
+                      <strong>{symbol}</strong>
+                      <small>{event.company || "Company"}</small>
+                    </span>
+                    <em className={result?.status === "reported" ? "reported" : ""}>
+                      {result?.status === "reported" ? "Reported" : "Watching"}
+                    </em>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="live-earnings-detail">
+              {selectedLiveEarningsEvent ? (
+                <>
+                  <div className="live-earnings-detail-head">
+                    <div>
+                      <span className="home-feature-label">{selectedLiveEarningsResult?.status === "reported" ? "Actuals found" : "Watching release"}</span>
+                      <h3>{selectedLiveEarningsSymbol}</h3>
+                      <p>{selectedLiveEarningsEvent.company || selectedLiveEarningsResult?.company || selectedLiveEarningsSymbol}</p>
+                    </div>
+                    <div className="live-earnings-price">
+                      <strong>{formatPrice(selectedLiveEarningsResult?.price)}</strong>
+                      <span className={selectedLiveEarningsResult?.percentChange >= 0 ? "green" : "red"}>
+                        {formatCalendarSignedPercent(selectedLiveEarningsResult?.percentChange)}
+                      </span>
+                      {selectedLiveEarningsResult?.extendedHours?.price && (
+                        <small>
+                          {selectedLiveEarningsResult.extendedHours.label || "Extended"} {formatPrice(selectedLiveEarningsResult.extendedHours.price)}
+                        </small>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="live-earnings-metrics">
+                    <article>
+                      <span>Revenue estimate</span>
+                      <strong>{formatCalendarMoney(selectedLiveEarningsResult?.revenueEstimate, "No estimate")}</strong>
+                      <small>FMP earnings calendar</small>
+                    </article>
+                    <article>
+                      <span>Revenue actual</span>
+                      <strong>{formatCalendarMoney(selectedLiveEarningsResult?.revenueActual, "Waiting")}</strong>
+                      <small className={selectedLiveEarningsResult?.revenueSurprisePercent >= 0 ? "green" : "red"}>
+                        {formatCalendarSignedPercent(selectedLiveEarningsResult?.revenueSurprisePercent, "Beat/miss pending")}
+                      </small>
+                    </article>
+                    <article>
+                      <span>EPS estimate</span>
+                      <strong>{formatCalendarEps(selectedLiveEarningsResult?.epsEstimate, "No estimate")}</strong>
+                      <small>FMP earnings calendar</small>
+                    </article>
+                    <article>
+                      <span>EPS actual</span>
+                      <strong>{formatCalendarEps(selectedLiveEarningsResult?.epsActual, "Waiting")}</strong>
+                      <small className={selectedLiveEarningsResult?.epsSurprisePercent >= 0 ? "green" : "red"}>
+                        {formatCalendarSignedPercent(selectedLiveEarningsResult?.epsSurprisePercent, "Beat/miss pending")}
+                      </small>
+                    </article>
+                  </div>
+
+                  <div className="live-earnings-sources">
+                    <div>
+                      <strong>{loadingLiveEarningsSymbol === selectedLiveEarningsSymbol ? "Checking primary sources..." : selectedLiveEarningsResult?.message || "Waiting for release documents."}</strong>
+                      <small>Actuals are not filled from delayed FMP actuals in this tab.</small>
+                    </div>
+                    {selectedLiveEarningsResult?.sources?.length ? (
+                      selectedLiveEarningsResult.sources.map((source, index) => (
+                        <a key={`${source.url}-${index}`} href={source.url} target="_blank" rel="noreferrer">
+                          {source.title || source.source || "Source document"}
+                        </a>
+                      ))
+                    ) : null}
+                  </div>
+                </>
+              ) : (
+                <div className="calendar-empty">Select a company reporting today to watch for primary-source actuals.</div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="calendar-empty">No earnings reporters are listed for today.</div>
+        )}
+      </div>
+    ) : (
+      <>
     <div className="calendar-date-strip">
       {displayedCalendarDays.map((day) => {
         const date = new Date(`${day.date}T12:00:00`);
@@ -16739,6 +16954,8 @@ return (
       </div>
     ) : (
       <div className="calendar-empty">No {activeCalendarConfig.label.toLowerCase()} events are scheduled for this date.</div>
+    )}
+      </>
     )}
 
     {calendarMode === "earnings" && selectedCalendarEvent && (

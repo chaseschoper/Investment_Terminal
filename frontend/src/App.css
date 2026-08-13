@@ -5062,6 +5062,204 @@ body {
   text-align: center;
 }
 
+.live-earnings-panel {
+  padding: 18px;
+}
+
+.live-earnings-intro,
+.live-earnings-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.live-earnings-intro {
+  padding: 18px;
+  border: 1px solid rgba(45, 212, 191, 0.22);
+  border-radius: 10px;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(20, 184, 166, 0.16), transparent 34%),
+    rgba(5, 10, 20, 0.42);
+}
+
+.live-earnings-intro h3,
+.live-earnings-detail-head h3 {
+  margin: 4px 0;
+  color: #ffffff;
+  font-size: 30px;
+}
+
+.live-earnings-intro p,
+.live-earnings-detail-head p {
+  margin: 0;
+  color: #9ca3af;
+  line-height: 1.5;
+}
+
+.live-earnings-intro > span {
+  color: #67e8f9;
+  font-size: 13px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.live-earnings-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.6fr);
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.live-earnings-list {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.live-earnings-item {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 64px;
+  padding: 10px;
+  border: 1px solid rgba(51, 65, 85, 0.88);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.68);
+  color: #d1d5db;
+  text-align: left;
+  cursor: pointer;
+}
+
+.live-earnings-item:hover,
+.live-earnings-item.active {
+  border-color: rgba(45, 212, 191, 0.58);
+  background: rgba(17, 39, 58, 0.92);
+}
+
+.live-earnings-item strong {
+  display: block;
+  color: #f9fafb;
+}
+
+.live-earnings-item small {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  color: #8b95a7;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-earnings-item em {
+  padding: 4px 8px;
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  border-radius: 999px;
+  color: #93c5fd;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.live-earnings-item em.reported {
+  border-color: rgba(52, 211, 153, 0.4);
+  color: #34d399;
+}
+
+.live-earnings-detail {
+  min-height: 390px;
+  padding: 18px;
+  border: 1px solid rgba(37, 99, 235, 0.32);
+  border-radius: 10px;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(56, 189, 248, 0.12), transparent 34%),
+    rgba(5, 10, 20, 0.54);
+}
+
+.live-earnings-price {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+  min-width: 150px;
+}
+
+.live-earnings-price strong {
+  color: #ffffff;
+  font-size: 32px;
+}
+
+.live-earnings-price span,
+.live-earnings-price small {
+  color: #9ca3af;
+  font-weight: 900;
+}
+
+.live-earnings-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.live-earnings-metrics article {
+  min-height: 120px;
+  padding: 14px;
+  border: 1px solid rgba(51, 65, 85, 0.74);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.62);
+}
+
+.live-earnings-metrics span {
+  display: block;
+  color: #67e8f9;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.live-earnings-metrics strong {
+  display: block;
+  margin-top: 12px;
+  color: #ffffff;
+  font-size: 24px;
+}
+
+.live-earnings-metrics small {
+  display: block;
+  margin-top: 8px;
+  color: #8b95a7;
+  font-weight: 900;
+}
+
+.live-earnings-sources {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(51, 65, 85, 0.72);
+}
+
+.live-earnings-sources strong {
+  color: #f9fafb;
+}
+
+.live-earnings-sources small {
+  display: block;
+  margin-top: 4px;
+  color: #8b95a7;
+}
+
+.live-earnings-sources a {
+  color: #67e8f9;
+  font-weight: 900;
+  text-decoration: none;
+}
+
 .earnings-week-snapshot {
   position: relative;
   overflow: hidden;
@@ -5815,6 +6013,24 @@ body {
 
   .calendar-report-table {
     min-width: 760px;
+  }
+
+  .live-earnings-panel {
+    padding: 12px;
+  }
+
+  .live-earnings-intro,
+  .live-earnings-detail-head {
+    flex-direction: column;
+  }
+
+  .live-earnings-layout,
+  .live-earnings-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .live-earnings-price {
+    justify-items: start;
   }
 }
 .ai-analysis-box {
