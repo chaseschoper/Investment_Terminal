@@ -5650,7 +5650,7 @@ useEffect(() => {
 
   const refreshTopWatchlistPrices = async () => {
     if (!isActive) return;
-    loadSavedPrices(topWatchlistSymbols, 0, { live: true });
+    loadTopWatchlistChartPrices(topWatchlistSymbols);
     liveRefreshTimer = window.setTimeout(
       refreshTopWatchlistPrices,
       5 * 60 * 1000
@@ -5670,14 +5670,14 @@ useEffect(() => {
     if (!initialSavedPricesLoaded.current) {
       initialSavedPricesLoaded.current = true;
       loadSavedPrices(passiveSymbols);
-      loadSavedPrices(topWatchlistSymbols, 0, { live: true });
+      loadTopWatchlistChartPrices(topWatchlistSymbols);
       window.setTimeout(() => {
         if (!isActive) return;
-        loadSavedPrices(topWatchlistSymbols, 0, { live: true });
+        loadTopWatchlistChartPrices(topWatchlistSymbols);
       }, 1200);
     } else {
       loadSavedPrices(passiveSymbols);
-      loadSavedPrices(topWatchlistSymbols, 0, { live: true });
+      loadTopWatchlistChartPrices(topWatchlistSymbols);
     }
   };
 
@@ -6478,6 +6478,12 @@ useEffect(() => {
 
       const points = response.data.points || [];
       const latest = response.data.latest || null;
+      if (stockChartRange === "1D") {
+        applyChartLatestToSavedPrice(ticker, latest, {
+          marketType: "stock",
+          source: response.data?.source || "FMP 5-minute chart"
+        });
+      }
       if (response.data.unavailable) {
         setStockChartData([]);
         setStockChartMeta(latest);
@@ -7510,6 +7516,89 @@ const loadUserData = async () => {
     LOAD PORTFOLIO PRICE
   */
 
+  const applyPricePayload = (receivedPrices = {}, receivedDetails = {}) => {
+    mergeSavedQuoteSnapshot(receivedPrices, receivedDetails);
+    setPortfolioPrices((prev) => ({ ...prev, ...receivedPrices }));
+    setSavedSymbolDetails((prev) => {
+      const next = { ...prev };
+      Object.entries(receivedDetails).forEach(([symbol, detail]) => {
+        const hasPercentChange = Object.prototype.hasOwnProperty.call(detail || {}, "percentChange");
+        const hasChange = Object.prototype.hasOwnProperty.call(detail || {}, "change");
+        next[symbol] = {
+          ...prev[symbol],
+          ...detail,
+          percentChange: hasPercentChange
+            ? (isNumber(detail?.percentChange) ? detail.percentChange : null)
+            : prev[symbol]?.percentChange,
+          change: hasChange
+            ? (isNumber(detail?.change) ? detail.change : null)
+            : prev[symbol]?.change
+        };
+      });
+      return next;
+    });
+  };
+
+  const applyChartLatestToSavedPrice = (symbol, latest, fallbackDetails = {}) => {
+    const cleanSymbol = String(symbol || "").trim().toUpperCase();
+    if (!cleanSymbol || !isNumber(latest?.price)) return;
+    applyPricePayload(
+      { [cleanSymbol]: latest.price },
+      {
+        [cleanSymbol]: {
+          ...fallbackDetails,
+          change: latest.change,
+          percentChange: latest.percentChange,
+          previousClose: latest.previousClose,
+          price: latest.price,
+          source: fallbackDetails.source || "FMP 5-minute chart"
+        }
+      }
+    );
+  };
+
+  const loadTopWatchlistChartPrices = async (symbols, attempt = 0) => {
+    const cleanSymbols = [...new Set((symbols || [])
+      .map((symbol) => String(symbol || "").trim().toUpperCase())
+      .filter(Boolean))];
+    if (!cleanSymbols.length) return;
+    const retrySymbols = [];
+
+    await Promise.all(cleanSymbols.map(async (symbol) => {
+      const marketType = getMarketSymbolType(symbol);
+      const endpoint = marketType === "crypto"
+        ? `${API_URL}/api/crypto-price-history/${encodeURIComponent(symbol)}`
+        : marketType === "forex"
+          ? `${API_URL}/api/forex-price-history/${encodeURIComponent(symbol)}`
+          : `${API_URL}/api/price-history/${encodeURIComponent(symbol)}`;
+      try {
+        const response = await axios.get(endpoint, {
+          params: { range: "1D" },
+          timeout: 8000
+        });
+        const latest = response.data?.latest;
+        if (isNumber(latest?.price)) {
+          applyChartLatestToSavedPrice(symbol, latest, {
+            marketType,
+            source: response.data?.source || "FMP 5-minute chart"
+          });
+        }
+        if (response.data?.stale || response.data?.refreshing || !isNumber(latest?.price)) {
+          retrySymbols.push(symbol);
+        }
+      } catch (error) {
+        retrySymbols.push(symbol);
+      }
+    }));
+
+    if (retrySymbols.length && attempt < 8) {
+      window.setTimeout(
+        () => loadTopWatchlistChartPrices(retrySymbols, attempt + 1),
+        Math.min(60 * 1000, 5000 + attempt * 5000)
+      );
+    }
+  };
+
   const loadSavedPrices = async (symbols, attempt = 0, options = {}) => {
     if (!symbols.length) return;
     const cleanSymbols = [...new Set(symbols
@@ -7521,29 +7610,6 @@ const loadUserData = async () => {
       options.live ? 60 * 1000 : 90 * 1000,
       4000 + attempt * (options.live ? 3500 : 6000)
     );
-
-    const applyPricePayload = (receivedPrices = {}, receivedDetails = {}) => {
-      mergeSavedQuoteSnapshot(receivedPrices, receivedDetails);
-      setPortfolioPrices((prev) => ({ ...prev, ...receivedPrices }));
-      setSavedSymbolDetails((prev) => {
-        const next = { ...prev };
-        Object.entries(receivedDetails).forEach(([symbol, detail]) => {
-          const hasPercentChange = Object.prototype.hasOwnProperty.call(detail || {}, "percentChange");
-          const hasChange = Object.prototype.hasOwnProperty.call(detail || {}, "change");
-          next[symbol] = {
-            ...prev[symbol],
-            ...detail,
-            percentChange: hasPercentChange
-              ? (isNumber(detail?.percentChange) ? detail.percentChange : null)
-              : prev[symbol]?.percentChange,
-            change: hasChange
-              ? (isNumber(detail?.change) ? detail.change : null)
-              : prev[symbol]?.change
-          };
-        });
-        return next;
-      });
-    };
 
     try {
       const symbolChunks = chunkSymbols(cleanSymbols, options.live ? 8 : 12);
