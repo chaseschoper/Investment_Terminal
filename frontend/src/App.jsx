@@ -2607,6 +2607,12 @@ const normalizeStockProjections = (items = {}) => {
   );
 };
 
+const projectNetIncomeWithGrowth = (previousNetIncome, growthRate) => {
+  if (!isNumber(previousNetIncome) || !isNumber(growthRate)) return null;
+  if (previousNetIncome < 0) return previousNetIncome * (1 - growthRate);
+  return previousNetIncome * (1 + growthRate);
+};
+
 const parseInputPercent = (value) => {
   const number = Number(value);
   return Number.isFinite(number) ? number / 100 : null;
@@ -8590,7 +8596,7 @@ const buildProjectionRows = (caseId) => PROJECTION_YEARS.reduce((rows, year) => 
   const netIncome = isBaseYear
     ? firstNumber(baseNetIncomeOverride, estimateCurrentYearCard?.earnings)
     : isNumber(previousRow?.netIncome)
-      ? previousRow.netIncome * (1 + netIncomeGrowthRate)
+      ? projectNetIncomeWithGrowth(previousRow.netIncome, netIncomeGrowthRate)
       : null;
   const shares = isBaseYear
     ? firstNumber(baseSharesOverride, projectionShareBase)
