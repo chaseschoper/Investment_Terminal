@@ -5627,37 +5627,60 @@ useEffect(() => {
 
 useEffect(() => {
   let isActive = true;
-  let refreshTimer;
-  const symbols = [...new Set([
-    ...watchlist,
+  let liveRefreshTimer;
+  let passiveRefreshTimer;
+  const topWatchlistSymbols = [...new Set(watchlist
+    .map((symbol) => String(symbol || "").trim().toUpperCase())
+    .filter(Boolean))];
+  const passiveSymbols = [...new Set([
     ...portfolios.flatMap((item) =>
       (item.positions || []).map((position) => position.symbol)
     ),
     ...namedWatchlists.flatMap((list) => list.symbols || [])
-  ].map((symbol) => String(symbol || "").trim().toUpperCase()).filter(Boolean))];
+  ]
+    .map((symbol) => String(symbol || "").trim().toUpperCase())
+    .filter((symbol) => symbol && !topWatchlistSymbols.includes(symbol)))];
 
-  const refreshPrices = async () => {
+  const refreshTopWatchlistPrices = async () => {
     if (!isActive) return;
-    const marketIsOpen = getMarketClock(new Date()).tone === "open";
-    if (!initialSavedPricesLoaded.current) {
-      initialSavedPricesLoaded.current = true;
-      loadSavedPrices(symbols, 0, { live: true });
-      window.setTimeout(() => {
-        if (isActive) loadSavedPrices(symbols, 0, { live: true });
-      }, 1200);
-    } else {
-      loadSavedPrices(symbols, 0, { live: true });
-    }
-    refreshTimer = window.setTimeout(
-      refreshPrices,
-      marketIsOpen ? 15 * 1000 : 90 * 1000
+    loadSavedPrices(topWatchlistSymbols, 0, { live: true });
+    liveRefreshTimer = window.setTimeout(
+      refreshTopWatchlistPrices,
+      5 * 60 * 1000
     );
   };
 
-  refreshPrices();
+  const refreshPassivePrices = async () => {
+    if (!isActive) return;
+    loadSavedPrices(passiveSymbols);
+    passiveRefreshTimer = window.setTimeout(
+      refreshPassivePrices,
+      30 * 60 * 1000
+    );
+  };
+
+  const loadInitialPrices = () => {
+    if (!initialSavedPricesLoaded.current) {
+      initialSavedPricesLoaded.current = true;
+      loadSavedPrices(passiveSymbols);
+      loadSavedPrices(topWatchlistSymbols, 0, { live: true });
+      window.setTimeout(() => {
+        if (!isActive) return;
+        loadSavedPrices(topWatchlistSymbols, 0, { live: true });
+      }, 1200);
+    } else {
+      loadSavedPrices(passiveSymbols);
+      loadSavedPrices(topWatchlistSymbols, 0, { live: true });
+    }
+  };
+
+  loadInitialPrices();
+  liveRefreshTimer = window.setTimeout(refreshTopWatchlistPrices, 5 * 60 * 1000);
+  passiveRefreshTimer = window.setTimeout(refreshPassivePrices, 30 * 60 * 1000);
   return () => {
     isActive = false;
-    window.clearTimeout(refreshTimer);
+    window.clearTimeout(liveRefreshTimer);
+    window.clearTimeout(passiveRefreshTimer);
   };
 }, [watchlist, portfolios, namedWatchlists]);
 
