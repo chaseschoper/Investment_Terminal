@@ -15061,7 +15061,7 @@ app.get("/api/prices", async (req, res) => {
           ? ((savedPrice - savedPreviousClose) / savedPreviousClose) * 100
           : null
     };
-    if (!wantsLiveQuotes && savedPrice !== null && savedPrice > 0) prices[symbol] = savedPrice;
+    if (savedPrice !== null && savedPrice > 0) prices[symbol] = savedPrice;
 
     const cached = livePriceCache.get(symbol);
     const cachedIsFreshForRequest =
@@ -15274,7 +15274,17 @@ app.get("/api/prices", async (req, res) => {
   });
   runBackgroundQuoteRefresh(staleSymbols);
 
-  res.json({ prices, details });
+  const missingSymbols = symbols.filter((symbol) =>
+    toNumberOrNull(prices[symbol]) === null ||
+    toNumberOrNull(details[symbol]?.percentChange) === null
+  );
+
+  res.json({
+    prices,
+    details,
+    refreshing: staleSymbols.length > 0 || missingSymbols.length > 0,
+    missingSymbols
+  });
 });
 
 const hasCompleteHeatmapQuote = (company = {}) =>
@@ -24530,6 +24540,7 @@ profileSettings: req.user.profileSettings || {}
 
 const buildBackendWarmupTargets = () => [
   { label: "health", path: "/health", timeout: 2200 },
+  { label: "saved quote cache", path: "/api/prices?symbols=SPY,QQQ,NVDA,AAPL,MSFT,AMD,TSLA,BTCUSD,EURUSD&live=1", timeout: 12000 },
   { label: "market indices", path: "/api/market-indices", timeout: 5200 },
   { label: "market movers", path: "/api/market-movers", timeout: 9000 },
   { label: "top traded stocks", path: "/api/top-traded-stocks", timeout: 12000 },

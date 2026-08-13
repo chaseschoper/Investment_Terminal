@@ -3732,7 +3732,7 @@ const DEFAULT_PORTFOLIO = {
 const SAVED_LISTS_STORAGE_KEY = "mrktrally-saved-lists";
 const MARKET_INDICES_STORAGE_KEY = "mrktrally-market-indices";
 const SAVED_QUOTES_STORAGE_KEY = "mrktrally-saved-quotes";
-const SAVED_QUOTES_TTL_MS = 4 * 60 * 60 * 1000;
+const SAVED_QUOTES_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MARKET_INDEX_ORDER = [
   { key: "sp500", label: "S&P 500" },
   { key: "dow", label: "Dow Jones" },
@@ -3849,12 +3849,16 @@ const readSavedListsSnapshot = () => {
 
 const readSavedQuoteSnapshot = () => {
   const snapshot = readLocalJsonStorage(SAVED_QUOTES_STORAGE_KEY, {});
-  if (!snapshot?.savedAt || Date.now() - Date.parse(snapshot.savedAt) > SAVED_QUOTES_TTL_MS) {
+  const savedAt = Date.parse(snapshot?.savedAt);
+  if (!snapshot?.savedAt || Number.isNaN(savedAt)) {
     return { prices: {}, details: {} };
   }
+  const isExpired = Date.now() - savedAt > SAVED_QUOTES_TTL_MS;
   return {
     prices: snapshot.prices && typeof snapshot.prices === "object" ? snapshot.prices : {},
-    details: snapshot.details && typeof snapshot.details === "object" ? snapshot.details : {}
+    details: snapshot.details && typeof snapshot.details === "object" ? snapshot.details : {},
+    isExpired,
+    savedAt: snapshot.savedAt
   };
 };
 
@@ -7478,6 +7482,15 @@ const loadUserData = async () => {
 
   const loadSavedPrices = async (symbols, attempt = 0, options = {}) => {
     if (!symbols.length) return;
+    const cleanSymbols = [...new Set(symbols
+      .map((symbol) => String(symbol || "").trim().toUpperCase())
+      .filter(Boolean))];
+    if (!cleanSymbols.length) return;
+    const maxAttempts = options.live ? 18 : 8;
+    const retryDelay = Math.min(
+      options.live ? 60 * 1000 : 90 * 1000,
+      4000 + attempt * (options.live ? 3500 : 6000)
+    );
 
     const applyPricePayload = (receivedPrices = {}, receivedDetails = {}) => {
       mergeSavedQuoteSnapshot(receivedPrices, receivedDetails);
@@ -7503,9 +7516,10 @@ const loadUserData = async () => {
     };
 
     try {
-      const symbolChunks = chunkSymbols(symbols, options.live ? 8 : 12);
+      const symbolChunks = chunkSymbols(cleanSymbols, options.live ? 8 : 12);
       const receivedPrices = {};
       const receivedDetails = {};
+      let anyChunkRefreshing = false;
 
       for (const symbolChunk of symbolChunks) {
         try {
@@ -7519,16 +7533,17 @@ const loadUserData = async () => {
               timeout: options.live ? 10000 : 7000
             }
           );
+          if (response.data?.refreshing) anyChunkRefreshing = true;
           const chunkPrices = response.data?.prices || {};
           const chunkDetails = response.data?.details || {};
           Object.assign(receivedPrices, chunkPrices);
           Object.assign(receivedDetails, chunkDetails);
           applyPricePayload(chunkPrices, chunkDetails);
         } catch (chunkError) {
-          if (attempt < 2) {
+          if (attempt < maxAttempts) {
             window.setTimeout(
               () => loadSavedPrices(symbolChunk, attempt + 1, options),
-              5000
+              retryDelay
             );
           } else {
             console.error(chunkError);
@@ -7536,22 +7551,27 @@ const loadUserData = async () => {
         }
       }
 
-      const missingSymbols = symbols.filter(
+      const missingSymbols = cleanSymbols.filter(
         (symbol) =>
           !isNumber(receivedPrices[symbol]) ||
           !isNumber(receivedDetails[symbol]?.percentChange)
       );
 
-      if (missingSymbols.length && attempt < 2) {
+      if (missingSymbols.length && attempt < maxAttempts) {
         window.setTimeout(
           () => loadSavedPrices(missingSymbols, attempt + 1, options),
-          4000
+          retryDelay
+        );
+      } else if (anyChunkRefreshing && attempt < maxAttempts) {
+        window.setTimeout(
+          () => loadSavedPrices(cleanSymbols, attempt + 1, options),
+          retryDelay
         );
       }
 
     } catch (err) {
-      if (attempt < 2) {
-        window.setTimeout(() => loadSavedPrices(symbols, attempt + 1, options), 8000);
+      if (attempt < maxAttempts) {
+        window.setTimeout(() => loadSavedPrices(cleanSymbols, attempt + 1, options), retryDelay);
       } else {
         console.error(err);
       }
