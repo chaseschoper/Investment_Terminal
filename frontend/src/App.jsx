@@ -905,7 +905,6 @@ const DEFAULT_FUNDAMENTAL_INDICATORS = ["income_revenue", "income_netIncome", "i
 
 const CALENDAR_MODES = [
   { id: "earnings", label: "Earnings" },
-  { id: "live-earnings", label: "Live Earnings" },
   { id: "dividends", label: "Dividends" },
   { id: "ipos", label: "IPOs" },
   { id: "economic", label: "Economic" }
@@ -1982,22 +1981,6 @@ const formatLargeDollars = (value) => {
   return `$${value.toFixed(0)}`;
 };
 
-const formatFullStatementDollars = (value) => {
-  if (!isNumber(value)) return "N/A";
-  const absolute = Math.abs(value);
-  const formatted = absolute.toLocaleString(undefined, {
-    maximumFractionDigits: absolute < 100 ? 2 : 0
-  });
-  return `${value < 0 ? "-" : ""}$${formatted}`;
-};
-
-const formatFullStatementNumber = (value) => {
-  if (!isNumber(value)) return "N/A";
-  return value.toLocaleString(undefined, {
-    maximumFractionDigits: Math.abs(value) < 100 ? 2 : 0
-  });
-};
-
 const formatLargeNumber = (value) => {
   if (!isNumber(value)) return "N/A";
   if (Math.abs(value) >= 1e9) return `${(value / 1e9).toFixed(2)}B`;
@@ -2025,9 +2008,9 @@ const formatStatementValue = (value, row = {}) => {
     return value.toFixed(2);
   }
   if (format === "shares" || label.includes("shares")) {
-    return formatFullStatementNumber(value);
+    return formatSharesCount(value);
   }
-  return formatFullStatementDollars(value);
+  return formatLargeDollars(value);
 };
 
 const formatFundamentalChartValue = (value, indicator = {}) => {
