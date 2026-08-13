@@ -3881,6 +3881,11 @@ const mergeSavedQuoteSnapshot = (prices = {}, details = {}) => {
     })
   );
 };
+
+const isChartQuoteDetail = (detail = {}) => {
+  const source = String(detail?.source || "").toLowerCase();
+  return source.includes("chart") || source.includes("intraday");
+};
 import axios from "axios";
 const API_URL =
   import.meta.env.VITE_API_URL ||
@@ -5636,6 +5641,7 @@ useEffect(() => {
   let isActive = true;
   let liveRefreshTimer;
   let passiveRefreshTimer;
+  let closeRefreshTimer;
   const topWatchlistSymbols = [...new Set(watchlist
     .map((symbol) => String(symbol || "").trim().toUpperCase())
     .filter(Boolean))];
@@ -5650,7 +5656,7 @@ useEffect(() => {
 
   const refreshTopWatchlistPrices = async () => {
     if (!isActive) return;
-    loadTopWatchlistChartPrices(topWatchlistSymbols);
+    refreshTopWatchlistMarketPrices(topWatchlistSymbols);
     liveRefreshTimer = window.setTimeout(
       refreshTopWatchlistPrices,
       5 * 60 * 1000
@@ -5670,24 +5676,30 @@ useEffect(() => {
     if (!initialSavedPricesLoaded.current) {
       initialSavedPricesLoaded.current = true;
       loadSavedPrices(passiveSymbols);
-      loadTopWatchlistChartPrices(topWatchlistSymbols);
+      refreshTopWatchlistMarketPrices(topWatchlistSymbols);
       window.setTimeout(() => {
         if (!isActive) return;
-        loadTopWatchlistChartPrices(topWatchlistSymbols);
+        refreshTopWatchlistMarketPrices(topWatchlistSymbols);
       }, 1200);
     } else {
       loadSavedPrices(passiveSymbols);
-      loadTopWatchlistChartPrices(topWatchlistSymbols);
+      refreshTopWatchlistMarketPrices(topWatchlistSymbols);
     }
   };
 
   loadInitialPrices();
   liveRefreshTimer = window.setTimeout(refreshTopWatchlistPrices, 5 * 60 * 1000);
   passiveRefreshTimer = window.setTimeout(refreshPassivePrices, 30 * 60 * 1000);
+  closeRefreshTimer = window.setInterval(() => {
+    if (getMarketClock(new Date()).tone !== "open") {
+      loadTopWatchlistClosePrices(topWatchlistSymbols);
+    }
+  }, 60 * 1000);
   return () => {
     isActive = false;
     window.clearTimeout(liveRefreshTimer);
     window.clearTimeout(passiveRefreshTimer);
+    window.clearInterval(closeRefreshTimer);
   };
 }, [watchlist, portfolios, namedWatchlists]);
 
@@ -7231,10 +7243,15 @@ useEffect(() => {
         scheduleRetry(retryDelay);
       }
 
-      setPortfolioPrices((prev) => ({
-        ...prev,
-        [symbol]: stableResponse.price,
-      }));
+      setPortfolioPrices((prev) => {
+        if (watchlist.includes(symbol) && isChartQuoteDetail(savedSymbolDetails[symbol])) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [symbol]: stableResponse.price,
+        };
+      });
 
     } catch (error) {
 
@@ -7516,12 +7533,26 @@ const loadUserData = async () => {
     LOAD PORTFOLIO PRICE
   */
 
-  const applyPricePayload = (receivedPrices = {}, receivedDetails = {}) => {
-    mergeSavedQuoteSnapshot(receivedPrices, receivedDetails);
-    setPortfolioPrices((prev) => ({ ...prev, ...receivedPrices }));
+  const applyPricePayload = (receivedPrices = {}, receivedDetails = {}, options = {}) => {
+    const stockMarketIsOpen = getMarketClock(new Date()).tone === "open";
+    const shouldPreserveChartPrice = (symbol) =>
+      options.preserveTopWatchlistChartPrices &&
+      watchlist.includes(symbol) &&
+      (getMarketSymbolType(symbol) !== "stock" || stockMarketIsOpen) &&
+      isChartQuoteDetail(savedSymbolDetails[symbol]) &&
+      !isChartQuoteDetail(receivedDetails[symbol]);
+    const acceptedPrices = {};
+    const acceptedDetails = {};
+    Object.entries(receivedPrices).forEach(([symbol, price]) => {
+      if (!shouldPreserveChartPrice(symbol)) acceptedPrices[symbol] = price;
+    });
+    Object.entries(receivedDetails).forEach(([symbol, detail]) => {
+      if (!shouldPreserveChartPrice(symbol)) acceptedDetails[symbol] = detail;
+    });
+    mergeSavedQuoteSnapshot(acceptedPrices, acceptedDetails);
     setSavedSymbolDetails((prev) => {
       const next = { ...prev };
-      Object.entries(receivedDetails).forEach(([symbol, detail]) => {
+      Object.entries(acceptedDetails).forEach(([symbol, detail]) => {
         const hasPercentChange = Object.prototype.hasOwnProperty.call(detail || {}, "percentChange");
         const hasChange = Object.prototype.hasOwnProperty.call(detail || {}, "change");
         next[symbol] = {
@@ -7536,6 +7567,9 @@ const loadUserData = async () => {
         };
       });
       return next;
+    });
+    setPortfolioPrices((prev) => {
+      return { ...prev, ...acceptedPrices };
     });
   };
 
@@ -7599,6 +7633,30 @@ const loadUserData = async () => {
     }
   };
 
+  const loadTopWatchlistClosePrices = (symbols) => {
+    const cleanSymbols = [...new Set((symbols || [])
+      .map((symbol) => String(symbol || "").trim().toUpperCase())
+      .filter((symbol) => symbol && getMarketSymbolType(symbol) === "stock"))];
+    if (!cleanSymbols.length) return;
+    loadSavedPrices(cleanSymbols, 0, { live: true, allowTopWatchlistQuoteOverwrite: true });
+  };
+
+  const refreshTopWatchlistMarketPrices = (symbols) => {
+    const cleanSymbols = [...new Set((symbols || [])
+      .map((symbol) => String(symbol || "").trim().toUpperCase())
+      .filter(Boolean))];
+    if (!cleanSymbols.length) return;
+    const stockMarketIsOpen = getMarketClock(new Date()).tone === "open";
+    const chartSymbols = cleanSymbols.filter((symbol) =>
+      getMarketSymbolType(symbol) !== "stock" || stockMarketIsOpen
+    );
+    const closeSymbols = stockMarketIsOpen
+      ? []
+      : cleanSymbols.filter((symbol) => getMarketSymbolType(symbol) === "stock");
+    loadTopWatchlistChartPrices(chartSymbols);
+    loadTopWatchlistClosePrices(closeSymbols);
+  };
+
   const loadSavedPrices = async (symbols, attempt = 0, options = {}) => {
     if (!symbols.length) return;
     const cleanSymbols = [...new Set(symbols
@@ -7634,7 +7692,9 @@ const loadUserData = async () => {
           const chunkDetails = response.data?.details || {};
           Object.assign(receivedPrices, chunkPrices);
           Object.assign(receivedDetails, chunkDetails);
-          applyPricePayload(chunkPrices, chunkDetails);
+          applyPricePayload(chunkPrices, chunkDetails, {
+            preserveTopWatchlistChartPrices: !options.allowTopWatchlistQuoteOverwrite
+          });
         } catch (chunkError) {
           if (attempt < maxAttempts) {
             window.setTimeout(
