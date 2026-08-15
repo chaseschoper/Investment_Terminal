@@ -3413,8 +3413,16 @@ const hasRevenueSegmentData = (stock = {}) =>
   segmentScore(stock.revenueProductSegments) > 0 ||
   segmentScore(stock.revenueGeographicSegments) > 0;
 
+const hasCompleteMetricCardVersions = (stock = {}) =>
+  stock?.valuationMetricsVersion === VALUATION_METRICS_VERSION &&
+  stock?.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION;
+
 const shouldRetryOverviewExtras = (stock = {}, attempt = 0) =>
-  attempt < 2 && !stock.overviewExtrasCheckedAt;
+  attempt < 12 &&
+  (
+    !stock.overviewExtrasCheckedAt ||
+    !hasCompleteMetricCardVersions(stock)
+  );
 
 const shouldRetrySidecarData = (stock = {}, attempt = 0) =>
   attempt < 2 &&
@@ -6647,7 +6655,7 @@ useEffect(() => {
     const loadOverviewExtras = async (attempt = 0) => {
       try {
         const response = await axios.get(`${API_URL}/api/stock-overview-extras/${symbol}`, {
-          timeout: 3500
+          timeout: 6500
         });
         if (!isActive) return;
         const patch = response.data || {};
@@ -8988,17 +8996,17 @@ const hasCurrentFmpValuationMetrics = stockData?.valuationMetricsVersion === VAL
 const hasCurrentFmpBalanceMetrics = stockData?.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION;
 const areValuationMetricsRefreshing =
   isInitialStockLoad ||
-  (isStockLoading && !hasCurrentFmpValuationMetrics);
+  !hasCurrentFmpValuationMetrics;
 const isBalanceSheetMetricsRefreshing =
   isInitialStockLoad ||
-  (isStockLoading && !hasCurrentFmpBalanceMetrics);
+  !hasCurrentFmpBalanceMetrics;
 const areMetricsRefreshing =
   isInitialStockLoad ||
-  (isStockLoading && (
+  (
     !hasUsableMetricSnapshot ||
     !hasCurrentFmpValuationMetrics ||
     !hasCurrentFmpBalanceMetrics
-  ));
+  );
 const shouldShowHistoricalPeLoading = (rows = []) =>
   !hasRealHistoryRows(rows) &&
   (

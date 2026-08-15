@@ -2024,20 +2024,28 @@ async function buildStockOverviewExtras(ticker, data = {}) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol) return {};
 
-  const [afterHoursTradeRaw, revenueProductSegments, revenueGeographicSegments] = await Promise.all([
+  const needsMetricCards = !hasCompleteFmpMetricCardSnapshot(data);
+  const [afterHoursTradeRaw, revenueProductSegments, revenueGeographicSegments, metricCards] = await Promise.all([
     resolveWithin(fetchFmpAfterHoursTrade(symbol), 2600, null),
     resolveWithin(fetchFmpRevenueProductSegments(symbol), 1100, data.revenueProductSegments || null),
-    resolveWithin(fetchFmpRevenueGeographicSegments(symbol), 1100, data.revenueGeographicSegments || null)
+    resolveWithin(fetchFmpRevenueGeographicSegments(symbol), 1100, data.revenueGeographicSegments || null),
+    needsMetricCards ? resolveWithin(fetchFmpMetricCards(symbol), 3600, {}) : {}
   ]);
   const regularClose = firstFiniteNumber(data.regularClose, data.close, data.marketClose, data.officialClose);
   const afterHoursTrade = buildAfterHoursSessionQuote(afterHoursTradeRaw, regularClose);
   const productSegments = revenueProductSegments || data.revenueProductSegments || null;
   const geographicSegments = revenueGeographicSegments || data.revenueGeographicSegments || null;
+  const metricPatch = hasFmpMetricCardPayload(metricCards)
+    ? isCompleteFmpMetricCardPayload(metricCards)
+      ? buildFmpMetricCardUpdate(metricCards)
+      : buildNonNullFmpMetricCardUpdate(metricCards)
+    : {};
 
   const patch = {
     afterHoursTrade,
     ...(productSegments ? { revenueProductSegments: productSegments } : {}),
     ...(geographicSegments ? { revenueGeographicSegments: geographicSegments } : {}),
+    ...metricPatch,
     overviewExtrasCheckedAt: new Date().toISOString()
   };
 
