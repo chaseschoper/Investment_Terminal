@@ -1128,8 +1128,8 @@ const HOME_FEATURES = [
     id: "watchlists",
     icon: "watchlists",
     label: "Watchlists",
-    title: "Keep ideas close",
-    text: "Save companies you want to monitor and jump back into research quickly when a stock starts moving."
+    title: "Keep ideas in the top bar",
+    text: "Pin the stocks, ETFs, crypto, or forex pairs you care about in the top watchlist bar so they stay visible while you research."
   },
   {
     id: "earnings-calendar",
@@ -1239,10 +1239,10 @@ const HOME_TOUR_SECTIONS = [
     id: "watchlists",
     icon: "watchlists",
     label: "Watchlists",
-    eyebrow: "Saved ideas",
-    title: "Keep your research queue close.",
-    text: "Save stocks you want to revisit, see current price and change, and jump back into any company page quickly.",
-    bullets: ["Top watchlist bar", "Dedicated watchlist page", "Fast remove and revisit flow"],
+    eyebrow: "Top watchlist bar",
+    title: "Keep your highest-priority symbols visible.",
+    text: "Use the top watchlist bar to keep key stocks, ETFs, crypto, and forex pairs in view while you move through the terminal.",
+    bullets: ["Persistent top bar", "Fast add and remove controls", "Stays visible across research pages"],
     snapshot: "watchlists"
   },
   {
@@ -1341,7 +1341,6 @@ const HOME_FOOTER_GROUPS = [
   {
     title: "Portfolio",
     links: [
-      ["watchlists", "Watchlists"],
       ["portfolio", "Portfolio Tracker"],
       ["news", "News"]
     ]
@@ -5672,8 +5671,7 @@ useEffect(() => {
   const passiveSymbols = [...new Set([
     ...portfolios.flatMap((item) =>
       (item.positions || []).map((position) => position.symbol)
-    ),
-    ...namedWatchlists.flatMap((list) => list.symbols || [])
+    )
   ]
     .map((symbol) => String(symbol || "").trim().toUpperCase())
     .filter((symbol) => symbol && !topWatchlistSymbols.includes(symbol)))];
@@ -5725,7 +5723,7 @@ useEffect(() => {
     window.clearTimeout(passiveRefreshTimer);
     window.clearInterval(closeRefreshTimer);
   };
-}, [watchlist, portfolios, namedWatchlists]);
+}, [watchlist, portfolios]);
 
 useEffect(() => {
   let isActive = true;
@@ -11588,6 +11586,7 @@ const handleStockSearchSubmit = async (event, destinationPage = "overview") => {
 };
 
 const openPage = (page) => {
+  if (page === "watchlists") return;
   if (typeof page === "string" && page.startsWith("policy:")) {
     setActivePolicyKey(page.replace("policy:", ""));
     return;
@@ -11854,7 +11853,6 @@ return (
         ["stock-screener", "Stock Screener"],
         ["market-overview", "Market Overview"],
         ["etfs", "ETF Overview"],
-        ["watchlists", "Watchlists"],
         ["portfolio", "Portfolio"],
         ["earnings-calendar", "Calendar"],
         ["treasury-rates", "Treasury Rates"],
