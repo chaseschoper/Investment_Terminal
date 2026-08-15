@@ -1684,6 +1684,7 @@ async function fetchFmpStableQuoteProfile(ticker) {
       employeeCount: firstFiniteNumber(profile.fullTimeEmployees),
       isAdr: profile.isAdr === true || String(profile.isAdr || "").toLowerCase() === "true",
       dividendYield: normalizeDividendYield(profile.lastDividend && quote.price ? profile.lastDividend / quote.price : null),
+      profileMetricsCheckedAt: new Date().toISOString(),
       fmpProfileSource: "FMP stable quote/profile"
     };
   } catch (err) {
@@ -1711,6 +1712,7 @@ async function fetchFmpSharesFloat(ticker) {
         ? floatShares * (freeFloatPercent / 100)
         : null,
       floatSharesUpdatedAt: firstText(row.date),
+      sharesFloatCheckedAt: new Date().toISOString(),
       sharesFloatSource: firstText(row.source) || "FMP shares float"
     };
   } catch (err) {
@@ -2028,11 +2030,35 @@ async function buildStockOverviewExtras(ticker, data = {}) {
   if (!symbol) return {};
 
   const needsMetricCards = !hasCompleteFmpMetricCardSnapshot(data);
-  const [afterHoursTradeRaw, revenueProductSegments, revenueGeographicSegments, metricCards] = await Promise.all([
+  const needsProfileMetrics =
+    !data.profileMetricsCheckedAt ||
+    !data.industry ||
+    !data.ceo ||
+    !data.country ||
+    !data.exchange;
+  const needsShareFloatMetrics =
+    !data.sharesFloatCheckedAt ||
+    toNumberOrNull(data.floatShares) === null ||
+    toNumberOrNull(data.freeFloatShares) === null;
+  const needsExecutives =
+    !Array.isArray(data.executives) ||
+    !data.executives.length;
+  const [
+    afterHoursTradeRaw,
+    revenueProductSegments,
+    revenueGeographicSegments,
+    metricCards,
+    fmpProfile,
+    fmpSharesFloat,
+    fmpExecutives
+  ] = await Promise.all([
     resolveWithin(fetchFmpAfterHoursTrade(symbol), 2600, null),
     resolveWithin(fetchFmpRevenueProductSegments(symbol), 1100, data.revenueProductSegments || null),
     resolveWithin(fetchFmpRevenueGeographicSegments(symbol), 1100, data.revenueGeographicSegments || null),
-    needsMetricCards ? resolveWithin(fetchFmpMetricCards(symbol), 3600, {}) : {}
+    needsMetricCards ? resolveWithin(fetchFmpMetricCards(symbol), 3600, {}) : {},
+    needsProfileMetrics ? resolveWithin(fetchFmpStableQuoteProfile(symbol), 2400, {}) : {},
+    needsShareFloatMetrics ? resolveWithin(fetchFmpSharesFloat(symbol), 1800, {}) : {},
+    needsExecutives ? resolveWithin(fetchFmpKeyExecutives(symbol), 1800, []) : []
   ]);
   const regularClose = firstFiniteNumber(data.regularClose, data.close, data.marketClose, data.officialClose);
   const afterHoursTrade = buildAfterHoursSessionQuote(afterHoursTradeRaw, regularClose);
@@ -2043,12 +2069,26 @@ async function buildStockOverviewExtras(ticker, data = {}) {
       ? buildFmpMetricCardUpdate(metricCards)
       : buildNonNullFmpMetricCardUpdate(metricCards)
     : {};
+  const profilePatch = Object.fromEntries(
+    Object.entries(fmpProfile || {})
+      .filter(([, value]) => value !== null && value !== undefined && value !== "")
+  );
+  const sharesFloatPatch = Object.fromEntries(
+    Object.entries(fmpSharesFloat || {})
+      .filter(([, value]) => value !== null && value !== undefined && value !== "")
+  );
+  const executivesPatch = Array.isArray(fmpExecutives) && fmpExecutives.length
+    ? { executives: fmpExecutives }
+    : {};
 
   const patch = {
     afterHoursTrade,
     ...(productSegments ? { revenueProductSegments: productSegments } : {}),
     ...(geographicSegments ? { revenueGeographicSegments: geographicSegments } : {}),
     ...metricPatch,
+    ...profilePatch,
+    ...sharesFloatPatch,
+    ...executivesPatch,
     overviewExtrasCheckedAt: new Date().toISOString()
   };
 
@@ -13165,6 +13205,9 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     floatShares: firstNumber(fmpSharesFloat.floatShares),
     freeFloatShares: firstNumber(fmpSharesFloat.freeFloatShares),
     freeFloatPercent: firstNumber(fmpSharesFloat.freeFloatPercent),
+    profileMetricsCheckedAt: firstText(fmpProfile.profileMetricsCheckedAt),
+    fmpProfileSource: firstText(fmpProfile.fmpProfileSource),
+    sharesFloatCheckedAt: firstText(fmpSharesFloat.sharesFloatCheckedAt),
     floatSharesUpdatedAt: firstText(fmpSharesFloat.floatSharesUpdatedAt),
     sharesFloatSource: firstText(fmpSharesFloat.sharesFloatSource),
     fiftyTwoWeekHigh: firstNumber(fmpProfile.fiftyTwoWeekHigh, previousData.fiftyTwoWeekHigh),
@@ -14628,6 +14671,9 @@ async function fetchStockData(ticker) {
     floatShares: firstFiniteNumber(fmpSharesFloat.floatShares, previousData?.floatShares),
     freeFloatShares: firstFiniteNumber(fmpSharesFloat.freeFloatShares, previousData?.freeFloatShares),
     freeFloatPercent: firstFiniteNumber(fmpSharesFloat.freeFloatPercent, previousData?.freeFloatPercent),
+    profileMetricsCheckedAt: firstText(fmpQuoteProfile.profileMetricsCheckedAt, previousData?.profileMetricsCheckedAt),
+    fmpProfileSource: firstText(fmpQuoteProfile.fmpProfileSource, previousData?.fmpProfileSource),
+    sharesFloatCheckedAt: firstText(fmpSharesFloat.sharesFloatCheckedAt, previousData?.sharesFloatCheckedAt),
     floatSharesUpdatedAt: firstText(fmpSharesFloat.floatSharesUpdatedAt, previousData?.floatSharesUpdatedAt),
     sharesFloatSource: firstText(fmpSharesFloat.sharesFloatSource, previousData?.sharesFloatSource),
     dividendYield,

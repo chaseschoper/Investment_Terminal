@@ -3417,11 +3417,24 @@ const hasCompleteMetricCardVersions = (stock = {}) =>
   stock?.valuationMetricsVersion === VALUATION_METRICS_VERSION &&
   stock?.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION;
 
+const hasProfileMetricSnapshot = (stock = {}) =>
+  Boolean(stock?.profileMetricsCheckedAt || stock?.fmpProfileSource);
+
+const hasShareFloatMetricSnapshot = (stock = {}) =>
+  Boolean(
+    stock?.sharesFloatCheckedAt ||
+    stock?.sharesFloatSource ||
+    isNumber(stock?.floatShares) ||
+    isNumber(stock?.freeFloatShares)
+  );
+
 const shouldRetryOverviewExtras = (stock = {}, attempt = 0) =>
   attempt < 12 &&
   (
     !stock.overviewExtrasCheckedAt ||
-    !hasCompleteMetricCardVersions(stock)
+    !hasCompleteMetricCardVersions(stock) ||
+    !hasProfileMetricSnapshot(stock) ||
+    !hasShareFloatMetricSnapshot(stock)
   );
 
 const shouldRetrySidecarData = (stock = {}, attempt = 0) =>
@@ -9000,6 +9013,12 @@ const areMetricsRefreshing =
     !hasCurrentFmpValuationMetrics ||
     !hasCurrentFmpBalanceMetrics
   );
+const isProfileMetricsRefreshing =
+  isInitialStockLoad ||
+  !hasProfileMetricSnapshot(stockData || {});
+const isShareFloatMetricsRefreshing =
+  isInitialStockLoad ||
+  !hasShareFloatMetricSnapshot(stockData || {});
 const shouldShowHistoricalPeLoading = (rows = []) =>
   !hasRealHistoryRows(rows) &&
   (
@@ -9017,6 +9036,14 @@ const metricValue = (value) =>
 const balanceSheetValue = (value) =>
   (areMetricsRefreshing || isBalanceSheetMetricsRefreshing) &&
   (value === "N/A" || value === null || value === undefined)
+    ? "Loading..."
+    : stockValue(value);
+const profileMetricValue = (value) =>
+  isProfileMetricsRefreshing && (value === "N/A" || value === null || value === undefined)
+    ? "Loading..."
+    : stockValue(value);
+const shareFloatMetricValue = (value) =>
+  isShareFloatMetricsRefreshing && (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
     : stockValue(value);
 const hasMetricCardValue = (value) =>
@@ -9197,12 +9224,12 @@ const metricCardItems = [
       </>
     ) : metricValue("N/A")
   },
-  { label: "Float Shares", raw: stockData.floatShares, value: metricValue(formatSharesCount(stockData.floatShares)) },
-  { label: "Free Float Shares", raw: stockData.freeFloatShares, value: metricValue(formatSharesCount(stockData.freeFloatShares)) },
-  { label: "Industry", raw: stockData.industry, className: "metric-text-card", value: metricValue(stockData.industry || "N/A") },
-  { label: "CEO", raw: stockData.ceo, className: "metric-text-card", value: metricValue(stockData.ceo || "N/A") },
-  { label: "Country", raw: stockData.country, className: "metric-text-card", value: metricValue(stockData.country || "N/A") },
-  { label: "Exchange", raw: stockData.exchange, className: "metric-text-card", value: metricValue(stockData.exchange || "N/A") }
+  { label: "Float Shares", raw: stockData.floatShares, value: shareFloatMetricValue(formatSharesCount(stockData.floatShares)) },
+  { label: "Free Float Shares", raw: stockData.freeFloatShares, value: shareFloatMetricValue(formatSharesCount(stockData.freeFloatShares)) },
+  { label: "Industry", raw: stockData.industry, className: "metric-text-card", value: profileMetricValue(stockData.industry || "N/A") },
+  { label: "CEO", raw: stockData.ceo, className: "metric-text-card", value: profileMetricValue(stockData.ceo || "N/A") },
+  { label: "Country", raw: stockData.country, className: "metric-text-card", value: profileMetricValue(stockData.country || "N/A") },
+  { label: "Exchange", raw: stockData.exchange, className: "metric-text-card", value: profileMetricValue(stockData.exchange || "N/A") }
 ].filter(Boolean);
 const companyExecutives = Array.isArray(stockData.executives)
   ? stockData.executives.filter((executive) => executive?.name).slice(0, 10)
