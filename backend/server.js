@@ -105,7 +105,7 @@ const INTERIM_HISTORY_VERSION = 7;
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const MIN_RESPONSE_INTERIM_HISTORY_ROWS = 4;
 const BALANCE_SHEET_METRICS_VERSION = 14;
-const VALUATION_METRICS_VERSION = 23;
+const VALUATION_METRICS_VERSION = 24;
 const FOREIGN_CURRENCY_CONVERSION_VERSION = 2;
 const EARNINGS_CALL_VERSION = 18;
 const FMP_VALUATION_METRIC_FIELDS = [
@@ -237,6 +237,9 @@ const FMP_BALANCE_SHEET_METRIC_FIELDS = [
 ];
 const FMP_MARKET_METRIC_FIELDS = [
   "marketCap",
+  "beta",
+  "volume",
+  "lastDividend",
   "sharesOutstanding",
   "fiftyTwoWeekHigh",
   "fiftyTwoWeekLow",
@@ -2552,6 +2555,7 @@ function buildFmpMetricCardUpdate(metricCards = {}) {
 function isCompleteFmpMetricCardPayload(metricCards = {}) {
   return metricCards._valuationMetricsComplete !== false &&
     metricCards._balanceSheetMetricsComplete !== false &&
+    metricCards._metricCardSourcesComplete !== false &&
     hasUsableFmpValuationPayload(metricCards) &&
     hasUsableFmpBalancePayload(metricCards);
 }
@@ -2649,6 +2653,14 @@ async function fetchFmpMetricCards(ticker) {
     const currentYearEstimate = estimates[0] || {};
     const hasQuotePayload = Boolean(Object.keys(quote).length || Object.keys(profile).length);
     const hasValuationPayload = Boolean(Object.keys(ratios).length || Object.keys(metrics).length);
+    const hasStatementPayload = Boolean(
+      Object.keys(balance).length ||
+      cashflowRows.length ||
+      incomeRows.length
+    );
+    const hasGrowthPayload = growthData !== null;
+    const hasEstimatePayload = estimatesData !== null;
+    const hasAnalystPayload = ratingData !== null && priceTargetData !== null;
 
     const price = firstFmpMetricNumber(quote.price, metrics.stockPrice, metrics.price);
     const marketCap = firstFmpMetricNumber(quote.marketCap, profile.marketCap, metrics.marketCap);
@@ -2768,8 +2780,18 @@ async function fetchFmpMetricCards(ticker) {
     return {
       _valuationMetricsComplete: hasQuotePayload && hasValuationPayload,
       _balanceSheetMetricsComplete: hasBalancePayload,
+      _metricCardSourcesComplete:
+        hasQuotePayload &&
+        hasValuationPayload &&
+        hasStatementPayload &&
+        hasGrowthPayload &&
+        hasEstimatePayload &&
+        hasAnalystPayload,
       isAdr,
       marketCap,
+      beta: firstFmpMetricNumber(profile.beta, quote.beta),
+      volume: firstFmpMetricNumber(quote.volume, quote.avgVolume, profile.volume),
+      lastDividend: firstFmpMetricNumber(profile.lastDiv, profile.lastDividend, quote.lastDiv, quote.lastDividend),
       sharesOutstanding,
       fiftyTwoWeekHigh: firstFmpMetricNumber(quote.yearHigh),
       fiftyTwoWeekLow: firstFmpMetricNumber(quote.yearLow),
