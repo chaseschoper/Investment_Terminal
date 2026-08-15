@@ -2659,6 +2659,9 @@ async function fetchFmpMetricCards(ticker) {
       balanceData,
       cashflowData,
       incomeData,
+      annualIncomeData,
+      annualCashflowData,
+      annualBalanceData,
       growthData,
       estimatesData,
       ratingData,
@@ -2671,6 +2674,9 @@ async function fetchFmpMetricCards(ticker) {
       metricCardsGet("metric cards balance sheet quarter", ["/stable/balance-sheet-statement?symbol={ticker}&period=quarter&limit=1"], 1500),
       metricCardsGet("metric cards cash flow quarter", ["/stable/cash-flow-statement?symbol={ticker}&period=quarter&limit=4"], 1500),
       metricCardsGet("metric cards income quarter", ["/stable/income-statement?symbol={ticker}&period=quarter&limit=4"], 1500),
+      metricCardsGet("metric cards annual income growth fallback", ["/stable/income-statement?symbol={ticker}&period=annual&limit=2"], 1500),
+      metricCardsGet("metric cards annual cash flow growth fallback", ["/stable/cash-flow-statement?symbol={ticker}&period=annual&limit=2"], 1500),
+      metricCardsGet("metric cards annual balance growth fallback", ["/stable/balance-sheet-statement?symbol={ticker}&period=annual&limit=2"], 1500),
       metricCardsGet("metric cards annual growth", ["/stable/financial-growth?symbol={ticker}&period=annual&limit=2"], 900),
       metricCardsGet("metric cards analyst estimates", ["/stable/analyst-estimates?symbol={ticker}&period=annual&limit=10"], 1500),
       metricCardsGet("metric cards rating snapshot", ["/stable/ratings-snapshot?symbol={ticker}"], 700),
@@ -2684,6 +2690,9 @@ async function fetchFmpMetricCards(ticker) {
     const balance = Array.isArray(balanceData) ? balanceData[0] || {} : balanceData || {};
     const cashflowRows = Array.isArray(cashflowData) ? cashflowData : cashflowData ? [cashflowData] : [];
     const incomeRows = Array.isArray(incomeData) ? incomeData : incomeData ? [incomeData] : [];
+    const annualIncomeRows = Array.isArray(annualIncomeData) ? annualIncomeData : annualIncomeData ? [annualIncomeData] : [];
+    const annualCashflowRows = Array.isArray(annualCashflowData) ? annualCashflowData : annualCashflowData ? [annualCashflowData] : [];
+    const annualBalanceRows = Array.isArray(annualBalanceData) ? annualBalanceData : annualBalanceData ? [annualBalanceData] : [];
     const cashflow = cashflowRows[0] || {};
     const income = incomeRows[0] || {};
     const growth = Array.isArray(growthData) ? growthData[0] || {} : growthData || {};
@@ -2698,7 +2707,11 @@ async function fetchFmpMetricCards(ticker) {
       cashflowRows.length ||
       incomeRows.length
     );
-    const hasGrowthPayload = growthData !== null;
+    const hasGrowthPayload =
+      growthData !== null ||
+      annualIncomeRows.length >= 2 ||
+      annualCashflowRows.length >= 2 ||
+      annualBalanceRows.length >= 2;
     const hasEstimatePayload = estimatesData !== null;
     const hasAnalystPayload = ratingData !== null && priceTargetData !== null;
 
@@ -2764,6 +2777,14 @@ async function fetchFmpMetricCards(ticker) {
     );
     const margin = (numerator) =>
       revenue && numerator !== null ? (numerator / revenue) * 100 : null;
+    const annualGrowthFallback = (rows, ...fields) => {
+      const latest = rows[0] || {};
+      const previous = rows[1] || {};
+      const latestValue = firstFmpMetricNumber(...fields.map((field) => latest?.[field]));
+      const previousValue = firstFmpMetricNumber(...fields.map((field) => previous?.[field]));
+      if (latestValue === null || previousValue === null || previousValue === 0) return null;
+      return ((latestValue - previousValue) / Math.abs(previousValue)) * 100;
+    };
     const forwardEps = toNumberOrNull(currentYearEstimate.epsAvg ?? currentYearEstimate.estimatedEpsAvg);
     const forwardRevenue = toNumberOrNull(currentYearEstimate.revenueAvg ?? currentYearEstimate.estimatedRevenueAvg);
 
@@ -2906,12 +2927,12 @@ async function fetchFmpMetricCards(ticker) {
       interestBurden: firstFmpMetricNumber(metrics.interestBurdenTTM),
       ebtPerEbit: firstFmpMetricNumber(ratios.ebtPerEbitTTM),
       netIncomePerEbt: firstFmpMetricNumber(ratios.netIncomePerEBTTTM),
-      revenueGrowth: percentFromFmpRatio(growth.revenueGrowth),
-      earningsGrowth: percentFromFmpRatio(growth.netIncomeGrowth, growth.epsgrowth),
-      freeCashflowGrowth: percentFromFmpRatio(growth.freeCashFlowGrowth),
-      operatingCashflowGrowth: percentFromFmpRatio(growth.operatingCashFlowGrowth),
-      ebitdaGrowth: percentFromFmpRatio(growth.ebitdaGrowth),
-      debtGrowth: percentFromFmpRatio(growth.debtGrowth),
+      revenueGrowth: firstFmpMetricNumber(percentFromFmpRatio(growth.revenueGrowth), annualGrowthFallback(annualIncomeRows, "revenue")),
+      earningsGrowth: firstFmpMetricNumber(percentFromFmpRatio(growth.netIncomeGrowth, growth.epsgrowth), annualGrowthFallback(annualIncomeRows, "netIncome")),
+      freeCashflowGrowth: firstFmpMetricNumber(percentFromFmpRatio(growth.freeCashFlowGrowth), annualGrowthFallback(annualCashflowRows, "freeCashFlow", "freeCashflow")),
+      operatingCashflowGrowth: firstFmpMetricNumber(percentFromFmpRatio(growth.operatingCashFlowGrowth), annualGrowthFallback(annualCashflowRows, "operatingCashFlow", "operatingCashflow", "netCashProvidedByOperatingActivities")),
+      ebitdaGrowth: firstFmpMetricNumber(percentFromFmpRatio(growth.ebitdaGrowth), annualGrowthFallback(annualIncomeRows, "ebitda")),
+      debtGrowth: firstFmpMetricNumber(percentFromFmpRatio(growth.debtGrowth), annualGrowthFallback(annualBalanceRows, "totalDebt")),
       threeYearRevenueGrowthPerShare: percentFromFmpRatio(growth.threeYRevenueGrowthPerShare),
       fiveYearRevenueGrowthPerShare: percentFromFmpRatio(growth.fiveYRevenueGrowthPerShare),
       threeYearNetIncomeGrowthPerShare: percentFromFmpRatio(growth.threeYNetIncomeGrowthPerShare, growth.threeYBottomLineNetIncomeGrowthPerShare),

@@ -4986,6 +4986,8 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   let [stockData, setStockData] =
     useState(null);
   const loadedStockSymbol = stockData?.symbol || null;
+  const [stockOverviewExtrasExhaustedSymbol, setStockOverviewExtrasExhaustedSymbol] =
+    useState("");
 
   const [isStockLoading, setIsStockLoading] =
     useState(false);
@@ -6655,6 +6657,7 @@ useEffect(() => {
     const requestKey = symbol;
     if (stockOverviewExtrasRequestRef.current === requestKey) return;
     stockOverviewExtrasRequestRef.current = requestKey;
+    setStockOverviewExtrasExhaustedSymbol((current) => current === symbol ? "" : current);
 
     let isActive = true;
     let retryTimer;
@@ -6677,19 +6680,24 @@ useEffect(() => {
           mergedSnapshot = merged;
           return merged;
         });
-        if (isActive && shouldRetryOverviewExtras(mergedSnapshot || patch, attempt)) {
+        const shouldRetry = shouldRetryOverviewExtras(mergedSnapshot || patch, attempt);
+        if (isActive && shouldRetry) {
           retryTimer = window.setTimeout(
             () => loadOverviewExtras(attempt + 1),
             900 + attempt * 450
           );
+        } else if (isActive && !hasCompleteMetricCardVersions(mergedSnapshot || patch)) {
+          setStockOverviewExtrasExhaustedSymbol(symbol);
         }
       } catch (error) {
         console.error("Stock overview extras failed", error);
-        if (isActive && attempt < 4) {
+        if (isActive && attempt < 12) {
           retryTimer = window.setTimeout(
             () => loadOverviewExtras(attempt + 1),
             1000 + attempt * 500
           );
+        } else if (isActive) {
+          setStockOverviewExtrasExhaustedSymbol(symbol);
         }
       }
     };
@@ -8998,27 +9006,30 @@ const hasUsableMetricSnapshot =
     isNumber(latestOperatingCashflowFromChart)
   );
 const isInitialStockLoad = isStockLoading && (!stockData?.symbol || stockData?.isPlaceholder);
+const hasOverviewExtrasExhausted =
+  stockOverviewExtrasExhaustedSymbol &&
+  stockOverviewExtrasExhaustedSymbol === String(stockData?.symbol || ticker || "").trim().toUpperCase();
 const hasCurrentFmpValuationMetrics = stockData?.valuationMetricsVersion === VALUATION_METRICS_VERSION;
 const hasCurrentFmpBalanceMetrics = stockData?.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION;
 const areValuationMetricsRefreshing =
-  isInitialStockLoad ||
-  !hasCurrentFmpValuationMetrics;
+  !hasOverviewExtrasExhausted &&
+  (isInitialStockLoad || !hasCurrentFmpValuationMetrics);
 const isBalanceSheetMetricsRefreshing =
-  isInitialStockLoad ||
-  !hasCurrentFmpBalanceMetrics;
+  !hasOverviewExtrasExhausted &&
+  (isInitialStockLoad || !hasCurrentFmpBalanceMetrics);
 const areMetricsRefreshing =
-  isInitialStockLoad ||
-  (
+  !hasOverviewExtrasExhausted &&
+  (isInitialStockLoad ||
     !hasUsableMetricSnapshot ||
     !hasCurrentFmpValuationMetrics ||
     !hasCurrentFmpBalanceMetrics
   );
 const isProfileMetricsRefreshing =
-  isInitialStockLoad ||
-  !hasProfileMetricSnapshot(stockData || {});
+  !hasOverviewExtrasExhausted &&
+  (isInitialStockLoad || !hasProfileMetricSnapshot(stockData || {}));
 const isShareFloatMetricsRefreshing =
-  isInitialStockLoad ||
-  !hasShareFloatMetricSnapshot(stockData || {});
+  !hasOverviewExtrasExhausted &&
+  (isInitialStockLoad || !hasShareFloatMetricSnapshot(stockData || {}));
 const shouldShowHistoricalPeLoading = (rows = []) =>
   !hasRealHistoryRows(rows) &&
   (
