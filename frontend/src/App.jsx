@@ -3384,6 +3384,77 @@ const overviewMetricCount = (stock = {}) =>
     "fiftyTwoWeekLow"
   ].filter((field) => isNumber(stock[field])).length;
 
+const hasMissingOverviewMetricCardValues = (stock = {}) =>
+  [
+    "marketCap",
+    "beta",
+    "volume",
+    "lastDividend",
+    "priceAvg50",
+    "priceAvg200",
+    "pe",
+    "forwardPE",
+    "forwardPS",
+    "pegRatio",
+    "forwardPegRatio",
+    "priceToSales",
+    "priceToBook",
+    "priceToFreeCashflow",
+    "priceToOperatingCashflow",
+    "enterpriseValue",
+    "evToSales",
+    "evToEbitda",
+    "evToOperatingCashflow",
+    "evToFreeCashflow",
+    "totalCash",
+    "totalDebt",
+    "cashAndCashEquivalents",
+    "netCash",
+    "netCashPerShare",
+    "equityBookValue",
+    "bookValuePerShare",
+    "workingCapital",
+    "revenueGrowth",
+    "earningsGrowth",
+    "freeCashflowGrowth",
+    "operatingCashflowGrowth",
+    "ebitdaGrowth",
+    "debtGrowth",
+    "threeYearRevenueGrowthPerShare",
+    "fiveYearRevenueGrowthPerShare",
+    "threeYearNetIncomeGrowthPerShare",
+    "fiveYearNetIncomeGrowthPerShare",
+    "revenuePerShare",
+    "netIncomePerShare",
+    "cashPerShare",
+    "freeCashflowPerShare",
+    "operatingCashflowPerShare",
+    "revenuePerEmployee",
+    "profitsPerEmployee",
+    "grossMargins",
+    "profitMargins",
+    "pretaxMargin",
+    "ebitdaMargin",
+    "returnOnEquity",
+    "returnOnAssets",
+    "returnOnInvestedCapital",
+    "currentRatio",
+    "quickRatio",
+    "cashRatio",
+    "debtToEquity",
+    "debtToAssets",
+    "assetTurnover",
+    "inventoryTurnover",
+    "receivablesTurnover",
+    "payablesTurnover",
+    "targetMean",
+    "fiftyTwoWeekHigh",
+    "fiftyTwoWeekLow",
+    "floatShares",
+    "freeFloatShares",
+    "employeeCount"
+  ].some((field) => !isNumber(stock?.[field]));
+
 const hasNextQuarterData = (stock = {}) => {
   const nextQuarter = stock.analystEstimates?.nextQuarter || {};
   return (
@@ -3434,13 +3505,11 @@ const hasShareFloatMetricSnapshot = (stock = {}) =>
   );
 
 const shouldRetryOverviewExtras = (stock = {}, attempt = 0) =>
-  attempt < 720 &&
-  (
-    !stock.overviewExtrasCheckedAt ||
-    !hasCompleteMetricCardVersions(stock) ||
-    !hasProfileMetricSnapshot(stock) ||
-    !hasShareFloatMetricSnapshot(stock)
-  );
+  !stock.overviewExtrasCheckedAt ||
+  !hasCompleteMetricCardVersions(stock) ||
+  hasMissingOverviewMetricCardValues(stock) ||
+  !hasProfileMetricSnapshot(stock) ||
+  !hasShareFloatMetricSnapshot(stock);
 
 const shouldRetrySidecarData = (stock = {}, attempt = 0) =>
   attempt < 2 &&
@@ -6711,22 +6780,14 @@ useEffect(() => {
             () => loadOverviewExtras(attempt + 1),
             Math.min(10000, 900 + attempt * 450)
           );
-        } else if (
-          isActive &&
-          attempt >= 720 &&
-          !hasCompleteMetricCardVersions(mergedSnapshot || patch)
-        ) {
-          setStockOverviewExtrasExhaustedSymbol(symbol);
         }
       } catch (error) {
         console.error("Stock overview extras failed", error);
-        if (isActive && attempt < 720) {
+        if (isActive) {
           retryTimer = window.setTimeout(
             () => loadOverviewExtras(attempt + 1),
             Math.min(10000, 1000 + attempt * 500)
           );
-        } else if (isActive) {
-          setStockOverviewExtrasExhaustedSymbol(symbol);
         }
       }
     };
@@ -9091,25 +9152,31 @@ const shouldShowHistoricalPeLoading = (rows = []) =>
     isInitialStockLoad ||
     (!stockData?.historicalPeCheckedAt && stockData?.refreshing)
   );
+const isMissingDisplayValue = (value) =>
+  value === "N/A" || value === null || value === undefined;
+const keepMissingMetricCardLoading =
+  activePage === "overview" &&
+  String(stockData?.symbol || ticker || "").trim().toUpperCase() === String(ticker || "").trim().toUpperCase() &&
+  !hasOverviewExtrasExhausted;
 const stockValue = (value) =>
-  areMetricsRefreshing && (value === "N/A" || value === null || value === undefined)
+  (areMetricsRefreshing || keepMissingMetricCardLoading) && isMissingDisplayValue(value)
     ? "Loading..."
     : value;
 const metricValue = (value) =>
-  areMetricsRefreshing && (value === "N/A" || value === null || value === undefined)
+  (areMetricsRefreshing || keepMissingMetricCardLoading) && isMissingDisplayValue(value)
     ? "Loading..."
     : stockValue(value);
 const balanceSheetValue = (value) =>
-  (areMetricsRefreshing || isBalanceSheetMetricsRefreshing) &&
-  (value === "N/A" || value === null || value === undefined)
+  (areMetricsRefreshing || isBalanceSheetMetricsRefreshing || keepMissingMetricCardLoading) &&
+  isMissingDisplayValue(value)
     ? "Loading..."
     : stockValue(value);
 const profileMetricValue = (value) =>
-  isProfileMetricsRefreshing && (value === "N/A" || value === null || value === undefined)
+  (isProfileMetricsRefreshing || keepMissingMetricCardLoading) && isMissingDisplayValue(value)
     ? "Loading..."
     : stockValue(value);
 const shareFloatMetricValue = (value) =>
-  isShareFloatMetricsRefreshing && (value === "N/A" || value === null || value === undefined)
+  (isShareFloatMetricsRefreshing || keepMissingMetricCardLoading) && isMissingDisplayValue(value)
     ? "Loading..."
     : stockValue(value);
 const hasMetricCardValue = (value) =>
