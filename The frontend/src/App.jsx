@@ -8291,13 +8291,19 @@ const latestQuarterlyProfitMarginFromChart = latestQuarterlyMetricValue(
 );
 const latestGrossMarginMetricValue = isNumber(latestQuarterlyGrossMarginFromChart)
   ? latestQuarterlyGrossMarginFromChart
-  : null;
+  : isNumber(stockData?.grossMargins)
+    ? stockData.grossMargins
+    : null;
 const latestOperatingMarginMetricValue = isNumber(latestQuarterlyOperatingMarginFromChart)
   ? latestQuarterlyOperatingMarginFromChart
-  : null;
+  : isNumber(stockData?.operatingMargins)
+    ? stockData.operatingMargins
+    : null;
 const latestProfitMarginMetricValue = isNumber(latestQuarterlyProfitMarginFromChart)
   ? latestQuarterlyProfitMarginFromChart
-  : null;
+  : isNumber(stockData?.profitMargins)
+    ? stockData.profitMargins
+    : null;
 const visibleMarginHistory = filterRowsByHistoryRange(
   filterChartRowsByMode(mergedMarginHistory, financialChartMode),
   financialChartRange,
@@ -8364,8 +8370,10 @@ const isHistoryRefreshPending =
     ? isQuarterlyHistoryRefreshPending
     : isAnnualHistoryRefreshPending;
 const shouldShowCoreHistoryLoading = (rows = []) =>
-  !hasEnoughVisibleHistoryRows(rows) ||
-  !hasEnoughQuarterlyCoreRows(rows);
+  (
+    !hasEnoughVisibleHistoryRows(rows) ||
+    !hasEnoughQuarterlyCoreRows(rows)
+  ) && isHistoryRefreshPending;
 const shouldShowHistoryLoading = (rows = []) =>
   !hasEnoughVisibleHistoryRows(rows) && isHistoryRefreshPending;
 const shouldShowAnnualHistoryLoading = (rows = []) =>
@@ -9172,6 +9180,10 @@ const shareFloatMetricValue = (value) =>
   (isShareFloatMetricsRefreshing || keepMissingMetricCardLoading) && isMissingDisplayValue(value)
     ? "Loading..."
     : stockValue(value);
+const marginMetricValue = (value) =>
+  (areMetricsRefreshing || isHistoryRefreshPending) && isMissingDisplayValue(value)
+    ? "Loading..."
+    : value;
 const hasMetricCardValue = (value) =>
   isNumber(value) || (typeof value === "string" && value.trim() && value !== "N/A");
 const shouldRenderMetricCard = (value) =>
@@ -9245,14 +9257,14 @@ const metricCardItems = [
   {
     label: stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin",
     raw: stockData.isFinancialCompany ? stockData.bankMetrics?.netInterestRevenueMix : latestGrossMarginMetricValue,
-    value: metricValue(formatPercent(stockData.isFinancialCompany ? stockData.bankMetrics?.netInterestRevenueMix : latestGrossMarginMetricValue))
+    value: marginMetricValue(formatPercent(stockData.isFinancialCompany ? stockData.bankMetrics?.netInterestRevenueMix : latestGrossMarginMetricValue))
   },
   {
     label: stockData.isFinancialCompany ? "Pre-Tax Margin" : "Operating Margin",
     raw: stockData.isFinancialCompany ? stockData.bankMetrics?.preTaxMargin : latestOperatingMarginMetricValue,
-    value: metricValue(formatPercent(stockData.isFinancialCompany ? stockData.bankMetrics?.preTaxMargin : latestOperatingMarginMetricValue))
+    value: marginMetricValue(formatPercent(stockData.isFinancialCompany ? stockData.bankMetrics?.preTaxMargin : latestOperatingMarginMetricValue))
   },
-  { label: "Profit Margin", raw: latestProfitMarginMetricValue, value: metricValue(formatPercent(latestProfitMarginMetricValue)) },
+  { label: "Profit Margin", raw: latestProfitMarginMetricValue, value: marginMetricValue(formatPercent(latestProfitMarginMetricValue)) },
   { label: "Pretax Margin", raw: fmpMetricValue(stockData.pretaxMargin), value: metricValue(formatPercent(fmpMetricValue(stockData.pretaxMargin))) },
   { label: "EBITDA Margin", raw: fmpMetricValue(stockData.ebitdaMargin), value: metricValue(formatPercent(fmpMetricValue(stockData.ebitdaMargin))) },
   { label: "EBIT Margin", raw: fmpMetricValue(stockData.ebitMargin), value: metricValue(formatPercent(fmpMetricValue(stockData.ebitMargin))) },
