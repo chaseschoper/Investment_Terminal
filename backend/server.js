@@ -256,6 +256,75 @@ const FMP_TEXT_METRIC_FIELDS = [
   "recommendationKey",
   "analystRatingText"
 ];
+const OVERVIEW_METRIC_CARD_REQUIRED_FIELDS = [
+  "marketCap",
+  "beta",
+  "volume",
+  "lastDividend",
+  "priceAvg50",
+  "priceAvg200",
+  "pe",
+  "forwardPE",
+  "forwardPS",
+  "pegRatio",
+  "forwardPegRatio",
+  "priceToSales",
+  "priceToBook",
+  "priceToFreeCashflow",
+  "priceToOperatingCashflow",
+  "enterpriseValue",
+  "evToSales",
+  "evToEbitda",
+  "evToOperatingCashflow",
+  "evToFreeCashflow",
+  "totalCash",
+  "totalDebt",
+  "cashAndCashEquivalents",
+  "netCash",
+  "netCashPerShare",
+  "equityBookValue",
+  "bookValuePerShare",
+  "workingCapital",
+  "revenueGrowth",
+  "earningsGrowth",
+  "freeCashflowGrowth",
+  "operatingCashflowGrowth",
+  "ebitdaGrowth",
+  "debtGrowth",
+  "threeYearRevenueGrowthPerShare",
+  "fiveYearRevenueGrowthPerShare",
+  "threeYearNetIncomeGrowthPerShare",
+  "fiveYearNetIncomeGrowthPerShare",
+  "revenuePerShare",
+  "netIncomePerShare",
+  "cashPerShare",
+  "freeCashflowPerShare",
+  "operatingCashflowPerShare",
+  "revenuePerEmployee",
+  "profitsPerEmployee",
+  "grossMargins",
+  "profitMargins",
+  "pretaxMargin",
+  "ebitdaMargin",
+  "returnOnEquity",
+  "returnOnAssets",
+  "returnOnInvestedCapital",
+  "currentRatio",
+  "quickRatio",
+  "cashRatio",
+  "debtToEquity",
+  "debtToAssets",
+  "assetTurnover",
+  "inventoryTurnover",
+  "receivablesTurnover",
+  "payablesTurnover",
+  "targetMean",
+  "fiftyTwoWeekHigh",
+  "fiftyTwoWeekLow",
+  "floatShares",
+  "freeFloatShares",
+  "employeeCount"
+];
 const FINANCIAL_STATEMENT_ENDPOINTS = {
   income: {
     label: "Income Statement",
@@ -2030,7 +2099,9 @@ async function buildStockOverviewExtras(ticker, data = {}) {
   if (!symbol) return {};
   const checkedAt = new Date().toISOString();
 
-  const needsMetricCards = !hasCompleteFmpMetricCardSnapshot(data);
+  const needsMetricCards =
+    !hasCompleteFmpMetricCardSnapshot(data) ||
+    hasMissingOverviewMetricCardValues(data);
   const needsProfileMetrics =
     !data.profileMetricsCheckedAt ||
     !data.industry ||
@@ -2608,6 +2679,10 @@ function hasCompleteFmpMetricCardSnapshot(data = {}) {
     hasUsableFmpValuationPayload(data) &&
     hasUsableFmpBalancePayload(data)
   );
+}
+
+function hasMissingOverviewMetricCardValues(data = {}) {
+  return OVERVIEW_METRIC_CARD_REQUIRED_FIELDS.some((field) => toNumberOrNull(data[field]) === null);
 }
 
 function buildNonNullFmpMetricCardUpdate(metricCards = {}) {
