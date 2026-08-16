@@ -3511,19 +3511,15 @@ const shouldRetryOverviewExtras = (stock = {}, attempt = 0) =>
   !hasProfileMetricSnapshot(stock) ||
   !hasShareFloatMetricSnapshot(stock);
 
-const hasHistoricalPeRows = (stock = {}) =>
-  Array.isArray(stock?.historicalPe) &&
-  stock.historicalPe.some((row) => !row?.isCurrent && isNumber(row?.pe));
-
 const shouldRetrySidecarData = (stock = {}, attempt = 0) =>
-  !stock.stockSidecarsCheckedAt ||
-  !hasHistoricalPeRows(stock) ||
+  attempt < 2 &&
   (
-    attempt < 4 && (
+    !stock.stockSidecarsCheckedAt ||
+    (attempt < 1 && (
       !hasAnnualEstimateData(stock) ||
       !hasNextQuarterData(stock) ||
       !hasMarketActivityLoaded(stock)
-    )
+    ))
   );
 
 const estimateFieldScore = (estimate = {}) =>
@@ -6864,10 +6860,10 @@ useEffect(() => {
         }
       } catch (error) {
         console.error("Stock sidecars failed", error);
-        if (isActive) {
+        if (isActive && attempt < 4) {
           retryTimer = window.setTimeout(
             () => loadSidecar(attempt + 1),
-            Math.min(10000, 1000 + attempt * 500)
+            1000 + attempt * 500
           );
         }
       }
@@ -7462,20 +7458,6 @@ useEffect(() => {
 
     }
   };
-
-  useEffect(() => {
-    const symbol = String(ticker || stockData?.symbol || "").trim().toUpperCase();
-    if (activePage !== "overview" || !symbol || isStockLoading) return;
-    const currentSymbol = String(stockData?.symbol || loadedStockSymbol || "").trim().toUpperCase();
-    if (currentSymbol && currentSymbol !== symbol) return;
-
-    if (stockRetryTimerRef.current) {
-      window.clearTimeout(stockRetryTimerRef.current);
-      stockRetryTimerRef.current = null;
-    }
-    const requestId = ++latestStockRequest.current;
-    loadStock(symbol, 0, requestId);
-  }, [financialChartMode]);
 
 useEffect(() => {
 
@@ -8302,30 +8284,32 @@ const mergedMarginHistory = mergeMultiMetricRows(
   ],
   ["grossMargin", "operatingMargin", "profitMargin"]
 );
+const latestQuarterlyGrossMarginFromChart = latestQuarterlyMetricValue(
+  mergedMarginHistory,
+  "grossMargin"
+);
+const latestQuarterlyOperatingMarginFromChart = latestQuarterlyMetricValue(
+  mergedMarginHistory,
+  "operatingMargin"
+);
+const latestQuarterlyProfitMarginFromChart = latestQuarterlyMetricValue(
+  mergedMarginHistory,
+  "profitMargin"
+);
+const latestGrossMarginMetricValue = isNumber(latestQuarterlyGrossMarginFromChart)
+  ? latestQuarterlyGrossMarginFromChart
+  : null;
+const latestOperatingMarginMetricValue = isNumber(latestQuarterlyOperatingMarginFromChart)
+  ? latestQuarterlyOperatingMarginFromChart
+  : null;
+const latestProfitMarginMetricValue = isNumber(latestQuarterlyProfitMarginFromChart)
+  ? latestQuarterlyProfitMarginFromChart
+  : null;
 const visibleMarginHistory = filterRowsByHistoryRange(
   filterChartRowsByMode(mergedMarginHistory, financialChartMode),
   financialChartRange,
   financialChartMode
 );
-const latestVisibleMarginValue = (key, fallback) => {
-  const latest = [...(visibleMarginHistory || [])]
-    .filter((row) => isNumber(row?.[key]))
-    .sort((a, b) => {
-      const yearDiff = Number(a.year || 0) - Number(b.year || 0);
-      if (yearDiff !== 0) return yearDiff;
-      if (Boolean(a.isInterim) !== Boolean(b.isInterim)) {
-        return a.isInterim ? 1 : -1;
-      }
-      return String(a.period || "").localeCompare(String(b.period || ""));
-    })
-    .at(-1);
-
-  if (isNumber(latest?.[key])) return latest[key];
-  return isNumber(fallback) ? fallback : null;
-};
-const latestGrossMarginMetricValue = latestVisibleMarginValue("grossMargin", stockData?.grossMargins);
-const latestOperatingMarginMetricValue = latestVisibleMarginValue("operatingMargin", stockData?.operatingMargins);
-const latestProfitMarginMetricValue = latestVisibleMarginValue("profitMargin", stockData?.profitMargins);
 const marginChartRowsWithFallback = (rows, key, value) =>
   financialChartMode === "quarterly"
     ? rows
@@ -9195,10 +9179,6 @@ const shareFloatMetricValue = (value) =>
   (isShareFloatMetricsRefreshing || keepMissingMetricCardLoading) && isMissingDisplayValue(value)
     ? "Loading..."
     : stockValue(value);
-const marginMetricValue = (value) =>
-  (isHistoryRefreshPending || areMetricsRefreshing) && isMissingDisplayValue(value)
-    ? "Loading..."
-    : value;
 const hasMetricCardValue = (value) =>
   isNumber(value) || (typeof value === "string" && value.trim() && value !== "N/A");
 const shouldRenderMetricCard = (value) =>
@@ -9272,14 +9252,14 @@ const metricCardItems = [
   {
     label: stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin",
     raw: stockData.isFinancialCompany ? stockData.bankMetrics?.netInterestRevenueMix : latestGrossMarginMetricValue,
-    value: marginMetricValue(formatPercent(stockData.isFinancialCompany ? stockData.bankMetrics?.netInterestRevenueMix : latestGrossMarginMetricValue))
+    value: metricValue(formatPercent(stockData.isFinancialCompany ? stockData.bankMetrics?.netInterestRevenueMix : latestGrossMarginMetricValue))
   },
   {
     label: stockData.isFinancialCompany ? "Pre-Tax Margin" : "Operating Margin",
     raw: stockData.isFinancialCompany ? stockData.bankMetrics?.preTaxMargin : latestOperatingMarginMetricValue,
-    value: marginMetricValue(formatPercent(stockData.isFinancialCompany ? stockData.bankMetrics?.preTaxMargin : latestOperatingMarginMetricValue))
+    value: metricValue(formatPercent(stockData.isFinancialCompany ? stockData.bankMetrics?.preTaxMargin : latestOperatingMarginMetricValue))
   },
-  { label: "Profit Margin", raw: latestProfitMarginMetricValue, value: marginMetricValue(formatPercent(latestProfitMarginMetricValue)) },
+  { label: "Profit Margin", raw: latestProfitMarginMetricValue, value: metricValue(formatPercent(latestProfitMarginMetricValue)) },
   { label: "Pretax Margin", raw: fmpMetricValue(stockData.pretaxMargin), value: metricValue(formatPercent(fmpMetricValue(stockData.pretaxMargin))) },
   { label: "EBITDA Margin", raw: fmpMetricValue(stockData.ebitdaMargin), value: metricValue(formatPercent(fmpMetricValue(stockData.ebitdaMargin))) },
   { label: "EBIT Margin", raw: fmpMetricValue(stockData.ebitMargin), value: metricValue(formatPercent(fmpMetricValue(stockData.ebitMargin))) },
