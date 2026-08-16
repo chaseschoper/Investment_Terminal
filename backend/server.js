@@ -18766,11 +18766,9 @@ app.get("/api/stock-overview-extras/:ticker", async (req, res) => {
     console.log("Stock overview extras failed:", req.params.ticker, err.response?.status || err.message);
     const requestedTicker = String(req.params.ticker || "").trim().toUpperCase();
     const ticker = TICKER_ALIASES[requestedTicker] || requestedTicker;
-    const checkedAt = new Date().toISOString();
     return res.json({
       ticker: requestedTicker,
       sourceSymbol: ticker,
-      overviewExtrasCheckedAt: checkedAt,
       stale: true,
       error: "Stock overview extras are still refreshing."
     });

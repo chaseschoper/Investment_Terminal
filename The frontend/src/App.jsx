@@ -5062,6 +5062,8 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const loadedStockSymbol = stockData?.symbol || null;
   const [stockOverviewExtrasExhaustedSymbol, setStockOverviewExtrasExhaustedSymbol] =
     useState("");
+  const [metricCardRefreshState, setMetricCardRefreshState] =
+    useState({ symbol: "", inFlight: false, attempt: 0, retrying: false });
 
   const [isStockLoading, setIsStockLoading] =
     useState(false);
@@ -6749,6 +6751,12 @@ useEffect(() => {
     let isActive = true;
     let retryTimer;
     const loadOverviewExtras = async (attempt = 0) => {
+      setMetricCardRefreshState({
+        symbol,
+        inFlight: true,
+        attempt,
+        retrying: attempt > 0
+      });
       try {
         const response = await axios.get(`${API_URL}/api/stock-overview-extras/${symbol}`, {
           timeout: 6500
@@ -6768,6 +6776,12 @@ useEffect(() => {
           return merged;
         });
         const shouldRetry = shouldRetryOverviewExtras(mergedSnapshot || patch, attempt);
+        setMetricCardRefreshState({
+          symbol,
+          inFlight: false,
+          attempt,
+          retrying: Boolean(shouldRetry)
+        });
         if (isActive && shouldRetry) {
           retryTimer = window.setTimeout(
             () => loadOverviewExtras(attempt + 1),
@@ -6777,6 +6791,12 @@ useEffect(() => {
       } catch (error) {
         console.error("Stock overview extras failed", error);
         if (isActive) {
+          setMetricCardRefreshState({
+            symbol,
+            inFlight: false,
+            attempt,
+            retrying: true
+          });
           retryTimer = window.setTimeout(
             () => loadOverviewExtras(attempt + 1),
             Math.min(10000, 1000 + attempt * 500)
@@ -6790,6 +6810,11 @@ useEffect(() => {
       isActive = false;
       window.clearTimeout(timer);
       if (retryTimer) window.clearTimeout(retryTimer);
+      setMetricCardRefreshState((current) =>
+        current.symbol === symbol
+          ? { ...current, inFlight: false, retrying: false }
+          : current
+      );
     };
   }, [
     ticker,
@@ -9121,24 +9146,39 @@ const hasCurrentFmpValuationMetrics = stockData?.valuationMetricsVersion === VAL
 const hasCurrentFmpBalanceMetrics = stockData?.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION;
 const hasValuationMetricRequestFinished = hasValuationMetricRequestSettled(stockData || {});
 const hasBalanceSheetMetricRequestFinished = hasBalanceSheetMetricRequestSettled(stockData || {});
+const currentMetricCardRefreshSymbol = String(metricCardRefreshState?.symbol || "").trim().toUpperCase();
+const currentMetricCardSymbol = String(stockData?.symbol || ticker || "").trim().toUpperCase();
+const isCurrentMetricCardRefresh =
+  currentMetricCardRefreshSymbol &&
+  currentMetricCardRefreshSymbol === currentMetricCardSymbol;
+const isMetricCardRefreshActive =
+  isCurrentMetricCardRefresh &&
+  (
+    metricCardRefreshState.inFlight ||
+    (
+      metricCardRefreshState.retrying &&
+      metricCardRefreshState.attempt < 2 &&
+      !hasUsableMetricSnapshot
+    )
+  );
 const areValuationMetricsRefreshing =
   !hasOverviewExtrasExhausted &&
-  (isInitialStockLoad || !hasValuationMetricRequestFinished);
+  (isInitialStockLoad || (!hasValuationMetricRequestFinished && isMetricCardRefreshActive));
 const isBalanceSheetMetricsRefreshing =
   !hasOverviewExtrasExhausted &&
-  (isInitialStockLoad || !hasBalanceSheetMetricRequestFinished);
+  (isInitialStockLoad || (!hasBalanceSheetMetricRequestFinished && isMetricCardRefreshActive));
 const areMetricsRefreshing =
   !hasOverviewExtrasExhausted &&
   (isInitialStockLoad ||
-    !hasValuationMetricRequestFinished ||
-    !hasBalanceSheetMetricRequestFinished
+    (!hasValuationMetricRequestFinished && isMetricCardRefreshActive) ||
+    (!hasBalanceSheetMetricRequestFinished && isMetricCardRefreshActive)
   );
 const isProfileMetricsRefreshing =
   !hasOverviewExtrasExhausted &&
-  (isInitialStockLoad || !hasProfileMetricSnapshot(stockData || {}));
+  (isInitialStockLoad || (!hasProfileMetricSnapshot(stockData || {}) && isMetricCardRefreshActive));
 const isShareFloatMetricsRefreshing =
   !hasOverviewExtrasExhausted &&
-  (isInitialStockLoad || !hasShareFloatMetricSnapshot(stockData || {}));
+  (isInitialStockLoad || (!hasShareFloatMetricSnapshot(stockData || {}) && isMetricCardRefreshActive));
 const shouldShowHistoricalPeLoading = (rows = []) =>
   !hasRealHistoryRows(rows) &&
   (
@@ -9150,7 +9190,8 @@ const isMissingDisplayValue = (value) =>
 const keepMissingMetricCardLoading =
   activePage === "overview" &&
   String(stockData?.symbol || ticker || "").trim().toUpperCase() === String(ticker || "").trim().toUpperCase() &&
-  !hasOverviewExtrasExhausted;
+  !hasOverviewExtrasExhausted &&
+  (isInitialStockLoad || isMetricCardRefreshActive);
 const stockValue = (value) =>
   (areMetricsRefreshing || keepMissingMetricCardLoading) && isMissingDisplayValue(value)
     ? "Loading..."
