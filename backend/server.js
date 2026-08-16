@@ -9509,27 +9509,32 @@ async function ensureQuarterlyHistoricalPeForResponse(ticker, data = {}, timeout
   const bestAnnualRows = Array.isArray(rebuiltRows) && rebuiltRows.length > annualRows.length
     ? rebuiltRows
     : annualRows;
-  const historicalPeCheckedAt = new Date().toISOString();
+  const hasHistoricalPeRows = bestAnnualRows.length > 0;
+  const historicalPeCheckedAt = hasHistoricalPeRows
+    ? new Date().toISOString()
+    : data.historicalPeCheckedAt;
   const patchedData = {
     ...data,
     historicalPe: bestAnnualRows,
-    historicalPeVersion: HISTORICAL_PE_VERSION,
+    historicalPeVersion: hasHistoricalPeRows ? HISTORICAL_PE_VERSION : data.historicalPeVersion,
     historicalPeCheckedAt,
-    historicalPeSource: "FMP annual ratios"
+    historicalPeSource: hasHistoricalPeRows ? "FMP annual ratios" : data.historicalPeSource
   };
-  Stock.findOneAndUpdate(
-    { ticker },
-    {
-      $set: {
-        "data.historicalPe": bestAnnualRows,
-        "data.historicalPeVersion": HISTORICAL_PE_VERSION,
-        "data.historicalPeCheckedAt": historicalPeCheckedAt,
-        "data.historicalPeSource": patchedData.historicalPeSource
+  if (hasHistoricalPeRows) {
+    Stock.findOneAndUpdate(
+      { ticker },
+      {
+        $set: {
+          "data.historicalPe": bestAnnualRows,
+          "data.historicalPeVersion": HISTORICAL_PE_VERSION,
+          "data.historicalPeCheckedAt": historicalPeCheckedAt,
+          "data.historicalPeSource": patchedData.historicalPeSource
+        }
       }
-    }
-  ).catch((err) => {
-    console.log("Quarterly historical PE checked cache skipped:", ticker, err.message);
-  });
+    ).catch((err) => {
+      console.log("Quarterly historical PE checked cache skipped:", ticker, err.message);
+    });
+  }
   return patchedData;
 
 }
@@ -9899,9 +9904,15 @@ async function buildFastStockSidecars(ticker, data = {}, options = {}) {
     epsBeatMiss,
     epsBeatMissCheckedAt: needsEpsRows ? checkedAt : data.epsBeatMissCheckedAt,
     historicalPe,
-    historicalPeSource: "FMP annual ratios",
-    historicalPeVersion: HISTORICAL_PE_VERSION,
-    historicalPeCheckedAt: checkedAt,
+    ...(historicalPe.length ? {
+      historicalPeSource: "FMP annual ratios",
+      historicalPeVersion: HISTORICAL_PE_VERSION,
+      historicalPeCheckedAt: checkedAt
+    } : {
+      historicalPeSource: data.historicalPeSource,
+      historicalPeVersion: data.historicalPeVersion,
+      historicalPeCheckedAt: data.historicalPeCheckedAt
+    }),
     ...(hasMarketActivityPatch || hasExistingMarketActivity ? {
       analystUpdates,
       insiderTransactions,
