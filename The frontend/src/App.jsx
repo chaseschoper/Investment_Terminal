@@ -3417,6 +3417,14 @@ const hasCompleteMetricCardVersions = (stock = {}) =>
   stock?.valuationMetricsVersion === VALUATION_METRICS_VERSION &&
   stock?.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION;
 
+const hasValuationMetricRequestSettled = (stock = {}) =>
+  stock?.valuationMetricsVersion === VALUATION_METRICS_VERSION ||
+  Boolean(stock?.valuationMetricsCheckedAt || stock?.metricCardsCheckedAt || stock?.overviewExtrasCheckedAt);
+
+const hasBalanceSheetMetricRequestSettled = (stock = {}) =>
+  stock?.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION ||
+  Boolean(stock?.balanceSheetCheckedAt || stock?.metricCardsCheckedAt || stock?.overviewExtrasCheckedAt);
+
 const hasProfileMetricSnapshot = (stock = {}) =>
   Boolean(stock?.profileMetricsCheckedAt || stock?.fmpProfileSource);
 
@@ -7256,7 +7264,26 @@ useEffect(() => {
       if (
         response.data.status === "pending"
       ) {
-        setIsStockLoading(!stockMemoryCacheRef.current.has(symbol));
+        const hasCachedStock = stockMemoryCacheRef.current.has(symbol);
+        const shouldBlockForPending = !hasCachedStock && attempt < 8;
+        setIsStockLoading(shouldBlockForPending);
+        if (!hasCachedStock && !shouldBlockForPending) {
+          setStockData((current) => current || {
+            symbol,
+            ticker: symbol,
+            name: symbol,
+            isPlaceholder: true,
+            status: "pending",
+            overviewExtrasCheckedAt: new Date().toISOString(),
+            metricCardsCheckedAt: new Date().toISOString(),
+            valuationMetricsCheckedAt: new Date().toISOString(),
+            balanceSheetCheckedAt: new Date().toISOString(),
+            profileMetricsCheckedAt: new Date().toISOString(),
+            sharesFloatCheckedAt: new Date().toISOString(),
+            stockLoadError: "Still trying to load stock data."
+          });
+          firstStockLoadSettled.current = true;
+        }
         const retryDelay = attempt < 10
           ? 650
           : Math.min(3500, 900 + (attempt - 10) * 150);
@@ -7351,7 +7378,25 @@ useEffect(() => {
         return;
       }
 
-      setIsStockLoading(!stockMemoryCacheRef.current.has(symbol));
+      const hasCachedStock = stockMemoryCacheRef.current.has(symbol);
+      const shouldBlockForError = !hasCachedStock && attempt < 8;
+      setIsStockLoading(shouldBlockForError);
+      if (!hasCachedStock && !shouldBlockForError) {
+        setStockData((current) => current || {
+          symbol,
+          ticker: symbol,
+          name: symbol,
+          isPlaceholder: true,
+          overviewExtrasCheckedAt: new Date().toISOString(),
+          metricCardsCheckedAt: new Date().toISOString(),
+          valuationMetricsCheckedAt: new Date().toISOString(),
+          balanceSheetCheckedAt: new Date().toISOString(),
+          profileMetricsCheckedAt: new Date().toISOString(),
+          sharesFloatCheckedAt: new Date().toISOString(),
+          stockLoadError: "Still trying to load stock data."
+        });
+        firstStockLoadSettled.current = true;
+      }
       scheduleRetry(Math.min(5000, 1000 + attempt * 350));
 
     }
@@ -9024,18 +9069,20 @@ const hasOverviewExtrasExhausted =
   stockOverviewExtrasExhaustedSymbol === String(stockData?.symbol || ticker || "").trim().toUpperCase();
 const hasCurrentFmpValuationMetrics = stockData?.valuationMetricsVersion === VALUATION_METRICS_VERSION;
 const hasCurrentFmpBalanceMetrics = stockData?.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION;
+const hasValuationMetricRequestFinished = hasValuationMetricRequestSettled(stockData || {});
+const hasBalanceSheetMetricRequestFinished = hasBalanceSheetMetricRequestSettled(stockData || {});
 const areValuationMetricsRefreshing =
   !hasOverviewExtrasExhausted &&
-  (isInitialStockLoad || !hasCurrentFmpValuationMetrics);
+  (isInitialStockLoad || !hasValuationMetricRequestFinished);
 const isBalanceSheetMetricsRefreshing =
   !hasOverviewExtrasExhausted &&
-  (isInitialStockLoad || !hasCurrentFmpBalanceMetrics);
+  (isInitialStockLoad || !hasBalanceSheetMetricRequestFinished);
 const areMetricsRefreshing =
   !hasOverviewExtrasExhausted &&
   (isInitialStockLoad ||
-    !hasUsableMetricSnapshot ||
-    !hasCurrentFmpValuationMetrics ||
-    !hasCurrentFmpBalanceMetrics
+    (!hasUsableMetricSnapshot &&
+      (!hasValuationMetricRequestFinished || !hasBalanceSheetMetricRequestFinished)
+    )
   );
 const isProfileMetricsRefreshing =
   !hasOverviewExtrasExhausted &&

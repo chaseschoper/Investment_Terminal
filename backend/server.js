@@ -2028,6 +2028,7 @@ async function fetchFmpRevenueGeographicSegments(ticker) {
 async function buildStockOverviewExtras(ticker, data = {}) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol) return {};
+  const checkedAt = new Date().toISOString();
 
   const needsMetricCards = !hasCompleteFmpMetricCardSnapshot(data);
   const needsProfileMetrics =
@@ -2068,15 +2069,27 @@ async function buildStockOverviewExtras(ticker, data = {}) {
     ? isCompleteFmpMetricCardPayload(metricCards)
       ? buildFmpMetricCardUpdate(metricCards)
       : buildNonNullFmpMetricCardUpdate(metricCards)
-    : {};
+    : needsMetricCards
+      ? {
+          metricCardsCheckedAt: checkedAt,
+          valuationMetricsCheckedAt: checkedAt,
+          balanceSheetCheckedAt: checkedAt
+        }
+      : {};
   const profilePatch = Object.fromEntries(
     Object.entries(fmpProfile || {})
       .filter(([, value]) => value !== null && value !== undefined && value !== "")
   );
+  if (needsProfileMetrics && !profilePatch.profileMetricsCheckedAt && !profilePatch.fmpProfileSource) {
+    profilePatch.profileMetricsCheckedAt = checkedAt;
+  }
   const sharesFloatPatch = Object.fromEntries(
     Object.entries(fmpSharesFloat || {})
       .filter(([, value]) => value !== null && value !== undefined && value !== "")
   );
+  if (needsShareFloatMetrics && !sharesFloatPatch.sharesFloatCheckedAt && !sharesFloatPatch.sharesFloatSource) {
+    sharesFloatPatch.sharesFloatCheckedAt = checkedAt;
+  }
   const executivesPatch = Array.isArray(fmpExecutives) && fmpExecutives.length
     ? { executives: fmpExecutives }
     : {};
@@ -2089,7 +2102,7 @@ async function buildStockOverviewExtras(ticker, data = {}) {
     ...profilePatch,
     ...sharesFloatPatch,
     ...executivesPatch,
-    overviewExtrasCheckedAt: new Date().toISOString()
+    overviewExtrasCheckedAt: checkedAt
   };
 
   if (Object.keys(patch).length > 1) {
@@ -18665,7 +18678,21 @@ app.get("/api/stock-overview-extras/:ticker", async (req, res) => {
     });
   } catch (err) {
     console.log("Stock overview extras failed:", req.params.ticker, err.response?.status || err.message);
-    return res.status(502).json({ error: "Stock overview extras unavailable" });
+    const requestedTicker = String(req.params.ticker || "").trim().toUpperCase();
+    const ticker = TICKER_ALIASES[requestedTicker] || requestedTicker;
+    const checkedAt = new Date().toISOString();
+    return res.json({
+      ticker: requestedTicker,
+      sourceSymbol: ticker,
+      overviewExtrasCheckedAt: checkedAt,
+      metricCardsCheckedAt: checkedAt,
+      valuationMetricsCheckedAt: checkedAt,
+      balanceSheetCheckedAt: checkedAt,
+      profileMetricsCheckedAt: checkedAt,
+      sharesFloatCheckedAt: checkedAt,
+      stale: true,
+      error: "Stock overview extras are still refreshing."
+    });
   }
 });
 
