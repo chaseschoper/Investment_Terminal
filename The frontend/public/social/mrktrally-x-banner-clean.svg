@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="500" viewBox="0 0 1500 500">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#020706" />
+      <stop offset="0.48" stop-color="#07110f" />
+      <stop offset="1" stop-color="#0b1720" />
+    </linearGradient>
+    <radialGradient id="greenGlow" cx="70%" cy="16%" r="62%">
+      <stop offset="0" stop-color="#27d996" stop-opacity="0.32" />
+      <stop offset="0.48" stop-color="#129c80" stop-opacity="0.17" />
+      <stop offset="1" stop-color="#020706" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="blueGlow" cx="18%" cy="88%" r="62%">
+      <stop offset="0" stop-color="#2b7cff" stop-opacity="0.28" />
+      <stop offset="0.48" stop-color="#0f7689" stop-opacity="0.12" />
+      <stop offset="1" stop-color="#020706" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#27d996" />
+      <stop offset="1" stop-color="#2b7cff" />
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#000000" flood-opacity="0.42" />
+    </filter>
+  </defs>
+
+  <rect width="1500" height="500" fill="url(#bg)" />
+  <rect width="1500" height="500" fill="url(#greenGlow)" />
+  <rect width="1500" height="500" fill="url(#blueGlow)" />
+  <rect x="1" y="1" width="1498" height="498" fill="none" stroke="#31424d" stroke-opacity="0.6" stroke-width="2" />
+
+  <g opacity="0.22">
+    <path d="M0 386 C260 302 356 412 570 316 S864 199 1055 248 S1310 216 1500 110" fill="none" stroke="#3be5bb" stroke-width="2" />
+    <path d="M0 430 C278 350 458 434 672 342 S932 270 1122 310 S1326 294 1500 218" fill="none" stroke="#3d8dff" stroke-width="2" />
+    <path d="M130 390 H1370" stroke="#ffffff" stroke-opacity="0.11" />
+    <path d="M130 430 H1370" stroke="#ffffff" stroke-opacity="0.08" />
+  </g>
+
+  <g transform="translate(120 70)">
+    <image href="../mrktrally-icon.png" x="0" y="0" width="88" height="88" preserveAspectRatio="xMidYMid meet" />
+    <text x="122" y="58" fill="#ffffff" font-family="Inter, Arial, Helvetica, sans-serif" font-size="46" font-weight="800">MrktRally</text>
+  </g>
+
+  <g transform="translate(132 172)">
+    <rect x="0" y="0" width="40" height="5" rx="3" fill="#2fe0a6" />
+    <text x="60" y="13" fill="#9debd8" font-family="Inter, Arial, Helvetica, sans-serif" font-size="22" font-weight="800" letter-spacing="7">INVESTMENT RESEARCH TERMINAL</text>
+  </g>
+
+  <g transform="translate(132 235)">
+    <text x="0" y="0" fill="#ffffff" font-family="Georgia, 'Times New Roman', serif" font-size="58" font-weight="700">Investment Research</text>
+    <text x="0" y="62" fill="#ffffff" font-family="Georgia, 'Times New Roman', serif" font-size="58" font-weight="700">for Modern Markets</text>
+    <text x="0" y="124" fill="#b7c4cf" font-family="Inter, Arial, Helvetica, sans-serif" font-size="27" font-weight="500">Charts, watchlists, calendars, financial statements,</text>
+    <text x="0" y="158" fill="#b7c4cf" font-family="Inter, Arial, Helvetica, sans-serif" font-size="27" font-weight="500">fundamental metrics, filings, and market news.</text>
+  </g>
+
+  <g transform="translate(1068 142)" filter="url(#shadow)">
+    <rect x="0" y="0" width="224" height="214" rx="34" fill="#07100f" stroke="#2fd9a4" stroke-opacity="0.5" stroke-width="2" />
+    <text x="112" y="49" fill="#d8fff4" text-anchor="middle" font-family="Inter, Arial, Helvetica, sans-serif" font-size="22" font-weight="800" letter-spacing="4">LIVE DATA</text>
+    <path d="M52 140 L88 100 L118 122 L168 72" fill="none" stroke="url(#line)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M52 170 H168" stroke="#2b7cff" stroke-width="9" stroke-linecap="round" opacity="0.92" />
+  </g>
+
+  <g transform="translate(132 438)">
+    <text x="0" y="0" fill="#7f95a6" font-family="Inter, Arial, Helvetica, sans-serif" font-size="22" font-weight="700">Powered by real market APIs</text>
+    <text x="982" y="0" fill="#d7fff5" font-family="Inter, Arial, Helvetica, sans-serif" font-size="25" font-weight="800">mrktrally.com</text>
+  </g>
+</svg>

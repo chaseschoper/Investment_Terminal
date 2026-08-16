@@ -6535,19 +6535,32 @@ useEffect(() => {
         });
       }
       if (response.data.unavailable) {
-        setStockChartData([]);
+        if (cachedChartIsFresh) {
+          setStockChartData(cachedChart.points);
+        } else {
+          setStockChartData([]);
+          keepLoading = attempt < 8;
+        }
         setStockChartMeta(latest);
-        setStockChartError(response.data.error || "FMP chart history is not available right now.");
-        keepLoading = false;
+        setStockChartError(cachedChartIsFresh
+          ? "Chart history is refreshing..."
+          : response.data.error || "Chart history is still loading..."
+        );
         scheduleRetry(attempt);
         return;
       }
       const isFallbackHistory =
-        response.data.stale && (
+        (
+          response.data.stale ||
+          response.data.refreshing ||
+          response.data.unavailable
+        ) && (
           response.data.interval === "fallback" ||
+          response.data.interval === "quote" ||
+          /quote fallback/i.test(String(response.data.source || "")) ||
+          points.some((point) => point?.isFallback) ||
           (
             stockChartRange === "1D" &&
-            response.data.source === "FMP daily price" &&
             points.length <= 2
           )
         );

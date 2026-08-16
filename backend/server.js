@@ -3548,7 +3548,7 @@ function buildFmpQuoteFallbackPriceHistory(ticker, requestedRange = "1D", quoteD
     symbol,
     sourceSymbol: symbol,
     range: rangeKey,
-    interval: "quote",
+    interval: "fallback",
     source: "FMP quote fallback",
     points: [
       {
@@ -3577,6 +3577,32 @@ function buildFmpQuoteFallbackPriceHistory(ticker, requestedRange = "1D", quoteD
       open: firstPrice
     },
     stale: true,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function isQuoteFallbackPriceHistory(history) {
+  if (!history || !Array.isArray(history.points)) return false;
+  return history.interval === "fallback" ||
+    history.interval === "quote" ||
+    /quote fallback/i.test(String(history.source || "")) ||
+    history.points.some((point) => point?.isFallback);
+}
+
+function buildUnavailablePriceHistoryFromFallback(requestedTicker, sourceTicker, requestedRange, fallbackHistory, message = "FMP chart history is still loading.") {
+  const latest = fallbackHistory?.latest || null;
+  return {
+    symbol: requestedTicker,
+    sourceSymbol: sourceTicker,
+    range: requestedRange,
+    interval: fallbackHistory?.interval || "fallback",
+    source: fallbackHistory?.source || "FMP quote fallback",
+    points: [],
+    latest,
+    stale: true,
+    refreshing: true,
+    unavailable: true,
+    error: message,
     updatedAt: new Date().toISOString()
   };
 }
@@ -17436,6 +17462,13 @@ app.get("/api/price-history/:ticker", async (req, res) => {
     const cached = priceHistoryCache.get(cacheKey);
     const cacheResolvedPriceHistory = (history) => {
       if (!history?.points?.length) return null;
+      if (isQuoteFallbackPriceHistory(history)) {
+        return {
+          ...history,
+          symbol: requestedTicker,
+          sourceSymbol: ticker
+        };
+      }
       const data = {
         ...history,
         symbol: requestedTicker,
@@ -17464,10 +17497,15 @@ app.get("/api/price-history/:ticker", async (req, res) => {
         null
       ).catch(() => null);
       if (fundFallback?.points?.length) {
-        return res.json(cacheResolvedPriceHistory({
-          ...fundFallback,
-          source: "Fund quote fallback"
-        }));
+        return res.json(buildUnavailablePriceHistoryFromFallback(
+          requestedTicker,
+          ticker,
+          requestedRange,
+          {
+            ...fundFallback,
+            source: "Fund quote fallback"
+          }
+        ));
       }
     }
     if (cached && Date.now() - cached.fetchedAt < rangeConfig.ttl) {
@@ -17502,7 +17540,12 @@ app.get("/api/price-history/:ticker", async (req, res) => {
         null
       ).catch(() => null);
       if (quoteFallback?.points?.length) {
-        return res.json(cacheResolvedPriceHistory(quoteFallback));
+        return res.json(buildUnavailablePriceHistoryFromFallback(
+          requestedTicker,
+          ticker,
+          requestedRange,
+          quoteFallback
+        ));
       }
       const fundFallback = await resolveWithin(
         fetchEtfData(ticker).then((fund) =>
@@ -17519,10 +17562,15 @@ app.get("/api/price-history/:ticker", async (req, res) => {
         null
       ).catch(() => null);
       if (fundFallback?.points?.length) {
-        return res.json(cacheResolvedPriceHistory({
-          ...fundFallback,
-          source: "Fund quote fallback"
-        }));
+        return res.json(buildUnavailablePriceHistoryFromFallback(
+          requestedTicker,
+          ticker,
+          requestedRange,
+          {
+            ...fundFallback,
+            source: "Fund quote fallback"
+          }
+        ));
       }
       return res.status(502).json({ error: "FMP price history unavailable" });
     }
@@ -17560,7 +17608,12 @@ app.get("/api/price-history/:ticker", async (req, res) => {
       null
     );
     if (quoteFallback?.points?.length) {
-      return res.json(cacheResolvedPriceHistory(quoteFallback));
+      return res.json(buildUnavailablePriceHistoryFromFallback(
+        requestedTicker,
+        ticker,
+        requestedRange,
+        quoteFallback
+      ));
     }
     const fundFallback = await resolveWithin(
       fetchEtfData(ticker).then((fund) =>
@@ -17577,10 +17630,15 @@ app.get("/api/price-history/:ticker", async (req, res) => {
       null
     ).catch(() => null);
     if (fundFallback?.points?.length) {
-      return res.json(cacheResolvedPriceHistory({
-        ...fundFallback,
-        source: "Fund quote fallback"
-      }));
+      return res.json(buildUnavailablePriceHistoryFromFallback(
+        requestedTicker,
+        ticker,
+        requestedRange,
+        {
+          ...fundFallback,
+          source: "Fund quote fallback"
+        }
+      ));
     }
 
     return res.status(502).json({ error: "FMP price history unavailable" });
@@ -17602,11 +17660,12 @@ app.get("/api/price-history/:ticker", async (req, res) => {
       null
     ).catch(() => null);
     if (quoteFallback?.points?.length) {
-      return res.json({
-        ...quoteFallback,
-        symbol: requestedTicker,
-        sourceSymbol: fallbackTicker
-      });
+      return res.json(buildUnavailablePriceHistoryFromFallback(
+        requestedTicker,
+        fallbackTicker,
+        requestedRange,
+        quoteFallback
+      ));
     }
     const fundFallback = await resolveWithin(
       fetchEtfData(fallbackTicker).then((fund) =>
@@ -17623,12 +17682,15 @@ app.get("/api/price-history/:ticker", async (req, res) => {
       null
     ).catch(() => null);
     if (fundFallback?.points?.length) {
-      return res.json({
-        ...fundFallback,
-        source: "Fund quote fallback",
-        symbol: requestedTicker,
-        sourceSymbol: fallbackTicker
-      });
+      return res.json(buildUnavailablePriceHistoryFromFallback(
+        requestedTicker,
+        fallbackTicker,
+        requestedRange,
+        {
+          ...fundFallback,
+          source: "Fund quote fallback"
+        }
+      ));
     }
     console.log("FMP price history failed:", req.params.ticker, err.response?.status || err.message);
     return res.status(502).json({ error: "FMP price history unavailable" });
