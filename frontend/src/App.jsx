@@ -3424,18 +3424,17 @@ const hasBalanceSheetMetricRequestSettled = (stock = {}) =>
   stock?.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION;
 
 const hasProfileMetricSnapshot = (stock = {}) =>
-  Boolean(stock?.profileMetricsCheckedAt || stock?.fmpProfileSource);
+  Boolean(stock?.fmpProfileSource || stock?.industry || stock?.ceo || stock?.country || stock?.exchange);
 
 const hasShareFloatMetricSnapshot = (stock = {}) =>
   Boolean(
-    stock?.sharesFloatCheckedAt ||
     stock?.sharesFloatSource ||
     isNumber(stock?.floatShares) ||
     isNumber(stock?.freeFloatShares)
   );
 
 const shouldRetryOverviewExtras = (stock = {}, attempt = 0) =>
-  attempt < 120 &&
+  attempt < 720 &&
   (
     !stock.overviewExtrasCheckedAt ||
     !hasCompleteMetricCardVersions(stock) ||
@@ -6712,15 +6711,19 @@ useEffect(() => {
             () => loadOverviewExtras(attempt + 1),
             Math.min(10000, 900 + attempt * 450)
           );
-        } else if (isActive && !hasCompleteMetricCardVersions(mergedSnapshot || patch)) {
+        } else if (
+          isActive &&
+          attempt >= 720 &&
+          !hasCompleteMetricCardVersions(mergedSnapshot || patch)
+        ) {
           setStockOverviewExtrasExhaustedSymbol(symbol);
         }
       } catch (error) {
         console.error("Stock overview extras failed", error);
-        if (isActive && attempt < 12) {
+        if (isActive && attempt < 720) {
           retryTimer = window.setTimeout(
             () => loadOverviewExtras(attempt + 1),
-            1000 + attempt * 500
+            Math.min(10000, 1000 + attempt * 500)
           );
         } else if (isActive) {
           setStockOverviewExtrasExhaustedSymbol(symbol);
@@ -9073,9 +9076,8 @@ const isBalanceSheetMetricsRefreshing =
 const areMetricsRefreshing =
   !hasOverviewExtrasExhausted &&
   (isInitialStockLoad ||
-    (!hasUsableMetricSnapshot &&
-      (!hasValuationMetricRequestFinished || !hasBalanceSheetMetricRequestFinished)
-    )
+    !hasValuationMetricRequestFinished ||
+    !hasBalanceSheetMetricRequestFinished
   );
 const isProfileMetricsRefreshing =
   !hasOverviewExtrasExhausted &&

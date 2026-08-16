@@ -2067,15 +2067,9 @@ async function buildStockOverviewExtras(ticker, data = {}) {
   const geographicSegments = revenueGeographicSegments || data.revenueGeographicSegments || null;
   const metricPatch = hasFmpMetricCardPayload(metricCards)
     ? isCompleteFmpMetricCardPayload(metricCards)
-      ? buildFmpMetricCardUpdate(metricCards)
+      ? preserveExistingFmpMetricCardValues(data, buildFmpMetricCardUpdate(metricCards))
       : buildNonNullFmpMetricCardUpdate(metricCards)
-    : needsMetricCards
-      ? {
-          metricCardsCheckedAt: checkedAt,
-          valuationMetricsCheckedAt: checkedAt,
-          balanceSheetCheckedAt: checkedAt
-        }
-      : {};
+    : {};
   const profilePatch = Object.fromEntries(
     Object.entries(fmpProfile || {})
       .filter(([, value]) => value !== null && value !== undefined && value !== "")
@@ -2623,22 +2617,45 @@ function buildNonNullFmpMetricCardUpdate(metricCards = {}) {
   );
 }
 
+function preserveExistingFmpMetricCardValues(previousData = {}, update = {}) {
+  const preserved = { ...update };
+  [
+    ...FMP_METRIC_CARD_FIELDS,
+    ...FMP_TEXT_METRIC_FIELDS,
+    "balanceSheetAsOf",
+    "balanceSheetSource",
+    "valuationMetricsSource",
+    "metricCardsSource"
+  ].forEach((field) => {
+    const incoming = preserved[field];
+    const previous = previousData[field];
+    if (
+      (incoming === null || incoming === undefined || incoming === "") &&
+      previous !== null &&
+      previous !== undefined &&
+      previous !== ""
+    ) {
+      preserved[field] = previous;
+    }
+  });
+  return preserved;
+}
+
 function applyFmpMetricCards(data = {}, metricCards = {}) {
   if (!hasFmpMetricCardPayload(metricCards)) return data;
+  const update = isCompleteFmpMetricCardPayload(metricCards)
+    ? preserveExistingFmpMetricCardValues(data, buildFmpMetricCardUpdate(metricCards))
+    : buildNonNullFmpMetricCardUpdate(metricCards);
   return {
     ...data,
-    ...(isCompleteFmpMetricCardPayload(metricCards)
-      ? buildFmpMetricCardUpdate(metricCards)
-      : buildNonNullFmpMetricCardUpdate(metricCards))
+    ...update
   };
 }
 
 function persistFmpMetricCards(ticker, metricCards = {}) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol || !hasFmpMetricCardPayload(metricCards)) return;
-  const update = isCompleteFmpMetricCardPayload(metricCards)
-    ? buildFmpMetricCardUpdate(metricCards)
-    : buildNonNullFmpMetricCardUpdate(metricCards);
+  const update = buildNonNullFmpMetricCardUpdate(metricCards);
   return Stock.findOneAndUpdate(
     { ticker: symbol },
     {
@@ -18679,9 +18696,6 @@ app.get("/api/stock-overview-extras/:ticker", async (req, res) => {
       ticker: requestedTicker,
       sourceSymbol: ticker,
       overviewExtrasCheckedAt: checkedAt,
-      metricCardsCheckedAt: checkedAt,
-      valuationMetricsCheckedAt: checkedAt,
-      balanceSheetCheckedAt: checkedAt,
       stale: true,
       error: "Stock overview extras are still refreshing."
     });
