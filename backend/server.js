@@ -2080,16 +2080,10 @@ async function buildStockOverviewExtras(ticker, data = {}) {
     Object.entries(fmpProfile || {})
       .filter(([, value]) => value !== null && value !== undefined && value !== "")
   );
-  if (needsProfileMetrics && !profilePatch.profileMetricsCheckedAt && !profilePatch.fmpProfileSource) {
-    profilePatch.profileMetricsCheckedAt = checkedAt;
-  }
   const sharesFloatPatch = Object.fromEntries(
     Object.entries(fmpSharesFloat || {})
       .filter(([, value]) => value !== null && value !== undefined && value !== "")
   );
-  if (needsShareFloatMetrics && !sharesFloatPatch.sharesFloatCheckedAt && !sharesFloatPatch.sharesFloatSource) {
-    sharesFloatPatch.sharesFloatCheckedAt = checkedAt;
-  }
   const executivesPatch = Array.isArray(fmpExecutives) && fmpExecutives.length
     ? { executives: fmpExecutives }
     : {};
@@ -18688,8 +18682,6 @@ app.get("/api/stock-overview-extras/:ticker", async (req, res) => {
       metricCardsCheckedAt: checkedAt,
       valuationMetricsCheckedAt: checkedAt,
       balanceSheetCheckedAt: checkedAt,
-      profileMetricsCheckedAt: checkedAt,
-      sharesFloatCheckedAt: checkedAt,
       stale: true,
       error: "Stock overview extras are still refreshing."
     });

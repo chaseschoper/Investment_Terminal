@@ -3418,12 +3418,10 @@ const hasCompleteMetricCardVersions = (stock = {}) =>
   stock?.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION;
 
 const hasValuationMetricRequestSettled = (stock = {}) =>
-  stock?.valuationMetricsVersion === VALUATION_METRICS_VERSION ||
-  Boolean(stock?.valuationMetricsCheckedAt || stock?.metricCardsCheckedAt || stock?.overviewExtrasCheckedAt);
+  stock?.valuationMetricsVersion === VALUATION_METRICS_VERSION;
 
 const hasBalanceSheetMetricRequestSettled = (stock = {}) =>
-  stock?.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION ||
-  Boolean(stock?.balanceSheetCheckedAt || stock?.metricCardsCheckedAt || stock?.overviewExtrasCheckedAt);
+  stock?.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION;
 
 const hasProfileMetricSnapshot = (stock = {}) =>
   Boolean(stock?.profileMetricsCheckedAt || stock?.fmpProfileSource);
@@ -3437,7 +3435,7 @@ const hasShareFloatMetricSnapshot = (stock = {}) =>
   );
 
 const shouldRetryOverviewExtras = (stock = {}, attempt = 0) =>
-  attempt < 12 &&
+  attempt < 120 &&
   (
     !stock.overviewExtrasCheckedAt ||
     !hasCompleteMetricCardVersions(stock) ||
@@ -6712,7 +6710,7 @@ useEffect(() => {
         if (isActive && shouldRetry) {
           retryTimer = window.setTimeout(
             () => loadOverviewExtras(attempt + 1),
-            900 + attempt * 450
+            Math.min(10000, 900 + attempt * 450)
           );
         } else if (isActive && !hasCompleteMetricCardVersions(mergedSnapshot || patch)) {
           setStockOverviewExtrasExhaustedSymbol(symbol);
@@ -7281,12 +7279,6 @@ useEffect(() => {
             name: symbol,
             isPlaceholder: true,
             status: "pending",
-            overviewExtrasCheckedAt: new Date().toISOString(),
-            metricCardsCheckedAt: new Date().toISOString(),
-            valuationMetricsCheckedAt: new Date().toISOString(),
-            balanceSheetCheckedAt: new Date().toISOString(),
-            profileMetricsCheckedAt: new Date().toISOString(),
-            sharesFloatCheckedAt: new Date().toISOString(),
             stockLoadError: "Still trying to load stock data."
           });
           firstStockLoadSettled.current = true;
@@ -7394,12 +7386,6 @@ useEffect(() => {
           ticker: symbol,
           name: symbol,
           isPlaceholder: true,
-          overviewExtrasCheckedAt: new Date().toISOString(),
-          metricCardsCheckedAt: new Date().toISOString(),
-          valuationMetricsCheckedAt: new Date().toISOString(),
-          balanceSheetCheckedAt: new Date().toISOString(),
-          profileMetricsCheckedAt: new Date().toISOString(),
-          sharesFloatCheckedAt: new Date().toISOString(),
           stockLoadError: "Still trying to load stock data."
         });
         firstStockLoadSettled.current = true;
