@@ -25061,6 +25061,122 @@ app.get("/api/fundamental-metrics/:ticker", async (req, res) => {
   }
 });
 
+app.get("/api/dcf/:ticker", async (req, res) => {
+  const symbol = String(req.params.ticker || "").trim().toUpperCase();
+  try {
+    if (!symbol || !/^[A-Z0-9.-]{1,15}$/.test(symbol)) {
+      return res.status(400).json({ error: "Invalid ticker" });
+    }
+    if (isBlockedStockOnlySymbol(symbol)) {
+      return res.status(400).json({ error: "Use the crypto or FOREX page for that symbol" });
+    }
+    if (!process.env.FMP_API_KEY || !canUseFmp()) {
+      return res.status(503).json({ error: "DCF data is not available while FMP is cooling down." });
+    }
+
+    const [dcfData, quoteData, profileData, cashFlowData, balanceData, incomeData] = await Promise.all([
+      getFmpData(symbol, "DCF", [
+        "/stable/discounted-cash-flow?symbol={ticker}"
+      ]),
+      getFmpData(symbol, "DCF quote", [
+        "/stable/quote?symbol={ticker}"
+      ]),
+      getFmpData(symbol, "DCF profile", [
+        "/stable/profile?symbol={ticker}"
+      ]),
+      getFmpData(symbol, "DCF cash flow", [
+        "/stable/cash-flow-statement?symbol={ticker}&period=annual&limit=5"
+      ]),
+      getFmpData(symbol, "DCF balance sheet", [
+        "/stable/balance-sheet-statement?symbol={ticker}&period=annual&limit=1"
+      ]),
+      getFmpData(symbol, "DCF income statement", [
+        "/stable/income-statement?symbol={ticker}&period=annual&limit=1"
+      ])
+    ]);
+
+    const dcfRows = Array.isArray(dcfData) ? dcfData.filter(Boolean) : dcfData ? [dcfData] : [];
+    const quote = Array.isArray(quoteData) ? quoteData[0] || {} : quoteData || {};
+    const profile = Array.isArray(profileData) ? profileData[0] || {} : profileData || {};
+    const cashFlowRows = (Array.isArray(cashFlowData) ? cashFlowData : cashFlowData ? [cashFlowData] : [])
+      .filter(Boolean)
+      .sort((a, b) => financialRowSortValue(b) - financialRowSortValue(a));
+    const balance = Array.isArray(balanceData) ? balanceData[0] || {} : balanceData || {};
+    const income = Array.isArray(incomeData) ? incomeData[0] || {} : incomeData || {};
+    const latestDcf = dcfRows[0] || {};
+    const latestCashFlow = cashFlowRows[0] || {};
+    const latestFreeCashFlow = firstFiniteNumber(
+      latestCashFlow.freeCashFlow,
+      subtractNullable(latestCashFlow.operatingCashFlow, Math.abs(firstFiniteNumber(latestCashFlow.capitalExpenditure) || 0)),
+      subtractNullable(latestCashFlow.netCashProvidedByOperatingActivities, Math.abs(firstFiniteNumber(latestCashFlow.capitalExpenditure) || 0))
+    );
+    const cashAndEquivalents = firstFiniteNumber(balance.cashAndShortTermInvestments, balance.cashAndCashEquivalents);
+    const totalDebt = firstFiniteNumber(
+      balance.totalDebt,
+      sumNullable(balance.shortTermDebt, balance.longTermDebt)
+    );
+    const sharesOutstanding = firstFiniteNumber(
+      income.weightedAverageShsOut,
+      income.weightedAverageShsOutDil,
+      quote.sharesOutstanding,
+      profile.sharesOutstanding,
+      profile.mktCap && quote.price ? profile.mktCap / quote.price : null,
+      quote.marketCap && quote.price ? quote.marketCap / quote.price : null
+    );
+    const fmpFairValue = firstFiniteNumber(
+      latestDcf.dcf,
+      latestDcf.DCF,
+      latestDcf.value,
+      latestDcf.fairValue,
+      latestDcf.discountedCashFlow
+    );
+    const price = firstFiniteNumber(
+      latestDcf["Stock Price"],
+      latestDcf.stockPrice,
+      latestDcf.price,
+      quote.price,
+      profile.price
+    );
+
+    res.json({
+      symbol,
+      name: firstText(profile.companyName, quote.name, symbol),
+      logo: firstText(profile.image, profile.logo),
+      currency: firstText(profile.currency, quote.currency, latestCashFlow.reportedCurrency, "USD"),
+      updatedAt: new Date().toISOString(),
+      fmpDcf: {
+        fairValue: fmpFairValue,
+        stockPrice: price,
+        date: firstText(latestDcf.date)
+      },
+      inputs: {
+        latestFreeCashFlow,
+        cashAndEquivalents,
+        totalDebt,
+        sharesOutstanding
+      },
+      quote: {
+        price,
+        change: firstFiniteNumber(quote.change),
+        changePercentage: firstFiniteNumber(quote.changePercentage),
+        marketCap: firstFiniteNumber(quote.marketCap, profile.marketCap, profile.mktCap)
+      },
+      history: cashFlowRows.map((row) => ({
+        date: firstText(row.date),
+        period: firstText(row.calendarYear, row.fiscalYear, row.date),
+        freeCashFlow: firstFiniteNumber(row.freeCashFlow),
+        operatingCashFlow: firstFiniteNumber(row.operatingCashFlow, row.netCashProvidedByOperatingActivities),
+        capitalExpenditure: firstFiniteNumber(row.capitalExpenditure)
+      })),
+      source: "FMP discounted cash flow and financial statements"
+    });
+  } catch (err) {
+    setFmpCooldown(err, "DCF", req.params.ticker);
+    console.log("FMP DCF skipped:", req.params.ticker, err.response?.status || err.message);
+    res.status(500).json({ error: "DCF data is not available yet." });
+  }
+});
+
 app.get("/api/stock-screener/options", async (req, res) => {
 try {
 if (!process.env.FMP_API_KEY || !canUseFmp()) {

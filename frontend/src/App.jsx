@@ -1083,6 +1083,13 @@ const HOME_FEATURES = [
     text: "Filter active stocks, ETFs, and funds by market cap, price, sector, industry, beta, dividend, volume, exchange, and country."
   },
   {
+    id: "dcf-calculator",
+    icon: "fundamental",
+    label: "DCF Calculator",
+    title: "Value stocks with cash flow",
+    text: "Search a ticker, compare FMP fair value data, and run your own DCF assumptions for growth, discount rate, terminal growth, and projection years."
+  },
+  {
     id: "news",
     icon: "news",
     label: "News",
@@ -1216,6 +1223,16 @@ const HOME_TOUR_SECTIONS = [
     snapshot: "screener"
   },
   {
+    id: "dcf-calculator",
+    icon: "fundamental",
+    label: "DCF Calculator",
+    eyebrow: "Fair value model",
+    title: "Run a DCF without leaving the terminal.",
+    text: "Compare FMP discounted cash flow data with a custom model built from free cash flow, cash, debt, shares, and your assumptions.",
+    bullets: ["FMP fair value data", "Editable growth and discount rates", "Per-share valuation output"],
+    snapshot: "fundamentals"
+  },
+  {
     id: "market-overview",
     icon: "market",
     label: "Market Overview",
@@ -1321,8 +1338,9 @@ const HOME_FOOTER_GROUPS = [
   {
     title: "Markets",
     links: [
-      ["market-overview", "Market Overview"],
       ["stock-screener", "Stock Screener"],
+      ["dcf-calculator", "DCF Calculator"],
+      ["market-overview", "Market Overview"],
       ["etfs", "ETF Overview"],
       ["crypto", "Crypto Center"],
       ["forex", "FOREX Overview"],
@@ -4658,9 +4676,23 @@ function HistoricalLineChart({
   valueLabel,
   symbol,
   loading = false,
-  mode = "annual"
+  mode = "annual",
+  chartType = "line"
 }) {
   const periodLabel = mode === "quarterly" ? "quarterly" : "annual";
+  const chartMargin = { top: 12, right: 18, left: 6, bottom: 4 };
+  const tooltip = (
+    <Tooltip
+      content={(
+        <OverviewChartTooltip
+          formatter={formatter}
+          valueLabel={valueLabel}
+          symbol={symbol}
+          color={color}
+        />
+      )}
+    />
+  );
   return (
     <section className="historical-chart-panel">
       <h3>{title}</h3>
@@ -4669,32 +4701,30 @@ function HistoricalLineChart({
           <StockDataLoading label={`Loading ${periodLabel} history...`} />
         ) : data.length ? (
           <ResponsiveContainer width="100%" height={300}>
-            <LineChart
-              data={data}
-              margin={{ top: 12, right: 18, left: 6, bottom: 4 }}
-            >
-              <CartesianGrid stroke="#273244" />
-              <XAxis dataKey="period" />
-              <YAxis tickFormatter={formatter} width={58} />
-              <Tooltip
-                content={(
-                  <OverviewChartTooltip
-                    formatter={formatter}
-                    valueLabel={valueLabel}
-                    symbol={symbol}
-                    color={color}
-                  />
-                )}
-              />
-              <Line
-                type="monotone"
-                dataKey={dataKey}
-                stroke={color}
-                strokeWidth={3}
-                dot={{ r: 4 }}
-                activeDot={{ r: 6 }}
-              />
-            </LineChart>
+            {chartType === "bar" ? (
+              <BarChart data={data} margin={chartMargin}>
+                <CartesianGrid stroke="#273244" />
+                <XAxis dataKey="period" />
+                <YAxis tickFormatter={formatter} width={58} />
+                {tooltip}
+                <Bar dataKey={dataKey} fill={color} radius={[6, 6, 0, 0]} />
+              </BarChart>
+            ) : (
+              <LineChart data={data} margin={chartMargin}>
+                <CartesianGrid stroke="#273244" />
+                <XAxis dataKey="period" />
+                <YAxis tickFormatter={formatter} width={58} />
+                {tooltip}
+                <Line
+                  type="monotone"
+                  dataKey={dataKey}
+                  stroke={color}
+                  strokeWidth={3}
+                  dot={{ r: 4 }}
+                  activeDot={{ r: 6 }}
+                />
+              </LineChart>
+            )}
           </ResponsiveContainer>
         ) : (
           <div className="historical-chart-empty">No {periodLabel} history available.</div>
@@ -5482,6 +5512,41 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [fundamentalChartError, setFundamentalChartError] =
     useState("");
 
+  const [fundamentalChartType, setFundamentalChartType] =
+    useState("line");
+
+  const [fundamentalChartColors, setFundamentalChartColors] =
+    useState({});
+
+  const [stockOverviewHistoryChartType, setStockOverviewHistoryChartType] =
+    useState("line");
+
+  const [stockOverviewHistoryChartColor, setStockOverviewHistoryChartColor] =
+    useState("#60a5fa");
+
+  const [dcfTicker, setDcfTicker] =
+    useState("NVDA");
+
+  const [dcfSearchInput, setDcfSearchInput] =
+    useState("NVDA");
+
+  const [dcfData, setDcfData] =
+    useState(null);
+
+  const [isDcfLoading, setIsDcfLoading] =
+    useState(false);
+
+  const [dcfError, setDcfError] =
+    useState("");
+
+  const [dcfAssumptions, setDcfAssumptions] =
+    useState({
+      growthRate: 8,
+      discountRate: 10,
+      terminalGrowthRate: 3,
+      years: 5
+    });
+
   const [marketClockNow, setMarketClockNow] =
     useState(() => new Date());
 
@@ -6255,6 +6320,38 @@ useEffect(() => {
     isActive = false;
   };
 }, [activePage, screenerOptions]);
+
+useEffect(() => {
+  if (activePage !== "dcf-calculator" || !dcfTicker) return;
+
+  let isActive = true;
+
+  const loadDcfData = async () => {
+    setIsDcfLoading(true);
+    setDcfError("");
+
+    try {
+      const response = await axios.get(`${API_URL}/api/dcf/${dcfTicker}`, {
+        timeout: 15000
+      });
+      if (!isActive) return;
+      setDcfData(response.data);
+    } catch (error) {
+      console.error("DCF data failed", error);
+      if (!isActive) return;
+      setDcfError("DCF data is not available yet for that ticker.");
+      setDcfData(null);
+    } finally {
+      if (isActive) setIsDcfLoading(false);
+    }
+  };
+
+  loadDcfData();
+
+  return () => {
+    isActive = false;
+  };
+}, [activePage, dcfTicker]);
 
 useEffect(() => {
   if (activePage !== "financial-statements" || !financialStatementTicker) return;
@@ -8715,15 +8812,98 @@ const combinedFundamentalChartRows = (() => {
     return String(a.period).localeCompare(String(b.period));
   });
 })();
-const combinedFundamentalChartLines = fundamentalChartSeries.flatMap((series, metricIndex) =>
+const getDefaultFundamentalSeriesColor = (index = 0) =>
+  PORTFOLIO_COLORS[index % PORTFOLIO_COLORS.length];
+
+const getFundamentalSeriesColor = (symbol, index = 0) =>
+  fundamentalChartColors[symbol] || getDefaultFundamentalSeriesColor(index);
+
+const updateFundamentalSeriesColor = (symbol, color) => {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  if (!cleanSymbol || !/^#[0-9A-F]{6}$/i.test(color)) return;
+  setFundamentalChartColors((current) => ({
+    ...current,
+    [cleanSymbol]: color
+  }));
+};
+
+const combinedFundamentalChartLines = fundamentalChartSeries.flatMap((series) =>
   fundamentalChartTickers.map((symbol, symbolIndex) => ({
     key: `${symbol}__${series.indicator.key}`,
     symbol,
     indicator: series.indicator,
     label: `${symbol} · ${series.indicator.label}`,
-    color: PORTFOLIO_COLORS[(metricIndex * Math.max(fundamentalChartTickers.length, 1) + symbolIndex) % PORTFOLIO_COLORS.length]
+    color: getFundamentalSeriesColor(symbol, symbolIndex)
   }))
 );
+
+const handleDcfSearchSubmit = (event) => {
+  event.preventDefault();
+  const symbol = dcfSearchInput.trim().toUpperCase();
+  if (!/^[A-Z0-9.-]{1,15}$/.test(symbol)) return;
+  setDcfTicker(symbol);
+  setDcfSearchInput(symbol);
+};
+
+const updateDcfAssumption = (key, value) => {
+  const nextValue = Number(value);
+  if (!Number.isFinite(nextValue)) return;
+  setDcfAssumptions((current) => ({
+    ...current,
+    [key]: nextValue
+  }));
+};
+
+const dcfProjection = (() => {
+  const latestFreeCashFlow = Number(dcfData?.inputs?.latestFreeCashFlow);
+  const cash = Number(dcfData?.inputs?.cashAndEquivalents || 0);
+  const debt = Number(dcfData?.inputs?.totalDebt || 0);
+  const shares = Number(dcfData?.inputs?.sharesOutstanding);
+  const growthRate = Number(dcfAssumptions.growthRate) / 100;
+  const discountRate = Number(dcfAssumptions.discountRate) / 100;
+  const terminalGrowthRate = Number(dcfAssumptions.terminalGrowthRate) / 100;
+  const years = Math.max(1, Math.min(10, Math.round(Number(dcfAssumptions.years) || 5)));
+
+  if (
+    !Number.isFinite(latestFreeCashFlow) ||
+    !Number.isFinite(shares) ||
+    shares <= 0 ||
+    !Number.isFinite(discountRate) ||
+    discountRate <= terminalGrowthRate
+  ) {
+    return null;
+  }
+
+  let projectedFreeCashFlow = latestFreeCashFlow;
+  let presentValue = 0;
+  const rows = [];
+
+  for (let year = 1; year <= years; year += 1) {
+    projectedFreeCashFlow *= 1 + growthRate;
+    const discountedFreeCashFlow = projectedFreeCashFlow / ((1 + discountRate) ** year);
+    presentValue += discountedFreeCashFlow;
+    rows.push({
+      year: `Y${year}`,
+      freeCashFlow: projectedFreeCashFlow,
+      presentValue: discountedFreeCashFlow
+    });
+  }
+
+  const terminalValue = projectedFreeCashFlow * (1 + terminalGrowthRate) / (discountRate - terminalGrowthRate);
+  const presentTerminalValue = terminalValue / ((1 + discountRate) ** years);
+  const enterpriseValue = presentValue + presentTerminalValue;
+  const equityValue = enterpriseValue + cash - debt;
+  const fairValuePerShare = equityValue / shares;
+
+  return {
+    rows,
+    terminalValue,
+    presentTerminalValue,
+    enterpriseValue,
+    equityValue,
+    fairValuePerShare
+  };
+})();
 
 const getFundamentalCompanyMeta = (symbol) => {
   const cleanSymbol = String(symbol || "").trim().toUpperCase();
@@ -8739,7 +8919,7 @@ const renderFundamentalChartCompanies = (prefix = "chart") => (
   <div className="fundamental-chart-card-companies" aria-label="Companies shown on this chart">
     {fundamentalChartTickers.map((symbol, index) => {
       const company = getFundamentalCompanyMeta(symbol);
-      const color = PORTFOLIO_COLORS[index % PORTFOLIO_COLORS.length];
+      const color = getFundamentalSeriesColor(symbol, index);
       return (
         <span className="fundamental-chart-card-company" key={`${prefix}-company-${symbol}`}>
           <span className="fundamental-chart-card-logo" style={{ "--series-color": color }} aria-hidden="true">
@@ -8776,10 +8956,44 @@ const renderFundamentalChartBrand = () => (
 
 const renderFundamentalLineChart = (series, height = 320) => (
   <ResponsiveContainer width="100%" height={height}>
-    <LineChart
-      data={series.rows}
-      margin={{ top: 12, right: 18, left: 8, bottom: 8 }}
-    >
+    {fundamentalChartType === "bar" ? (
+      <BarChart data={series.rows} margin={{ top: 12, right: 18, left: 8, bottom: 8 }}>
+        <CartesianGrid stroke="#1f2937" strokeDasharray="4 4" />
+        <XAxis
+          dataKey="period"
+          tick={{ fill: "#94a3b8", fontSize: 12 }}
+          minTickGap={18}
+        />
+        <YAxis
+          tick={{ fill: "#94a3b8", fontSize: 12 }}
+          tickFormatter={(value) => formatFundamentalAxisValue(value, series.indicator)}
+          width={76}
+        />
+        <Tooltip
+          content={(
+            <FundamentalChartTooltip
+              indicator={series.indicator}
+              hoveredPoint={fundamentalHoveredPoint}
+            />
+          )}
+        />
+        {fundamentalChartTickers.map((symbol, index) => {
+          const color = getFundamentalSeriesColor(symbol, index);
+          return (
+            <Bar
+              key={`${series.indicator.key}-${symbol}`}
+              dataKey={symbol}
+              fill={color}
+              radius={[5, 5, 0, 0]}
+            />
+          );
+        })}
+      </BarChart>
+    ) : (
+      <LineChart
+        data={series.rows}
+        margin={{ top: 12, right: 18, left: 8, bottom: 8 }}
+      >
       <CartesianGrid stroke="#1f2937" strokeDasharray="4 4" />
       <XAxis
         dataKey="period"
@@ -8801,7 +9015,7 @@ const renderFundamentalLineChart = (series, height = 320) => (
         )}
       />
       {fundamentalChartTickers.map((symbol, index) => {
-        const color = PORTFOLIO_COLORS[index % PORTFOLIO_COLORS.length];
+        const color = getFundamentalSeriesColor(symbol, index);
         return (
           <Line
             key={`${series.indicator.key}-${symbol}`}
@@ -8824,43 +9038,75 @@ const renderFundamentalLineChart = (series, height = 320) => (
           />
         );
       })}
-    </LineChart>
+      </LineChart>
+    )}
   </ResponsiveContainer>
 );
 const renderCombinedFundamentalLineChart = (height = 560) => (
   <ResponsiveContainer width="100%" height={height}>
-    <LineChart
-      data={combinedFundamentalChartRows}
-      margin={{ top: 14, right: 22, left: 8, bottom: 8 }}
-    >
-      <CartesianGrid stroke="#1f2937" strokeDasharray="4 4" />
-      <XAxis
-        dataKey="period"
-        tick={{ fill: "#94a3b8", fontSize: 12 }}
-        minTickGap={18}
-      />
-      <YAxis
-        tick={{ fill: "#94a3b8", fontSize: 12 }}
-        tickFormatter={formatLargeNumber}
-        width={82}
-      />
-      <Tooltip
-        content={<CombinedFundamentalChartTooltip lines={combinedFundamentalChartLines} />}
-      />
-      {combinedFundamentalChartLines.map((line) => (
-        <Line
-          key={line.key}
-          type="monotone"
-          dataKey={line.key}
-          name={line.key}
-          stroke={line.color}
-          strokeWidth={2.2}
-          dot={false}
-          activeDot={{ r: 5, fill: "#08111f", stroke: line.color, strokeWidth: 2 }}
-          connectNulls
+    {fundamentalChartType === "bar" ? (
+      <BarChart
+        data={combinedFundamentalChartRows}
+        margin={{ top: 14, right: 22, left: 8, bottom: 8 }}
+      >
+        <CartesianGrid stroke="#1f2937" strokeDasharray="4 4" />
+        <XAxis
+          dataKey="period"
+          tick={{ fill: "#94a3b8", fontSize: 12 }}
+          minTickGap={18}
         />
-      ))}
-    </LineChart>
+        <YAxis
+          tick={{ fill: "#94a3b8", fontSize: 12 }}
+          tickFormatter={formatLargeNumber}
+          width={82}
+        />
+        <Tooltip
+          content={<CombinedFundamentalChartTooltip lines={combinedFundamentalChartLines} />}
+        />
+        {combinedFundamentalChartLines.map((line) => (
+          <Bar
+            key={line.key}
+            dataKey={line.key}
+            name={line.key}
+            fill={line.color}
+            radius={[5, 5, 0, 0]}
+          />
+        ))}
+      </BarChart>
+    ) : (
+      <LineChart
+        data={combinedFundamentalChartRows}
+        margin={{ top: 14, right: 22, left: 8, bottom: 8 }}
+      >
+        <CartesianGrid stroke="#1f2937" strokeDasharray="4 4" />
+        <XAxis
+          dataKey="period"
+          tick={{ fill: "#94a3b8", fontSize: 12 }}
+          minTickGap={18}
+        />
+        <YAxis
+          tick={{ fill: "#94a3b8", fontSize: 12 }}
+          tickFormatter={formatLargeNumber}
+          width={82}
+        />
+        <Tooltip
+          content={<CombinedFundamentalChartTooltip lines={combinedFundamentalChartLines} />}
+        />
+        {combinedFundamentalChartLines.map((line) => (
+          <Line
+            key={line.key}
+            type="monotone"
+            dataKey={line.key}
+            name={line.key}
+            stroke={line.color}
+            strokeWidth={2.2}
+            dot={false}
+            activeDot={{ r: 5, fill: "#08111f", stroke: line.color, strokeWidth: 2 }}
+            connectNulls
+          />
+        ))}
+      </LineChart>
+    )}
   </ResponsiveContainer>
 );
 const renderFundamentalChartDot = (props, options = {}) => {
@@ -12012,6 +12258,7 @@ return (
         ["projections", "Projections"],
         ["comparison", "Compare"],
         ["stock-screener", "Stock Screener"],
+        ["dcf-calculator", "DCF Calculator"],
         ["market-overview", "Market Overview"],
         ["etfs", "ETF Overview"],
         ["portfolio", "Portfolio"],
@@ -13164,6 +13411,197 @@ return (
       </section>
     )}
 
+    {activePage === "dcf-calculator" && (
+      <section className="dcf-page" id="dcf-calculator" aria-labelledby="dcf-calculator-title">
+        <div className="section-heading-row market-overview-heading screener-heading">
+          <div>
+            <div className="welcome-kicker">Fair Value Model</div>
+            <h2 id="dcf-calculator-title">DCF Calculator</h2>
+            <p>Search a stock, compare FMP fair value data, and run a custom discounted cash flow model with your own assumptions.</p>
+          </div>
+          {dcfData?.updatedAt && (
+            <span className="market-overview-updated">
+              Updated {new Date(dcfData.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+            </span>
+          )}
+        </div>
+
+        <form className="dcf-search-panel" onSubmit={handleDcfSearchSubmit}>
+          <label className="financial-statement-search">
+            <span>Stock</span>
+            <input
+              value={dcfSearchInput}
+              onChange={(event) => setDcfSearchInput(event.target.value.toUpperCase())}
+              placeholder="Search ticker: NVDA, AAPL, MSFT..."
+            />
+          </label>
+          <button type="submit" className="stock-search-button">
+            {isDcfLoading ? "Loading..." : "Run DCF"}
+          </button>
+        </form>
+
+        {dcfError ? (
+          <div className="heatmap-loading">{dcfError}</div>
+        ) : isDcfLoading && !dcfData ? (
+          <div className="heatmap-loading">Loading DCF data...</div>
+        ) : dcfData ? (
+          <>
+            <div className="dcf-hero-panel">
+              <div className="dcf-company-block">
+                <span className="stock-search-logo-shell has-logo" aria-hidden="true">
+                  <span>{getLogoFallbackText(dcfData.symbol)}</span>
+                  {getDisplayCompanyLogoUrl(dcfData.symbol, dcfData.logo) && (
+                    <img
+                      src={getDisplayCompanyLogoUrl(dcfData.symbol, dcfData.logo)}
+                      alt=""
+                      crossOrigin="anonymous"
+                      onLoad={(event) => handleCompanyLogoLoad(event)}
+                      onError={(event) => handleCompanyLogoError(event, dcfData.symbol)}
+                    />
+                  )}
+                </span>
+                <div>
+                  <span className="home-feature-label">{dcfData.symbol}</span>
+                  <h3>{dcfData.name || dcfData.symbol}</h3>
+                  <p>Model uses the latest annual free cash flow, cash, debt, and weighted average shares available from FMP.</p>
+                </div>
+              </div>
+              <div className="dcf-price-stack">
+                <span>Current Price</span>
+                <strong>{formatPrice(dcfData.quote?.price)}</strong>
+                <em className={isNumber(dcfData.quote?.changePercentage) && dcfData.quote.changePercentage < 0 ? "red" : "green"}>
+                  {formatSignedPercent(dcfData.quote?.changePercentage)}
+                </em>
+              </div>
+            </div>
+
+            <div className="dcf-summary-grid">
+              <div>
+                <span>FMP Fair Value</span>
+                <strong>{formatPrice(dcfData.fmpDcf?.fairValue)}</strong>
+                <small>{dcfData.fmpDcf?.date || "Latest available"}</small>
+              </div>
+              <div>
+                <span>Custom Fair Value</span>
+                <strong>{dcfProjection ? formatPrice(dcfProjection.fairValuePerShare) : "N/A"}</strong>
+                <small>Per share from your assumptions</small>
+              </div>
+              <div>
+                <span>Upside / Downside</span>
+                <strong className={
+                  dcfProjection && dcfData.quote?.price && dcfProjection.fairValuePerShare - dcfData.quote.price < 0
+                    ? "red"
+                    : "green"
+                }>
+                  {dcfProjection && dcfData.quote?.price
+                    ? formatSignedPercent(((dcfProjection.fairValuePerShare - dcfData.quote.price) / dcfData.quote.price) * 100)
+                    : "N/A"}
+                </strong>
+                <small>Custom value vs current price</small>
+              </div>
+              <div>
+                <span>Latest Free Cash Flow</span>
+                <strong>{formatLargeDollars(dcfData.inputs?.latestFreeCashFlow)}</strong>
+                <small>{dcfData.currency || "USD"}</small>
+              </div>
+            </div>
+
+            <div className="dcf-workspace-grid">
+              <div className="dcf-assumption-panel">
+                <div className="screener-results-heading">
+                  <span>Assumptions</span>
+                  <strong>Editable Model</strong>
+                </div>
+                {[
+                  ["growthRate", "FCF Growth", -20, 40, "%"],
+                  ["discountRate", "Discount Rate", 4, 20, "%"],
+                  ["terminalGrowthRate", "Terminal Growth", 0, 6, "%"],
+                  ["years", "Projection Years", 1, 10, "yrs"]
+                ].map(([key, label, min, max, suffix]) => (
+                  <label className="dcf-assumption-control" key={key}>
+                    <span>{label}</span>
+                    <div>
+                      <input
+                        type="range"
+                        min={min}
+                        max={max}
+                        step={key === "years" ? 1 : 0.25}
+                        value={dcfAssumptions[key]}
+                        onChange={(event) => updateDcfAssumption(key, event.target.value)}
+                      />
+                      <input
+                        type="number"
+                        min={min}
+                        max={max}
+                        step={key === "years" ? 1 : 0.25}
+                        value={dcfAssumptions[key]}
+                        onChange={(event) => updateDcfAssumption(key, event.target.value)}
+                      />
+                      <em>{suffix}</em>
+                    </div>
+                  </label>
+                ))}
+              </div>
+
+              <div className="dcf-chart-panel">
+                <div className="screener-results-heading">
+                  <span>Free Cash Flow History</span>
+                  <strong>{dcfData.history?.length || 0} periods</strong>
+                </div>
+                <div className="historical-chart-canvas">
+                  {Array.isArray(dcfData.history) && dcfData.history.length ? (
+                    <ResponsiveContainer width="100%" height={320}>
+                      <BarChart data={[...dcfData.history].reverse()} margin={{ top: 18, right: 20, left: 8, bottom: 8 }}>
+                        <CartesianGrid stroke="#223049" strokeDasharray="3 3" />
+                        <XAxis dataKey="period" tick={{ fill: "#94a3b8", fontSize: 12 }} />
+                        <YAxis tickFormatter={formatLargeNumber} tick={{ fill: "#94a3b8", fontSize: 12 }} width={78} />
+                        <Tooltip
+                          contentStyle={{ background: "#0b1220", border: "1px solid #2b3a55", borderRadius: "12px", color: "#f8fafc" }}
+                          formatter={(value) => [formatLargeDollars(value), "Free Cash Flow"]}
+                        />
+                        <Bar dataKey="freeCashFlow" fill="#34d399" radius={[6, 6, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="historical-chart-empty">No free cash flow history available.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="dcf-summary-grid dcf-detail-grid">
+              <div>
+                <span>Present Value of FCF</span>
+                <strong>{dcfProjection ? formatLargeDollars(dcfProjection.enterpriseValue - dcfProjection.presentTerminalValue) : "N/A"}</strong>
+              </div>
+              <div>
+                <span>PV Terminal Value</span>
+                <strong>{dcfProjection ? formatLargeDollars(dcfProjection.presentTerminalValue) : "N/A"}</strong>
+              </div>
+              <div>
+                <span>Cash and Equivalents</span>
+                <strong>{formatLargeDollars(dcfData.inputs?.cashAndEquivalents)}</strong>
+              </div>
+              <div>
+                <span>Total Debt</span>
+                <strong>{formatLargeDollars(dcfData.inputs?.totalDebt)}</strong>
+              </div>
+              <div>
+                <span>Equity Value</span>
+                <strong>{dcfProjection ? formatLargeDollars(dcfProjection.equityValue) : "N/A"}</strong>
+              </div>
+              <div>
+                <span>Shares</span>
+                <strong>{formatLargeNumber(dcfData.inputs?.sharesOutstanding)}</strong>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="heatmap-loading">Search a ticker to start a DCF.</div>
+        )}
+      </section>
+    )}
+
 
     {activePage === "news" && (
       <section className="news-page" id="news" aria-labelledby="news-page-title">
@@ -13509,6 +13947,41 @@ return (
             >
               Big Chart
             </button>
+          </div>
+
+          <div className="fundamental-style-panel" aria-label="Fundamental chart style">
+            <div className="fundamental-view-toggle" role="group" aria-label="Fundamental chart type">
+              <button
+                type="button"
+                className={fundamentalChartType === "line" ? "active" : ""}
+                onClick={() => setFundamentalChartType("line")}
+              >
+                Line
+              </button>
+              <button
+                type="button"
+                className={fundamentalChartType === "bar" ? "active" : ""}
+                onClick={() => setFundamentalChartType("bar")}
+              >
+                Bar
+              </button>
+            </div>
+            <div className="fundamental-color-row">
+              {fundamentalChartTickers.map((symbol, index) => {
+                const color = getFundamentalSeriesColor(symbol, index);
+                return (
+                  <label className="chart-color-control" key={`fundamental-color-${symbol}`}>
+                    <span style={{ "--series-color": color }}>{symbol}</span>
+                    <input
+                      type="color"
+                      value={color}
+                      onChange={(event) => updateFundamentalSeriesColor(symbol, event.target.value)}
+                      aria-label={`Change ${symbol} chart color`}
+                    />
+                  </label>
+                );
+              })}
+            </div>
           </div>
         </div>
 
@@ -14711,82 +15184,117 @@ return (
 
 </div>
 
+<div className="stock-overview-chart-style-panel" aria-label="Stock overview chart style">
+  <div className="fundamental-view-toggle" role="group" aria-label="Stock overview chart type">
+    <button
+      type="button"
+      className={stockOverviewHistoryChartType === "line" ? "active" : ""}
+      onClick={() => setStockOverviewHistoryChartType("line")}
+    >
+      Line
+    </button>
+    <button
+      type="button"
+      className={stockOverviewHistoryChartType === "bar" ? "active" : ""}
+      onClick={() => setStockOverviewHistoryChartType("bar")}
+    >
+      Bar
+    </button>
+  </div>
+  <label className="chart-color-control">
+    <span style={{ "--series-color": stockOverviewHistoryChartColor }}>Chart Color</span>
+    <input
+      type="color"
+      value={stockOverviewHistoryChartColor}
+      onChange={(event) => setStockOverviewHistoryChartColor(event.target.value)}
+      aria-label="Change stock overview history chart color"
+    />
+  </label>
+</div>
+
 <div className="historical-chart-grid">
   <HistoricalLineChart
     title="Historical Year-End P/E"
     data={historicalPeHistory}
     dataKey="pe"
-    color="#60a5fa"
+    color={stockOverviewHistoryChartColor}
     formatter={(value) => `${Number(value).toFixed(1)}x`}
     valueLabel="P/E"
     symbol={ticker}
     loading={shouldShowHistoricalPeLoading(historicalPeHistory)}
     mode="annual"
+    chartType={stockOverviewHistoryChartType}
   />
   <HistoricalLineChart
     title={stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin History"}
     data={readyHistoryRows(grossMarginHistory)}
     dataKey="grossMargin"
-    color="#a78bfa"
+    color={stockOverviewHistoryChartColor}
     formatter={(value) => `${Number(value).toFixed(1)}%`}
     valueLabel={stockData.isFinancialCompany ? "Net Interest Revenue Mix" : "Gross Margin"}
     symbol={ticker}
     loading={shouldShowHistoryLoading(grossMarginHistory)}
     mode={financialChartMode}
+    chartType={stockOverviewHistoryChartType}
   />
   <HistoricalLineChart
     title={stockData.isFinancialCompany ? "Pre-Tax Margin History" : "Operating Margin History"}
     data={readyHistoryRows(operatingMarginHistory)}
     dataKey="operatingMargin"
-    color="#f59e0b"
+    color={stockOverviewHistoryChartColor}
     formatter={(value) => `${Number(value).toFixed(1)}%`}
     valueLabel={stockData.isFinancialCompany ? "Pre-Tax Margin" : "Operating Margin"}
     symbol={ticker}
     loading={shouldShowHistoryLoading(operatingMarginHistory)}
     mode={financialChartMode}
+    chartType={stockOverviewHistoryChartType}
   />
   <HistoricalLineChart
     title="Profit Margin History"
     data={readyHistoryRows(profitMarginHistory)}
     dataKey="profitMargin"
-    color="#34d399"
+    color={stockOverviewHistoryChartColor}
     formatter={(value) => `${Number(value).toFixed(1)}%`}
     valueLabel="Profit Margin"
     symbol={ticker}
     loading={shouldShowHistoryLoading(profitMarginHistory)}
     mode={financialChartMode}
+    chartType={stockOverviewHistoryChartType}
   />
   <HistoricalLineChart
     title="Operating Cash Flow History"
     data={readyHistoryRows(operatingCashflowHistory)}
     dataKey="operatingCashflow"
-    color="#22d3ee"
+    color={stockOverviewHistoryChartColor}
     formatter={formatChartBillions}
     valueLabel="Operating Cash Flow"
     symbol={ticker}
     loading={shouldShowHistoryLoading(operatingCashflowHistory)}
     mode={financialChartMode}
+    chartType={stockOverviewHistoryChartType}
   />
   <HistoricalLineChart
     title="Free Cash Flow History"
     data={readyHistoryRows(freeCashflowHistory)}
     dataKey="freeCashflow"
-    color="#14b8a6"
+    color={stockOverviewHistoryChartColor}
     formatter={formatChartBillions}
     valueLabel="Free Cash Flow"
     symbol={ticker}
     loading={shouldShowHistoryLoading(freeCashflowHistory)}
     mode={financialChartMode}
+    chartType={stockOverviewHistoryChartType}
   />
   <HistoricalLineChart
     title="Weighted Avg Shares History"
     data={readyHistoryRows(sharesOutstandingHistory)}
     dataKey="weightedAverageShares"
-    color="#f472b6"
+    color={stockOverviewHistoryChartColor}
     formatter={formatSharesMillions}
     valueLabel="Weighted Avg Shares"
     loading={shouldShowHistoryLoading(sharesOutstandingHistory)}
     mode={financialChartMode}
+    chartType={stockOverviewHistoryChartType}
   />
   <div className="historical-chart-panel fundamental-chart-callout">
     <svg className="fundamental-chart-callout-art" viewBox="0 0 760 300" aria-hidden="true" focusable="false">
