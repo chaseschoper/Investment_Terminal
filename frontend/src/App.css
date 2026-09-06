@@ -10456,7 +10456,7 @@ body {
 }
 
 .dcf-detail-grid {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
 .screener-filter-grid {
@@ -11006,13 +11006,13 @@ body {
 }
 
 .stock-overview-chart-style-panel {
-  margin-top: 24px;
-  padding: 16px;
-  border: 1px solid rgba(37, 99, 235, 0.32);
-  border-radius: 10px;
+  margin: 0;
+  padding: 6px;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 8px;
   background:
     radial-gradient(circle at top left, rgba(20, 184, 166, 0.1), transparent 36%),
-    rgba(8, 13, 24, 0.86);
+    rgba(8, 17, 31, 0.78);
 }
 
 .fundamental-color-row {

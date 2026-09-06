@@ -2072,7 +2072,7 @@ const FundamentalChartTooltip = ({ active, label, payload, indicator, hoveredPoi
 
   const rows = payload
     .filter((item) => isNumber(item.value))
-    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+    .sort((a, b) => b.value - a.value);
   if (!rows.length) return null;
 
   return (
@@ -2098,7 +2098,8 @@ const CombinedFundamentalChartTooltip = ({ active, label, payload, lines }) => {
       const line = lines.find((candidate) => candidate.key === item.dataKey || candidate.key === item.name);
       return line ? { ...line, value: item.value } : null;
     })
-    .filter(Boolean);
+    .filter(Boolean)
+    .sort((a, b) => b.value - a.value);
 
   if (!rows.length) return null;
 
@@ -4731,6 +4732,65 @@ function HistoricalLineChart({
         )}
       </div>
     </section>
+  );
+}
+
+function StockOverviewFinancialChart({
+  data,
+  dataKey,
+  color,
+  formatter,
+  valueLabel,
+  symbol,
+  chartType = "line"
+}) {
+  const margin = {
+    top: 16,
+    right: 24,
+    left: 16,
+    bottom: 8
+  };
+  const tooltip = (
+    <Tooltip
+      content={(
+        <OverviewChartTooltip
+          formatter={formatter}
+          valueLabel={valueLabel}
+          symbol={symbol}
+          color={color}
+        />
+      )}
+    />
+  );
+
+  return (
+    <ResponsiveContainer width="100%" height={400}>
+      {chartType === "bar" ? (
+        <BarChart data={data} margin={margin}>
+          <CartesianGrid stroke="#1f2937" />
+          <XAxis dataKey="period" />
+          <YAxis tickFormatter={formatter} />
+          {tooltip}
+          <Bar dataKey={dataKey} fill={color} radius={[6, 6, 0, 0]} />
+        </BarChart>
+      ) : (
+        <LineChart data={data} margin={margin}>
+          <CartesianGrid stroke="#1f2937" />
+          <XAxis dataKey="period" />
+          <YAxis tickFormatter={formatter} />
+          {tooltip}
+          <Line
+            type="monotone"
+            dataKey={dataKey}
+            stroke={color}
+            strokeWidth={4}
+            connectNulls
+            dot={{ r: 4 }}
+            activeDot={{ r: 6 }}
+          />
+        </LineChart>
+      )}
+    </ResponsiveContainer>
   );
 }
 
@@ -13413,11 +13473,11 @@ return (
 
     {activePage === "dcf-calculator" && (
       <section className="dcf-page" id="dcf-calculator" aria-labelledby="dcf-calculator-title">
-        <div className="section-heading-row market-overview-heading screener-heading">
-          <div>
-            <div className="welcome-kicker">Fair Value Model</div>
-            <h2 id="dcf-calculator-title">DCF Calculator</h2>
-            <p>Search a stock, compare FMP fair value data, and run a custom discounted cash flow model with your own assumptions.</p>
+            <div className="section-heading-row market-overview-heading screener-heading">
+              <div>
+                <div className="welcome-kicker">Fair Value Model</div>
+                <h2 id="dcf-calculator-title">DCF Calculator</h2>
+            <p>Search a stock, compare MrktRally fair value data, and run a custom discounted cash flow model with your own assumptions.</p>
           </div>
           {dcfData?.updatedAt && (
             <span className="market-overview-updated">
@@ -13463,7 +13523,7 @@ return (
                 <div>
                   <span className="home-feature-label">{dcfData.symbol}</span>
                   <h3>{dcfData.name || dcfData.symbol}</h3>
-                  <p>Model uses the latest annual free cash flow, cash, debt, and weighted average shares available from FMP.</p>
+                  <p>Model uses the latest annual free cash flow, cash, debt, and weighted average shares available through MrktRally.</p>
                 </div>
               </div>
               <div className="dcf-price-stack">
@@ -13477,7 +13537,7 @@ return (
 
             <div className="dcf-summary-grid">
               <div>
-                <span>FMP Fair Value</span>
+                <span>MrktRally Fair Value</span>
                 <strong>{formatPrice(dcfData.fmpDcf?.fairValue)}</strong>
                 <small>{dcfData.fmpDcf?.date || "Latest available"}</small>
               </div>
@@ -13489,15 +13549,15 @@ return (
               <div>
                 <span>Upside / Downside</span>
                 <strong className={
-                  dcfProjection && dcfData.quote?.price && dcfProjection.fairValuePerShare - dcfData.quote.price < 0
+                  isNumber(dcfData.fmpDcf?.fairValue) && dcfData.quote?.price && dcfData.fmpDcf.fairValue - dcfData.quote.price < 0
                     ? "red"
                     : "green"
                 }>
-                  {dcfProjection && dcfData.quote?.price
-                    ? formatSignedPercent(((dcfProjection.fairValuePerShare - dcfData.quote.price) / dcfData.quote.price) * 100)
+                  {isNumber(dcfData.fmpDcf?.fairValue) && dcfData.quote?.price
+                    ? formatSignedPercent(((dcfData.fmpDcf.fairValue - dcfData.quote.price) / dcfData.quote.price) * 100)
                     : "N/A"}
                 </strong>
-                <small>Custom value vs current price</small>
+                <small>MrktRally value vs current price</small>
               </div>
               <div>
                 <span>Latest Free Cash Flow</span>
@@ -13556,8 +13616,14 @@ return (
                         <XAxis dataKey="period" tick={{ fill: "#94a3b8", fontSize: 12 }} />
                         <YAxis tickFormatter={formatLargeNumber} tick={{ fill: "#94a3b8", fontSize: 12 }} width={78} />
                         <Tooltip
-                          contentStyle={{ background: "#0b1220", border: "1px solid #2b3a55", borderRadius: "12px", color: "#f8fafc" }}
-                          formatter={(value) => [formatLargeDollars(value), "Free Cash Flow"]}
+                          content={(
+                            <OverviewChartTooltip
+                              formatter={formatLargeDollars}
+                              valueLabel="Free Cash Flow"
+                              symbol={dcfData.symbol}
+                              color="#34d399"
+                            />
+                          )}
                         />
                         <Bar dataKey="freeCashFlow" fill="#34d399" radius={[6, 6, 0, 0]} />
                       </BarChart>
@@ -13593,6 +13659,18 @@ return (
               <div>
                 <span>Shares</span>
                 <strong>{formatLargeNumber(dcfData.inputs?.sharesOutstanding)}</strong>
+              </div>
+              <div>
+                <span>Custom Upside / Downside</span>
+                <strong className={
+                  dcfProjection && dcfData.quote?.price && dcfProjection.fairValuePerShare - dcfData.quote.price < 0
+                    ? "red"
+                    : "green"
+                }>
+                  {dcfProjection && dcfData.quote?.price
+                    ? formatSignedPercent(((dcfProjection.fairValuePerShare - dcfData.quote.price) / dcfData.quote.price) * 100)
+                    : "N/A"}
+                </strong>
               </div>
             </div>
           </>
@@ -14902,6 +14980,34 @@ return (
       setFinancialChartRange,
       "Stock overview chart history range"
     )}
+
+    <div className="stock-overview-chart-style-panel" aria-label="Stock overview chart style">
+      <div className="fundamental-view-toggle" role="group" aria-label="Stock overview chart type">
+        <button
+          type="button"
+          className={stockOverviewHistoryChartType === "line" ? "active" : ""}
+          onClick={() => setStockOverviewHistoryChartType("line")}
+        >
+          Line
+        </button>
+        <button
+          type="button"
+          className={stockOverviewHistoryChartType === "bar" ? "active" : ""}
+          onClick={() => setStockOverviewHistoryChartType("bar")}
+        >
+          Bar
+        </button>
+      </div>
+      <label className="chart-color-control">
+        <span style={{ "--series-color": stockOverviewHistoryChartColor }}>Chart Color</span>
+        <input
+          type="color"
+          value={stockOverviewHistoryChartColor}
+          onChange={(event) => setStockOverviewHistoryChartColor(event.target.value)}
+          aria-label="Change stock overview history chart color"
+        />
+      </label>
+    </div>
   </div>
 
 <div className="chart-box">
@@ -14913,53 +15019,15 @@ return (
 ) : revenueHistory.length ? (
 
   <>
-<ResponsiveContainer
-  width="100%"
-  height={400}
->
-
-      <BarChart
-        data={revenueHistory}
-        margin={{
-          top: 16,
-          right: 24,
-          left: 16,
-          bottom: 8,
-        }}
-      >
-
-        <CartesianGrid
-          stroke="#1f2937"
-        />
-
-        <XAxis dataKey="period" />
-
-        <YAxis
-  tickFormatter={(value) =>
-    formatChartBillions(value)
-  }
-/>
-
-        <Tooltip
-          content={(
-            <OverviewChartTooltip
-              formatter={formatChartBillions}
-              valueLabel="Revenue"
-              symbol={ticker}
-              color="#3b82f6"
-            />
-          )}
-/>
-
-        <Bar
-          dataKey="revenue"
-          fill="#3b82f6"
-          radius={[6, 6, 0, 0]}
-        />
-
-      </BarChart>
-
-    </ResponsiveContainer>
+    <StockOverviewFinancialChart
+      data={revenueHistory}
+      dataKey="revenue"
+      color={stockOverviewHistoryChartColor}
+      formatter={formatChartBillions}
+      valueLabel="Revenue"
+      symbol={ticker}
+      chartType={stockOverviewHistoryChartType}
+    />
 
     {financialChartMode === "annual" && (
       <ChartGrowthStrip
@@ -15002,55 +15070,15 @@ return (
     ) : earningsHistory.length ? (
 
       <>
-      <ResponsiveContainer
-        width="100%"
-        height={400}
-      >
-
-        <LineChart
-          data={earningsHistory}
-          margin={{
-            top: 16,
-            right: 24,
-            left: 16,
-            bottom: 8,
-          }}
-        >
-
-          <CartesianGrid stroke="#1f2937" />
-
-          <XAxis dataKey="period" />
-
-          <YAxis
-            tickFormatter={(value) =>
-              formatChartBillions(value)
-            }
-          />
-
-          <Tooltip
-            content={(
-              <OverviewChartTooltip
-                formatter={formatChartBillions}
-                valueLabel="Net Income"
-                symbol={ticker}
-                color="#22c55e"
-              />
-            )}
-          />
-
-          <Line
-            type="monotone"
-            dataKey="earnings"
-            stroke="#22c55e"
-            strokeWidth={4}
-            connectNulls
-            dot={{ r: 4 }}
-            activeDot={{ r: 6 }}
-          />
-
-        </LineChart>
-
-      </ResponsiveContainer>
+      <StockOverviewFinancialChart
+        data={earningsHistory}
+        dataKey="earnings"
+        color={stockOverviewHistoryChartColor}
+        formatter={formatChartBillions}
+        valueLabel="Net Income"
+        symbol={ticker}
+        chartType={stockOverviewHistoryChartType}
+      />
 
       {financialChartMode === "annual" && (
         <ChartGrowthStrip
@@ -15109,55 +15137,15 @@ return (
     ) : epsHistory.length ? (
 
       <>
-      <ResponsiveContainer
-        width="100%"
-        height={400}
-      >
-
-        <LineChart
-          data={epsHistory}
-          margin={{
-            top: 16,
-            right: 24,
-            left: 16,
-            bottom: 8,
-          }}
-        >
-
-          <CartesianGrid stroke="#1f2937" />
-
-          <XAxis dataKey="period" />
-
-          <YAxis
-            tickFormatter={(value) =>
-              formatChartEps(value)
-            }
-          />
-
-          <Tooltip
-            content={(
-              <OverviewChartTooltip
-                formatter={formatChartEps}
-                valueLabel={epsChartLabel}
-                symbol={ticker}
-                color="#f59e0b"
-              />
-            )}
-          />
-
-          <Line
-            type="monotone"
-            dataKey="eps"
-            stroke="#f59e0b"
-            strokeWidth={4}
-            connectNulls
-            dot={{ r: 4 }}
-            activeDot={{ r: 6 }}
-          />
-
-        </LineChart>
-
-      </ResponsiveContainer>
+      <StockOverviewFinancialChart
+        data={epsHistory}
+        dataKey="eps"
+        color={stockOverviewHistoryChartColor}
+        formatter={formatChartEps}
+        valueLabel={epsChartLabel}
+        symbol={ticker}
+        chartType={stockOverviewHistoryChartType}
+      />
 
       {financialChartMode === "annual" && (
         <ChartGrowthStrip
@@ -15182,34 +15170,6 @@ return (
 
   </div>
 
-</div>
-
-<div className="stock-overview-chart-style-panel" aria-label="Stock overview chart style">
-  <div className="fundamental-view-toggle" role="group" aria-label="Stock overview chart type">
-    <button
-      type="button"
-      className={stockOverviewHistoryChartType === "line" ? "active" : ""}
-      onClick={() => setStockOverviewHistoryChartType("line")}
-    >
-      Line
-    </button>
-    <button
-      type="button"
-      className={stockOverviewHistoryChartType === "bar" ? "active" : ""}
-      onClick={() => setStockOverviewHistoryChartType("bar")}
-    >
-      Bar
-    </button>
-  </div>
-  <label className="chart-color-control">
-    <span style={{ "--series-color": stockOverviewHistoryChartColor }}>Chart Color</span>
-    <input
-      type="color"
-      value={stockOverviewHistoryChartColor}
-      onChange={(event) => setStockOverviewHistoryChartColor(event.target.value)}
-      aria-label="Change stock overview history chart color"
-    />
-  </label>
 </div>
 
 <div className="historical-chart-grid">
