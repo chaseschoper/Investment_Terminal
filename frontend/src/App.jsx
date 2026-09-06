@@ -4806,6 +4806,9 @@ function App() {
   const latestAiRequest = useRef(0);
   const latestEarningsCallRequest = useRef(0);
   const liveEarningsHydratedRef = useRef("");
+  const calendarRetryTimerRef = useRef(null);
+  const calendarRequestRef = useRef(0);
+  const calendarReportRetryTimersRef = useRef({});
   const initialSavedPricesLoaded = useRef(false);
   const firstStockLoadSettled = useRef(false);
   const previousMarketEventRef = useRef(null);
@@ -7313,9 +7316,24 @@ useEffect(() => {
       0
     );
 
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      if (calendarRetryTimerRef.current) {
+        window.clearTimeout(calendarRetryTimerRef.current);
+        calendarRetryTimerRef.current = null;
+      }
+      calendarRequestRef.current += 1;
+      setIsEarningsLoading(false);
+    };
 
   }, [activePage, earningsWeekStart, calendarMode]);
+
+  useEffect(() => () => {
+    Object.values(calendarReportRetryTimersRef.current || {}).forEach((timer) => {
+      if (timer) window.clearTimeout(timer);
+    });
+    calendarReportRetryTimersRef.current = {};
+  }, []);
 
   useEffect(() => {
     if (activePage !== "earnings-calendar" || calendarMode !== "live-earnings" || !selectedLiveEarningsEvent?.symbol) return;
@@ -7797,6 +7815,12 @@ const loadUserData = async () => {
   */
 
   const loadEarnings = async (weekStart, mode = calendarMode) => {
+    const requestId = calendarRequestRef.current + 1;
+    calendarRequestRef.current = requestId;
+    if (calendarRetryTimerRef.current) {
+      window.clearTimeout(calendarRetryTimerRef.current);
+      calendarRetryTimerRef.current = null;
+    }
 
     try {
       const requestMode = mode === "live-earnings" ? "earnings" : mode;
@@ -7822,13 +7846,22 @@ const loadUserData = async () => {
         type: mode,
         sourceType: requestMode
       };
-      setEarnings(calendar);
-      if ((calendar.days || []).some((day) => day.events?.length)) {
-        setCalendarDataCache((cache) => ({
-          ...cache,
-          [cacheKey]: calendar
-        }));
+      if (requestId !== calendarRequestRef.current) return;
+      const calendarHasEvents = (calendar.days || []).some((day) => day.events?.length);
+      const shouldRetryCalendar = Boolean(earningsRes.data?.unavailable || earningsRes.data?.pending || !calendarHasEvents);
+      if (shouldRetryCalendar) {
+        if (cachedCalendarHasEvents) setEarnings(cachedCalendar);
+        calendarRetryTimerRef.current = window.setTimeout(
+          () => loadEarnings(weekStart, mode),
+          cachedCalendarHasEvents ? 12000 : 5000
+        );
+        return;
       }
+      setEarnings(calendar);
+      setCalendarDataCache((cache) => ({
+        ...cache,
+        [cacheKey]: calendar
+      }));
       const availableDates = (calendar.days || []).map((day) => day.date);
       setSelectedEarningsDate((current) => {
         const today = toLocalIsoDate(new Date());
@@ -7848,37 +7881,66 @@ const loadUserData = async () => {
     } catch (err) {
 
       console.error(err);
+      if (requestId !== calendarRequestRef.current) return;
+      const requestMode = mode === "live-earnings" ? "earnings" : mode;
+      const requestStart = mode === "live-earnings" ? getWeekStartIso(toLocalIsoDate(new Date())) : weekStart;
+      const cacheKey = `${mode}:${requestStart}`;
+      const cachedCalendar = calendarDataCache[cacheKey];
+      if (cachedCalendar?.days?.some((day) => day.events?.length)) {
+        setEarnings(cachedCalendar);
+      }
+      calendarRetryTimerRef.current = window.setTimeout(
+        () => loadEarnings(weekStart, mode),
+        cachedCalendar?.days?.some((day) => day.events?.length) ? 12000 : 5000
+      );
 
     } finally {
 
-      setIsEarningsLoading(false);
+      if (requestId === calendarRequestRef.current && !calendarRetryTimerRef.current) {
+        setIsEarningsLoading(false);
+      }
 
     }
   };
 
-  const openCalendarEarningsReport = async (event) => {
+  const openCalendarEarningsReport = async (event, attempt = 0) => {
     const symbol = String(event?.symbol || "").trim().toUpperCase();
     if (!symbol) return;
     setSelectedCalendarEvent(event);
     if (calendarEarningsReports[symbol]?.rows?.length) return;
+    if (calendarReportRetryTimersRef.current[symbol]) {
+      window.clearTimeout(calendarReportRetryTimersRef.current[symbol]);
+      delete calendarReportRetryTimersRef.current[symbol];
+    }
     try {
       setLoadingCalendarReportSymbol(symbol);
       const response = await axios.get(
         `${API_URL}/api/earnings-report/${encodeURIComponent(symbol)}`,
-        { params: { limit: 16 } }
+        { params: { limit: 16, _: Date.now() }, timeout: 9000 }
       );
-      setCalendarEarningsReports((reports) => ({
-        ...reports,
-        [symbol]: response.data || { symbol, rows: [] }
-      }));
+      const rows = Array.isArray(response.data?.rows) ? response.data.rows : [];
+      if (rows.length) {
+        setCalendarEarningsReports((reports) => ({
+          ...reports,
+          [symbol]: response.data
+        }));
+        setLoadingCalendarReportSymbol("");
+        return;
+      }
+      calendarReportRetryTimersRef.current[symbol] = window.setTimeout(
+        () => openCalendarEarningsReport(event, attempt + 1),
+        Math.min(5000 + attempt * 2000, 20000)
+      );
     } catch (err) {
       console.error(err);
-      setCalendarEarningsReports((reports) => ({
-        ...reports,
-        [symbol]: { symbol, rows: [] }
-      }));
+      calendarReportRetryTimersRef.current[symbol] = window.setTimeout(
+        () => openCalendarEarningsReport(event, attempt + 1),
+        Math.min(5000 + attempt * 2000, 20000)
+      );
     } finally {
-      setLoadingCalendarReportSymbol("");
+      if (!calendarReportRetryTimersRef.current[symbol]) {
+        setLoadingCalendarReportSymbol("");
+      }
     }
   };
 
@@ -11717,8 +11779,14 @@ const handleCalendarSearchSubmit = async (event) => {
     });
     const firstMatch = Array.isArray(data?.results) ? data.results[0] : null;
     if (firstMatch?.symbol) await openCalendarSearchResult(firstMatch);
+    else if (/^[A-Z0-9.-]{1,15}$/.test(normalizedValue)) {
+      await openCalendarSearchResult({ symbol: normalizedValue, name: normalizedValue });
+    }
   } catch (error) {
     console.error("Calendar earnings search failed", error);
+    if (/^[A-Z0-9.-]{1,15}$/.test(normalizedValue)) {
+      await openCalendarSearchResult({ symbol: normalizedValue, name: normalizedValue });
+    }
   }
 };
 

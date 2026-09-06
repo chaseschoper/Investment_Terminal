@@ -23081,10 +23081,19 @@ app.get("/api/earnings", async (req, res) => {
   if (cached && Date.now() - cached.cachedAt < 60 * 60 * 1000 && cached.data?.days?.some((day) => day.events?.length)) {
     return res.json(cached.data);
   }
+  if (!process.env.FMP_API_KEY || !canUseFmp()) {
+    if (cached?.data) return res.json({ ...cached.data, stale: true, unavailable: true });
+    return res.json({
+      weekStart: dates[0],
+      weekEnd: dates[6],
+      days: dates.map((date) => ({ date, events: [] })),
+      unavailable: true,
+      pending: true
+    });
+  }
 
   try {
-    const fmpRows = process.env.FMP_API_KEY
-      ? await resolveWithin(
+    const fmpRows = await resolveWithin(
         getFmpAxios("https://financialmodelingprep.com/stable/earnings-calendar", {
           params: {
             from: dates[0],
@@ -23095,8 +23104,7 @@ app.get("/api/earnings", async (req, res) => {
         }).then((response) => response.data),
         4500,
         []
-      )
-      : [];
+      );
     if (isFmpErrorPayload(fmpRows)) {
       const error = new Error(firstText(fmpRows["Error Message"], fmpRows.error, fmpRows.Note, fmpRows.Information) || "FMP earnings calendar unavailable");
       error.response = { status: 429 };
@@ -23133,6 +23141,16 @@ app.get("/api/earnings", async (req, res) => {
       if (symbol && !stockAnalysisBySymbol.has(symbol)) stockAnalysisBySymbol.set(symbol, row);
     });
     const rawFmpList = Array.isArray(fmpRows) ? fmpRows : fmpRows ? [fmpRows] : [];
+    if (!rawFmpList.length) {
+      if (cached?.data) return res.json({ ...cached.data, stale: true, unavailable: true });
+      return res.json({
+        weekStart: dates[0],
+        weekEnd: dates[6],
+        days: dates.map((date) => ({ date, events: [] })),
+        unavailable: true,
+        pending: true
+      });
+    }
     const fmpList = rawFmpList;
     const calendarSymbols = [...new Set(fmpList
       .map((row) => String(row.symbol || "").trim().toUpperCase())
@@ -23239,7 +23257,14 @@ app.get("/api/earnings", async (req, res) => {
     return res.json(responseData);
   } catch (err) {
     console.error("Earnings calendar error:", err.message);
-    return res.status(500).json({ weekStart: dates[0], weekEnd: dates[6], days: [] });
+    if (cached?.data) return res.json({ ...cached.data, stale: true, unavailable: true });
+    return res.json({
+      weekStart: dates[0],
+      weekEnd: dates[6],
+      days: dates.map((date) => ({ date, events: [] })),
+      unavailable: true,
+      pending: true
+    });
   }
 });
 
@@ -23285,7 +23310,16 @@ app.get("/api/calendar-events", async (req, res) => {
   if (cached && cached.expiresAt > Date.now()) return res.json(cached.data);
 
   if (!process.env.FMP_API_KEY || !canUseFmp()) {
-    return res.status(503).json({ weekStart: dates[0], weekEnd: dates[6], type, days: [] });
+    if (cached?.data) return res.json({ ...cached.data, stale: true, unavailable: true });
+    return res.json({
+      weekStart: dates[0],
+      weekEnd: dates[6],
+      type,
+      days: dates.map((date) => ({ date, events: [] })),
+      unavailable: true,
+      pending: true,
+      updatedAt: new Date().toISOString()
+    });
   }
 
   try {
@@ -23427,7 +23461,16 @@ app.get("/api/calendar-events", async (req, res) => {
   } catch (err) {
     setFmpCooldown(err, `${type} calendar`, "calendar");
     console.log(`FMP ${type} calendar skipped:`, err.response?.status || err.message);
-    return res.status(500).json({ weekStart: dates[0], weekEnd: dates[6], type, days: [] });
+    if (cached?.data) return res.json({ ...cached.data, stale: true, unavailable: true });
+    return res.json({
+      weekStart: dates[0],
+      weekEnd: dates[6],
+      type,
+      days: dates.map((date) => ({ date, events: [] })),
+      unavailable: true,
+      pending: true,
+      updatedAt: new Date().toISOString()
+    });
   }
 });
 
@@ -23491,15 +23534,16 @@ app.get("/api/earnings-report/:symbol", async (req, res) => {
   const symbol = normalizeSp500Symbol(req.params.symbol);
   const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 12, 1), 40);
   if (!symbol) return res.status(400).json({ symbol, rows: [] });
-  if (!process.env.FMP_API_KEY || !canUseFmp()) {
-    return res.status(503).json({ symbol, rows: [] });
-  }
 
   const cacheKey = `earnings-report:${symbol}:${limit}`;
   const cached = fmpCalendarCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return res.json(cached.data);
 
   try {
+    if (!process.env.FMP_API_KEY || !canUseFmp()) {
+      if (cached?.data) return res.json({ ...cached.data, stale: true, unavailable: true });
+      return res.json({ symbol, rows: [], unavailable: true, pending: true, updatedAt: new Date().toISOString() });
+    }
     const rows = await resolveWithin(
       getFmpData(symbol, "earnings report", [
         `/stable/earnings?symbol={ticker}&limit=${limit}`
@@ -23557,7 +23601,8 @@ app.get("/api/earnings-report/:symbol", async (req, res) => {
   } catch (err) {
     setFmpCooldown(err, "earnings report", symbol);
     console.log("FMP earnings report skipped:", symbol, err.response?.status || err.message);
-    return res.status(500).json({ symbol, rows: [] });
+    if (cached?.data) return res.json({ ...cached.data, stale: true, unavailable: true });
+    return res.json({ symbol, rows: [], unavailable: true, pending: true, updatedAt: new Date().toISOString() });
   }
 });
 
