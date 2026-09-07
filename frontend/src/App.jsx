@@ -13610,11 +13610,6 @@ return (
                 <small>{dcfData.fmpDcf?.date || "Latest available"}</small>
               </div>
               <div>
-                <span>Custom Fair Value</span>
-                <strong>{dcfProjection ? formatPrice(dcfProjection.fairValuePerShare) : "N/A"}</strong>
-                <small>Per share from your assumptions</small>
-              </div>
-              <div>
                 <span>Upside / Downside</span>
                 <strong className={
                   isNumber(dcfData.fmpDcf?.fairValue) && dcfData.quote?.price && dcfData.fmpDcf.fairValue - dcfData.quote.price < 0
@@ -13727,6 +13722,11 @@ return (
               <div>
                 <span>Shares</span>
                 <strong>{formatLargeNumber(dcfData.inputs?.sharesOutstanding)}</strong>
+              </div>
+              <div>
+                <span>Custom Fair Value</span>
+                <strong>{dcfProjection ? formatPrice(dcfProjection.fairValuePerShare) : "N/A"}</strong>
+                <small>Per share from your assumptions</small>
               </div>
               <div>
                 <span>Custom Upside / Downside</span>
