@@ -25222,6 +25222,83 @@ app.get("/api/dcf/:ticker", async (req, res) => {
   }
 });
 
+app.get("/api/dcf-advanced/:ticker", async (req, res) => {
+  const symbol = String(req.params.ticker || "").trim().toUpperCase();
+  try {
+    if (!symbol || !/^[A-Z0-9.-]{1,15}$/.test(symbol)) {
+      return res.status(400).json({ error: "Invalid ticker" });
+    }
+    if (isBlockedStockOnlySymbol(symbol)) {
+      return res.status(400).json({ error: "Use the crypto or FOREX page for that symbol" });
+    }
+    if (!process.env.FMP_API_KEY || !canUseFmp()) {
+      return res.status(503).json({ error: "Advanced DCF data is not available while FMP is cooling down." });
+    }
+
+    const [advancedData, quoteData, profileData] = await Promise.all([
+      getFmpData(symbol, "Advanced DCF", [
+        "/stable/custom-discounted-cash-flow?symbol={ticker}"
+      ]),
+      getFmpData(symbol, "Advanced DCF quote", [
+        "/stable/quote?symbol={ticker}"
+      ]),
+      getFmpData(symbol, "Advanced DCF profile", [
+        "/stable/profile?symbol={ticker}"
+      ])
+    ]);
+
+    const rows = (Array.isArray(advancedData) ? advancedData : advancedData ? [advancedData] : [])
+      .filter((row) => row && typeof row === "object")
+      .map((row) => Object.fromEntries(
+        Object.entries(row).map(([key, value]) => {
+          const number = toNumberOrNull(value);
+          return [key, number !== null ? number : value];
+        })
+      ));
+    const quote = Array.isArray(quoteData) ? quoteData[0] || {} : quoteData || {};
+    const profile = Array.isArray(profileData) ? profileData[0] || {} : profileData || {};
+    const latest = rows[0] || {};
+    const fairValue = firstFiniteNumber(
+      latest.equityValuePerShare,
+      latest.dcf,
+      latest.DCF,
+      latest.fairValue,
+      latest.intrinsicValue
+    );
+    const price = firstFiniteNumber(
+      latest["Stock Price"],
+      latest.stockPrice,
+      latest.price,
+      quote.price,
+      profile.price
+    );
+
+    res.json({
+      symbol,
+      name: firstText(profile.companyName, quote.name, symbol),
+      logo: firstText(profile.image, profile.logo),
+      currency: firstText(profile.currency, quote.currency, "USD"),
+      updatedAt: new Date().toISOString(),
+      quote: {
+        price,
+        change: firstFiniteNumber(quote.change),
+        changePercentage: firstFiniteNumber(quote.changePercentage),
+        marketCap: firstFiniteNumber(quote.marketCap, profile.marketCap, profile.mktCap)
+      },
+      advanced: {
+        fairValue,
+        date: firstText(latest.date, latest.year)
+      },
+      rows,
+      source: "FMP advanced discounted cash flow"
+    });
+  } catch (err) {
+    setFmpCooldown(err, "Advanced DCF", req.params.ticker);
+    console.log("FMP Advanced DCF skipped:", req.params.ticker, err.response?.status || err.message);
+    res.status(500).json({ error: "Advanced DCF data is not available yet." });
+  }
+});
+
 app.get("/api/stock-screener/options", async (req, res) => {
 try {
 if (!process.env.FMP_API_KEY || !canUseFmp()) {

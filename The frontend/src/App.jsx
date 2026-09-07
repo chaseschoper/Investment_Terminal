@@ -5596,10 +5596,22 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [dcfData, setDcfData] =
     useState(null);
 
+  const [dcfMode, setDcfMode] =
+    useState("standard");
+
+  const [dcfAdvancedData, setDcfAdvancedData] =
+    useState(null);
+
   const [isDcfLoading, setIsDcfLoading] =
     useState(false);
 
+  const [isDcfAdvancedLoading, setIsDcfAdvancedLoading] =
+    useState(false);
+
   const [dcfError, setDcfError] =
+    useState("");
+
+  const [dcfAdvancedError, setDcfAdvancedError] =
     useState("");
 
   const [dcfAssumptions, setDcfAssumptions] =
@@ -6415,6 +6427,38 @@ useEffect(() => {
     isActive = false;
   };
 }, [activePage, dcfTicker]);
+
+useEffect(() => {
+  if (activePage !== "dcf-calculator" || dcfMode !== "advanced" || !dcfTicker) return;
+
+  let isActive = true;
+
+  const loadDcfAdvancedData = async () => {
+    setIsDcfAdvancedLoading(true);
+    setDcfAdvancedError("");
+
+    try {
+      const response = await axios.get(`${API_URL}/api/dcf-advanced/${dcfTicker}`, {
+        timeout: 18000
+      });
+      if (!isActive) return;
+      setDcfAdvancedData(response.data);
+    } catch (error) {
+      console.error("Advanced DCF data failed", error);
+      if (!isActive) return;
+      setDcfAdvancedError("Advanced DCF data is not available yet for that ticker.");
+      setDcfAdvancedData(null);
+    } finally {
+      if (isActive) setIsDcfAdvancedLoading(false);
+    }
+  };
+
+  loadDcfAdvancedData();
+
+  return () => {
+    isActive = false;
+  };
+}, [activePage, dcfMode, dcfTicker]);
 
 useEffect(() => {
   if (activePage !== "financial-statements" || !financialStatementTicker) return;
@@ -8975,6 +9019,95 @@ const updateDcfAssumption = (key, value) => {
     [key]: nextValue
   }));
 };
+
+const humanizeDcfField = (key) =>
+  String(key || "")
+    .replace(/^costof/i, "costOf")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+    .replace(/\bDcf\b/g, "DCF")
+    .replace(/\bFcf\b/g, "FCF")
+    .replace(/\bUfcf\b/g, "UFCF")
+    .replace(/\bTaxCost\b/g, "Tax Cost")
+    .replace(/\bWacc\b/g, "WACC")
+    .replace(/\bEbitda\b/g, "EBITDA")
+    .replace(/\bEbit\b/g, "EBIT");
+
+const formatDcfAdvancedValue = (key, value) => {
+  if (!isNumber(value)) return value || "N/A";
+  const normalizedKey = String(key || "").toLowerCase();
+  if (normalizedKey.includes("shares")) return formatLargeNumber(value);
+  if (normalizedKey === "beta") return value.toFixed(2);
+  if (normalizedKey === "taxratecash") return formatLargeDollars(value);
+  if (
+    normalizedKey.includes("rate") ||
+    normalizedKey.includes("costof") ||
+    normalizedKey.includes("growth") ||
+    normalizedKey.includes("premium") ||
+    normalizedKey.includes("weighting") ||
+    normalizedKey.includes("percentage") ||
+    normalizedKey.includes("margin") ||
+    normalizedKey === "wacc"
+  ) {
+    return formatPercent(value);
+  }
+  if (
+    normalizedKey.includes("share") ||
+    normalizedKey.includes("price") ||
+    normalizedKey.includes("dcf") ||
+    normalizedKey.includes("fairvalue")
+  ) {
+    return formatPrice(value);
+  }
+  if (normalizedKey.includes("year")) return String(value);
+  return formatLargeDollars(value);
+};
+
+const firstDcfAdvancedValue = (row, keys) => {
+  if (!row) return null;
+  for (const key of keys) {
+    if (isNumber(row[key])) return row[key];
+  }
+  return null;
+};
+
+const dcfAdvancedRows = Array.isArray(dcfAdvancedData?.rows) ? dcfAdvancedData.rows : [];
+const dcfAdvancedLatest = dcfAdvancedRows[0] || null;
+const dcfAdvancedChartRows = dcfAdvancedRows
+  .map((row, index) => ({
+    period: row.year || row.date || `Y${index + 1}`,
+    freeCashFlow: firstDcfAdvancedValue(row, ["ufcf", "freeCashFlow", "freeCashFlowT1", "fcf"]),
+    enterpriseValue: firstDcfAdvancedValue(row, ["enterpriseValue", "firmValue"]),
+    equityValue: firstDcfAdvancedValue(row, ["equityValue"]),
+    terminalValue: firstDcfAdvancedValue(row, ["terminalValue", "presentTerminalValue"])
+  }))
+  .reverse();
+const dcfAdvancedMetricCards = [
+  {
+    label: "Advanced Fair Value",
+    value: firstDcfAdvancedValue(dcfAdvancedLatest, ["equityValuePerShare", "dcf", "fairValue", "intrinsicValue"]),
+    formatter: formatPrice
+  },
+  {
+    label: "WACC",
+    value: firstDcfAdvancedValue(dcfAdvancedLatest, ["wacc", "WACC"]),
+    formatter: formatPercent
+  },
+  {
+    label: "Terminal Value",
+    value: firstDcfAdvancedValue(dcfAdvancedLatest, ["terminalValue"]),
+    formatter: formatLargeDollars
+  },
+  {
+    label: "Enterprise Value",
+    value: firstDcfAdvancedValue(dcfAdvancedLatest, ["enterpriseValue", "firmValue"]),
+    formatter: formatLargeDollars
+  }
+];
+const dcfAdvancedDetailKeys = dcfAdvancedLatest
+  ? Object.keys(dcfAdvancedLatest).filter((key) => !["symbol", "name"].includes(key))
+  : [];
 
 const dcfProjection = (() => {
   const latestFreeCashFlow = Number(dcfData?.inputs?.latestFreeCashFlow);
@@ -13568,7 +13701,120 @@ return (
           </button>
         </form>
 
-        {dcfError ? (
+        <div className="dcf-mode-switch" role="group" aria-label="DCF model type">
+          <button
+            type="button"
+            className={dcfMode === "standard" ? "active" : ""}
+            onClick={() => setDcfMode("standard")}
+          >
+            DCF Calculator
+          </button>
+          <button
+            type="button"
+            className={dcfMode === "advanced" ? "active" : ""}
+            onClick={() => setDcfMode("advanced")}
+          >
+            DCF Advanced
+          </button>
+        </div>
+
+        {dcfMode === "advanced" ? (
+          dcfAdvancedError ? (
+            <div className="heatmap-loading">{dcfAdvancedError}</div>
+          ) : isDcfAdvancedLoading && !dcfAdvancedData ? (
+            <div className="heatmap-loading">Loading Advanced DCF data...</div>
+          ) : dcfAdvancedData ? (
+            <>
+              <div className="dcf-hero-panel">
+                <div className="dcf-company-block">
+                  <span className="stock-search-logo-shell has-logo" aria-hidden="true">
+                    <span>{getLogoFallbackText(dcfAdvancedData.symbol)}</span>
+                    {getDisplayCompanyLogoUrl(dcfAdvancedData.symbol, dcfAdvancedData.logo) && (
+                      <img
+                        src={getDisplayCompanyLogoUrl(dcfAdvancedData.symbol, dcfAdvancedData.logo)}
+                        alt=""
+                        crossOrigin="anonymous"
+                        onLoad={(event) => handleCompanyLogoLoad(event)}
+                        onError={(event) => handleCompanyLogoError(event, dcfAdvancedData.symbol)}
+                      />
+                    )}
+                  </span>
+                  <div>
+                    <span className="home-feature-label">{dcfAdvancedData.symbol}</span>
+                    <h3>{dcfAdvancedData.name || dcfAdvancedData.symbol}</h3>
+                    <p>Advanced DCF pulls FMP's expanded model rows for revenue, EBITDA, WACC, terminal value, enterprise value, and equity value per share.</p>
+                  </div>
+                </div>
+                <div className="dcf-price-stack">
+                  <span>Current Price</span>
+                  <strong>{formatPrice(dcfAdvancedData.quote?.price)}</strong>
+                  <em className={isNumber(dcfAdvancedData.quote?.changePercentage) && dcfAdvancedData.quote.changePercentage < 0 ? "red" : "green"}>
+                    {formatSignedPercent(dcfAdvancedData.quote?.changePercentage)}
+                  </em>
+                </div>
+              </div>
+
+              <div className="dcf-summary-grid">
+                {dcfAdvancedMetricCards.map((card) => (
+                  <div key={card.label}>
+                    <span>{card.label}</span>
+                    <strong>{card.formatter(card.value)}</strong>
+                    <small>{dcfAdvancedLatest?.date || dcfAdvancedLatest?.year || "Latest advanced model"}</small>
+                  </div>
+                ))}
+              </div>
+
+              <div className="dcf-chart-panel">
+                <div className="screener-results-heading">
+                  <span>Advanced DCF Model</span>
+                  <strong>{dcfAdvancedRows.length || 0} periods</strong>
+                </div>
+                <div className="historical-chart-canvas">
+                  {dcfAdvancedChartRows.some((row) => isNumber(row.freeCashFlow) || isNumber(row.enterpriseValue)) ? (
+                    <ResponsiveContainer width="100%" height={340}>
+                      <BarChart data={dcfAdvancedChartRows} margin={{ top: 18, right: 20, left: 8, bottom: 8 }}>
+                        <CartesianGrid stroke="#223049" strokeDasharray="3 3" />
+                        <XAxis dataKey="period" tick={{ fill: "#94a3b8", fontSize: 12 }} />
+                        <YAxis tickFormatter={formatLargeNumber} tick={{ fill: "#94a3b8", fontSize: 12 }} width={78} />
+                        <Tooltip
+                          content={(
+                            <OverviewChartTooltip
+                              formatter={formatLargeDollars}
+                              valueLabel="Advanced DCF"
+                              symbol={dcfAdvancedData.symbol}
+                              color="#34d399"
+                            />
+                          )}
+                        />
+                        <Bar dataKey="freeCashFlow" name="FCF" fill="#34d399" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="enterpriseValue" name="Enterprise Value" fill="#60a5fa" radius={[6, 6, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="historical-chart-empty">No advanced DCF chart data available.</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="dcf-advanced-table-panel">
+                <div className="screener-results-heading">
+                  <span>Advanced Fields</span>
+                  <strong>{dcfAdvancedDetailKeys.length} items</strong>
+                </div>
+                <div className="dcf-advanced-grid">
+                  {dcfAdvancedDetailKeys.map((key) => (
+                    <div key={key}>
+                      <span>{humanizeDcfField(key)}</span>
+                      <strong>{formatDcfAdvancedValue(key, dcfAdvancedLatest[key])}</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="heatmap-loading">Search a ticker to start Advanced DCF.</div>
+          )
+        ) : dcfError ? (
           <div className="heatmap-loading">{dcfError}</div>
         ) : isDcfLoading && !dcfData ? (
           <div className="heatmap-loading">Loading DCF data...</div>
