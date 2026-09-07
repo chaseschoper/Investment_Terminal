@@ -10444,6 +10444,33 @@ body {
   overflow: hidden;
 }
 
+.dcf-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 0 18px 14px;
+}
+
+.dcf-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.dcf-chart-legend i {
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  box-shadow: 0 0 14px currentColor;
+}
+
+.dcf-chart-panel .recharts-bar-rectangle {
+  cursor: pointer;
+}
+
 .dcf-assumption-control {
   display: grid;
   gap: 10px;
@@ -10499,6 +10526,49 @@ body {
   box-shadow: 0 18px 55px rgba(0, 0, 0, 0.24);
 }
 
+.dcf-advanced-year-control {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 18px;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.dcf-advanced-year-control label {
+  display: grid;
+  gap: 7px;
+  min-width: 220px;
+}
+
+.dcf-advanced-year-control span {
+  color: #93c5fd;
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.dcf-advanced-year-control select,
+.dcf-advanced-year-control button,
+.dcf-advanced-grid input {
+  min-height: 38px;
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  border-radius: 8px;
+  background: rgba(2, 6, 12, 0.54);
+  color: #f8fafc;
+  font-weight: 900;
+}
+
+.dcf-advanced-year-control select {
+  padding: 0 12px;
+}
+
+.dcf-advanced-year-control button {
+  padding: 0 14px;
+  cursor: pointer;
+}
+
 .dcf-advanced-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -10527,6 +10597,22 @@ body {
   color: #f8fafc;
   font-size: 20px;
   line-height: 1.12;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dcf-advanced-grid input {
+  width: 100%;
+  min-width: 0;
+  padding: 0 10px;
+  color: #f8fafc;
+}
+
+.dcf-advanced-grid small {
+  overflow: hidden;
+  color: #67e8f9;
+  font-size: 12px;
+  font-weight: 900;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

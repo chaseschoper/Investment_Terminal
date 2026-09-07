@@ -2141,6 +2141,33 @@ const OverviewChartTooltip = ({ active, label, payload, formatter, valueLabel, s
   );
 };
 
+const DcfAdvancedChartTooltip = ({ active, label, payload }) => {
+  if (!active || !Array.isArray(payload) || !payload.length) return null;
+  const rows = payload
+    .filter((item) => isNumber(item.value))
+    .map((item) => ({
+      key: item.dataKey || item.name,
+      label: item.name || item.dataKey,
+      value: item.value,
+      color: item.fill || item.color || "#67e8f9"
+    }));
+
+  if (!rows.length) return null;
+
+  return (
+    <div className="fundamental-tooltip overview-chart-tooltip">
+      <span>{formatChartPeriodLabel(label)}</span>
+      {rows.map((row) => (
+        <div className="fundamental-tooltip-row" key={`${row.key}-${label}`}>
+          <i style={{ background: row.color }} />
+          <strong>{row.label}</strong>
+          <em>{formatLargeDollars(row.value)}</em>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 const formatShortDate = (value) => {
   if (!value) return "N/A";
   const date = new Date(`${value}T12:00:00`);
@@ -5602,6 +5629,12 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [dcfAdvancedData, setDcfAdvancedData] =
     useState(null);
 
+  const [dcfAdvancedSelectedYear, setDcfAdvancedSelectedYear] =
+    useState("");
+
+  const [dcfAdvancedEdits, setDcfAdvancedEdits] =
+    useState({});
+
   const [isDcfLoading, setIsDcfLoading] =
     useState(false);
 
@@ -6443,6 +6476,9 @@ useEffect(() => {
       });
       if (!isActive) return;
       setDcfAdvancedData(response.data);
+      const rows = Array.isArray(response.data?.rows) ? response.data.rows : [];
+      setDcfAdvancedSelectedYear(String(rows[0]?.year || rows[0]?.date || ""));
+      setDcfAdvancedEdits({});
     } catch (error) {
       console.error("Advanced DCF data failed", error);
       if (!isActive) return;
@@ -9072,41 +9108,102 @@ const firstDcfAdvancedValue = (row, keys) => {
   return null;
 };
 
+const getDcfAdvancedRowId = (row, index = 0) =>
+  String(row?.year || row?.date || `row-${index}`);
+
+const updateDcfAdvancedEdit = (key, value) => {
+  if (!dcfAdvancedSelectedYear) return;
+  const nextValue = value === "" ? "" : Number(value);
+  if (nextValue !== "" && !Number.isFinite(nextValue)) return;
+  setDcfAdvancedEdits((current) => ({
+    ...current,
+    [dcfAdvancedSelectedYear]: {
+      ...(current[dcfAdvancedSelectedYear] || {}),
+      [key]: nextValue
+    }
+  }));
+};
+
 const dcfAdvancedRows = Array.isArray(dcfAdvancedData?.rows) ? dcfAdvancedData.rows : [];
 const dcfAdvancedLatest = dcfAdvancedRows[0] || null;
+const dcfAdvancedSelectedRow = dcfAdvancedRows.find((row, index) =>
+  getDcfAdvancedRowId(row, index) === dcfAdvancedSelectedYear
+) || dcfAdvancedLatest;
+const dcfAdvancedSelectedBaseId = dcfAdvancedRows.reduce((match, row, index) =>
+  row === dcfAdvancedSelectedRow ? getDcfAdvancedRowId(row, index) : match
+, dcfAdvancedSelectedYear);
+const dcfAdvancedSelectedEdits = dcfAdvancedEdits[dcfAdvancedSelectedBaseId] || {};
+const dcfAdvancedEditedRow = dcfAdvancedSelectedRow
+  ? { ...dcfAdvancedSelectedRow, ...dcfAdvancedSelectedEdits }
+  : null;
 const dcfAdvancedChartRows = dcfAdvancedRows
   .map((row, index) => ({
-    period: row.year || row.date || `Y${index + 1}`,
+    period: getDcfAdvancedRowId(row, index),
     freeCashFlow: firstDcfAdvancedValue(row, ["ufcf", "freeCashFlow", "freeCashFlowT1", "fcf"]),
     enterpriseValue: firstDcfAdvancedValue(row, ["enterpriseValue", "firmValue"]),
     equityValue: firstDcfAdvancedValue(row, ["equityValue"]),
     terminalValue: firstDcfAdvancedValue(row, ["terminalValue", "presentTerminalValue"])
   }))
   .reverse();
+const dcfAdvancedCustomProjection = (() => {
+  if (!dcfAdvancedEditedRow) return null;
+  const hasEdit = (key) => Object.prototype.hasOwnProperty.call(dcfAdvancedSelectedEdits, key);
+  const sumPvUfcf = firstDcfAdvancedValue(dcfAdvancedEditedRow, ["sumPvUfcf"]);
+  const presentTerminalValue = firstDcfAdvancedValue(dcfAdvancedEditedRow, ["presentTerminalValue"]);
+  const explicitEnterpriseValue = firstDcfAdvancedValue(dcfAdvancedEditedRow, ["enterpriseValue", "firmValue"]);
+  const netDebt = firstDcfAdvancedValue(dcfAdvancedEditedRow, ["netDebt"]) || 0;
+  const shares = firstDcfAdvancedValue(dcfAdvancedEditedRow, ["dilutedSharesOutstanding", "sharesOutstanding"]);
+  const enterpriseValue = hasEdit("enterpriseValue") || hasEdit("firmValue")
+    ? explicitEnterpriseValue
+    : isNumber(sumPvUfcf) && isNumber(presentTerminalValue)
+      ? sumPvUfcf + presentTerminalValue
+      : explicitEnterpriseValue;
+  const explicitEquityValue = firstDcfAdvancedValue(dcfAdvancedEditedRow, ["equityValue"]);
+  const equityValue = hasEdit("equityValue")
+    ? explicitEquityValue
+    : isNumber(enterpriseValue)
+      ? enterpriseValue - netDebt
+      : explicitEquityValue;
+  const explicitEquityValuePerShare = firstDcfAdvancedValue(dcfAdvancedEditedRow, ["equityValuePerShare", "dcf", "fairValue", "intrinsicValue"]);
+  const equityValuePerShare = hasEdit("equityValuePerShare") || hasEdit("dcf") || hasEdit("fairValue") || hasEdit("intrinsicValue")
+    ? explicitEquityValuePerShare
+    : isNumber(equityValue) && isNumber(shares) && shares > 0
+      ? equityValue / shares
+      : explicitEquityValuePerShare;
+
+  return {
+    enterpriseValue,
+    equityValue,
+    equityValuePerShare,
+    upsideDownside: isNumber(equityValuePerShare) && dcfAdvancedData?.quote?.price
+      ? ((equityValuePerShare - dcfAdvancedData.quote.price) / dcfAdvancedData.quote.price) * 100
+      : null
+  };
+})();
 const dcfAdvancedMetricCards = [
   {
     label: "Advanced Fair Value",
-    value: firstDcfAdvancedValue(dcfAdvancedLatest, ["equityValuePerShare", "dcf", "fairValue", "intrinsicValue"]),
+    value: firstDcfAdvancedValue(dcfAdvancedEditedRow, ["equityValuePerShare", "dcf", "fairValue", "intrinsicValue"]),
     formatter: formatPrice
   },
   {
     label: "WACC",
-    value: firstDcfAdvancedValue(dcfAdvancedLatest, ["wacc", "WACC"]),
+    value: firstDcfAdvancedValue(dcfAdvancedEditedRow, ["wacc", "WACC"]),
     formatter: formatPercent
   },
   {
     label: "Terminal Value",
-    value: firstDcfAdvancedValue(dcfAdvancedLatest, ["terminalValue"]),
+    value: firstDcfAdvancedValue(dcfAdvancedEditedRow, ["terminalValue"]),
     formatter: formatLargeDollars
   },
   {
     label: "Enterprise Value",
-    value: firstDcfAdvancedValue(dcfAdvancedLatest, ["enterpriseValue", "firmValue"]),
+    value: dcfAdvancedCustomProjection?.enterpriseValue,
     formatter: formatLargeDollars
   }
 ];
-const dcfAdvancedDetailKeys = dcfAdvancedLatest
-  ? Object.keys(dcfAdvancedLatest).filter((key) => !["symbol", "name"].includes(key))
+const dcfAdvancedDetailKeys = dcfAdvancedEditedRow
+  ? Object.keys(dcfAdvancedEditedRow).filter((key) => !["symbol", "name"].includes(key))
   : [];
 
 const dcfProjection = (() => {
@@ -13759,15 +13856,44 @@ return (
                   <div key={card.label}>
                     <span>{card.label}</span>
                     <strong>{card.formatter(card.value)}</strong>
-                    <small>{dcfAdvancedLatest?.date || dcfAdvancedLatest?.year || "Latest advanced model"}</small>
+                    <small>{dcfAdvancedEditedRow?.date || dcfAdvancedEditedRow?.year || "Selected advanced model"}</small>
                   </div>
                 ))}
+              </div>
+
+              <div className="dcf-summary-grid">
+                <div>
+                  <span>Custom Advanced Value</span>
+                  <strong>{formatPrice(dcfAdvancedCustomProjection?.equityValuePerShare)}</strong>
+                  <small>From edited selected-year fields</small>
+                </div>
+                <div>
+                  <span>Custom Advanced Upside / Downside</span>
+                  <strong className={isNumber(dcfAdvancedCustomProjection?.upsideDownside) && dcfAdvancedCustomProjection.upsideDownside < 0 ? "red" : "green"}>
+                    {formatSignedPercent(dcfAdvancedCustomProjection?.upsideDownside)}
+                  </strong>
+                  <small>Custom value vs current price</small>
+                </div>
+                <div>
+                  <span>Custom Equity Value</span>
+                  <strong>{formatLargeDollars(dcfAdvancedCustomProjection?.equityValue)}</strong>
+                  <small>Enterprise value minus net debt</small>
+                </div>
+                <div>
+                  <span>Selected Year</span>
+                  <strong>{dcfAdvancedEditedRow?.year || dcfAdvancedSelectedYear || "N/A"}</strong>
+                  <small>FMP advanced model row</small>
+                </div>
               </div>
 
               <div className="dcf-chart-panel">
                 <div className="screener-results-heading">
                   <span>Advanced DCF Model</span>
                   <strong>{dcfAdvancedRows.length || 0} periods</strong>
+                </div>
+                <div className="dcf-chart-legend" aria-label="Advanced DCF chart legend">
+                  <span><i style={{ background: "#34d399" }} /> Green bars: Unlevered free cash flow</span>
+                  <span><i style={{ background: "#60a5fa" }} /> Blue bars: Enterprise value</span>
                 </div>
                 <div className="historical-chart-canvas">
                   {dcfAdvancedChartRows.some((row) => isNumber(row.freeCashFlow) || isNumber(row.enterpriseValue)) ? (
@@ -13777,17 +13903,23 @@ return (
                         <XAxis dataKey="period" tick={{ fill: "#94a3b8", fontSize: 12 }} />
                         <YAxis tickFormatter={formatLargeNumber} tick={{ fill: "#94a3b8", fontSize: 12 }} width={78} />
                         <Tooltip
-                          content={(
-                            <OverviewChartTooltip
-                              formatter={formatLargeDollars}
-                              valueLabel="Advanced DCF"
-                              symbol={dcfAdvancedData.symbol}
-                              color="#34d399"
-                            />
-                          )}
+                          cursor={{ fill: "rgba(96, 165, 250, 0.08)" }}
+                          content={<DcfAdvancedChartTooltip />}
                         />
-                        <Bar dataKey="freeCashFlow" name="FCF" fill="#34d399" radius={[6, 6, 0, 0]} />
-                        <Bar dataKey="enterpriseValue" name="Enterprise Value" fill="#60a5fa" radius={[6, 6, 0, 0]} />
+                        <Bar
+                          dataKey="freeCashFlow"
+                          name="Unlevered FCF"
+                          fill="#34d399"
+                          radius={[6, 6, 0, 0]}
+                          onClick={(entry) => setDcfAdvancedSelectedYear(entry?.period || "")}
+                        />
+                        <Bar
+                          dataKey="enterpriseValue"
+                          name="Enterprise Value"
+                          fill="#60a5fa"
+                          radius={[6, 6, 0, 0]}
+                          onClick={(entry) => setDcfAdvancedSelectedYear(entry?.period || "")}
+                        />
                       </BarChart>
                     </ResponsiveContainer>
                   ) : (
@@ -13799,13 +13931,52 @@ return (
               <div className="dcf-advanced-table-panel">
                 <div className="screener-results-heading">
                   <span>Advanced Fields</span>
-                  <strong>{dcfAdvancedDetailKeys.length} items</strong>
+                  <strong>{dcfAdvancedDetailKeys.length} editable items</strong>
+                </div>
+                <div className="dcf-advanced-year-control">
+                  <label>
+                    <span>FMP Model Year</span>
+                    <select
+                      value={dcfAdvancedSelectedYear}
+                      onChange={(event) => setDcfAdvancedSelectedYear(event.target.value)}
+                    >
+                      {dcfAdvancedRows.map((row, index) => {
+                        const id = getDcfAdvancedRowId(row, index);
+                        return (
+                          <option key={id} value={id}>
+                            {row.year || row.date || `Model ${index + 1}`}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setDcfAdvancedEdits((current) => ({
+                      ...current,
+                      [dcfAdvancedSelectedBaseId]: {}
+                    }))}
+                  >
+                    Reset Year Inputs
+                  </button>
                 </div>
                 <div className="dcf-advanced-grid">
                   {dcfAdvancedDetailKeys.map((key) => (
                     <div key={key}>
                       <span>{humanizeDcfField(key)}</span>
-                      <strong>{formatDcfAdvancedValue(key, dcfAdvancedLatest[key])}</strong>
+                      {isNumber(dcfAdvancedEditedRow[key]) ? (
+                        <input
+                          type="number"
+                          value={dcfAdvancedEditedRow[key]}
+                          onChange={(event) => updateDcfAdvancedEdit(key, event.target.value)}
+                          aria-label={humanizeDcfField(key)}
+                        />
+                      ) : (
+                        <strong>{formatDcfAdvancedValue(key, dcfAdvancedEditedRow[key])}</strong>
+                      )}
+                      {isNumber(dcfAdvancedEditedRow[key]) && (
+                        <small>{formatDcfAdvancedValue(key, dcfAdvancedEditedRow[key])}</small>
+                      )}
                     </div>
                   ))}
                 </div>
