@@ -7907,12 +7907,15 @@ const loadUserData = async () => {
       const requestStart = mode === "live-earnings" ? getWeekStartIso(toLocalIsoDate(new Date())) : weekStart;
       const cacheKey = `${mode}:${requestStart}`;
       const cachedCalendar = calendarDataCache[cacheKey];
+      const cachedCalendarHasDays = cachedCalendar?.days?.length > 0;
       const cachedCalendarHasEvents = cachedCalendar?.days?.some((day) => day.events?.length);
-      if (cachedCalendarHasEvents) {
+      if (cachedCalendarHasDays) {
         setEarnings(cachedCalendar);
       }
-      setIsEarningsLoading(true);
-      setSelectedEarningsDate(mode === "live-earnings" ? toLocalIsoDate(new Date()) : weekStart);
+      setIsEarningsLoading(!cachedCalendarHasDays);
+      if (mode === "live-earnings") {
+        setSelectedEarningsDate(toLocalIsoDate(new Date()));
+      }
 
       const earningsRes =
         await axios.get(
@@ -7928,20 +7931,28 @@ const loadUserData = async () => {
       };
       if (requestId !== calendarRequestRef.current) return;
       const calendarHasEvents = (calendar.days || []).some((day) => day.events?.length);
-      const shouldRetryCalendar = Boolean(earningsRes.data?.unavailable || earningsRes.data?.pending || !calendarHasEvents);
+      const calendarHasDays = (calendar.days || []).length > 0;
+      const shouldRetryCalendar = Boolean((earningsRes.data?.unavailable || earningsRes.data?.pending) && !calendarHasEvents);
+      if (calendarHasDays || calendarHasEvents) {
+        setEarnings(calendar);
+        setCalendarDataCache((cache) => ({
+          ...cache,
+          [cacheKey]: calendar
+        }));
+      }
       if (shouldRetryCalendar) {
-        if (cachedCalendarHasEvents) setEarnings(cachedCalendar);
+        if (cachedCalendarHasDays) {
+          setEarnings(cachedCalendar);
+        }
         calendarRetryTimerRef.current = window.setTimeout(
           () => loadEarnings(weekStart, mode),
-          cachedCalendarHasEvents ? 12000 : 5000
+          cachedCalendarHasDays ? 12000 : 5000
         );
+        if (cachedCalendarHasDays || calendarHasDays) {
+          setIsEarningsLoading(false);
+        }
         return;
       }
-      setEarnings(calendar);
-      setCalendarDataCache((cache) => ({
-        ...cache,
-        [cacheKey]: calendar
-      }));
       const availableDates = (calendar.days || []).map((day) => day.date);
       setSelectedEarningsDate((current) => {
         const today = toLocalIsoDate(new Date());

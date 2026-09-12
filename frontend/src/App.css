@@ -390,9 +390,12 @@ body {
 
 .home-tour-heading {
   max-width: 940px;
+  align-self: flex-start;
+  text-align: left;
 }
 
 .home-tour-heading h2 {
+  max-width: 940px;
   margin: 0;
   color: #f8fafc;
   font-size: clamp(34px, 4.4vw, 64px);
@@ -402,7 +405,7 @@ body {
 }
 
 .home-tour-heading p {
-  max-width: 760px;
+  max-width: 940px;
   margin: 18px 0 0;
   color: #a8b3c4;
   font-size: 17px;
