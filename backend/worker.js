@@ -122,46 +122,6 @@ const parseAbbreviatedNumber = (value) => {
   return Number(match[1]) * (multipliers[match[2]?.toUpperCase()] || 1);
 };
 
-async function fetchStockAnalysisForecast(ticker) {
-  try {
-    const response = await axios.get(
-      `https://stockanalysis.com/stocks/${ticker.toLowerCase()}/forecast/`,
-      {
-        headers: { "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36" },
-        timeout: 10000
-      }
-    );
-    const $ = cheerio.load(response.data);
-    const readForecast = (heading) => {
-      const section = $("h2")
-        .filter((_, element) => $(element).text().trim() === heading)
-        .first()
-        .next();
-      const headers = section.find("tr").first().find("th,td")
-        .map((_, element) => $(element).text().trim()).get();
-      const average = section.find("tr").filter((_, row) =>
-        $(row).find("th,td").first().text().trim() === "Avg"
-      ).first().find("th,td")
-        .map((_, element) => $(element).text().trim()).get();
-      return {
-        year: Number(headers[1]) || null,
-        value: parseAbbreviatedNumber(average[1])
-      };
-    };
-    const revenue = readForecast("Revenue Forecast");
-    const eps = readForecast("EPS Forecast");
-
-    return {
-      fiscalYear: eps.year || revenue.year,
-      currentYearRevenue: revenue.value,
-      currentYearEps: eps.value
-    };
-  } catch (err) {
-    console.log("StockAnalysis forecast skipped:", ticker, err.message);
-    return {};
-  }
-}
-
 async function getSecTickerMap() {
   if (!secTickerMapPromise) {
     secTickerMapPromise = axios.get(
@@ -1164,14 +1124,12 @@ async function updateStock(ticker) {
       fmpIncomeStatementData,
       yahooSupplementalData,
       nasdaqData,
-      stockAnalysisForecast,
       secAnnualMargins
     ] = await Promise.all([
       fetchYahooFinancialHistory(ticker),
       fetchFmpIncomeStatementHistory(ticker),
       fetchYahooSupplementalData(ticker),
       fetchNasdaqData(ticker),
-      fetchStockAnalysisForecast(ticker),
       fetchSecAnnualMargins(ticker)
     ]);
 
@@ -1360,7 +1318,6 @@ async function updateStock(ticker) {
 
     const historicalForwardEps = estimateForwardEpsFromHistory(revenueData);
     const nextEpsCandidate =
-      stockAnalysisForecast.currentYearEps ??
       nasdaqData.currentYearEps ??
       yahooSupplementalData.forwardEps ??
       fmpEstimateField(fmpNextEstimate, "epsAvg", "estimatedEpsAvg") ??
@@ -1383,7 +1340,6 @@ async function updateStock(ticker) {
       currentRevenueBase;
 
     const nextRevenue =
-      stockAnalysisForecast.currentYearRevenue ??
       fmpEstimateField(
         fmpNextEstimate,
         "revenueAvg",
@@ -1536,9 +1492,6 @@ async function updateStock(ticker) {
       currentEpsValue ? quote.c / currentEpsValue : null
     );
     const forwardPE = firstNumber(
-      stockAnalysisForecast.currentYearEps
-        ? quote.c / stockAnalysisForecast.currentYearEps
-        : null,
       nasdaqData.currentYearEps ? quote.c / nasdaqData.currentYearEps : null,
       reportedForwardPE,
       nextEpsValue ? quote.c / nextEpsValue : null
@@ -1645,12 +1598,14 @@ async function updateStock(ticker) {
           forwardPE,
           trailingEps: yahooSupplementalData.trailingEps,
           forwardEps: yahooSupplementalData.forwardEps,
-          consensusCurrentYearEps:
-            stockAnalysisForecast.currentYearEps ?? nasdaqData.currentYearEps,
+          consensusCurrentYearEps: nasdaqData.currentYearEps,
           consensusNextYearEps: nasdaqData.nextYearEps,
-          consensusCurrentYearRevenue: stockAnalysisForecast.currentYearRevenue,
-          analystEstimateSource: stockAnalysisForecast.currentYearEps
-            ? "S&P Global consensus via StockAnalysis"
+          consensusCurrentYearRevenue: firstNumber(
+            fmpEstimateField(fmpCurrentEstimate, "revenueAvg", "estimatedRevenueAvg"),
+            fmpEstimateField(fmpNextEstimate, "revenueAvg", "estimatedRevenueAvg")
+          ),
+          analystEstimateSource: fmpAnalystEstimates.length
+            ? "FMP analyst estimates"
             : nasdaqData.currentYearEps
               ? "Nasdaq consensus"
               : "Modeled fallback",

@@ -60,8 +60,6 @@ const stockScreenerOptionsCache = new Map();
 const fmpCalendarCache = new Map();
 const treasuryRatesCache = new Map();
 const fmpNewsCache = new Map();
-const earningsCallPeriodsCache = new Map();
-const earningsCallTranscriptCache = new Map();
 const similarCompanyMetricCache = new Map();
 const fmpDataCache = new Map();
 const fmpDataInFlight = new Map();
@@ -87,9 +85,6 @@ const fmpMarketActivityCache = new Map();
 const marketBeatAnalystCache = new Map();
 const secInsiderTransactionCache = new Map();
 const epsSurpriseCache = new Map();
-const stockAnalysisValuationCache = new Map();
-const stockAnalysisHistoricalPeCache = new Map();
-let stockAnalysisEarningsCalendarPageCache = null;
 const sp500ConstituentsCache = new Map();
 const etfDataCache = new Map();
 const mrRallyExternalMetricCache = new Map();
@@ -251,7 +246,7 @@ const FMP_METRIC_CARD_FIELDS = [
   ...FMP_BALANCE_SHEET_METRIC_FIELDS,
   ...FMP_MARKET_METRIC_FIELDS
 ];
-const STOCK_ANALYSIS_VALUATION_FIELDS = FMP_VALUATION_METRIC_FIELDS;
+const VALUATION_METRIC_FIELDS = FMP_VALUATION_METRIC_FIELDS;
 const FMP_TEXT_METRIC_FIELDS = [
   "recommendationKey",
   "analystRatingText"
@@ -486,7 +481,6 @@ let yahooQuoteSummaryCooldownUntil = 0;
 let yahooEarningsTrendCooldownUntil = 0;
 let yahooAnalysisPageCooldownUntil = 0;
 let fmpCooldownUntil = 0;
-let stockAnalysisCooldownUntil = 0;
 let secTickerMapPromise;
 let secTickerMapRetryAfter = 0;
 const COMMON_SEC_CIKS = new Map(Object.entries({
@@ -656,7 +650,6 @@ const FOREIGN_ADR_CONFIG = {
     sourceCurrency: "TWD",
     displayCurrency: "USD",
     adrRatio: 5,
-    stockAnalysisPath: "quote/tpe/2330",
     localSymbols: ["2330.TW"],
     fallbackUsdRate: 0.031
   },
@@ -664,7 +657,6 @@ const FOREIGN_ADR_CONFIG = {
     sourceCurrency: "JPY",
     displayCurrency: "USD",
     adrRatio: 10,
-    stockAnalysisPath: "quote/tyo/7203",
     localSymbols: ["7203.T"],
     fallbackUsdRate: 0.0068
   },
@@ -672,7 +664,6 @@ const FOREIGN_ADR_CONFIG = {
     sourceCurrency: "KRW",
     displayCurrency: "USD",
     adrRatio: 1,
-    stockAnalysisPath: "quote/krx/000660",
     localSymbols: ["000660.KS"],
     fallbackUsdRate: 0.00069,
     marketCapMultiplier: 1000,
@@ -682,7 +673,6 @@ const FOREIGN_ADR_CONFIG = {
     sourceCurrency: "KRW",
     displayCurrency: "USD",
     adrRatio: 1,
-    stockAnalysisPath: "quote/krx/000660",
     localSymbols: ["000660.KS"],
     fallbackUsdRate: 0.00069,
     marketCapMultiplier: 1000,
@@ -745,10 +735,10 @@ const KNOWN_FINANCIAL_INSTITUTIONS = new Set([
 ]);
 
 const MARKET_INDICES = [
-  { key: "sp500", label: "S&P 500", yahooSymbol: "^GSPC", fmpSymbol: "^GSPC", investingPath: "us-spx-500", stockAnalysisLabel: "S&P500" },
-  { key: "dow", label: "Dow Jones", yahooSymbol: "^DJI", fmpSymbol: "^DJI", investingPath: "us-30", stockAnalysisLabel: "Dow Jones" },
-  { key: "nasdaq", label: "Nasdaq", yahooSymbol: "^NDX", fmpSymbol: "^IXIC", investingPath: "nq-100", stockAnalysisLabel: "Nasdaq" },
-  { key: "russell2000", label: "Russell 2000", yahooSymbol: "^RUT", fmpSymbol: "^RUT", investingPath: "smallcap-2000", stockAnalysisLabel: "Russell 2000" }
+  { key: "sp500", label: "S&P 500", yahooSymbol: "^GSPC", fmpSymbol: "^GSPC", investingPath: "us-spx-500" },
+  { key: "dow", label: "Dow Jones", yahooSymbol: "^DJI", fmpSymbol: "^DJI", investingPath: "us-30" },
+  { key: "nasdaq", label: "Nasdaq", yahooSymbol: "^NDX", fmpSymbol: "^IXIC", investingPath: "nq-100" },
+  { key: "russell2000", label: "Russell 2000", yahooSymbol: "^RUT", fmpSymbol: "^RUT", investingPath: "smallcap-2000" }
 ];
 
 const SP500_HEATMAP_COMPANIES = [
@@ -1415,19 +1405,12 @@ function canUseFmpEndpoint(endpointKey, symbol = "") {
     (!symbolKey || now >= (fmpEndpointCooldowns.get(symbolKey) || 0));
 }
 
-function setStockAnalysisCooldown(err, label, ticker) {
-  if (!isTooManyRequestsError(err)) return;
-  stockAnalysisCooldownUntil = Math.max(stockAnalysisCooldownUntil, Date.now() + 2 * 60 * 1000);
-  console.log(`StockAnalysis cooldown active after ${label}:`, ticker, err.response?.status || err.message);
-}
-
 const YAHOO_PROVIDER_ENABLED = process.env.ENABLE_YAHOO_PROVIDER === "true";
 const canUseYahoo = () => YAHOO_PROVIDER_ENABLED && Date.now() >= yahooCooldownUntil;
 const canUseYahooQuoteSummary = () => YAHOO_PROVIDER_ENABLED && Date.now() >= yahooQuoteSummaryCooldownUntil;
 const canUseYahooEarningsTrend = () => YAHOO_PROVIDER_ENABLED && Date.now() >= yahooEarningsTrendCooldownUntil;
 const canUseYahooAnalysisPage = () => YAHOO_PROVIDER_ENABLED && Date.now() >= yahooAnalysisPageCooldownUntil;
 const canUseFmp = () => Boolean(process.env.FMP_API_KEY);
-const canUseStockAnalysis = () => Date.now() >= stockAnalysisCooldownUntil;
 
 function isFmpErrorPayload(data) {
   if (!data || typeof data !== "object") return false;
@@ -4198,35 +4181,6 @@ async function fetchYahooMarketMoverList(type) {
   }
 }
 
-async function fetchStockAnalysisMarketMoverList(type) {
-  if (!canUseStockAnalysis()) return [];
-  const path = type === "losers" ? "losers" : "gainers";
-
-  try {
-    const response = await axios.get(`https://stockanalysis.com/markets/${path}/`, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-      },
-      timeout: 7000
-    });
-    const $ = cheerio.load(response.data || "");
-    return $("table tbody tr").map((_, row) => {
-      const cells = $(row).find("td").map((__, cell) => $(cell).text().trim()).get();
-      return {
-        symbol: cells[1],
-        name: cells[2],
-        percentChange: cells[3],
-        price: cells[4]
-      };
-    }).get();
-  } catch (err) {
-    setStockAnalysisCooldown(err, `market ${path}`, path);
-    console.log(`StockAnalysis market ${path} skipped:`, err.response?.status || err.message);
-    return [];
-  }
-}
-
 async function getAlphaVantageFundamentalData(ticker, fn) {
   const apiKey = getAlphaVantageApiKey();
   const symbol = String(ticker || "").trim().toUpperCase();
@@ -4592,193 +4546,6 @@ const estimatePegRatio = (forwardPE, epsGrowthPercent) => {
   if (forwardPeNumber === null || epsGrowthNumber === null || epsGrowthNumber <= 0) return null;
   return forwardPeNumber / epsGrowthNumber;
 };
-
-async function fetchStockAnalysisValuationMetrics(ticker) {
-  const symbol = getStockAnalysisPath(ticker);
-  const cached = stockAnalysisValuationCache.get(symbol);
-  if (cached && Date.now() - cached.fetchedAt < 15 * 60 * 1000) {
-    return cached.data;
-  }
-
-  try {
-    const { data } = await axios.get(buildStockAnalysisUrl(ticker, "statistics/"), {
-      headers: {
-        "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-      },
-      timeout: 5500
-    });
-    const $ = cheerio.load(data || "");
-    const normalizeStatisticLabel = (value = "") => String(value).replace(/\s+/g, " ").trim().toLowerCase();
-    const readStatistic = (label) => {
-      const expected = normalizeStatisticLabel(label);
-      let rawValue = "";
-      $("tr").each((_, row) => {
-        if (rawValue) return;
-        const cells = $(row).find("th,td").map((__, cell) =>
-          $(cell).text().replace(/\s+/g, " ").trim()
-        ).get();
-        if (cells.length < 2) return;
-        if (normalizeStatisticLabel(cells[0]) === expected) rawValue = cells[1];
-      });
-      return parseAbbreviatedNumber(rawValue);
-    };
-    const forwardPE = readStatistic("Forward PE");
-    const epsGrowthForecast = readStatistic("EPS Growth Forecast (3Y)");
-    const valuation = {
-      pe: readStatistic("PE Ratio"),
-      forwardPE,
-      forwardPS: readStatistic("Forward PS"),
-      priceToBook: firstNumber(
-        readStatistic("PB Ratio"),
-        readStatistic("Price-to-Book Ratio"),
-        readStatistic("Price / Book Ratio")
-      ),
-      priceToTangibleBook: readStatistic("P/TBV Ratio"),
-      priceToFreeCashflow: readStatistic("P/FCF Ratio"),
-      priceToOperatingCashflow: readStatistic("P/OCF Ratio"),
-      pretaxMargin: readStatistic("Pretax Margin"),
-      ebitdaMargin: readStatistic("EBITDA Margin"),
-      ebitMargin: readStatistic("EBIT Margin"),
-      fcfMargin: readStatistic("FCF Margin"),
-      returnOnEquity: readStatistic("Return on Equity (ROE)"),
-      returnOnAssets: readStatistic("Return on Assets (ROA)"),
-      returnOnInvestedCapital: readStatistic("Return on Invested Capital (ROIC)"),
-      returnOnCapitalEmployed: readStatistic("Return on Capital Employed (ROCE)"),
-      weightedAverageCostOfCapital: readStatistic("Weighted Average Cost of Capital (WACC)"),
-      revenuePerEmployee: firstNumber(
-        readStatistic("Revenue Per Employee"),
-        readStatistic("Revenue / Employee"),
-        readStatistic("Revenue per Employee")
-      ),
-      profitsPerEmployee: firstNumber(
-        readStatistic("Profits Per Employee"),
-        readStatistic("Profit Per Employee"),
-        readStatistic("Profits / Employee"),
-        readStatistic("Profit / Employee"),
-        readStatistic("Net Income Per Employee")
-      ),
-      employeeCount: firstNumber(
-        readStatistic("Employees"),
-        readStatistic("Employee Count"),
-        readStatistic("Number of Employees")
-      ),
-      pegRatio: firstNumber(
-        readStatistic("PEG Ratio"),
-        estimatePegRatio(forwardPE, epsGrowthForecast)
-      ),
-      epsGrowthForecast
-    };
-    const hasAnyValuationMetric = Object.entries(valuation)
-      .some(([key, value]) => key !== "epsGrowthForecast" && toNumberOrNull(value) !== null);
-    if (hasAnyValuationMetric) {
-      stockAnalysisValuationCache.set(symbol, { data: valuation, fetchedAt: Date.now() });
-    }
-    return valuation;
-  } catch (err) {
-    setStockAnalysisCooldown(err, "valuation metrics", ticker);
-    console.log("StockAnalysis valuation metrics skipped:", ticker, err.response?.status || err.message);
-    return {};
-  }
-}
-
-async function fetchStockAnalysisForecast(ticker) {
-  try {
-    const headers = {
-      "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36"
-    };
-    const [forecastResponse, statisticsResponse] = await Promise.all([
-      axios.get(buildStockAnalysisUrl(ticker, "forecast/"), {
-        headers,
-        timeout: 10000
-      }),
-      axios.get(buildStockAnalysisUrl(ticker, "statistics/"), {
-        headers,
-        timeout: 10000
-      }).catch(() => ({ data: "" }))
-    ]);
-    const $ = cheerio.load(forecastResponse.data);
-    const statistics = cheerio.load(statisticsResponse.data);
-    const readStatistic = (label) => {
-      const cells = statistics("tr").filter((_, row) =>
-        statistics(row).find("th,td").first().text().trim() === label
-      ).first().find("th,td");
-      return parseNasdaqNumber(cells.eq(1).text());
-    };
-    const readForecast = (heading) => {
-      const section = $("h2")
-        .filter((_, element) => $(element).text().trim() === heading)
-        .first()
-        .next();
-      const headers = section.find("tr").first().find("th,td")
-        .map((_, element) => $(element).text().trim()).get();
-      const average = section.find("tr").filter((_, row) =>
-        $(row).find("th,td").first().text().trim() === "Avg"
-      ).first().find("th,td")
-        .map((_, element) => $(element).text().trim()).get();
-      return {
-        year: Number(headers[1]) || null,
-        value: parseAbbreviatedNumber(average[1]),
-        nextYear: Number(headers[2]) || null,
-        nextValue: parseAbbreviatedNumber(average[2])
-      };
-    };
-    const revenue = readForecast("Revenue Forecast");
-    const eps = readForecast("EPS Forecast");
-    const readEmbeddedAnnualEstimate = (key) => {
-      const match = forecastResponse.data.match(
-        new RegExp(`${key}:\\{last:[^,}]+,this:([^,}]+)`)
-      );
-      return match ? parseNasdaqNumber(match[1]) : null;
-    };
-    const embeddedRevenueThis = readEmbeddedAnnualEstimate("revenueThis");
-    const embeddedRevenueNext = readEmbeddedAnnualEstimate("revenueNext");
-    const embeddedEpsThis = readEmbeddedAnnualEstimate("epsThis");
-    const embeddedEpsNext = readEmbeddedAnnualEstimate("epsNext");
-    const readEmbeddedTarget = (key) => {
-      const match = forecastResponse.data.match(
-        new RegExp(`priceTargets:\\{[^}]*${key}:([^,}]+)`)
-      );
-      return match ? parseNasdaqNumber(match[1]) : null;
-    };
-    const ratingConsensus = forecastResponse.data.match(
-      /currentRatings:\{[^}]*consensus:"([^"]+)"/
-    )?.[1];
-    const ratingScore = parseNasdaqNumber(
-      forecastResponse.data.match(/currentRatings:\{[^}]*score:([^,}]+)/)?.[1]
-    );
-    const ratingCount = parseNasdaqNumber(
-      forecastResponse.data.match(/currentRatings:\{[^}]*count:([^,}]+)/)?.[1]
-    );
-    const forecastForwardPE = readStatistic("Forward PE");
-    const epsGrowthForecast = readStatistic("EPS Growth Forecast (3Y)");
-
-    return {
-      fiscalYear: eps.year || revenue.year,
-      currentYearRevenue: firstNumber(embeddedRevenueThis, revenue.value),
-      currentYearEps: firstNumber(embeddedEpsThis, eps.value),
-      nextYearRevenue: firstNumber(embeddedRevenueNext, revenue.nextValue),
-      nextYearEps: firstNumber(embeddedEpsNext, eps.nextValue),
-      pe: readStatistic("PE Ratio"),
-      forwardPE: forecastForwardPE,
-      pegRatio: firstNumber(
-        readStatistic("PEG Ratio"),
-        estimatePegRatio(forecastForwardPE, epsGrowthForecast)
-      ),
-      epsGrowthForecast,
-      targetMean: readEmbeddedTarget("avg"),
-      targetMedian: readEmbeddedTarget("median"),
-      analystRatingText: firstText(ratingConsensus),
-      ratingConsensus,
-      ratingScore,
-      ratingCount
-    };
-  } catch (err) {
-    setStockAnalysisCooldown(err, "forecast", ticker);
-    console.log("StockAnalysis forecast skipped:", ticker, err.response?.status || err.message);
-    return {};
-  }
-}
 
 async function getSecTickerMap() {
   if (!secTickerMapPromise && Date.now() < secTickerMapRetryAfter) {
@@ -6600,63 +6367,6 @@ async function calculateFmpQuarterlyHistoricalPe(ticker, revenueRows = [], optio
     .slice(-80);
 }
 
-async function fetchStockAnalysisHistoricalPe(ticker) {
-  const symbol = getStockAnalysisPath(ticker);
-  const cached = stockAnalysisHistoricalPeCache.get(symbol);
-  if (cached && Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1000) {
-    return cached.data;
-  }
-
-  try {
-    const { data } = await axios.get(buildStockAnalysisUrl(ticker, "financials/ratios/"), {
-      headers: STOCK_ANALYSIS_HEADERS,
-      timeout: 5500
-    });
-    const $ = cheerio.load(data || "");
-    const table = $("table").first();
-    if (!table.length) return [];
-
-    const headers = table.find("thead tr").first().find("th").toArray()
-      .slice(1)
-      .map((cell) => $(cell).text().replace(/\s+/g, " ").trim());
-    let peValues = [];
-    table.find("tbody tr").each((_, row) => {
-      if (peValues.length) return;
-      const cells = $(row).find("th,td").toArray();
-      const label = $(cells[0]).text().replace(/\s+/g, " ").trim().toLowerCase();
-      if (label !== "pe ratio" && label !== "p/e ratio") return;
-      peValues = cells.slice(1).map((cell) => parseStockAnalysisNumber($(cell).text()));
-    });
-
-    const rows = headers
-      .map((header, index) => {
-        if (/^current$/i.test(header)) return null;
-        const year = Number(header.match(/\b(?:FY\s*)?(\d{4})\b/i)?.[1]);
-        const pe = toNumberOrNull(peValues[index]);
-        if (!Number.isFinite(year) || pe === null || Math.abs(pe) >= 1000) return null;
-        return {
-          year,
-          period: String(year),
-          isInterim: false,
-          pe,
-          source: "StockAnalysis ratios"
-        };
-      })
-      .filter(Boolean)
-      .sort((a, b) => a.year - b.year)
-      .slice(-40);
-
-    if (rows.length) {
-      stockAnalysisHistoricalPeCache.set(symbol, { data: rows, fetchedAt: Date.now() });
-    }
-    return rows;
-  } catch (err) {
-    setStockAnalysisCooldown(err, "historical PE", ticker);
-    console.log("StockAnalysis historical PE skipped:", ticker, err.response?.status || err.message);
-    return [];
-  }
-}
-
 const sanitizeFmpAdrMetricCards = (data = {}) => ({
   ...data,
   forwardPE: null,
@@ -7705,43 +7415,6 @@ const unwrapFinancialValue = (value) => {
 const firstYahooNumber = (...values) =>
   firstNumber(...values.map((value) => unwrapFinancialValue(value)));
 
-const normalizeTickerForStockAnalysis = (ticker) => {
-  const symbol = String(ticker || "").trim();
-  if (/^BRK[-.]B$/i.test(symbol)) return "brk.b";
-  if (/^BRK[-.]A$/i.test(symbol)) return "brk.a";
-  return symbol.toLowerCase();
-};
-
-const STOCK_ANALYSIS_PATH_OVERRIDES = {
-  ASML: "quote/ams/ASML",
-  BP: "quote/lon/BP",
-  HMC: "quote/tyo/7267",
-  NVO: "quote/cph/NOVO.B",
-  SAP: "quote/etr/SAP",
-  SHEL: "quote/lon/SHEL",
-  SONY: "quote/tyo/6758",
-  TTE: "quote/epa/TTE"
-};
-
-const getStockAnalysisPath = (ticker) => {
-  const symbol = String(ticker || "").trim().toUpperCase();
-  const configuredPath = FOREIGN_ADR_CONFIG[symbol]?.stockAnalysisPath || STOCK_ANALYSIS_PATH_OVERRIDES[symbol];
-  if (configuredPath) return String(configuredPath).replace(/^\/+/, "").replace(/\/+$/, "");
-  return `stocks/${normalizeTickerForStockAnalysis(ticker)}`;
-};
-
-const buildStockAnalysisUrl = (ticker, path = "") => {
-  const basePath = getStockAnalysisPath(ticker);
-  const cleanPath = String(path || "").replace(/^\/+/, "");
-  return `https://stockanalysis.com/${basePath}/${cleanPath}`;
-};
-
-const STOCK_ANALYSIS_TRANSCRIPT_PATH_OVERRIDES = {
-  TSM: ["quote/tpe/2330"]
-};
-
-const stockAnalysisTranscriptIndexUrlCache = new Map();
-
 const normalizeBookValuePerShare = (bookValuePerShare, price, ticker) => {
   const bookValue = toNumberOrNull(bookValuePerShare);
   const priceNumber = toNumberOrNull(price);
@@ -8213,7 +7886,7 @@ function removeStaleProviderScaleBreakRows(rows = []) {
     const revenue = toNumberOrNull(row.revenue);
     const laterTrustedRevenues = annualRows
       .slice(index + 1)
-      .filter((laterRow) => /stockanalysis|yahoo|fmp|sec/i.test(String(laterRow.source || "")))
+      .filter((laterRow) => /yahoo|fmp|sec/i.test(String(laterRow.source || "")))
       .map((laterRow) => toNumberOrNull(laterRow.revenue))
       .filter((value) => value !== null && value > 0)
       .sort((a, b) => a - b);
@@ -8489,13 +8162,6 @@ function isFinancialHistoryFreshnessRecent(data = {}) {
     Number.isFinite(checkedAt) &&
     Date.now() - checkedAt < STOCK_FINANCIAL_FRESHNESS_MS
   );
-}
-
-function isCompletedStockAnalysisAnnualHeader(header = {}) {
-  if (!header.id || header.id === "TTM") return false;
-  const endDate = new Date(`${header.id}T00:00:00Z`);
-  if (Number.isNaN(endDate.getTime())) return true;
-  return endDate.getTime() <= Date.now();
 }
 
 function hasCompleteSupplementalData(stock) {
@@ -9348,7 +9014,7 @@ async function prepareStockResponseData(ticker, data = {}, options = {}) {
       quarterEstimateCheckedAt: new Date().toISOString()
     };
   }
-  const missingValuationMetrics = STOCK_ANALYSIS_VALUATION_FIELDS.some((field) => toNumberOrNull(baseData[field]) === null);
+  const missingValuationMetrics = VALUATION_METRIC_FIELDS.some((field) => toNumberOrNull(baseData[field]) === null);
   const hasBalanceSheetValue =
     toNumberOrNull(baseData.totalCash) !== null ||
     toNumberOrNull(baseData.totalDebt) !== null ||
@@ -9366,7 +9032,7 @@ async function prepareStockResponseData(ticker, data = {}, options = {}) {
   if (missingValuationMetrics) {
     const valuationPatch = {};
     if (Object.keys(valuation || {}).length) {
-      STOCK_ANALYSIS_VALUATION_FIELDS.forEach((field) => {
+      VALUATION_METRIC_FIELDS.forEach((field) => {
         valuationPatch[field] = toNumberOrNull(valuation[field]);
       });
       FMP_TEXT_METRIC_FIELDS.forEach((field) => {
@@ -10385,435 +10051,6 @@ async function fetchFmpFinancialHistory(ticker) {
     annualCashRows,
     Infinity
   );
-}
-
-const parseStockAnalysisNumber = (value) => {
-  const text = String(value || "")
-    .replace(/[$,%]/g, "")
-    .replace(/\u2212/g, "-")
-    .trim();
-  if (!text || text === "-" || /^n\/a$/i.test(text)) return null;
-  const multiplier = /\((.*)\)/.test(text) ? -1 : 1;
-  const number = Number(text.replace(/[(),]/g, ""));
-  return Number.isFinite(number) ? number * multiplier : null;
-};
-
-async function fetchStockAnalysisBalanceSheetMetrics(ticker) {
-  try {
-    const { data } = await axios.get(
-      buildStockAnalysisUrl(ticker, "financials/balance-sheet/"),
-      {
-        headers: { "User-Agent": "Mozilla/5.0" },
-        timeout: 4500
-      }
-    );
-    const $ = cheerio.load(data || "");
-    const table = $("table").first();
-    if (!table.length) return {};
-
-    const headers = table.find("thead tr").first().find("th").toArray()
-      .slice(1)
-      .map((cell) => $(cell).text().trim());
-    const selectedIndex = 0;
-
-    const rows = new Map();
-    table.find("tbody tr").each((_, row) => {
-      const cells = $(row).find("td").toArray();
-      const label = $(cells[0]).text().trim().replace(/\s+/g, " ").toLowerCase();
-      if (!label) return;
-      rows.set(label, cells.slice(1).map((cell) => parseStockAnalysisNumber($(cell).text())));
-    });
-
-    const read = (...labels) => {
-      for (const label of labels) {
-        const values = rows.get(label.toLowerCase());
-        if (!values) continue;
-        const value = toNumberOrNull(values[selectedIndex]);
-        if (value !== null) return value * 1000000;
-      }
-      return null;
-    };
-
-    const totalCash = read(
-      "Cash & Equivalents",
-      "Cash and Equivalents",
-      "Cash",
-      "Cash & Short-Term Investments",
-      "Cash and Short-Term Investments"
-    );
-    const cashAndCashEquivalents = read(
-      "Cash & Equivalents",
-      "Cash and Equivalents",
-      "Cash"
-    );
-    const totalDebt = firstFiniteNumber(
-      read("Total Debt", "Total Debt & Finance Lease Obligations"),
-      (() => {
-        const shortTermDebt = read(
-          "Short-Term Debt",
-          "Short Term Debt",
-          "Current Debt",
-          "Current Portion of Long-Term Debt",
-          "Current Portion of Long Term Debt"
-        );
-        const longTermDebt = read(
-          "Long-Term Debt",
-          "Long Term Debt",
-          "Long-Term Debt & Finance Lease Obligations",
-          "Long Term Debt & Finance Lease Obligations"
-        );
-        return shortTermDebt !== null || longTermDebt !== null
-          ? (shortTermDebt || 0) + (longTermDebt || 0)
-          : null;
-      })()
-    );
-    const netCash = read("Net Cash (Debt)", "Net Cash", "Net Cash / Debt");
-    const netCashPerShare = firstFiniteNumber(
-      toNumberOrNull(rows.get("net cash per share")?.[selectedIndex]),
-      toNumberOrNull(rows.get("net cash (debt) per share")?.[selectedIndex])
-    );
-    const equityBookValue = read("Book Value", "Shareholders' Equity", "Total Equity");
-    const bookValuePerShare = firstFiniteNumber(
-      toNumberOrNull(rows.get("book value per share")?.[selectedIndex]),
-      toNumberOrNull(rows.get("shareholders' equity per share")?.[selectedIndex])
-    );
-    const workingCapital = firstFiniteNumber(
-      read("Working Capital"),
-      (() => {
-        const currentAssets = read("Total Current Assets");
-        const currentLiabilities = read("Total Current Liabilities");
-        return currentAssets !== null && currentLiabilities !== null
-          ? currentAssets - currentLiabilities
-          : null;
-      })()
-    );
-    if (totalCash === null && totalDebt === null) return {};
-
-    const selectedHeader = headers[selectedIndex] || null;
-    const year = selectedHeader?.match(/\b(?:FY\s*)?(\d{4})\b/i)?.[1] || null;
-    return {
-      totalCash: cashAndCashEquivalents ?? totalCash,
-      totalDebt,
-      cashAndCashEquivalents,
-      netCash,
-      netCashPerShare,
-      equityBookValue,
-      bookValuePerShare,
-      workingCapital,
-      balanceSheetAsOf: year ? `${year}-12-31` : null,
-      balanceSheetSource: "StockAnalysis latest balance sheet"
-    };
-  } catch (err) {
-    setStockAnalysisCooldown(err, "balance sheet", ticker);
-    console.log("StockAnalysis balance sheet skipped:", ticker, err.response?.status || err.message);
-    return {};
-  }
-}
-
-async function fetchStockAnalysisAnnualFinancialHistoryFast(ticker) {
-  try {
-    const { data } = await axios.get(
-      buildStockAnalysisUrl(ticker, "financials/income-statement/"),
-      {
-        headers: { "User-Agent": "Mozilla/5.0" },
-        timeout: 3500
-      }
-    );
-    const $ = cheerio.load(data || "");
-    const table = $("table").first();
-    if (!table.length) return [];
-    const statementCurrency = $("main").text().match(/Currency is\s+([A-Z]{3})/i)?.[1]?.toUpperCase() || null;
-
-    const rawHeaders = table.find("thead tr").first().find("th").toArray()
-      .slice(1)
-      .map((cell) => ({
-        id: $(cell).attr("id"),
-        text: $(cell).text().trim()
-      }));
-    const valueOffset = rawHeaders.some((header) => header.id === "TTM" || /^TTM$/i.test(header.text)) ? 1 : 0;
-    const headers = rawHeaders.filter(isCompletedStockAnalysisAnnualHeader);
-    const valuesByLabel = new Map();
-
-    table.find("tbody tr").each((_, row) => {
-      const cells = $(row).find("td").toArray();
-      const label = $(cells[0]).text().trim().replace(/\s+/g, " ");
-      if (!label) return;
-      valuesByLabel.set(
-        label.toLowerCase(),
-        cells.slice(1).map((cell) => parseStockAnalysisNumber($(cell).text()))
-      );
-    });
-
-    const valuesFor = (...labels) => {
-      for (const label of labels) {
-        const values = valuesByLabel.get(label.toLowerCase());
-        if (values) return values;
-      }
-      return [];
-    };
-    const revenueValues = valuesFor("Revenue");
-    const earningsValues = valuesFor("Net Income");
-    const grossProfitValues = valuesFor("Gross Profit", "Net Interest Income");
-    const operatingIncomeValues = valuesFor("Operating Income", "Pretax Income");
-    const epsValues = valuesFor("EPS (Diluted)", "EPS Diluted", "Diluted EPS");
-
-    return headers
-      .map((header, index) => {
-        const year = Number(String(header.id).slice(0, 4));
-        if (!Number.isFinite(year)) return null;
-        return {
-          year,
-          period: String(year),
-          revenue: revenueValues[index + valueOffset] !== undefined ? revenueValues[index + valueOffset] / 1000 : null,
-          earnings: earningsValues[index + valueOffset] !== undefined ? earningsValues[index + valueOffset] / 1000 : null,
-          grossProfit: grossProfitValues[index + valueOffset] !== undefined ? grossProfitValues[index + valueOffset] / 1000 : null,
-          operatingIncome: operatingIncomeValues[index + valueOffset] !== undefined ? operatingIncomeValues[index + valueOffset] / 1000 : null,
-          eps: epsValues[index + valueOffset] ?? null,
-          sourceCurrency: statementCurrency,
-          source: "StockAnalysis fast annual financials"
-        };
-      })
-      .filter((row) => row?.year)
-      .sort((a, b) => a.year - b.year);
-  } catch (err) {
-    setStockAnalysisCooldown(err, "fast annual financials", ticker);
-    console.log("StockAnalysis fast annual financials skipped:", ticker, err.response?.status || err.message);
-    return [];
-  }
-}
-
-async function fetchStockAnalysisIncomeStatementHistory(ticker) {
-  try {
-    const stockAnalysisRequest = (path) =>
-      axios.get(
-        buildStockAnalysisUrl(ticker, path),
-        {
-          headers: { "User-Agent": "Mozilla/5.0" },
-          timeout: STOCK_PROVIDER_TIMEOUT_MS
-        }
-      );
-    let [annualResponse, quarterlyResponse, annualCashFlowResponse, quarterlyCashFlowResponse] = await Promise.all([
-      stockAnalysisRequest("financials/income-statement/"),
-      stockAnalysisRequest("financials/income-statement/?p=quarterly").catch(() => ({ data: "" })),
-      stockAnalysisRequest("financials/cash-flow-statement/").catch(() => ({ data: "" })),
-      stockAnalysisRequest("financials/cash-flow-statement/?p=quarterly").catch(() => ({ data: "" }))
-    ]);
-    const countQuarterlyHeaders = (html) => {
-      const page = cheerio.load(html || "");
-      return page("table").first().find("thead tr").first().find("th").toArray()
-        .slice(1)
-        .filter((cell) => /\bQ[1-4]\s+\d{4}\b/i.test(page(cell).text().trim()))
-        .length;
-    };
-    if (countQuarterlyHeaders(quarterlyResponse.data) < 4) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      const retryQuarterlyResponse = await stockAnalysisRequest("financials/income-statement/?p=quarterly")
-        .catch(() => ({ data: "" }));
-      if (countQuarterlyHeaders(retryQuarterlyResponse.data) > countQuarterlyHeaders(quarterlyResponse.data)) {
-        quarterlyResponse = retryQuarterlyResponse;
-      }
-    }
-    if (countQuarterlyHeaders(quarterlyCashFlowResponse.data) < 4) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      const retryCashFlowResponse = await stockAnalysisRequest("financials/cash-flow-statement/?p=quarterly")
-        .catch(() => ({ data: "" }));
-      if (countQuarterlyHeaders(retryCashFlowResponse.data) > countQuarterlyHeaders(quarterlyCashFlowResponse.data)) {
-        quarterlyCashFlowResponse = retryCashFlowResponse;
-      }
-    }
-    const { data } = annualResponse;
-    const $ = cheerio.load(data);
-    const table = $("table").first();
-    if (!table.length) return [];
-    const statementCurrency = $("main").text().match(/Currency is\s+([A-Z]{3})/i)?.[1]?.toUpperCase() || null;
-
-    const rawHeaders = table.find("thead tr").first().find("th").toArray()
-      .slice(1)
-      .map((cell) => ({
-        id: $(cell).attr("id"),
-        text: $(cell).text().trim()
-      }));
-    const valueOffset = rawHeaders.some((header) => header.id === "TTM" || /^TTM$/i.test(header.text)) ? 1 : 0;
-    const headers = rawHeaders.filter(isCompletedStockAnalysisAnnualHeader);
-    const valuesByLabel = new Map();
-
-    table.find("tbody tr").each((_, row) => {
-      const cells = $(row).find("td").toArray();
-      const label = $(cells[0]).text().trim().replace(/\s+/g, " ");
-      if (!label) return;
-      valuesByLabel.set(
-        label.toLowerCase(),
-        cells.slice(1).map((cell) => parseStockAnalysisNumber($(cell).text()))
-      );
-    });
-
-    const valuesFor = (...labels) => {
-      for (const label of labels) {
-        const values = valuesByLabel.get(label.toLowerCase());
-        if (values) return values;
-      }
-      return [];
-    };
-    const revenueValues = valuesFor("Revenue");
-    const earningsValues = valuesFor("Net Income");
-    const grossProfitValues = valuesFor("Gross Profit", "Net Interest Income");
-    const operatingIncomeValues = valuesFor("Operating Income", "Pretax Income");
-    const epsValues = valuesFor("EPS (Diluted)", "EPS Diluted", "Diluted EPS");
-    const annualCashFlow = cheerio.load(annualCashFlowResponse.data || "");
-    const annualCashValuesByLabel = new Map();
-
-    annualCashFlow("table").first().find("tbody tr").each((_, row) => {
-      const cells = annualCashFlow(row).find("td").toArray();
-      const label = annualCashFlow(cells[0]).text().trim().replace(/\s+/g, " ");
-      if (!label) return;
-      annualCashValuesByLabel.set(
-        label.toLowerCase(),
-        cells.slice(1).map((cell) => parseStockAnalysisNumber(annualCashFlow(cell).text()))
-      );
-    });
-
-    const annualCashValuesFor = (...labels) => {
-      for (const label of labels) {
-        const values = annualCashValuesByLabel.get(label.toLowerCase());
-        if (values) return values;
-      }
-      return [];
-    };
-    const annualOperatingCashflowValues = annualCashValuesFor("Operating Cash Flow");
-    const annualFreeCashflowValues = annualCashValuesFor("Free Cash Flow");
-
-    const annualRows = headers
-      .map((header, index) => {
-        const year = Number(String(header.id).slice(0, 4));
-        if (!Number.isFinite(year)) return null;
-
-        return {
-          year,
-          period: String(year),
-          revenue: revenueValues[index + valueOffset] !== undefined ? revenueValues[index + valueOffset] / 1000 : null,
-          earnings: earningsValues[index + valueOffset] !== undefined ? earningsValues[index + valueOffset] / 1000 : null,
-          grossProfit: grossProfitValues[index + valueOffset] !== undefined ? grossProfitValues[index + valueOffset] / 1000 : null,
-          operatingIncome: operatingIncomeValues[index + valueOffset] !== undefined ? operatingIncomeValues[index + valueOffset] / 1000 : null,
-          operatingCashflow: annualOperatingCashflowValues[index + valueOffset] !== undefined ? annualOperatingCashflowValues[index + valueOffset] / 1000 : null,
-          freeCashflow: annualFreeCashflowValues[index + valueOffset] !== undefined ? annualFreeCashflowValues[index + valueOffset] / 1000 : null,
-          eps: epsValues[index + valueOffset] ?? null,
-          sourceCurrency: statementCurrency,
-          source: "StockAnalysis financials"
-        };
-      })
-      .filter((row) => row?.year)
-      .sort((a, b) => a.year - b.year);
-
-    const quarterly = cheerio.load(quarterlyResponse.data || "");
-    const quarterlyTable = quarterly("table").first();
-    const quarterHeaders = quarterlyTable.find("thead tr").first().find("th").toArray()
-      .slice(1)
-      .map((cell) => {
-        const text = quarterly(cell).text().trim();
-        const match = text.match(/\bQ([1-4])\s+(\d{4})\b/i);
-        return {
-          quarter: match ? Number(match[1]) : null,
-          year: match ? Number(match[2]) : null
-        };
-      });
-    const quarterValuesByLabel = new Map();
-
-    quarterlyTable.find("tbody tr").each((_, row) => {
-      const cells = quarterly(row).find("td").toArray();
-      const label = quarterly(cells[0]).text().trim().replace(/\s+/g, " ");
-      if (!label) return;
-      quarterValuesByLabel.set(
-        label.toLowerCase(),
-        cells.slice(1).map((cell) => parseStockAnalysisNumber(quarterly(cell).text()))
-      );
-    });
-
-    const quarterValuesFor = (...labels) => {
-      for (const label of labels) {
-        const values = quarterValuesByLabel.get(label.toLowerCase());
-        if (values) return values;
-      }
-      return [];
-    };
-    const quarterRevenueValues = quarterValuesFor("Revenue");
-    const quarterEarningsValues = quarterValuesFor("Net Income");
-    const quarterGrossProfitValues = quarterValuesFor("Gross Profit", "Net Interest Income");
-    const quarterOperatingIncomeValues = quarterValuesFor("Operating Income", "Pretax Income");
-    const quarterEpsValues = quarterValuesFor("EPS (Diluted)", "EPS Diluted", "Diluted EPS");
-    const quarterlyCashFlow = cheerio.load(quarterlyCashFlowResponse.data || "");
-    const quarterCashValuesByLabel = new Map();
-
-    quarterlyCashFlow("table").first().find("tbody tr").each((_, row) => {
-      const cells = quarterlyCashFlow(row).find("td").toArray();
-      const label = quarterlyCashFlow(cells[0]).text().trim().replace(/\s+/g, " ");
-      if (!label) return;
-      quarterCashValuesByLabel.set(
-        label.toLowerCase(),
-        cells.slice(1).map((cell) => parseStockAnalysisNumber(quarterlyCashFlow(cell).text()))
-      );
-    });
-
-    const quarterCashValuesFor = (...labels) => {
-      for (const label of labels) {
-        const values = quarterCashValuesByLabel.get(label.toLowerCase());
-        if (values) return values;
-      }
-      return [];
-    };
-    const quarterOperatingCashflowValues = quarterCashValuesFor("Operating Cash Flow");
-    const quarterFreeCashflowValues = quarterCashValuesFor("Free Cash Flow");
-    const quarterlyRows = quarterHeaders
-      .map((header, index) => ({
-        ...header,
-        revenue: quarterRevenueValues[index],
-        earnings: quarterEarningsValues[index],
-        grossProfit: quarterGrossProfitValues[index],
-        operatingIncome: quarterOperatingIncomeValues[index],
-        eps: quarterEpsValues[index],
-        operatingCashflow: quarterOperatingCashflowValues[index],
-        freeCashflow: quarterFreeCashflowValues[index]
-      }))
-      .filter((row) => row.year && row.quarter)
-      .sort((a, b) => {
-        const yearDiff = a.year - b.year;
-        if (yearDiff !== 0) return yearDiff;
-        return a.quarter - b.quarter;
-      })
-      .map((row) => ({
-        year: row.year,
-        period: `${row.year} Q${row.quarter}`,
-        isInterim: true,
-        revenue: toNumberOrNull(row.revenue) !== null ? toNumberOrNull(row.revenue) / 1000 : null,
-        earnings: toNumberOrNull(row.earnings) !== null ? toNumberOrNull(row.earnings) / 1000 : null,
-        grossProfit: toNumberOrNull(row.grossProfit) !== null ? toNumberOrNull(row.grossProfit) / 1000 : null,
-        operatingIncome: toNumberOrNull(row.operatingIncome) !== null ? toNumberOrNull(row.operatingIncome) / 1000 : null,
-        operatingCashflow: toNumberOrNull(row.operatingCashflow) !== null ? toNumberOrNull(row.operatingCashflow) / 1000 : null,
-        freeCashflow: toNumberOrNull(row.freeCashflow) !== null ? toNumberOrNull(row.freeCashflow) / 1000 : null,
-        eps: toNumberOrNull(row.eps),
-        sourceCurrency: statementCurrency,
-        source: "StockAnalysis quarterly financials"
-      }))
-      .filter((row) =>
-        row.revenue !== null ||
-        row.earnings !== null ||
-        row.eps !== null ||
-        row.grossProfit !== null ||
-        row.operatingIncome !== null ||
-        row.operatingCashflow !== null ||
-        row.freeCashflow !== null
-      );
-
-    return [...annualRows, ...quarterlyRows].sort((a, b) => {
-      const yearDiff = Number(a.year) - Number(b.year);
-      if (yearDiff !== 0) return yearDiff;
-      if (Boolean(a.isInterim) !== Boolean(b.isInterim)) return a.isInterim ? 1 : -1;
-      return String(a.period || "").localeCompare(String(b.period || ""));
-    });
-  } catch (err) {
-    setStockAnalysisCooldown(err, "financials", ticker);
-    console.log("StockAnalysis financials skipped:", ticker, err.response?.status || err.message);
-    return [];
-  }
 }
 
 const selectYahooAnnualEstimateTrends = (trends = []) => {
@@ -12283,13 +11520,6 @@ async function fetchLatestBalanceSheetMetrics(ticker, options = {}) {
 
   return withCheckedAt({});
 
-  try {
-    const stockAnalysisResult = await fetchStockAnalysisBalanceSheetMetrics(symbol);
-    if (hasBalanceSheetData(stockAnalysisResult)) return withCheckedAt(stockAnalysisResult);
-  } catch (err) {
-    console.log("StockAnalysis balance sheet metrics skipped:", symbol, err.response?.status || err.message);
-  }
-
   const latestSecInstantFact = (companyFacts, concepts = []) => {
     let latest = null;
     for (const concept of concepts) {
@@ -13392,7 +12622,7 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
     profitsPerEmployee: firstNumber(fmpValuation.profitsPerEmployee),
     employeeCount: firstNumber(fmpValuation.employeeCount, fmpProfile.employeeCount),
     ...Object.fromEntries(
-      STOCK_ANALYSIS_VALUATION_FIELDS.map((field) => [field, toNumberOrNull(fmpValuation[field])])
+      VALUATION_METRIC_FIELDS.map((field) => [field, toNumberOrNull(fmpValuation[field])])
     ),
     totalCash: isFmpAdr ? null : firstNumber(fmpValuation.totalCash, fmpValuation.cashAndCashEquivalents),
     totalDebt: isFmpAdr ? null : fmpValuation.totalDebt ?? null,
@@ -13414,7 +12644,7 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
   };
   const hasFastSnapshotData =
     toNumberOrNull(fastData.price) !== null ||
-    STOCK_ANALYSIS_VALUATION_FIELDS.some((field) => toNumberOrNull(fastData[field]) !== null) ||
+    VALUATION_METRIC_FIELDS.some((field) => toNumberOrNull(fastData[field]) !== null) ||
     toNumberOrNull(fastData.totalCash) !== null ||
     toNumberOrNull(fastData.totalDebt) !== null ||
     toNumberOrNull(fmpValuation.currentYearRevenue) !== null ||
@@ -13513,7 +12743,7 @@ async function buildFastStockSnapshot(ticker, previousData = {}) {
   const fmpMetricCardValues = Object.keys(fmpValuation || {}).length
     ? {
         ...Object.fromEntries(
-          STOCK_ANALYSIS_VALUATION_FIELDS.map((field) => [field, toNumberOrNull(fastData[field])])
+          VALUATION_METRIC_FIELDS.map((field) => [field, toNumberOrNull(fastData[field])])
         ),
         ...Object.fromEntries(
           FMP_TEXT_METRIC_FIELDS.map((field) => [field, firstText(fastData[field]) || null])
@@ -13800,15 +13030,15 @@ async function fetchStockData(ticker) {
     yahooSupplementalData,
     yahooYearEndPrices,
     nasdaqData,
-    stockAnalysisForecast,
-    stockAnalysisHistoricalPe,
+    supplementalForecast,
+    fmpHistoricalPe,
     secAnnualMargins,
     fmpCashFlowData,
     fmpPriceTargetData,
     fmpAnalystEstimateData,
     fmpRatingData,
-    stockAnalysisFinancialData,
-    stockAnalysisValuation,
+    supplementalFinancialData,
+    supplementalValuation,
     fmpStableValuation,
     fmpQuoteProfile,
     fmpFiftyTwoWeekRange,
@@ -13919,14 +13149,14 @@ async function fetchStockData(ticker) {
     ? mergeAllHistoricalFinancials(
         previousRealRevenueData,
         fmpIncomeStatementData,
-        stockAnalysisFinancialData,
+        supplementalFinancialData,
         yahooFinancialData,
         getRecentEarningsReleaseAnnualRows(ticker)
       )
     : mergeAllHistoricalFinancials(
         previousRealRevenueData,
         fmpIncomeStatementData,
-        stockAnalysisFinancialData,
+        supplementalFinancialData,
         finnhubMetricData,
         finnhubReportedData,
         yahooFinancialData,
@@ -13936,7 +13166,7 @@ async function fetchStockData(ticker) {
   const supplementalAnnualData = mergeAllHistoricalFinancials(
     fmpCashFlowHistory,
     fmpQuarterlyFinancialData,
-    stockAnalysisFinancialData,
+    supplementalFinancialData,
     secAnnualMargins.history || []
   );
   const historicalMarketCap =
@@ -13983,12 +13213,12 @@ async function fetchStockData(ticker) {
       : annualRowsAll;
   const latestAnnual = annualRows[annualRows.length - 1] || {};
   const previousAnnual = annualRows[annualRows.length - 2] || {};
-  const stockAnalysisFinancialCurrency = firstText(
-    ...stockAnalysisFinancialData.map((row) => row.sourceCurrency)
+  const supplementalFinancialCurrency = firstText(
+    ...supplementalFinancialData.map((row) => row.sourceCurrency)
   );
   const historicalFinancialCurrency = firstText(
     ...revenueData.map((row) => row.sourceCurrency),
-    stockAnalysisFinancialCurrency
+    supplementalFinancialCurrency
   );
   const chartRevenueGrowth = historicalGrowth(revenueData, "revenue");
   const chartEarningsGrowth = historicalGrowth(revenueData, "earnings");
@@ -14098,8 +13328,8 @@ async function fetchStockData(ticker) {
       : yahooSupplementalData.yearEndPrices || []
     ).map((row) => [Number(row.year), row.close])
   );
-  let historicalPe = Array.isArray(stockAnalysisHistoricalPe) && stockAnalysisHistoricalPe.length
-    ? stockAnalysisHistoricalPe
+  let historicalPe = Array.isArray(fmpHistoricalPe) && fmpHistoricalPe.length
+    ? fmpHistoricalPe
     : revenueData
       .filter((row) => !row.isInterim)
       .map((row) => {
@@ -14232,8 +13462,8 @@ async function fetchStockData(ticker) {
   const rating = getAnalystRating(
     yahooSupplementalData.analystRatingText,
     yahooSupplementalData.recommendationKey,
-    stockAnalysisForecast.analystRatingText,
-    stockAnalysisForecast.ratingConsensus,
+    supplementalForecast.analystRatingText,
+    supplementalForecast.ratingConsensus,
     recommendation,
     yahooSupplementalData.recommendationTrend,
     fmpRating.ratingRecommendation,
@@ -14358,7 +13588,7 @@ async function fetchStockData(ticker) {
     fmpEstimateField(fmpFollowingEstimate, "epsAvg", "estimatedEpsAvg"),
     epsEstimates[2]?.epsAvg
   );
-  const stockAnalysisFollowingEps = null;
+  const supplementalFollowingEps = null;
   const followingRevenueGrowthRate = nextRevenue && followingRevenue
     ? followingRevenue / nextRevenue - 1
     : null;
@@ -14386,7 +13616,7 @@ async function fetchStockData(ticker) {
     estimateNextValue(nextEps, conservativeProjectionRate(earningsGrowthRate, 0.15)) ??
     null;
   const followingEps =
-    stockAnalysisFollowingEps ??
+    supplementalFollowingEps ??
     sanitizeForwardEps(followingEpsCandidate, nextEps);
   const followingEarnings =
     firstNumber(
@@ -14424,7 +13654,7 @@ async function fetchStockData(ticker) {
   const marketReportedPE = firstNumber(
     fmpStableValuation.pe,
     metrics.peTTM,
-    stockAnalysisForecast.pe,
+    supplementalForecast.pe,
     yahooSupplementalData.pe,
     metrics.peNormalizedAnnual
   );
@@ -14441,8 +13671,8 @@ async function fetchStockData(ticker) {
       ? quote.c / marketReportedPE
       : rawTrailingEpsValue;
   const forwardEpsValue = firstNumber(
-    stockAnalysisForecast.forwardPE > 0
-      ? quote.c / stockAnalysisForecast.forwardPE
+    supplementalForecast.forwardPE > 0
+      ? quote.c / supplementalForecast.forwardPE
       : null,
     metrics.forwardPE > 0 ? quote.c / metrics.forwardPE : null,
     yahooSupplementalData.forwardEps,
@@ -14457,7 +13687,7 @@ async function fetchStockData(ticker) {
   );
   historicalPe = historicalPe.filter((row) => !row?.isInterim && !row?.isCurrent);
   const reportedForwardPE = firstNumber(
-    stockAnalysisForecast.forwardPE,
+    supplementalForecast.forwardPE,
     metrics.forwardPE,
     yahooSupplementalData.forwardPE,
     forwardEpsValue > 0 ? quote.c / forwardEpsValue : null
@@ -14465,7 +13695,7 @@ async function fetchStockData(ticker) {
   const pegRatio = firstNumber(
     fmpStableValuation.pegRatio,
     yahooSupplementalData.pegRatio,
-    stockAnalysisForecast.pegRatio,
+    supplementalForecast.pegRatio,
     metrics.forwardPEG,
     metrics.pegTTM
   );
@@ -14581,7 +13811,7 @@ async function fetchStockData(ticker) {
     profitMargin: profitMargins
   });
   const displayedFollowingEpsValue =
-    stockAnalysisFollowingEps ??
+    supplementalFollowingEps ??
     sanitizeForwardEps(
       (useRevenueGuidedFollowingEps ? revenueGuidedFollowingEps : providerFollowingEps) ??
         revenueGuidedFollowingEps ??
@@ -14677,8 +13907,8 @@ async function fetchStockData(ticker) {
       fmpPriceTarget?.targetPrice,
       yahooSupplementalData.targetMean,
       yahooSupplementalData.targetMedian,
-      stockAnalysisForecast.targetMean,
-      stockAnalysisForecast.targetMedian,
+      supplementalForecast.targetMean,
+      supplementalForecast.targetMedian,
       nasdaqData.targetMean,
       priceTarget?.targetMean,
       priceTarget?.targetMedian,
@@ -14698,8 +13928,8 @@ async function fetchStockData(ticker) {
   const analystRatingText = firstText(
     fmpStableValuation.analystRatingText,
     yahooSupplementalData.analystRatingText,
-    stockAnalysisForecast.analystRatingText,
-    stockAnalysisForecast.ratingConsensus,
+    supplementalForecast.analystRatingText,
+    supplementalForecast.ratingConsensus,
     rating,
     recommendationKey
   );
@@ -15946,655 +15176,110 @@ function buildMarketHeatmapPayload(companies, stale = false) {
   };
 }
 
-const STOCK_ANALYSIS_HEADERS = {
-  "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
-  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-};
-
-const parseStockAnalysisMoney = (value) => {
-  const text = String(value || "").trim();
-  if (!text || /^n\/a$/i.test(text)) return null;
-  const match = text.replace(/,/g, "").match(/^\$?(-?[\d.]+)\s*([KMBT])?$/i);
-  if (!match) return parseApiNumber(text);
-  const multipliers = { K: 1e3, M: 1e6, B: 1e9, T: 1e12 };
-  return Number(match[1]) * (multipliers[match[2]?.toUpperCase()] || 1);
-};
-
-const parseStockAnalysisPercent = (value) => {
-  const parsed = parseApiNumber(value);
-  return parsed === null ? null : parsed;
-};
-
-const parseStockAnalysisShares = (value) => parseApiNumber(value);
-
-const readStockAnalysisRows = ($, tableIndex = 0) => {
-  const rows = {};
-  $("table").eq(tableIndex).find("tr").each((_, row) => {
-    const cells = $(row).find("th,td").map((__, cell) => $(cell).text().trim()).get();
-    if (cells.length >= 2) rows[cells[0]] = cells[1];
-  });
-  return rows;
-};
-
-const parseEmbeddedStockAnalysisPairs = (html, arrayName, keyName = "n", valueName = "w") => {
-  const match = String(html || "").match(new RegExp(`${arrayName}:\\[(.*?)\\](?:,|})`));
-  if (!match) return [];
-  return [...match[1].matchAll(new RegExp(`\\{[^}]*${keyName}:"([^"]+)"[^}]*${valueName}:(-?[\\d.]+)`, "g"))]
-    .map((item) => ({
-      name: item[1],
-      weight: parseApiNumber(item[2])
-    }))
-    .filter((item) => item.name && item.weight !== null);
-};
-
-const inferStockAnalysisAssetAllocation = (html, sectors = [], holdings = []) => {
-  const explicit = parseEmbeddedStockAnalysisPairs(html, "asset_allocation", "key", "value");
-  if (explicit.length) return explicit;
-
-  const source = String(html || "");
-  if (!/asset_allocation:null/.test(source)) return [];
-
-  if (sectors.length) {
-    return [{ name: "Stocks", weight: 100 }];
-  }
-
-  const holdingText = (Array.isArray(holdings) ? holdings : [])
-    .slice(0, 10)
-    .map((holding) => `${holding.name || ""} ${holding.symbol || ""}`)
-    .join(" ");
-  if (/\b(treasury|bond|note|bill|mktliq|mortgage|agency|credit|income)\b/i.test(holdingText)) {
-    return [{ name: "Bonds", weight: 100 }];
-  }
-
-  return [];
-};
-
-const parseEmbeddedStockAnalysisCountries = (html) => {
-  const match = String(html || "").match(/countries:\[(.*?)\](?:,|})/);
-  if (!match) return [];
-  return [...match[1].matchAll(/\{[^}]*weight:(-?[\d.]+)[^}]*country:"([^"]+)"/g)]
-    .map((item) => ({
-      name: item[2],
-      weight: parseApiNumber(item[1])
-    }))
-    .filter((item) => item.name && item.weight !== null);
-};
-
-const parseEmbeddedStockAnalysisHoldingsMeta = (html) => {
-  const source = String(html || "");
-  const count = source.match(/(?:infoTable|holdingsTable):\{[^}]*count:(\d+)/)?.[1];
-  const top10 = source.match(/(?:infoTable|holdingsTable):\{[^}]*top10:([\d.]+)/)?.[1];
-  const lastUpdated = source.match(/(?:lastUpdated|updated):"([^"]+)"/)?.[1];
-  const asOf = source.match(/date:"([^"]+)"/)?.[1];
-  return {
-    count: parseApiNumber(count),
-    top10Percent: parseApiNumber(top10),
-    asOf: asOf || lastUpdated || null,
-    lastUpdated: lastUpdated || null
-  };
-};
-
-const parseEmbeddedStockAnalysisQuoteValue = (html, key) => {
-  const quoteBlock = String(html || "").match(/quote:\{([^}]+)\}/)?.[1] || "";
-  const match = quoteBlock.match(new RegExp(`(?:^|,)${key}:([^,}]+)`));
-  return parseApiNumber(match?.[1]);
-};
-
-const parseEmbeddedStockAnalysisQuoteString = (html, key) => {
-  const quoteBlock = String(html || "").match(/quote:\{([^}]+)\}/)?.[1] || "";
-  return quoteBlock.match(new RegExp(`(?:^|,)${key}:"([^"]+)"`))?.[1] || null;
-};
-
-const cleanEtfDescription = (text) =>
-  String(text || "").replace(/^Fund Home Page\s+/i, "").trim();
-
-const cleanStockAnalysisFundDescription = (text) => {
-  const cleaned = cleanEtfDescription(text)
-    .replace(/\s+/g, " ")
-    .trim();
-  if (/^get the latest\b/i.test(cleaned)) return "";
-  return cleaned;
-};
-
-const readStockAnalysisAboutDescription = ($, symbol) => {
-  let description = "";
-  const normalizedSymbol = String(symbol || "").trim().toUpperCase();
-
-  $("h2").each((_, heading) => {
-    if (description) return;
-    const headingText = $(heading).text().replace(/\s+/g, " ").trim();
-    if (headingText !== `About ${normalizedSymbol}`) return;
-
-    description =
-      $(heading).parent().nextAll("p").first().text().trim() ||
-      $(heading).nextAll("p").first().text().trim();
-  });
-
-  return cleanStockAnalysisFundDescription(description);
-};
-
-const parseStockAnalysisFundHoldings = ($) =>
-  $("table").first().find("tbody tr").map((_, row) => {
-    const cells = $(row).find("td").map((__, cell) => $(cell).text().trim()).get();
-    if (cells.length < 4) return null;
-    return {
-      rank: parseApiNumber(cells[0]),
-      symbol: String(cells[1] || "").replace(/^\$/, "").replace(/\./g, "-").toUpperCase(),
-      name: cells[2],
-      weight: parseStockAnalysisPercent(cells[3]),
-      shares: parseStockAnalysisShares(cells[4])
-    };
-  }).get().filter(Boolean);
-
-async function fetchStockAnalysisMutualFundData(ticker, upstreamError = null, options = {}) {
-  const symbol = String(ticker || "").trim().toUpperCase();
-  if (!options.ignoreCooldown && !canUseStockAnalysis()) {
-    throw upstreamError || new Error("StockAnalysis cooldown active");
-  }
-  const stockAnalysisSymbol = normalizeTickerForStockAnalysis(symbol);
-  const [overviewResponse, holdingsResponse] = await Promise.all([
-    axios.get(`https://stockanalysis.com/quote/mutf/${stockAnalysisSymbol}/`, {
-      headers: STOCK_ANALYSIS_HEADERS,
-      timeout: 6500
-    }),
-    axios.get(`https://stockanalysis.com/quote/mutf/${stockAnalysisSymbol}/holdings/`, {
-      headers: STOCK_ANALYSIS_HEADERS,
-      timeout: 6500
-    }).catch(() => ({ data: "" }))
-  ]).catch((err) => {
-    setStockAnalysisCooldown(err, "mutual fund data", symbol);
-    throw upstreamError || err;
-  });
-
-  const overviewHtml = overviewResponse.data || "";
-  const holdingsHtml = holdingsResponse.data || "";
-  const $ = cheerio.load(overviewHtml);
-  const holdingsPage = cheerio.load(holdingsHtml);
-  const summaryRows = readStockAnalysisRows($, 0);
-  const performanceRows = readStockAnalysisRows($, 1);
-  const h1 = $("h1").first().text().trim();
-  const h1Match = h1.match(/^(.*?)\s*\(([^)]+)\)$/);
-  const name = h1Match?.[1] || h1 || symbol;
-  const price = firstFiniteNumber(
-    parseEmbeddedStockAnalysisQuoteValue(overviewHtml, "p"),
-    parseStockAnalysisMoney(performanceRows["Previous Close"])
-  );
-  const change = parseEmbeddedStockAnalysisQuoteValue(overviewHtml, "c");
-  const percentChange = parseEmbeddedStockAnalysisQuoteValue(overviewHtml, "cp");
-  const holdings = parseStockAnalysisFundHoldings(holdingsPage);
-  const overviewHoldings = $("table").eq(4).find("tbody tr").map((_, row) => {
-    const cells = $(row).find("td").map((__, cell) => $(cell).text().trim()).get();
-    if (cells.length < 3) return null;
-    return {
-      symbol: String(cells[1] || "").replace(/^\$/, "").replace(/\./g, "-").toUpperCase(),
-      name: cells[0],
-      weight: parseStockAnalysisPercent(cells[2])
-    };
-  }).get().filter(Boolean);
-  const selectedHoldings = holdings.length ? holdings : overviewHoldings;
-  const sectors = parseEmbeddedStockAnalysisPairs(holdingsHtml, "sectors");
-  const countries = parseEmbeddedStockAnalysisCountries(holdingsHtml);
-  const assetAllocation = inferStockAnalysisAssetAllocation(holdingsHtml, sectors, selectedHoldings);
-  const holdingsMeta = parseEmbeddedStockAnalysisHoldingsMeta(overviewHtml);
-  const holdingsPageMeta = parseEmbeddedStockAnalysisHoldingsMeta(holdingsHtml);
-  const provider = holdingsHtml.match(/provider:"([^"]+)"/)?.[1] || "";
-  const description =
-    readStockAnalysisAboutDescription($, symbol) ||
-    cleanStockAnalysisFundDescription($("meta[name='description']").attr("content") || "");
-  const data = {
-    symbol,
-    name,
-    type: "Mutual Fund",
-    logo: getFmpSymbolImageUrl(symbol),
-    price,
-    change,
-    percentChange,
-    currency: "USD",
-    updatedAt: new Date().toISOString(),
-    source: "StockAnalysis mutual fund data",
-    description,
-    stats: {
-      assets: parseStockAnalysisMoney(summaryRows["Fund Assets"]),
-      expenseRatio: parseStockAnalysisPercent(summaryRows["Expense Ratio"]),
-      peRatio: null,
-      dividend: parseStockAnalysisMoney(summaryRows["Dividend (ttm)"]),
-      dividendYield: parseStockAnalysisPercent(summaryRows["Dividend Yield"]),
-      dividendGrowth: parseStockAnalysisPercent(summaryRows["Dividend Growth"]),
-      payoutFrequency: summaryRows["Payout Frequency"] || null,
-      exDividendDate: summaryRows["Ex-Dividend Date"] || null,
-      turnover: parseStockAnalysisPercent(summaryRows.Turnover),
-      volume: null,
-      previousClose: parseStockAnalysisMoney(performanceRows["Previous Close"]),
-      ytdReturn: parseStockAnalysisPercent(performanceRows["YTD Return"]),
-      oneYearReturn: parseStockAnalysisPercent(performanceRows["1-Year Return"]),
-      fiveYearReturn: parseStockAnalysisPercent(performanceRows["5-Year Return"]),
-      fiftyTwoWeekLow: parseStockAnalysisMoney(performanceRows["52-Week Low"]),
-      fiftyTwoWeekHigh: parseStockAnalysisMoney(performanceRows["52-Week High"]),
-      beta: parseApiNumber(performanceRows["Beta (5Y)"]),
-      holdingsCount: parseApiNumber(performanceRows.Holdings) || holdingsMeta.count || holdingsPageMeta.count,
-      inceptionDate: performanceRows["Inception Date"] || null,
-      top10Percent: holdingsMeta.top10Percent || holdingsPageMeta.top10Percent,
-      minimumInitialInvestment: parseStockAnalysisMoney(summaryRows["Min. Investment"]),
-      minimumIncrementalInvestment: null,
-      pricingFrequency: null,
-      shareClass: null,
-      distributionFrequency: summaryRows["Payout Frequency"] || null,
-      lastTradeDate: parseEmbeddedStockAnalysisQuoteString(overviewHtml, "td")
-    },
-    profile: {
-      assetClass: "Mutual Fund",
-      category: summaryRows.Category || overviewHtml.match(/fundCategory:"([^"]+)"/)?.[1] || "",
-      region: "",
-      exchange: "MUTF",
-      provider,
-      indexTracked: ""
-    },
-    holdings: selectedHoldings,
-    sectors,
-    countries,
-    assetAllocation,
-    holdingsAsOf: holdingsMeta.asOf || holdingsPageMeta.asOf,
-    holdingsLastUpdated: holdingsMeta.lastUpdated || holdingsPageMeta.lastUpdated
-  };
-
-  etfDataCache.set(symbol, { data, fetchedAt: Date.now() });
-  return data;
-}
-
-const normalizeYahooFundHolding = (holding, index) => ({
-  rank: index + 1,
-  symbol: String(holding?.symbol || "").replace(/^\$/, "").replace(/\./g, "-").toUpperCase(),
-  name: holding?.holdingName || holding?.name || holding?.symbol || "Holding",
-  weight: parseApiNumber(holding?.holdingPercent) !== null
-    ? parseApiNumber(holding.holdingPercent) * 100
-    : parseApiNumber(holding?.weight),
-  shares: null
-});
-
-const normalizeYahooFundExposure = (rows = [], nameKey = "categoryName", weightKey = "equityPosition") =>
-  (Array.isArray(rows) ? rows : [])
-    .map((row) => ({
-      name: row?.[nameKey] || row?.category || row?.name,
-      weight: parseApiNumber(row?.[weightKey]) !== null
-        ? parseApiNumber(row?.[weightKey]) * 100
-        : parseApiNumber(row?.weight)
-    }))
-    .filter((row) => row.name && row.weight !== null);
-
-async function fetchNasdaqFundFallback(ticker, upstreamError = null) {
-  const symbol = String(ticker || "").trim().toUpperCase();
-  const headers = {
-    "User-Agent": STOCK_ANALYSIS_HEADERS["User-Agent"],
-    Accept: "application/json",
-    Origin: "https://www.nasdaq.com",
-    Referer: "https://www.nasdaq.com/"
-  };
-  const [infoResponse, summaryResponse] = await Promise.all([
-    axios.get(`https://api.nasdaq.com/api/quote/${symbol}/info`, {
-      params: { assetclass: "mutualfunds" },
-      headers,
-      timeout: 6500,
-      validateStatus: () => true
-    }),
-    axios.get(`https://api.nasdaq.com/api/quote/${symbol}/summary`, {
-      params: { assetclass: "mutualfunds" },
-      headers,
-      timeout: 6500,
-      validateStatus: () => true
-    }).catch(() => ({ data: null }))
-  ]);
-  const info = infoResponse.data?.data;
-  if (!info?.symbol) throw upstreamError || new Error("Fund data unavailable");
-  const primary = info.primaryData || {};
-  const summary = summaryResponse.data?.data?.summaryData || {};
-  const readSummary = (key) => {
-    const value = summary?.[key]?.value;
-    return value && !/^n\/a$/i.test(String(value)) ? value : null;
-  };
-  const price = parseApiNumber(primary.lastSalePrice);
-  const change = parseApiNumber(primary.netChange);
-  const percentChange = parseApiNumber(primary.percentageChange);
-  const data = {
-    symbol,
-    name: info.companyName || symbol,
-    type: readSummary("InstrumentType") || info.stockType || "Mutual Fund",
-    logo: getFmpSymbolImageUrl(symbol),
-    price,
-    change,
-    percentChange,
-    currency: primary.currency || readSummary("Currency") || "USD",
-    updatedAt: new Date().toISOString(),
-    source: "Nasdaq mutual fund data",
-    description: "Mutual fund quote and profile data from Nasdaq Fund Network. Holdings are shown when a fund provider source makes them available.",
-    stats: {
-      assets: null,
-      expenseRatio: parseStockAnalysisPercent(readSummary("NetExpenseRatio")),
-      peRatio: null,
-      dividendYield: null,
-      volume: parseApiNumber(primary.volume),
-      previousClose: price !== null && change !== null ? price - change : null,
-      fiftyTwoWeekLow: null,
-      fiftyTwoWeekHigh: null,
-      beta: null,
-      holdingsCount: null,
-      inceptionDate: readSummary("NAVInceptionDate"),
-      top10Percent: null,
-      minimumInitialInvestment: parseStockAnalysisMoney(readSummary("MinimumInitialSubscription")),
-      minimumIncrementalInvestment: parseStockAnalysisMoney(readSummary("MinimumIncrementalSubscription")),
-      pricingFrequency: readSummary("PricingFrequency"),
-      shareClass: readSummary("ShareClass"),
-      distributionFrequency: readSummary("DistributionTypeAndFrequency"),
-      lastTradeDate: primary.lastTradeTimestamp || null
-    },
-    profile: {
-      assetClass: readSummary("InstrumentType") || "Mutual Fund",
-      category: readSummary("Category") || "",
-      region: "",
-      exchange: info.exchange || "",
-      provider: "",
-      indexTracked: readSummary("InvestorType") || ""
-    },
-    holdings: [],
-    sectors: [],
-    countries: [],
-    assetAllocation: [],
-    holdingsAsOf: null,
-    holdingsLastUpdated: primary.lastTradeTimestamp || null
-  };
-
-  etfDataCache.set(symbol, { data, fetchedAt: Date.now() });
-  return data;
-}
-
-async function fetchYahooFundFallback(ticker, stockAnalysisError = null) {
-  if (!YAHOO_PROVIDER_ENABLED) {
-    throw stockAnalysisError || new Error("Yahoo fund fallback disabled");
-  }
-  const symbol = String(ticker || "").trim().toUpperCase();
-  const chartResponse = await axios.get(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`, {
-    params: { range: "1mo", interval: "1d" },
-    headers: { "User-Agent": STOCK_ANALYSIS_HEADERS["User-Agent"] },
-    timeout: 6500
-  }).catch((err) => {
-    throw err;
-  });
-  const chart = chartResponse.data?.chart?.result?.[0];
-  const meta = chart?.meta || {};
-  if (!meta.symbol && !meta.regularMarketPrice) throw stockAnalysisError || new Error("Fund data unavailable");
-
-  const timestamps = Array.isArray(chart?.timestamp) ? chart.timestamp : [];
-  const closes = chart?.indicators?.quote?.[0]?.close || [];
-  const lastClose = [...closes].reverse().find((value) => parseApiNumber(value) !== null);
-  const previousClose = firstFiniteNumber(
-    parseApiNumber(meta.chartPreviousClose),
-    closes.length > 1 ? parseApiNumber(closes[closes.length - 2]) : null
-  );
-  const price = firstFiniteNumber(parseApiNumber(meta.regularMarketPrice), parseApiNumber(lastClose));
-  const change = price !== null && previousClose !== null ? price - previousClose : null;
-  const percentChange = price !== null && previousClose ? (change / previousClose) * 100 : null;
-
-  const summary = await resolveWithin(
-    yahooFinance.quoteSummary(symbol, {
-      modules: ["summaryProfile", "topHoldings", "fundProfile", "price", "summaryDetail", "defaultKeyStatistics"]
-    }).catch(() => null),
-    2500,
-    null
-  );
-  const topHoldings = summary?.topHoldings || {};
-  const fundProfile = summary?.fundProfile || {};
-  const summaryDetail = summary?.summaryDetail || {};
-  const priceSummary = summary?.price || {};
-  const stats = summary?.defaultKeyStatistics || {};
-  const annualExpenseRatio = firstFiniteNumber(
-    parseApiNumber(fundProfile.annualReportExpenseRatio),
-    parseApiNumber(summaryDetail.annualReportExpenseRatio)
-  );
-  const holdings = (topHoldings.holdings || []).map(normalizeYahooFundHolding).filter((holding) => holding.name);
-  const bondHoldings = topHoldings.bondHoldings || {};
-  const assetAllocation = [
-    ["Cash", topHoldings.cashPosition],
-    ["Stocks", topHoldings.stockPosition],
-    ["Bonds", topHoldings.bondPosition],
-    ["Preferred", topHoldings.preferredPosition],
-    ["Convertible", topHoldings.convertiblePosition],
-    ["Other", topHoldings.otherPosition]
-  ]
-    .map(([name, value]) => ({
-      name,
-      weight: parseApiNumber(value) !== null ? parseApiNumber(value) * 100 : null
-    }))
-    .filter((row, index, rows) =>
-      row.weight !== null &&
-      rows.findIndex((item) => item.name === row.name) === index
-    );
-
-  const data = {
-    symbol,
-    name: meta.longName || meta.shortName || priceSummary.longName || priceSummary.shortName || symbol,
-    type: String(meta.instrumentType || "Fund").toUpperCase() === "MUTUALFUND" ? "Mutual Fund" : (meta.instrumentType || "Fund"),
-    logo: getFmpSymbolImageUrl(symbol),
-    price,
-    change,
-    percentChange,
-    currency: meta.currency || priceSummary.currency || "USD",
-    updatedAt: new Date().toISOString(),
-    source: "Yahoo fund chart data",
-    description: summary?.summaryProfile?.longBusinessSummary || "Fund profile data is limited, but price and NAV data are available from the latest market feed.",
-    stats: {
-      assets: parseApiNumber(summaryDetail.totalAssets),
-      expenseRatio: annualExpenseRatio !== null ? annualExpenseRatio * 100 : null,
-      peRatio: parseApiNumber(topHoldings.equityHoldings?.priceToEarnings),
-      dividendYield: parseApiNumber(summaryDetail.yield) !== null ? parseApiNumber(summaryDetail.yield) * 100 : null,
-      volume: parseApiNumber(meta.regularMarketVolume),
-      previousClose,
-      fiftyTwoWeekLow: parseApiNumber(meta.fiftyTwoWeekLow),
-      fiftyTwoWeekHigh: parseApiNumber(meta.fiftyTwoWeekHigh),
-      beta: parseApiNumber(stats.beta),
-      holdingsCount: parseApiNumber(topHoldings.holdings?.length) || null,
-      inceptionDate: meta.firstTradeDate ? new Date(meta.firstTradeDate * 1000).toISOString().slice(0, 10) : null,
-      top10Percent: holdings.reduce((sum, holding) => sum + (holding.weight || 0), 0) || null,
-      bondDuration: parseApiNumber(bondHoldings.duration),
-      bondMaturity: parseApiNumber(bondHoldings.maturity),
-      bondCreditQuality: bondHoldings.creditQuality || null
-    },
-    profile: {
-      assetClass: fundProfile.categoryName || (String(meta.instrumentType || "").toUpperCase() === "MUTUALFUND" ? "Mutual Fund" : meta.instrumentType || "Fund"),
-      category: fundProfile.categoryName || summary?.summaryProfile?.category || "",
-      region: "",
-      exchange: meta.fullExchangeName || meta.exchangeName || "",
-      provider: fundProfile.family || "",
-      indexTracked: fundProfile.legalType || ""
-    },
-    holdings,
-    sectors: normalizeYahooFundExposure(topHoldings.sectorWeightings, "categoryName", "equityPosition"),
-    countries: [],
-    assetAllocation,
-    holdingsAsOf: null,
-    holdingsLastUpdated: timestamps.length ? new Date(timestamps[timestamps.length - 1] * 1000).toISOString().slice(0, 10) : null
-  };
-
-  etfDataCache.set(symbol, { data, fetchedAt: Date.now() });
-  return data;
-}
-
 async function fetchEtfData(ticker) {
   const symbol = String(ticker || "").trim().toUpperCase();
-  const stockAnalysisSymbol = normalizeTickerForStockAnalysis(symbol);
   const cached = etfDataCache.get(symbol);
   if (cached && Date.now() - cached.fetchedAt < 60 * 60 * 1000) {
-    const cachedLogo = firstText(cached.data?.logo, getFmpSymbolImageUrl(symbol));
-    if (cachedLogo !== cached.data?.logo) {
-      cached.data = { ...cached.data, logo: cachedLogo };
-    }
     return cached.data;
   }
-  if (!canUseStockAnalysis()) {
-    try {
-      return await fetchNasdaqFundFallback(symbol, new Error("StockAnalysis cooldown active"));
-    } catch (fundErr) {
-      return fetchYahooFundFallback(symbol, fundErr);
-    }
+
+  const [infoData, quoteData, profileData, dividendData, sectorData, countryData] = await Promise.all([
+    getFmpData(symbol, "ETF information", ["/stable/etf/info?symbol={ticker}"]),
+    getFmpData(symbol, "ETF quote", ["/stable/quote?symbol={ticker}"]),
+    getFmpData(symbol, "ETF profile", ["/stable/profile?symbol={ticker}"]),
+    getFmpData(symbol, "ETF dividends", ["/stable/dividends?symbol={ticker}"]),
+    getFmpData(symbol, "ETF sector weights", ["/stable/etf/sector-weightings?symbol={ticker}"]),
+    getFmpData(symbol, "ETF country weights", ["/stable/etf/country-weightings?symbol={ticker}"])
+  ]);
+
+  const firstRow = (value) => Array.isArray(value) ? value[0] || {} : value || {};
+  const info = firstRow(infoData);
+  const quote = firstRow(quoteData);
+  const profile = firstRow(profileData);
+  if (!info.symbol && !quote.symbol && !profile.symbol) {
+    throw new Error("FMP fund data unavailable");
   }
 
-  let overviewResponse;
-  let holdingsResponse;
-  try {
-    [overviewResponse, holdingsResponse] = await Promise.all([
-    axios.get(`https://stockanalysis.com/etf/${stockAnalysisSymbol}/`, {
-      headers: STOCK_ANALYSIS_HEADERS,
-      timeout: 6500
-    }),
-    axios.get(`https://stockanalysis.com/etf/${stockAnalysisSymbol}/holdings/`, {
-      headers: STOCK_ANALYSIS_HEADERS,
-      timeout: 6500
-    }).catch(() => ({ data: "" }))
-    ]);
-  } catch (err) {
-    setStockAnalysisCooldown(err, "ETF data", symbol);
-    try {
-      return await fetchStockAnalysisMutualFundData(symbol, err, { ignoreCooldown: true });
-    } catch (stockAnalysisFundErr) {
-      try {
-        return await fetchNasdaqFundFallback(symbol, stockAnalysisFundErr);
-      } catch (fundErr) {
-        return fetchYahooFundFallback(symbol, fundErr);
-      }
-    }
-  }
+  const dividends = (Array.isArray(dividendData) ? dividendData : [])
+    .filter((row) => row?.date)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const latestDividend = dividends[0] || {};
+  const trailingCutoff = Date.now() - 366 * 24 * 60 * 60 * 1000;
+  const trailingDividend = dividends.reduce((total, row) => {
+    const timestamp = new Date(`${row.date}T00:00:00Z`).getTime();
+    const amount = firstFiniteNumber(row.adjDividend, row.dividend);
+    return Number.isFinite(timestamp) && timestamp >= trailingCutoff && amount !== null
+      ? total + amount
+      : total;
+  }, 0);
+  const sectors = (Array.isArray(sectorData) ? sectorData : [])
+    .map((row) => ({
+      name: firstText(row.sector, row.industry),
+      weight: firstFiniteNumber(row.weightPercentage, row.exposure)
+    }))
+    .filter((row) => row.name && row.weight !== null);
+  const countries = (Array.isArray(countryData) ? countryData : [])
+    .map((row) => ({
+      name: firstText(row.country),
+      weight: parseApiNumber(row.weightPercentage)
+    }))
+    .filter((row) => row.name && row.weight !== null);
+  const isMutualFund = profile.isFund === true && profile.isEtf !== true;
+  const dayLow = firstFiniteNumber(quote.dayLow);
+  const dayHigh = firstFiniteNumber(quote.dayHigh);
 
-  const overviewHtml = overviewResponse.data || "";
-  const holdingsHtml = holdingsResponse.data || "";
-  const $ = cheerio.load(overviewHtml);
-  const holdingsPage = cheerio.load(holdingsHtml);
-  const summaryRows = readStockAnalysisRows($, 0);
-  const tradingRows = readStockAnalysisRows($, 1);
-  const h1 = $("h1").first().text().trim();
-  const h1Match = h1.match(/^(.*?)\s*\(([^)]+)\)$/);
-  const name = h1Match?.[1] || h1 || symbol;
-  const price = firstFiniteNumber(parseEmbeddedStockAnalysisQuoteValue(overviewHtml, "p"), parseStockAnalysisMoney($("main").text().match(/\b\d+\.\d{2}\b/)?.[0]));
-  const change = parseEmbeddedStockAnalysisQuoteValue(overviewHtml, "c");
-  const percentChange = parseEmbeddedStockAnalysisQuoteValue(overviewHtml, "cp");
-
-  const aboutText = $("body").text().replace(/\s+/g, " ");
-  const profileText = aboutText.slice(Math.max(0, aboutText.indexOf(`About ${symbol}`)));
-  const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const readAbout = (label, nextLabel) => {
-    const pattern = nextLabel
-      ? new RegExp(`${escapeRegex(label)}\\s+(.+?)\\s+${escapeRegex(nextLabel)}`)
-      : new RegExp(`${escapeRegex(label)}\\s+(.+?)\\s*(?:Top 10 Holdings|Dividend History|Performance|News|$)`);
-    return profileText.match(pattern)?.[1]?.trim() || "";
-  };
-  const readProfileField = (label) => {
-    let value = "";
-    $("span").each((_, span) => {
-      if (value) return;
-      const spanText = $(span).text().trim();
-      if (spanText !== label) return;
-      const parentText = $(span).parent().text().replace(/\s+/g, " ").trim();
-      value = parentText.replace(new RegExp(`^${escapeRegex(label)}\\s*`), "").trim();
-    });
-    return value;
-  };
-  const providerFromSchema = (() => {
-    let provider = "";
-    $("script[type='application/ld+json']").each((_, script) => {
-      if (provider) return;
-      try {
-        const json = JSON.parse($(script).text());
-        provider = json?.provider?.name || "";
-      } catch {
-        provider = "";
-      }
-    });
-    return provider;
-  })();
-
-  const holdings = holdingsPage("table").first().find("tbody tr").map((_, row) => {
-    const cells = holdingsPage(row).find("td").map((__, cell) => holdingsPage(cell).text().trim()).get();
-    if (cells.length < 4) return null;
-    return {
-      rank: parseApiNumber(cells[0]),
-      symbol: String(cells[1] || "").replace(/^\$/, "").replace(/\./g, "-").toUpperCase(),
-      name: cells[2],
-      weight: parseStockAnalysisPercent(cells[3]),
-      shares: parseStockAnalysisShares(cells[4])
-    };
-  }).get().filter(Boolean);
-
-  const overviewTopHoldings = $("table").eq(2).find("tbody tr").map((_, row) => {
-    const cells = $(row).find("td").map((__, cell) => $(cell).text().trim()).get();
-    if (cells.length < 3) return null;
-    return {
-      symbol: String(cells[1] || "").replace(/^\$/, "").replace(/\./g, "-").toUpperCase(),
-      name: cells[0],
-      weight: parseStockAnalysisPercent(cells[2])
-    };
-  }).get().filter(Boolean);
-
-  const selectedHoldings = holdings.length ? holdings : overviewTopHoldings;
-  const sectors = parseEmbeddedStockAnalysisPairs(holdingsHtml, "sectors");
-  const countries = parseEmbeddedStockAnalysisCountries(holdingsHtml);
-  const assetAllocation = inferStockAnalysisAssetAllocation(holdingsHtml, sectors, selectedHoldings);
-  const holdingsMeta = parseEmbeddedStockAnalysisHoldingsMeta(holdingsHtml);
-  const fmpProfileData = await resolveWithin(
-    getFmpData(symbol, "fund profile logo", ["/stable/profile?symbol={ticker}"]),
-    1100,
-    []
-  ).catch(() => []);
-  const fmpProfile = Array.isArray(fmpProfileData) ? fmpProfileData[0] || {} : fmpProfileData || {};
   const data = {
     symbol,
-    name,
-    type: "ETF",
-    logo: firstText(fmpProfile.image, getFmpSymbolImageUrl(symbol)),
-    price,
-    change,
-    percentChange,
-    currency: "USD",
-    updatedAt: new Date().toISOString(),
-    source: "StockAnalysis ETF data",
-    description: cleanEtfDescription(readAbout("About " + symbol, "Asset Class")),
+    name: firstText(info.name, quote.name, profile.companyName, symbol),
+    type: isMutualFund ? "Mutual Fund" : "ETF",
+    logo: firstText(profile.image, getFmpSymbolImageUrl(symbol)),
+    price: firstFiniteNumber(quote.price, info.nav, profile.price),
+    change: firstFiniteNumber(quote.change, profile.change),
+    percentChange: firstFiniteNumber(quote.changePercentage, profile.changePercentage),
+    currency: firstText(info.navCurrency, profile.currency, "USD"),
+    updatedAt: firstText(info.updatedAt, new Date().toISOString()),
+    source: "Financial Modeling Prep API",
+    description: firstText(info.description, profile.description),
     stats: {
-      assets: parseStockAnalysisMoney(summaryRows.Assets),
-      expenseRatio: parseStockAnalysisPercent(summaryRows["Expense Ratio"]),
-      peRatio: parseApiNumber(summaryRows["PE Ratio"]),
-      sharesOutstanding: parseStockAnalysisMoney(summaryRows["Shares Out"]),
-      dividend: parseStockAnalysisMoney(summaryRows["Dividend (ttm)"]),
-      dividendYield: parseStockAnalysisPercent(summaryRows["Dividend Yield"]),
-      exDividendDate: summaryRows["Ex-Dividend Date"] || null,
-      payoutFrequency: summaryRows["Payout Frequency"] || null,
-      payoutRatio: parseStockAnalysisPercent(summaryRows["Payout Ratio"]),
-      volume: parseApiNumber(tradingRows.Volume),
-      open: parseStockAnalysisMoney(tradingRows.Open),
-      previousClose: parseStockAnalysisMoney(tradingRows["Previous Close"]),
-      dayRange: tradingRows["Day's Range"] || null,
-      fiftyTwoWeekLow: parseStockAnalysisMoney(tradingRows["52-Week Low"]),
-      fiftyTwoWeekHigh: parseStockAnalysisMoney(tradingRows["52-Week High"]),
-      beta: parseApiNumber(tradingRows.Beta),
-      holdingsCount: holdingsMeta.count || parseApiNumber(summaryRows.Holdings),
-      inceptionDate: tradingRows["Inception Date"] || summaryRows["Inception Date"] || null,
-      top10Percent: holdingsMeta.top10Percent
+      assets: firstFiniteNumber(info.assetsUnderManagement),
+      expenseRatio: firstFiniteNumber(info.expenseRatio),
+      peRatio: null,
+      sharesOutstanding: null,
+      dividend: trailingDividend || firstFiniteNumber(latestDividend.adjDividend, latestDividend.dividend),
+      dividendYield: firstFiniteNumber(latestDividend.yield),
+      exDividendDate: firstText(latestDividend.date),
+      payoutFrequency: firstText(latestDividend.frequency),
+      payoutRatio: null,
+      volume: firstFiniteNumber(quote.volume),
+      open: firstFiniteNumber(quote.open),
+      previousClose: firstFiniteNumber(quote.previousClose),
+      dayRange: dayLow !== null && dayHigh !== null ? `${dayLow} - ${dayHigh}` : null,
+      fiftyTwoWeekLow: firstFiniteNumber(quote.yearLow),
+      fiftyTwoWeekHigh: firstFiniteNumber(quote.yearHigh),
+      beta: firstFiniteNumber(profile.beta),
+      holdingsCount: firstFiniteNumber(info.holdingsCount),
+      inceptionDate: firstText(info.inceptionDate),
+      top10Percent: null
     },
     profile: {
-      assetClass: readProfileField("Asset Class") || readAbout("Asset Class", "Category"),
-      category: readProfileField("Category") || readAbout("Category", "Region"),
-      region: readProfileField("Region") || readAbout("Region", "Stock Exchange"),
-      exchange: readProfileField("Stock Exchange") || readAbout("Stock Exchange", "Ticker Symbol"),
-      provider: providerFromSchema || readProfileField("ETF Provider") || readAbout("ETF Provider", "Index Tracked"),
-      indexTracked: readProfileField("Index Tracked") || readAbout("Index Tracked")
+      assetClass: firstText(info.assetClass, isMutualFund ? "Mutual Fund" : "ETF"),
+      category: null,
+      region: firstText(info.domicile, profile.country),
+      exchange: firstText(profile.exchangeFullName, profile.exchange, quote.exchange),
+      provider: firstText(info.etfCompany),
+      indexTracked: null
     },
-    holdings: selectedHoldings,
+    holdings: [],
     sectors,
     countries,
-    assetAllocation,
-    holdingsAsOf: holdingsMeta.asOf,
-    holdingsLastUpdated: holdingsMeta.lastUpdated
+    assetAllocation: [],
+    holdingsAsOf: null,
+    holdingsLastUpdated: firstText(info.updatedAt)
   };
 
   etfDataCache.set(symbol, { data, fetchedAt: Date.now() });
   return data;
 }
-
 app.get("/api/market-heatmap", async (req, res) => {
   const cached = marketHeatmapCache.get("sp500");
   const cachedAge = cached ? Date.now() - cached.fetchedAt : Infinity;
@@ -17011,16 +15696,9 @@ app.get("/api/market-movers", async (req, res) => {
   }
 
   const fetchFreshMovers = async () => {
-    const [
-      fmpGainerRows,
-      fmpLoserRows,
-      stockAnalysisGainerRows,
-      stockAnalysisLoserRows
-    ] = await Promise.all([
+    const [fmpGainerRows, fmpLoserRows] = await Promise.all([
       resolveWithin(fetchFmpMarketMoverList("gainers"), 6500, []),
-      resolveWithin(fetchFmpMarketMoverList("losers"), 6500, []),
-      resolveWithin(fetchStockAnalysisMarketMoverList("gainers"), 7000, []),
-      resolveWithin(fetchStockAnalysisMarketMoverList("losers"), 7000, [])
+      resolveWithin(fetchFmpMarketMoverList("losers"), 6500, [])
     ]);
 
     const mergeMoverRows = (...groups) => {
@@ -17033,12 +15711,12 @@ app.get("/api/market-movers", async (req, res) => {
       return [...bySymbol.values()];
     };
 
-    const rawGainers = mergeMoverRows(fmpGainerRows, stockAnalysisGainerRows)
+    const rawGainers = mergeMoverRows(fmpGainerRows)
       .map(normalizeMarketMoverRow)
       .filter(Boolean)
       .sort((a, b) => toNumberOrNull(b.percentChange) - toNumberOrNull(a.percentChange))
       .slice(0, 10);
-    const rawLosers = mergeMoverRows(fmpLoserRows, stockAnalysisLoserRows)
+    const rawLosers = mergeMoverRows(fmpLoserRows)
       .map(normalizeMarketMoverRow)
       .filter(Boolean)
       .sort((a, b) => toNumberOrNull(a.percentChange) - toNumberOrNull(b.percentChange))
@@ -17055,7 +15733,7 @@ app.get("/api/market-movers", async (req, res) => {
       gainers: gainers.length ? gainers : fallbackRows.filter((row) => toNumberOrNull(row.percentChange) >= 0).slice(0, 5),
       losers: losers.length ? losers : fallbackRows.filter((row) => toNumberOrNull(row.percentChange) < 0).slice(0, 5),
       source: gainers.length || losers.length
-        ? "FMP/StockAnalysis market movers with FMP 5-minute quotes"
+        ? "FMP market movers with FMP 5-minute quotes"
         : "saved FMP market movers fallback",
       updatedAt: new Date().toISOString()
     };
@@ -17250,75 +15928,6 @@ app.get("/api/market-indices", async (req, res) => {
     const number = Number(normalized);
     if (!Number.isFinite(number)) return null;
     return String(value).includes("-") ? -Math.abs(number) : number;
-  };
-
-  const fetchStockAnalysisIndexMoves = async () => {
-    if (!canUseStockAnalysis()) return new Map();
-    try {
-      const response = await axios.get("https://stockanalysis.com/markets/active/", {
-        headers: {
-          "User-Agent": "Mozilla/5.0 AppleWebKit/537.36 Chrome/124 Safari/537.36",
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-        },
-        timeout: 2500
-      });
-      const $ = cheerio.load(response.data || "");
-      const pageText = $("body").text().replace(/\s+/g, " ");
-      const moves = new Map();
-
-      MARKET_INDICES.forEach((index) => {
-        const escapedLabel = String(index.stockAnalysisLabel || index.label)
-          .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const match = pageText.match(new RegExp(`${escapedLabel}\\s+([+-]?\\d+(?:\\.\\d+)?)%`, "i"));
-        const percentChange = parseIndexNumber(match?.[1]);
-        if (percentChange !== null) {
-          moves.set(index.key, {
-            percentChange,
-            source: "StockAnalysis"
-          });
-        }
-      });
-
-      return moves;
-    } catch (err) {
-      setStockAnalysisCooldown(err, "index moves", "indices");
-      console.log("StockAnalysis index moves skipped:", err.response?.status || err.message);
-      return new Map();
-    }
-  };
-
-  const applyStockAnalysisMove = (index, indexQuote, stockAnalysisMoves) => {
-    const move = stockAnalysisMoves.get(index.key);
-    if (!move || toNumberOrNull(move.percentChange) === null) return indexQuote;
-    if (
-      /^FMP/i.test(String(indexQuote?.source || "")) &&
-      toNumberOrNull(indexQuote?.percentChange) !== null
-    ) {
-      return indexQuote;
-    }
-
-    const quote = indexQuote || cachedByKey.get(index.key);
-    const price = toNumberOrNull(quote?.price);
-    const percentChange = move.percentChange;
-    const impliedPreviousClose = price !== null && percentChange !== -100
-      ? price / (1 + percentChange / 100)
-      : null;
-    const change = price !== null && impliedPreviousClose
-      ? price - impliedPreviousClose
-      : toNumberOrNull(quote?.change);
-
-    return {
-      ...(quote || {}),
-      key: index.key,
-      label: index.label,
-      symbol: index.yahooSymbol,
-      price: price ?? null,
-      change,
-      percentChange,
-      source: price !== null
-        ? `StockAnalysis / ${quote?.source || "cached index"}`
-        : "StockAnalysis"
-    };
   };
 
   const fetchFmpIndex = async (index) => {
@@ -19434,7 +18043,7 @@ async function fetchMrRallyWebContext(ticker, intent = {}, question = "") {
         score:
           (/transcript|earnings call|conference call/i.test(`${result.title} ${result.snippet}`) ? 8 : 0) +
           (/complete transcript|q[1-4].*transcript|transcript.*q[1-4]/i.test(`${result.title} ${result.snippet}`) ? 5 : 0) +
-          (/benzinga|alphastreet|seekingalpha|yahoo|stockanalysis|gurufocus/i.test(result.url) ? 4 : 0) +
+          (/benzinga|alphastreet|seekingalpha|yahoo|gurufocus/i.test(result.url) ? 4 : 0) +
           (/\/transcripts\/?$|earnings-calls\/?$/i.test(result.url) ? -7 : 0) +
           (/latest|q[1-4]|2026|2025/i.test(`${result.title} ${result.snippet}`) ? 2 : 0)
       }))
@@ -20029,7 +18638,7 @@ function buildResearchAnalysis(stock) {
       score,
       summary: `${data.name || stock.ticker} combines ${revenueGrowth >= 10 ? "strong" : revenueGrowth >= 3 ? "moderate" : "limited"} revenue momentum with a ${round(data.profitMargins)}% profit margin. The valuation is ${forwardPE && forwardPE > 40 ? "demanding" : forwardPE && forwardPE < 20 ? "relatively modest" : "middle-of-the-range"} at ${forwardPE ? `${round(forwardPE)}x forward earnings` : "an unavailable forward multiple"}.`
     },
-    stockAnalysis: {
+    equityAnalysis: {
       valuation: [
         `Current P/E: ${pe ? `${round(pe)}x` : "N/A"}; forward P/E: ${forwardPE ? `${round(forwardPE)}x` : "N/A"}.`,
         `Price-to-sales: ${priceToSales ? `${round(priceToSales)}x` : "N/A"}.`,
@@ -20388,9 +18997,9 @@ async function getMrRallyStockContext(ticker, intent = {}) {
     analystEstimates: data.analystEstimates,
     history,
     verdict: analysis.verdict,
-    catalysts: analysis.stockAnalysis.catalysts,
-    risks: analysis.stockAnalysis.risks,
-    scenarios: analysis.stockAnalysis.scenarios,
+    catalysts: analysis.equityAnalysis.catalysts,
+    risks: analysis.equityAnalysis.risks,
+    scenarios: analysis.equityAnalysis.scenarios,
     externalFinancials,
     externalMetrics,
     externalStatements,
@@ -21589,43 +20198,6 @@ function buildEarningsAudioProxyUrl(apiBaseUrl, ticker, audioUrl) {
   return `${apiBaseUrl}/api/earnings-call/${encodeURIComponent(ticker)}/ir-audio?${params}`;
 }
 
-function isStockAnalysisAudioUrl(audioUrl) {
-  try {
-    const parsed = new URL(audioUrl);
-    const host = parsed.hostname.replace(/^www\./, "").toLowerCase();
-    return (
-      host === "files.quartr.com" &&
-      /^\/audio-files\/[^/?#]+\.(?:mpeg|mp3|m4a|wav|mp4)$/i.test(parsed.pathname)
-    );
-  } catch {
-    return false;
-  }
-}
-
-function cleanStockAnalysisAudioUrl(audioUrl) {
-  const cleaned = String(audioUrl || "")
-    .replace(/\\u0026/g, "&")
-    .replace(/\\\//g, "/")
-    .replace(/&amp;/g, "&")
-    .trim();
-  return isStockAnalysisAudioUrl(cleaned) ? cleaned : null;
-}
-
-function extractStockAnalysisAudioUrl(html = "") {
-  const text = String(html || "");
-  const directMatch = text.match(/audioUrl:\s*"([^"]+)"/);
-  const directUrl = cleanStockAnalysisAudioUrl(directMatch?.[1]);
-  if (directUrl) return directUrl;
-
-  const fileMatch = text.match(/https?:\\?\/\\?\/files\.quartr\.com\\?\/audio-files\\?\/[^"'\\\s<>]+/i);
-  return cleanStockAnalysisAudioUrl(fileMatch?.[0]);
-}
-
-function buildStockAnalysisAudioProxyUrl(apiBaseUrl, ticker, audioUrl) {
-  const params = new URLSearchParams({ url: audioUrl });
-  return `${apiBaseUrl}/api/earnings-call/${encodeURIComponent(ticker)}/stockanalysis-audio?${params}`;
-}
-
 function buildEarningsTranscriptProxyUrl(apiBaseUrl, ticker, transcriptUrl) {
   const params = new URLSearchParams({ url: transcriptUrl });
   return `${apiBaseUrl}/api/earnings-call/${encodeURIComponent(ticker)}/transcript-file?${params}`;
@@ -22002,100 +20574,6 @@ function parseEarningsCallPublicTranscript(html, ticker, requestedPeriod = null,
   };
 }
 
-function parseStockAnalysisTranscript(html, ticker, requestedPeriod = null, pageUrl = "") {
-  const $ = cheerio.load(html || "");
-  const audioUrl = extractStockAnalysisAudioUrl(html);
-  $("script,style,noscript,nav,footer,header,aside").remove();
-
-  const transcriptRoot = $('[aria-label="Full transcript"] [role="article"]').first();
-  const transcriptBlocks = transcriptRoot.length
-    ? transcriptRoot.find("div").filter((_, element) => {
-        const className = $(element).attr("class") || "";
-        const hasSectionBorder = className.split(/\s+/).includes("border-t");
-        return hasSectionBorder && $(element).children("div").first().text().trim() && $(element).find("p").length;
-      })
-    : $();
-
-  const transcript = transcriptBlocks.map((index, element) => {
-    const speaker = $(element).children("div").first().text().replace(/\s+/g, " ").trim() || "Speaker";
-    const paragraphs = $(element).find("p").map((_, paragraph) =>
-      $(paragraph).text().replace(/\s+/g, " ").trim()
-    ).get().filter(Boolean);
-    const text = paragraphs.join("\n\n");
-    return text
-      ? {
-          id: `${index}-${speaker}`,
-          speaker,
-          session: null,
-          text
-        }
-      : null;
-  }).get().filter(Boolean);
-
-  if (!transcript.length) return null;
-
-  const title = $("title").first().text().trim() ||
-    `${ticker} ${requestedPeriod ? `Q${requestedPeriod.quarter} ${requestedPeriod.year}` : ""} earnings call transcript`;
-  const pageText = $("main").first().text().replace(/\s+/g, " ").trim();
-  const dateMatch = pageText.match(/\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},\s+20\d{2}\b/i);
-
-  return {
-    available: true,
-    provider: "StockAnalysis",
-    title,
-    date: dateMatch ? dateMatch[0] : null,
-    fiscalYear: requestedPeriod?.year || null,
-    fiscalPeriod: requestedPeriod ? `Q${requestedPeriod.quarter}` : null,
-    audioUrl,
-    transcriptUrl: null,
-    transcript,
-    sourceUrl: pageUrl,
-    transcriptSourceUrl: pageUrl
-  };
-}
-
-async function fetchStockAnalysisEarningsCall(ticker, requestedPeriod = null) {
-  if (!requestedPeriod) return null;
-  if (!canUseStockAnalysis()) return null;
-  const symbol = normalizeTickerForStockAnalysis(ticker);
-  if (!symbol || !/^[a-z0-9.-]{1,15}$/.test(symbol)) return null;
-
-  const cacheKey = `${symbol}-${requestedPeriod.year}-Q${requestedPeriod.quarter}`;
-  const cached = earningsCallTranscriptCache.get(cacheKey);
-  if (cached && Date.now() - cached.fetchedAt < 60 * 60 * 1000) {
-    return cached.data;
-  }
-
-  const cachedPeriodData = earningsCallPeriodsCache.get(String(ticker || "").trim().toUpperCase());
-  const hasCachedStockAnalysisPeriods = (cachedPeriodData?.data?.periods || [])
-    .some((item) => item.provider === "StockAnalysis");
-  const periods = cachedPeriodData && hasCachedStockAnalysisPeriods && Date.now() - cachedPeriodData.fetchedAt < 60 * 60 * 1000
-    ? (cachedPeriodData.data?.periods || []).filter((item) => item.provider === "StockAnalysis")
-    : await fetchStockAnalysisEarningsCallPeriods(ticker);
-  const period = periods.find((item) =>
-    Number(item.year) === requestedPeriod.year &&
-    Number(item.quarter) === requestedPeriod.quarter &&
-    item.sourceUrl
-  );
-  if (!period?.sourceUrl) return null;
-  const indexUrl = period.indexUrl || buildStockAnalysisTranscriptIndexUrls(ticker)[0] || period.sourceUrl;
-
-  try {
-    const html = await fetchStockAnalysisTranscriptHtml(period.sourceUrl, indexUrl, 12000);
-    if (!html) return null;
-    const parsed = parseStockAnalysisTranscript(html, ticker, requestedPeriod, period.sourceUrl);
-    if (parsed) {
-      earningsCallTranscriptCache.set(cacheKey, { data: parsed, fetchedAt: Date.now() });
-      return parsed;
-    }
-  } catch (err) {
-    setStockAnalysisCooldown(err, "transcript", ticker);
-    console.log("StockAnalysis transcript skipped:", ticker, requestedPeriod.year, requestedPeriod.quarter, err.response?.status || err.message);
-  }
-
-  return null;
-}
-
 async function fetchEarningsCallPublicPage(ticker, requestedPeriod = null) {
   if (!requestedPeriod) return null;
 
@@ -22228,164 +20706,6 @@ async function fetchEarningsCallBiz(ticker, apiBaseUrl, requestedPeriod = null) 
   };
 }
 
-app.get("/api/earnings-call/:ticker/audio", async (req, res) => {
-  const ticker = req.params.ticker.trim().toUpperCase();
-  const exchange = String(req.query.exchange || "").toUpperCase();
-  const year = Number(req.query.year);
-  const quarter = Number(req.query.quarter);
-  if (
-    !process.env.EARNINGSCALL_API_KEY ||
-    !/^[A-Z0-9.-]{1,15}$/.test(ticker) ||
-    !EARNINGS_CALL_EXCHANGES.includes(exchange) ||
-    !Number.isInteger(year) ||
-    year < 1990 ||
-    year > new Date().getFullYear() + 1 ||
-    ![1, 2, 3, 4].includes(quarter)
-  ) {
-    return res.status(400).json({ error: "Invalid earnings call audio request" });
-  }
-
-  try {
-    const upstream = await axios.get("https://v2.api.earningscall.biz/audio", {
-      params: {
-        apikey: process.env.EARNINGSCALL_API_KEY,
-        exchange: exchange.toLowerCase(),
-        symbol: ticker.toLowerCase(),
-        year,
-        quarter
-      },
-      headers: req.headers.range ? { Range: req.headers.range } : {},
-      responseType: "stream",
-      timeout: 30000,
-      validateStatus: (status) => status === 200 || status === 206
-    });
-    res.status(upstream.status);
-    for (const header of ["content-type", "content-length", "content-range", "accept-ranges"]) {
-      if (upstream.headers[header]) res.setHeader(header, upstream.headers[header]);
-    }
-    res.setHeader("Cache-Control", "public, max-age=86400");
-    return upstream.data.pipe(res);
-  } catch (err) {
-    console.error("EarningsCall audio failed:", ticker, err.response?.status || err.message);
-    return res.status(502).json({ error: "Earnings call audio unavailable" });
-  }
-});
-
-app.get("/api/earnings-call/:ticker/stockanalysis-audio", async (req, res) => {
-  const ticker = req.params.ticker.trim().toUpperCase();
-  const audioUrl = String(req.query.url || "");
-
-  if (!/^[A-Z0-9.-]{1,15}$/.test(ticker) || !isStockAnalysisAudioUrl(audioUrl)) {
-    return res.status(400).json({ error: "Invalid StockAnalysis audio request" });
-  }
-
-  try {
-    const upstream = await axios.get(audioUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        Accept: "audio/*,*/*;q=0.8",
-        Referer: "https://stockanalysis.com/",
-        ...(req.headers.range ? { Range: req.headers.range } : {})
-      },
-      responseType: "stream",
-      timeout: 30000,
-      maxRedirects: 4,
-      validateStatus: (status) => status === 200 || status === 206
-    });
-
-    res.status(upstream.status);
-    for (const header of ["content-type", "content-length", "content-range", "accept-ranges"]) {
-      if (upstream.headers[header]) res.setHeader(header, upstream.headers[header]);
-    }
-    res.setHeader("Cache-Control", "public, max-age=86400");
-    return upstream.data.pipe(res);
-  } catch (err) {
-    console.error("StockAnalysis audio proxy failed:", ticker, err.response?.status || err.message);
-    return res.status(502).json({ error: "StockAnalysis earnings call audio unavailable" });
-  }
-});
-
-app.get("/api/earnings-call/:ticker/ir-audio", async (req, res) => {
-  const ticker = req.params.ticker.trim().toUpperCase();
-  const audioUrl = String(req.query.url || "");
-
-  if (!/^[A-Z0-9.-]{1,15}$/.test(ticker) || !audioUrl) {
-    return res.status(400).json({ error: "Invalid investor relations audio request" });
-  }
-
-  try {
-    const companyUrl = await getCompanyInvestorRelationsUrl(ticker);
-    if (!companyUrl || !isOfficialInvestorRelationsUrl(audioUrl, companyUrl)) {
-      return res.status(403).json({ error: "Audio URL is not from the company's official investor relations site" });
-    }
-
-    const upstream = await axios.get(audioUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        ...(req.headers.range ? { Range: req.headers.range } : {})
-      },
-      responseType: "stream",
-      timeout: 30000,
-      maxRedirects: 4,
-      validateStatus: (status) => status === 200 || status === 206
-    });
-
-    res.status(upstream.status);
-    for (const header of ["content-type", "content-length", "content-range", "accept-ranges"]) {
-      if (upstream.headers[header]) res.setHeader(header, upstream.headers[header]);
-    }
-    res.setHeader("Cache-Control", "public, max-age=86400");
-    return upstream.data.pipe(res);
-  } catch (err) {
-    console.error("Investor relations audio proxy failed:", ticker, err.response?.status || err.message);
-    return res.status(502).json({ error: "Investor relations audio unavailable" });
-  }
-});
-
-app.get("/api/earnings-call/:ticker/transcript-file", async (req, res) => {
-  const ticker = req.params.ticker.trim().toUpperCase();
-  const transcriptUrl = String(req.query.url || "");
-
-  if (!/^[A-Z0-9.-]{1,15}$/.test(ticker) || !transcriptUrl) {
-    return res.status(400).json({ error: "Invalid transcript request" });
-  }
-
-  try {
-    const cached = await EarningsCall.findOne({ ticker }).lean();
-    const cachedData = cached?.data || {};
-    const allowedUrls = new Set([
-      cachedData.rawTranscriptUrl,
-      cachedData.transcriptUrl,
-      cachedData.transcriptSourceUrl
-    ].filter(Boolean));
-
-    if (!allowedUrls.has(transcriptUrl)) {
-      return res.status(403).json({ error: "Transcript URL is not approved for this ticker" });
-    }
-
-    const upstream = await axios.get(transcriptUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        Accept: "application/pdf,text/html,text/plain,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-      },
-      responseType: "stream",
-      timeout: 30000,
-      maxRedirects: 4,
-      validateStatus: (status) => status >= 200 && status < 400
-    });
-
-    const contentType = upstream.headers["content-type"] || "application/pdf";
-    res.status(upstream.status);
-    res.setHeader("Content-Type", contentType);
-    res.setHeader("Cache-Control", "public, max-age=86400");
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    return upstream.data.pipe(res);
-  } catch (err) {
-    console.error("Transcript proxy failed:", ticker, err.response?.status || err.message);
-    return res.status(502).json({ error: "Transcript file unavailable" });
-  }
-});
-
 app.get("/api/company-documents/:ticker", async (req, res) => {
   const ticker = req.params.ticker.trim().toUpperCase();
   if (!/^[A-Z0-9.-]{1,15}$/.test(ticker)) {
@@ -22416,7 +20736,6 @@ function earningsCallResultScore(result = {}, providerName = "") {
       ? fiscalYear * 10 + fiscalQuarter
       : null;
   const providerPriority = {
-    StockAnalysis: 8,
     EarningsCall: 7,
     Quartr: 6,
     "Alpha Vantage": 5,
@@ -22605,457 +20924,9 @@ async function fetchFinnhubEarningsCallPeriods(ticker) {
   }
 }
 
-async function fetchStockAnalysisTranscriptHtml(url, referer, timeout = 12000) {
-  let lastError = null;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      const response = await axios.get(url, {
-        headers: {
-          "User-Agent": "Mozilla/5.0",
-          Referer: referer,
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "Accept-Language": "en-US,en;q=0.9"
-        },
-        timeout: timeout + attempt * 2500,
-        responseType: "text",
-        transformResponse: [(data) => data],
-        validateStatus: (status) => status >= 200 && status < 500
-      });
-      if (response.status >= 400) return null;
-      return String(response.data || "");
-    } catch (err) {
-      lastError = err;
-      await new Promise((resolve) => setTimeout(resolve, 350 + attempt * 550));
-    }
-  }
-  if (lastError) throw lastError;
-  return null;
-}
-
-function buildStockAnalysisTranscriptIndexUrls(ticker) {
-  const symbol = normalizeTickerForStockAnalysis(ticker);
-  if (!symbol || !/^[a-z0-9.-]{1,15}$/.test(symbol)) return [];
-  const urls = [buildStockAnalysisUrl(ticker, "transcripts/")];
-  const overrides = STOCK_ANALYSIS_TRANSCRIPT_PATH_OVERRIDES[String(ticker || "").trim().toUpperCase()] || [];
-  overrides.forEach((path) => {
-    urls.push(`https://stockanalysis.com/${String(path).replace(/^\/+/, "").replace(/\/+$/, "")}/transcripts/`);
-  });
-  return [...new Set(urls)];
-}
-
-async function fetchStockAnalysisSearchCandidates(query) {
-  const cleaned = String(query || "").trim();
-  if (!cleaned) return [];
-  if (!canUseStockAnalysis()) return [];
-  try {
-    const response = await axios.get("https://stockanalysis.com/api/search", {
-      params: { q: cleaned },
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        Accept: "application/json,text/plain,*/*"
-      },
-      timeout: 7000,
-      validateStatus: (status) => status >= 200 && status < 500
-    });
-    if (response.status >= 400) return [];
-    return Array.isArray(response.data?.data) ? response.data.data : [];
-  } catch (err) {
-    setStockAnalysisCooldown(err, "transcript search", cleaned);
-    console.log("StockAnalysis transcript search skipped:", cleaned, err.response?.status || err.message);
-    return [];
-  }
-}
-
-function stockAnalysisCandidateToTranscriptUrl(candidate) {
-  const path = String(candidate?.s || "").trim();
-  if (!path || /^(mutf|futures|crypto)\//i.test(path)) return null;
-
-  if (candidate?.t === "s" && !path.includes("/")) {
-    return `https://stockanalysis.com/stocks/${encodeURIComponent(normalizeTickerForStockAnalysis(path))}/transcripts/`;
-  }
-
-  if (candidate?.t === "sy" && /^[a-z0-9.-]+\/[^/]+$/i.test(path)) {
-    const [exchange, symbol] = path.split("/");
-    return `https://stockanalysis.com/quote/${encodeURIComponent(exchange.toLowerCase())}/${encodeURIComponent(symbol)}/transcripts/`;
-  }
-
-  return null;
-}
-
-function normalizeStockAnalysisCompanyName(value) {
-  return String(value || "")
-    .toLowerCase()
-    .replace(/&/g, "and")
-    .replace(/\b(incorporated|inc|corporation|corp|company|co|limited|ltd|plc|p\.l\.c|group|holdings?|holding|sa|se|nv|n\.v|a\/s|ag|s\.a|class [a-z])\b/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function stockAnalysisNamesLikelyMatch(candidateName, requestedName) {
-  const candidate = normalizeStockAnalysisCompanyName(candidateName);
-  const requested = normalizeStockAnalysisCompanyName(requestedName);
-  if (!candidate || !requested) return false;
-  return (
-    candidate === requested ||
-    candidate.includes(requested) ||
-    requested.includes(candidate)
-  );
-}
-
-function stockAnalysisCandidateScore(candidate, ticker, companyName = "") {
-  const symbol = String(ticker || "").trim().toUpperCase().replace(/-/g, ".");
-  const candidateSymbol = String(candidate?.s || "").split("/").pop()?.trim().toUpperCase().replace(/-/g, ".") || "";
-  const candidateName = String(candidate?.n || "").toLowerCase();
-  const requestedName = String(companyName || "").toLowerCase();
-  const nameMatches = requestedName && candidateName
-    ? stockAnalysisNamesLikelyMatch(candidateName, requestedName)
-    : false;
-  if (requestedName && candidateName && !nameMatches) return -Infinity;
-
-  let score = 0;
-
-  if (candidateSymbol === symbol) score += 60;
-  if (candidate?.t === "s") score += 45;
-  if (candidate?.t === "sy") score += 25;
-  if (nameMatches) score += 55;
-  if (/^(bcba|bvmf|bkk|wse|vie|neo|fra|otc)\//i.test(String(candidate?.s || ""))) score -= 12;
-  if (candidate?.st && candidate.st !== "s") score -= 20;
-
-  return score;
-}
-
-async function discoverStockAnalysisTranscriptIndexUrls(ticker) {
-  const symbol = String(ticker || "").trim().toUpperCase();
-  const cached = stockAnalysisTranscriptIndexUrlCache.get(symbol);
-  if (cached && Date.now() - cached.fetchedAt < 12 * 60 * 60 * 1000) {
-    return cached.urls;
-  }
-
-  const urls = buildStockAnalysisTranscriptIndexUrls(symbol);
-  const quote = await yahooFinance.quote(symbol).catch(() => ({}));
-  const queries = [
-    symbol,
-    symbol.replace(/-/g, "."),
-    quote.longName,
-    quote.shortName,
-    quote.displayName
-  ].filter(Boolean);
-
-  const byUrl = new Map(urls.map((url) => [url, 1000]));
-  const quoteCompanyName = quote.longName || quote.shortName || quote.displayName || "";
-  const seenQueries = new Set();
-  for (let index = 0; index < queries.length; index += 1) {
-    const query = queries[index];
-    const queryKey = String(query || "").trim().toLowerCase();
-    if (!queryKey || seenQueries.has(queryKey)) continue;
-    seenQueries.add(queryKey);
-    const candidates = await fetchStockAnalysisSearchCandidates(query);
-    const referenceName = quoteCompanyName || (/^[A-Z0-9.-]{1,12}$/i.test(String(query)) ? "" : query);
-    if (!quoteCompanyName && /^[A-Z0-9.-]{1,12}$/i.test(String(query))) {
-      candidates
-        .filter((candidate) =>
-          candidate?.t === "s" &&
-          String(candidate?.s || "").trim().toUpperCase().replace(/-/g, ".") === symbol.replace(/-/g, ".") &&
-          candidate?.n
-        )
-        .slice(0, 2)
-        .forEach((candidate) => {
-          const nameKey = String(candidate.n).trim().toLowerCase();
-          if (nameKey && !seenQueries.has(nameKey)) queries.push(candidate.n);
-        });
-    }
-    candidates
-      .map((candidate) => ({
-        url: stockAnalysisCandidateToTranscriptUrl(candidate),
-        score: stockAnalysisCandidateScore(candidate, symbol, referenceName)
-      }))
-      .filter((item) => item.url && Number.isFinite(item.score))
-      .forEach((item) => {
-        byUrl.set(item.url, Math.max(byUrl.get(item.url) || -Infinity, item.score));
-      });
-  }
-
-  const discoveredUrls = [...byUrl.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([url]) => url)
-    .slice(0, 14);
-
-  stockAnalysisTranscriptIndexUrlCache.set(symbol, { urls: discoveredUrls, fetchedAt: Date.now() });
-  return discoveredUrls;
-}
-
-async function fetchStockAnalysisPeriodsFromIndexUrls(ticker, indexUrls) {
-  if (!indexUrls.length) return [];
-  if (!canUseStockAnalysis()) return [];
-
-  for (const indexUrl of indexUrls) {
-    try {
-      const html = await fetchStockAnalysisTranscriptHtml(indexUrl, indexUrl, 9000);
-      if (!html) continue;
-      const $ = cheerio.load(html);
-      const transcriptLinks = [];
-      $("a").each((_, element) => {
-        const text = $(element).text().replace(/\s+/g, " ").trim();
-        const match = text.match(/Earnings Call:\s*Q([1-4])\s+(20\d{2})/i);
-        const href = $(element).attr("href");
-        if (!match || !href) return;
-        transcriptLinks.push({
-          quarter: Number(match[1]),
-          year: Number(match[2]),
-          indexUrl,
-          sourceUrl: new URL(href, indexUrl).toString()
-        });
-      });
-      const periods = mergeEarningsCallPeriods(
-        transcriptLinks.map((item) =>
-          normalizeEarningsCallPeriodItem(
-            item,
-            "StockAnalysis"
-          )
-        ).filter(Boolean)
-      );
-      if (periods.length) return periods;
-    } catch (err) {
-      setStockAnalysisCooldown(err, "transcript periods", ticker);
-      console.log("StockAnalysis transcript periods skipped:", ticker, indexUrl, err.response?.status || err.message);
-    }
-  }
-
-  return [];
-}
-
-async function fetchStockAnalysisEarningsCallPeriods(ticker) {
-  if (!canUseStockAnalysis()) return [];
-  const directUrls = buildStockAnalysisTranscriptIndexUrls(ticker);
-  const directPeriods = await fetchStockAnalysisPeriodsFromIndexUrls(ticker, directUrls);
-  if (directPeriods.length) return directPeriods;
-
-  const discoveredUrls = await discoverStockAnalysisTranscriptIndexUrls(ticker);
-  const directUrlSet = new Set(directUrls);
-  return fetchStockAnalysisPeriodsFromIndexUrls(
-    ticker,
-    discoveredUrls.filter((url) => !directUrlSet.has(url))
-  );
-}
-
-function cachedEarningsCallPeriod(cached, ticker) {
-  const cachedData = normalizeCachedEarningsCall(cached, ticker, cached?.data?.rawTranscriptUrl);
-  if (cachedData?.provider !== "StockAnalysis") return [];
-  return cachedData
-    ? [normalizeEarningsCallPeriodItem(cachedData, cachedData.provider || "Cached transcript")].filter(Boolean)
-    : [];
-}
-
-async function fetchAvailableEarningsCallPeriods(ticker) {
-  const symbol = String(ticker || "").trim().toUpperCase();
-  const cached = earningsCallPeriodsCache.get(symbol);
-  if (cached && Date.now() - cached.fetchedAt < 60 * 60 * 1000) {
-    return cached.data;
-  }
-
-  const savedCall = await EarningsCall.findOne({ ticker: symbol }).catch(() => null);
-  const stockAnalysisPeriods = await resolveWithin(fetchStockAnalysisEarningsCallPeriods(symbol), 12000, []);
-  const periods = mergeEarningsCallPeriods(stockAnalysisPeriods, cachedEarningsCallPeriod(savedCall, symbol));
-  const data = {
-    available: periods.length > 0,
-    symbol,
-    periods,
-    updatedAt: new Date().toISOString()
-  };
-  if (periods.length) {
-    earningsCallPeriodsCache.set(symbol, { data, fetchedAt: Date.now() });
-  }
-  return data;
-}
-
-app.get("/api/earnings-call-periods/:ticker", async (req, res) => {
-  const ticker = req.params.ticker.trim().toUpperCase();
-  if (!/^[A-Z0-9.-]{1,15}$/.test(ticker)) {
-    return res.status(400).json({ available: false, periods: [], error: "Invalid ticker" });
-  }
-
-  try {
-    const data = await fetchAvailableEarningsCallPeriods(ticker);
-    return res.json(data);
-  } catch (err) {
-    console.error("Earnings call periods fetch failed:", ticker, err.response?.status || err.message);
-    return res.status(502).json({
-      available: false,
-      symbol: ticker,
-      periods: [],
-      error: "Earnings call periods are temporarily unavailable"
-    });
-  }
-});
-
-app.get("/api/earnings-call/:ticker", async (req, res) => {
-  const ticker = req.params.ticker.trim().toUpperCase();
-  const requestedPeriod = parseRequestedEarningsPeriod(req.query);
-  const isSpecificPeriodRequest = Boolean(requestedPeriod);
-
-  try {
-    const apiBaseUrl =
-      process.env.PUBLIC_API_URL ||
-      `${req.protocol}://${req.get("host")}`;
-    const cached = await EarningsCall.findOne({ ticker });
-    const providerErrors = [];
-    const cachedTranscriptUrl =
-      cached?.data?.rawTranscriptUrl ||
-      (/\/transcript-file\?/.test(String(cached?.data?.transcriptUrl || ""))
-        ? null
-        : cached?.data?.transcriptUrl);
-    const sendTranscriptData = async (transcriptData) => {
-      const rawAudioUrl = transcriptData.rawAudioUrl || transcriptData.audioUrl || null;
-      const proxiedAudioUrl = rawAudioUrl
-        ? (
-            String(rawAudioUrl).startsWith(apiBaseUrl)
-              ? rawAudioUrl
-              : isStockAnalysisAudioUrl(rawAudioUrl)
-                ? buildStockAnalysisAudioProxyUrl(apiBaseUrl, ticker, rawAudioUrl)
-                : transcriptData.audioUrl || null
-          )
-        : null;
-      const data = {
-        ...transcriptData,
-        provider: transcriptData.provider,
-        symbol: ticker,
-        audioUrl: proxiedAudioUrl,
-        webcastUrl: null,
-        rawAudioUrl,
-        rawTranscriptUrl: transcriptData.transcriptUrl || null,
-        transcriptUrl: transcriptData.transcriptUrl
-          ? buildEarningsTranscriptProxyUrl(apiBaseUrl, ticker, transcriptData.transcriptUrl)
-          : null,
-        transcript: transcriptData.transcript || [],
-        computerReadAudio: false,
-        hasOriginalAudio: Boolean(proxiedAudioUrl),
-        version: EARNINGS_CALL_VERSION,
-        errors: providerErrors,
-        fetchedAt: new Date().toISOString()
-      };
-      if (!isSpecificPeriodRequest) {
-        await EarningsCall.findOneAndUpdate(
-          { ticker },
-          { ticker, data, updatedAt: new Date() },
-          { upsert: true, new: true }
-        );
-      }
-      return res.json(data);
-    };
-
-    if (isSpecificPeriodRequest) {
-      const stockAnalysisData = await resolveWithin(
-        fetchStockAnalysisEarningsCall(ticker, requestedPeriod),
-        20000,
-        null
-      );
-      if (stockAnalysisData?.available && (stockAnalysisData.transcript?.length || stockAnalysisData.transcriptUrl)) {
-        return sendTranscriptData(stockAnalysisData);
-      }
-    } else {
-      const stockAnalysisPeriods = await resolveWithin(fetchStockAnalysisEarningsCallPeriods(ticker), 12000, []);
-      const latestPeriod = stockAnalysisPeriods[0] || null;
-      if (latestPeriod) {
-        const stockAnalysisData = await resolveWithin(
-          fetchStockAnalysisEarningsCall(ticker, latestPeriod),
-          20000,
-          null
-        );
-        if (stockAnalysisData?.available && (stockAnalysisData.transcript?.length || stockAnalysisData.transcriptUrl)) {
-          return sendTranscriptData(stockAnalysisData);
-        }
-      }
-    }
-
-    return res.json({
-      available: false,
-      symbol: ticker,
-      provider: "StockAnalysis",
-      transcript: [],
-      audioUrl: null,
-      computerReadAudio: false,
-      hasOriginalAudio: false,
-      version: EARNINGS_CALL_VERSION,
-      errors: providerErrors,
-      requestedPeriod: requestedPeriod
-        ? `${requestedPeriod.year} Q${requestedPeriod.quarter}`
-        : null,
-      message: requestedPeriod
-        ? `StockAnalysis does not have an earnings call transcript for ${ticker} ${requestedPeriod.year} Q${requestedPeriod.quarter}.`
-        : "StockAnalysis does not have an earnings call transcript for this ticker yet."
-    });
-  } catch (err) {
-    console.error("EarningsCall native fetch failed:", ticker, err.message);
-    return res.status(500).json({
-      available: false,
-      symbol: ticker,
-      transcript: [],
-      audioUrl: null,
-      error: "Earnings call transcript unavailable"
-    });
-  }
-});
-
 // =========================
 // EARNINGS CALENDAR
 // =========================
-async function fetchStockAnalysisEarningsCalendarRows(targetDates = []) {
-  const targetSet = new Set(targetDates);
-  try {
-    if (
-      stockAnalysisEarningsCalendarPageCache &&
-      Date.now() - stockAnalysisEarningsCalendarPageCache.fetchedAt < 10 * 60 * 1000
-    ) {
-      const cachedRows = stockAnalysisEarningsCalendarPageCache.rows || [];
-      return targetSet.size
-        ? cachedRows.filter((row) => targetSet.has(row.date))
-        : cachedRows;
-    }
-    if (!canUseStockAnalysis()) return [];
-
-    const response = await axios.get("https://stockanalysis.com/stocks/earnings-calendar/", {
-      headers: STOCK_ANALYSIS_HEADERS,
-      timeout: 7000
-    });
-    const html = String(response.data || "");
-    const allRows = [];
-    const parseCalendarNumber = (value) => {
-      const text = String(value || "").trim();
-      if (!text || text === "null") return null;
-      const number = Number(text);
-      return Number.isFinite(number) ? number : null;
-    };
-
-    for (const dayMatch of html.matchAll(/\{date:"(\d{4}-\d{2}-\d{2})",day:"([^"]+)",symbols:\[(.*?)\],count:/gs)) {
-      const [, date, , symbolsBlock] = dayMatch;
-
-      for (const symbolMatch of symbolsBlock.matchAll(/\{s:"([^"]+)",n:"([^"]*)",t:(null|"[^"]*"),e:([^,}]+),eg:([^,}]+),r:([^,}]+),rg:([^,}]+),m:([^,}]+)\}/g)) {
-        const [, symbol, name, timeRaw, eps, , revenue, , marketCap] = symbolMatch;
-        allRows.push({
-          date,
-          symbol,
-          company: name || symbol,
-          reportTimeCode: timeRaw === "null" ? null : timeRaw.replace(/"/g, ""),
-          epsEstimate: parseCalendarNumber(eps),
-          revenueEstimate: parseCalendarNumber(revenue),
-          marketCap: parseCalendarNumber(marketCap),
-          source: "StockAnalysis earnings calendar"
-        });
-      }
-    }
-
-    stockAnalysisEarningsCalendarPageCache = { rows: allRows, fetchedAt: Date.now() };
-    return targetSet.size
-      ? allRows.filter((row) => targetSet.has(row.date))
-      : allRows;
-  } catch (err) {
-    setStockAnalysisCooldown(err, "earnings calendar", "calendar");
-    console.log("StockAnalysis earnings calendar skipped:", err.response?.status || err.message);
-    return [];
-  }
-}
-
 app.get("/api/earnings", async (req, res) => {
   const parseIsoDate = (value) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))) return null;
@@ -23110,36 +20981,6 @@ app.get("/api/earnings", async (req, res) => {
       error.response = { status: 429 };
       throw error;
     }
-    const stockAnalysisRows = [];
-    const timeLabels = {
-      bmo: "Before open",
-      amc: "After close",
-      dmh: "During market",
-      "time-pre-market": "Before open",
-      "time-after-hours": "After close"
-    };
-    const normalizeReportTime = (...values) => {
-      for (const value of values) {
-        const raw = String(value || "").trim();
-        if (!raw) continue;
-        const text = raw.toLowerCase();
-        if (timeLabels[text]) return timeLabels[text];
-        if (/\b(before|pre[-\s]?market|premarket|open)\b/.test(text)) return "Before open";
-        if (/\b(after|post[-\s]?market|after[-\s]?hours|close)\b/.test(text)) return "After close";
-        if (/\b(during|market hours)\b/.test(text)) return "During market";
-        if (!/not supplied|unknown|n\/a/.test(text)) return raw;
-      }
-      return "Time not supplied";
-    };
-    const stockAnalysisByDateSymbol = new Map(
-      (Array.isArray(stockAnalysisRows) ? stockAnalysisRows : [])
-        .map((row) => [`${row.date}:${String(row.symbol || "").trim().toUpperCase()}`, row])
-    );
-    const stockAnalysisBySymbol = new Map();
-    (Array.isArray(stockAnalysisRows) ? stockAnalysisRows : []).forEach((row) => {
-      const symbol = String(row.symbol || "").trim().toUpperCase();
-      if (symbol && !stockAnalysisBySymbol.has(symbol)) stockAnalysisBySymbol.set(symbol, row);
-    });
     const rawFmpList = Array.isArray(fmpRows) ? fmpRows : fmpRows ? [fmpRows] : [];
     if (!rawFmpList.length) {
       if (cached?.data) return res.json({ ...cached.data, stale: true, unavailable: true });
@@ -23193,20 +21034,19 @@ app.get("/api/earnings", async (req, res) => {
       if (!dates.includes(date)) return;
       const symbol = String(row.symbol || "").trim().toUpperCase();
       if (!symbol) return;
-      const stockAnalysisRow = stockAnalysisByDateSymbol.get(`${date}:${symbol}`) || stockAnalysisBySymbol.get(symbol) || {};
       const event = {
         date,
         symbol,
-        company: row.name || row.company || stockAnalysisRow.company || symbol,
+        company: row.name || row.company || symbol,
         logo: getFinnhubLogoUrl(symbol),
-        exchange: firstText(row.exchange, row.exchangeShortName, stockAnalysisRow.exchange),
+        exchange: firstText(row.exchange, row.exchangeShortName),
         marketCap: firstFiniteNumber(
           fmpMarketCapBySymbol.get(symbol),
           row.marketCap
         ),
         fiscalQuarter: row.fiscalDateEnding ? String(row.fiscalDateEnding).slice(0, 10) : null,
-        epsEstimate: firstFiniteNumber(row.epsEstimated, row.epsEstimate, stockAnalysisRow.epsEstimate),
-        revenueEstimate: firstFiniteNumber(row.revenueEstimated, row.revenueEstimate, stockAnalysisRow.revenueEstimate),
+        epsEstimate: firstFiniteNumber(row.epsEstimated, row.epsEstimate),
+        revenueEstimate: firstFiniteNumber(row.revenueEstimated, row.revenueEstimate),
         epsActual: parseApiNumber(row.epsActual),
         revenueActual: parseApiNumber(row.revenueActual),
         source: "FMP earnings calendar"

@@ -38,32 +38,6 @@ const firstNumber = (...values) =>
 const formatPercent = (value) =>
   isNumber(value) ? `${value.toFixed(1)}%` : "N/A";
 
-const isFutureTranscriptPeriod = (period) => {
-  if (!period?.date) return false;
-  const parsed = new Date(period.date);
-  if (!Number.isFinite(parsed.getTime())) return false;
-  return parsed.getTime() > Date.now() + 12 * 60 * 60 * 1000;
-};
-
-const normalizeTranscriptPeriodOptions = (periods = []) =>
-  (Array.isArray(periods) ? periods : [])
-    .map((period) => {
-      const year = Number(period?.year);
-      const quarter = Number(period?.quarter);
-      if (!Number.isInteger(year) || !Number.isInteger(quarter)) return null;
-      return {
-        value: period.value || `${year}-Q${quarter}`,
-        label: period.label || `${year} Q${quarter}`,
-        year,
-        quarter,
-        date: period.date || null,
-        provider: period.provider || null
-      };
-    })
-    .filter(Boolean)
-    .filter((period) => !isFutureTranscriptPeriod(period))
-    .sort((a, b) => (b.year * 4 + b.quarter) - (a.year * 4 + a.quarter));
-
 const COMPANY_DOCUMENT_TABS = [
   { id: "results", label: "Latest Results" },
   { id: "annual", label: "Annual Reports" },
@@ -933,7 +907,6 @@ const STOCK_OVERVIEW_SECTIONS = [
   { id: "analyst-estimates", label: "Estimates", icon: "target" },
   { id: "similar-companies", label: "Peers", icon: "peers" },
   { id: "ai-analysis", label: "AI Analysis", icon: "spark" },
-  { id: "earnings-calls", label: "Transcript", icon: "transcript" },
   { id: "company-documents", label: "Documents", icon: "document" },
   { id: "stock-news", label: "News", icon: "news" }
 ];
@@ -1000,15 +973,6 @@ const renderOverviewGuideIcon = (icon) => {
           <path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z" />
         </svg>
       );
-    case "transcript":
-      return (
-        <svg {...commonProps}>
-          <path d="M6 5h12" />
-          <path d="M6 10h12" />
-          <path d="M6 15h8" />
-          <path d="M6 20h5" />
-        </svg>
-      );
     case "document":
       return (
         <svg {...commonProps}>
@@ -1052,7 +1016,7 @@ const HOME_FEATURES = [
     icon: "overview",
     label: "Stock Overview",
     title: "Everything on one company page",
-    text: "Search a ticker and review live pricing, financial charts, metrics, estimates, peer comps, AI analysis, transcripts, and company documents together."
+    text: "Search a ticker and review live pricing, financial charts, metrics, estimates, peer comps, AI analysis, and company documents together."
   },
   {
     id: "etfs",
@@ -1168,7 +1132,7 @@ const HOME_TOUR_SECTIONS = [
     label: "Stock Overview",
     eyebrow: "Company command center",
     title: "One page for the full stock story.",
-    text: "Search a company and move through live pricing, financial charts, valuation, estimates, peers, AI analysis, transcripts, filings, and company news without jumping between tabs.",
+    text: "Search a company and move through live pricing, financial charts, valuation, estimates, peers, AI analysis, filings, and company news without jumping between tabs.",
     bullets: ["Price chart and watchlist-aware quote", "Annual and quarterly financial charts", "Metrics, estimates, peers, documents, and news"],
     snapshot: "overview"
   },
@@ -1381,7 +1345,7 @@ const POLICY_CONTENT = {
     sections: [
       {
         title: "What MrktRally provides",
-        text: "MrktRally brings together stock charts, financial statements, metrics, analyst estimates, filings, transcripts, calendars, market maps, ETF and fund research, watchlists, portfolio organization tools, screeners, treasury rates, crypto data, forex data, news, and other market research features. The site is meant to help you study companies and markets more efficiently in one place."
+        text: "MrktRally brings together stock charts, financial statements, metrics, analyst estimates, filings, calendars, market maps, ETF and fund research, watchlists, portfolio organization tools, screeners, treasury rates, crypto data, forex data, news, and other market research features. The site is meant to help you study companies and markets more efficiently in one place."
       },
       {
         title: "Not a financial service",
@@ -1405,7 +1369,7 @@ const POLICY_CONTENT = {
       },
       {
         title: "AI and generated content",
-        text: "AI summaries, earnings call analysis, stock analysis, management questions, and other generated content are research aids. They may be incomplete, wrong, outdated, or overly confident. You should treat them as starting points for your own work and verify important claims against original filings, transcripts, company releases, and other primary sources."
+        text: "AI summaries, equity analysis, earnings analysis, management questions, and other generated content are research aids. They may be incomplete, wrong, outdated, or overly confident. You should treat them as starting points for your own work and verify important claims against original filings, company releases, and other primary sources."
       },
       {
         title: "Acceptable use",
@@ -1413,7 +1377,7 @@ const POLICY_CONTENT = {
       },
       {
         title: "Availability and changes",
-        text: "MrktRally is an active project and may change over time. Pages, calculations, layouts, metrics, chart ranges, data fields, providers, calendars, transcripts, filings, and features may be added, removed, renamed, reorganized, limited, or changed to improve accuracy, speed, reliability, security, cost, or user experience."
+        text: "MrktRally is an active project and may change over time. Pages, calculations, layouts, metrics, chart ranges, data fields, providers, calendars, filings, and features may be added, removed, renamed, reorganized, limited, or changed to improve accuracy, speed, reliability, security, cost, or user experience."
       },
       {
         title: "No guarantee of uptime",
@@ -1421,7 +1385,7 @@ const POLICY_CONTENT = {
       },
       {
         title: "Intellectual property",
-        text: "The MrktRally name, design, interface, code, branding, custom visuals, and organization of the site belong to MrktRally or its creator. Market data, company names, logos, filings, transcripts, and third-party materials belong to their respective owners and may be subject to separate terms."
+        text: "The MrktRally name, design, interface, code, branding, custom visuals, and organization of the site belong to MrktRally or its creator. Market data, company names, logos, filings, and third-party materials belong to their respective owners and may be subject to separate terms."
       },
       {
         title: "Contact and enforcement",
@@ -1443,11 +1407,11 @@ const POLICY_CONTENT = {
       },
       {
         title: "Research requests",
-        text: "When you search a stock, ETF, fund, crypto symbol, forex pair, market calendar, news page, filing, transcript, or chart, MrktRally may process the symbol, date range, selected page, selected period, selected metric, and related request details. These requests help the app fetch the correct information and improve performance."
+        text: "When you search a stock, ETF, fund, crypto symbol, forex pair, market calendar, news page, filing, or chart, MrktRally may process the symbol, date range, selected page, selected period, selected metric, and related request details. These requests help the app fetch the correct information and improve performance."
       },
       {
         title: "Market data providers",
-        text: "MrktRally uses providers such as FMP and Stock Analysis for market data, company financials, estimates, filings, earnings calls, ETF and fund data, calendars, news, and charts. When the site requests data, those providers may receive the requested symbol, endpoint, date range, or similar technical request information."
+        text: "MrktRally primarily uses the Financial Modeling Prep (FMP) API for market data, company financials, estimates, ETF and fund information, calendars, quotes, and charts. Some features may also use other configured market-data and news APIs, including Finnhub, Nasdaq, and Alpha Vantage, or retrieve public filings and issuer materials from official sources such as the U.S. Securities and Exchange Commission and company investor-relations websites. These providers may receive a requested symbol, endpoint, date range, or similar technical request information."
       },
       {
         title: "Hosting and infrastructure",
@@ -1543,7 +1507,7 @@ const POLICY_CONTENT = {
       },
       {
         title: "Data may be wrong or delayed",
-        text: "Prices, estimates, financial statements, charts, filings, transcripts, ratings, calendars, news, market maps, after-hours data, and other information may be delayed, incomplete, stale, revised, unavailable, or inaccurate. Different providers can report different numbers, especially around earnings releases, foreign stocks, ADRs, fiscal-year changes, and restatements."
+        text: "Prices, estimates, financial statements, charts, filings, ratings, calendars, news, market maps, after-hours data, and other information may be delayed, incomplete, stale, revised, unavailable, or inaccurate. Different providers can report different numbers, especially around earnings releases, foreign stocks, ADRs, fiscal-year changes, and restatements."
       },
       {
         title: "Provider differences",
@@ -1555,7 +1519,7 @@ const POLICY_CONTENT = {
       },
       {
         title: "AI and generated analysis",
-        text: "Any AI-generated summaries, stock analysis, earnings call highlights, management questions, or research notes are informational summaries only. They can miss context, misunderstand data, overstate confidence, or be based on incomplete information. Review the underlying data, filings, transcripts, and company releases before relying on any analysis."
+        text: "Any AI-generated summaries, equity analysis, earnings highlights, management questions, or research notes are informational summaries only. They can miss context, misunderstand data, overstate confidence, or be based on incomplete information. Review the underlying data, filings, and company releases before relying on any analysis."
       },
       {
         title: "Portfolio calculations",
@@ -1579,7 +1543,7 @@ const POLICY_CONTENT = {
       },
       {
         title: "Independent project",
-        text: "MrktRally is an independent research project and is not endorsed by, sponsored by, or affiliated with FMP, Stock Analysis, MongoDB, Google, GitHub, Vercel, Render, or any company shown on the site unless specifically stated. Company names, logos, and data belong to their respective owners."
+        text: "MrktRally is an independent research project and is not endorsed by, sponsored by, or affiliated with Financial Modeling Prep, the U.S. Securities and Exchange Commission, MongoDB, Google, GitHub, Vercel, Render, or any company shown on the site unless specifically stated. Company names, logos, filings, and data belong to their respective owners."
       },
       {
         title: "Verify before acting",
@@ -1589,7 +1553,7 @@ const POLICY_CONTENT = {
   }
 };
 
-const CURRENT_POLICY_VERSION = "2026-07-30";
+const CURRENT_POLICY_VERSION = "2026-09-19";
 
 const renderHomeFeatureIcon = (icon) => {
   const commonProps = {
@@ -3757,22 +3721,6 @@ const stabilizeRefreshingStockData = (previous, incoming) => {
   return stable;
 };
 
-const splitForSpeech = (text, maxLength = 1200) => {
-  const sentences = String(text || "").match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [];
-  const chunks = [];
-  let chunk = "";
-
-  for (const sentence of sentences) {
-    if (chunk && chunk.length + sentence.length > maxLength) {
-      chunks.push(chunk.trim());
-      chunk = "";
-    }
-    chunk += sentence;
-  }
-  if (chunk.trim()) chunks.push(chunk.trim());
-  return chunks;
-};
-
 const toLocalIsoDate = (date) => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -4886,7 +4834,6 @@ function App() {
   const stockSearchBlurTimerRef = useRef(null);
   const latestComparisonRequest = useRef(0);
   const latestAiRequest = useRef(0);
-  const latestEarningsCallRequest = useRef(0);
   const liveEarningsHydratedRef = useRef("");
   const calendarRetryTimerRef = useRef(null);
   const calendarRequestRef = useRef(0);
@@ -4898,9 +4845,6 @@ function App() {
   const firstStockLoadSettled = useRef(false);
   const previousMarketEventRef = useRef(null);
   const firedMarketEventsRef = useRef(new Set());
-  const speechQueueRef = useRef([]);
-  const speechIndexRef = useRef(0);
-  const speechUtteranceRef = useRef(null);
   const initialSavedListsRef = useRef(null);
   const initialSavedUserRef = useRef(null);
   const initialSavedQuotesRef = useRef(null);
@@ -5295,9 +5239,6 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [isMrRallyLoading, setIsMrRallyLoading] =
     useState(false);
 
-  const [earningsCall, setEarningsCall] =
-    useState(null);
-
   const [companyDocuments, setCompanyDocuments] =
     useState(null);
 
@@ -5306,30 +5247,6 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
 
   const [isCompanyDocumentsLoading, setIsCompanyDocumentsLoading] =
     useState(false);
-
-  const [selectedTranscriptPeriod, setSelectedTranscriptPeriod] =
-    useState("");
-
-  const [transcriptPeriodOptions, setTranscriptPeriodOptions] =
-    useState([]);
-
-  const [isTranscriptPeriodsLoading, setIsTranscriptPeriodsLoading] =
-    useState(false);
-
-  const [isEarningsCallLoading, setIsEarningsCallLoading] =
-    useState(false);
-
-  const [isSpeechPlaying, setIsSpeechPlaying] =
-    useState(false);
-
-  const [isSpeechPaused, setIsSpeechPaused] =
-    useState(false);
-
-  const [speechRate, setSpeechRate] =
-    useState(1);
-
-  const [speechError, setSpeechError] =
-    useState("");
 
    const [watchlist, setWatchlist] =
   useState(() => initialSavedListsRef.current.watchlist);
@@ -7024,22 +6941,14 @@ useEffect(() => {
     const requestId = ++latestStockRequest.current;
     const cachedStock = stockMemoryCacheRef.current.get(ticker) || null;
     latestAiRequest.current += 1;
-    latestEarningsCallRequest.current += 1;
     stockSidecarRequestRef.current = "";
     stockOverviewExtrasRequestRef.current = "";
     setStockData(cachedStock);
     if (cachedStock) firstStockLoadSettled.current = true;
     setAiAnalysis(null);
-    setEarningsCall(null);
     setCompanyDocuments(null);
     setSimilarCompanies([]);
     setActiveCompanyDocumentTab("results");
-    setTranscriptPeriodOptions([]);
-    setSelectedTranscriptPeriod("");
-    window.speechSynthesis?.cancel();
-    setIsSpeechPlaying(false);
-    setIsSpeechPaused(false);
-    setSpeechError("");
     setIsStockLoading(!cachedStock);
     loadSavedPrices([ticker], 0, { live: true });
     loadStock(ticker, 0, requestId);
@@ -7180,10 +7089,6 @@ useEffect(() => {
     };
   }, [ticker, loadedStockSymbol, activePage, isStockLoading, stockData?.symbol, financialChartMode]);
 
-  useEffect(() => () => {
-    window.speechSynthesis?.cancel();
-  }, []);
-
   useEffect(() => {
     if (activePage !== "overview" || !loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
     let isActive = true;
@@ -7238,136 +7143,6 @@ useEffect(() => {
       if (retryTimer) window.clearTimeout(retryTimer);
     };
   }, [ticker, loadedStockSymbol, isStockLoading, activePage]);
-
-  useEffect(() => {
-    if (activePage !== "overview" || !loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
-    let isActive = true;
-    let retryTimer;
-    setIsTranscriptPeriodsLoading(true);
-
-    const loadEarningsCallPeriods = (attempt = 0) => {
-      if (!isActive) return;
-      let willRetry = false;
-      axios.get(`${API_URL}/api/earnings-call-periods/${ticker}`, { timeout: 35000 })
-        .then((response) => {
-          if (!isActive) return;
-          const periods = normalizeTranscriptPeriodOptions(response.data?.periods || []);
-          if (!periods.length && attempt < 4) {
-            willRetry = true;
-            retryTimer = window.setTimeout(
-              () => loadEarningsCallPeriods(attempt + 1),
-              Math.min(12000, 1800 + attempt * 2200)
-            );
-            return;
-          }
-          setTranscriptPeriodOptions(periods);
-          setSelectedTranscriptPeriod((current) =>
-            periods.some((period) => period.value === current)
-              ? current
-              : periods[0]?.value || ""
-          );
-          if (!periods.length) {
-            setEarningsCall({
-              available: false,
-              message: "No conference call transcripts are available for this ticker yet."
-            });
-          }
-        })
-        .catch((error) => {
-          console.error("Earnings call periods failed", error);
-          if (!isActive) return;
-          if (attempt < 4) {
-            willRetry = true;
-            retryTimer = window.setTimeout(
-              () => loadEarningsCallPeriods(attempt + 1),
-              Math.min(12000, 1800 + attempt * 2200)
-            );
-            return;
-          }
-          setTranscriptPeriodOptions([]);
-          setSelectedTranscriptPeriod("");
-          setEarningsCall({
-            available: false,
-            message: "Conference call options are temporarily unavailable."
-          });
-        })
-        .finally(() => {
-          if (isActive && !willRetry) setIsTranscriptPeriodsLoading(false);
-        });
-    };
-
-    const startTimer = window.setTimeout(loadEarningsCallPeriods, 2600);
-
-    return () => {
-      isActive = false;
-      window.clearTimeout(startTimer);
-      if (retryTimer) window.clearTimeout(retryTimer);
-    };
-  }, [ticker, loadedStockSymbol, isStockLoading, activePage]);
-
-  useEffect(() => {
-    if (activePage !== "overview" || !loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading || isTranscriptPeriodsLoading) return;
-    const requestId = ++latestEarningsCallRequest.current;
-    const selectedPeriod = transcriptPeriodOptions.find((period) => period.value === selectedTranscriptPeriod);
-    if (!selectedPeriod) {
-      setIsEarningsCallLoading(false);
-      if (!transcriptPeriodOptions.length) {
-        setEarningsCall({
-          available: false,
-          message: "No conference call transcripts are available for this ticker yet."
-        });
-      }
-      return;
-    }
-    const delay = 100;
-    const timer = window.setTimeout(() => {
-      setIsEarningsCallLoading(true);
-
-      const loadSelectedEarningsCall = (attempt = 0) => {
-        axios.get(`${API_URL}/api/earnings-call/${ticker}`, {
-          params: {
-            year: selectedPeriod.year,
-            quarter: selectedPeriod.quarter,
-            attempt
-          },
-          timeout: 50000
-        })
-          .then((response) => {
-            if (requestId !== latestEarningsCallRequest.current) return;
-            const data = response.data || {};
-            const hasTranscript = Boolean(data.transcript?.length || data.transcriptUrl);
-            if (!hasTranscript && attempt < 2) {
-              window.setTimeout(() => {
-                if (requestId === latestEarningsCallRequest.current) {
-                  loadSelectedEarningsCall(attempt + 1);
-                }
-              }, 1200 + attempt * 1800);
-              return;
-            }
-            setEarningsCall(data);
-            setIsEarningsCallLoading(false);
-          })
-          .catch((error) => {
-            console.error("Earnings call failed", error);
-            if (requestId !== latestEarningsCallRequest.current) return;
-            if (attempt < 2) {
-              window.setTimeout(() => {
-                if (requestId === latestEarningsCallRequest.current) {
-                  loadSelectedEarningsCall(attempt + 1);
-                }
-              }, 1200 + attempt * 1800);
-              return;
-            }
-            setEarningsCall({ available: false });
-            setIsEarningsCallLoading(false);
-          });
-      };
-
-      loadSelectedEarningsCall();
-      });
-
-    return () => window.clearTimeout(timer);
-  }, [ticker, loadedStockSymbol, isStockLoading, isTranscriptPeriodsLoading, selectedTranscriptPeriod, transcriptPeriodOptions, activePage]);
 
   useEffect(() => {
     if (activePage !== "overview" || !stockData?.price || stockData.symbol !== ticker) return;
@@ -11019,71 +10794,6 @@ const activeCompanyDocumentCards =
         ? companyDocumentCards
         : allSecDocumentCards.filter((document) => document.category === activeCompanyDocumentTab);
 
-const stopComputerRead = () => {
-  window.speechSynthesis?.cancel();
-  speechQueueRef.current = [];
-  speechIndexRef.current = 0;
-  speechUtteranceRef.current = null;
-  setIsSpeechPlaying(false);
-  setIsSpeechPaused(false);
-};
-
-const playComputerRead = () => {
-  if (!("speechSynthesis" in window)) {
-    setSpeechError("Computer-read audio is not supported by this browser.");
-    return;
-  }
-  setSpeechError("");
-  if (isSpeechPlaying && isSpeechPaused) {
-    window.speechSynthesis.resume();
-    setIsSpeechPaused(false);
-    return;
-  }
-  if (isSpeechPlaying) return;
-
-  const queue = (earningsCall?.transcript || []).flatMap((section) =>
-    splitForSpeech(`${section.speaker}. ${section.text}`)
-  );
-  if (!queue.length) return;
-
-  window.speechSynthesis.cancel();
-  speechQueueRef.current = queue;
-  speechIndexRef.current = 0;
-  setIsSpeechPlaying(true);
-  setIsSpeechPaused(false);
-
-  const speakNext = () => {
-    const nextText = speechQueueRef.current[speechIndexRef.current];
-    if (!nextText) {
-      stopComputerRead();
-      return;
-    }
-    speechIndexRef.current += 1;
-    const utterance = new SpeechSynthesisUtterance(nextText);
-    utterance.rate = speechRate;
-    utterance.onend = speakNext;
-    utterance.onerror = (event) => {
-      if (event.error !== "canceled" && event.error !== "interrupted") {
-        stopComputerRead();
-      }
-    };
-    speechUtteranceRef.current = utterance;
-    window.speechSynthesis.speak(utterance);
-  };
-  speakNext();
-};
-
-const pauseComputerRead = () => {
-  if (!isSpeechPlaying) return;
-  if (isSpeechPaused) {
-    window.speechSynthesis.resume();
-    setIsSpeechPaused(false);
-  } else {
-    window.speechSynthesis.pause();
-    setIsSpeechPaused(true);
-  }
-};
-
 const marketSignal = getMarketSignal(marketIndices);
 const marketClock = getMarketClock(marketClockNow);
 const displayedStockPrice = stockChartMeta?.price ?? stockData?.price;
@@ -12929,8 +12639,7 @@ return (
               <strong>MrktRally<span aria-label="trademark">™</span></strong>
             </div>
             <div className="home-rally-badge">Built for focused market research</div>
-            <p>Market data by FMP</p>
-            <p>Earnings calls and ETFs by Stock Analysis</p>
+            <p>Primary market and fund data powered by FMP APIs</p>
             <a
               className="home-rally-contact"
               href="mailto:mrktrally@gmail.com?subject=MrktRally%20Support"
@@ -15080,7 +14789,7 @@ return (
       <h2 id="stock-overview-title">Stock Overview</h2>
       <p>
         Search a company and review pricing, financial charts, metrics, estimates, peer comps,
-        AI analysis, transcripts, filings, and news in one focused research view.
+        AI analysis, filings, and news in one focused research view.
       </p>
     </div>
     <form
@@ -15157,7 +14866,7 @@ return (
       <strong className="etf-type-badge">Public company</strong>
       <p>
         Track the latest quote, chart history, financials, valuation, estimates, filings,
-        transcripts, market news, and company-specific research in one page.
+        market news, and company-specific research in one page.
       </p>
     </div>
     <div className="etf-price-card stock-overview-price-card">
@@ -15291,13 +15000,13 @@ return (
 <div className="chart-section research-section ai-stock-section" id="ai-analysis">
 
   <h2 className="section-title">
-    AI Stock Analysis
+    AI Equity Analysis
   </h2>
 
   <div className="ai-analysis-box">
     {isAiLoading && !aiAnalysis ? (
       <div className="ai-text">Building analysis...</div>
-    ) : aiAnalysis?.verdict && aiAnalysis?.stockAnalysis ? (
+    ) : aiAnalysis?.verdict && aiAnalysis?.equityAnalysis ? (
       <>
         <div className={`ai-brief-hero ${String(aiAnalysis.verdict.stance || "").toLowerCase()}`}>
           <div>
@@ -15318,7 +15027,7 @@ return (
           <div className="ai-card">
             <h3 className="ai-title">Valuation</h3>
             <ul className="ai-list">
-              {aiAnalysis.stockAnalysis.valuation.map((item) => (
+              {aiAnalysis.equityAnalysis.valuation.map((item) => (
                 <li key={item}>{item}</li>
               ))}
             </ul>
@@ -15327,39 +15036,39 @@ return (
           <div className="ai-card">
             <h3 className="ai-title">Financial Quality</h3>
             <ul className="ai-list">
-              {aiAnalysis.stockAnalysis.financialQuality.map((item) => (
+              {aiAnalysis.equityAnalysis.financialQuality.map((item) => (
                 <li key={item}>{item}</li>
               ))}
             </ul>
           </div>
 
-          {aiAnalysis.stockAnalysis.balanceSheet?.length ? (
+          {aiAnalysis.equityAnalysis.balanceSheet?.length ? (
             <div className="ai-card">
               <h3 className="ai-title">Balance Sheet</h3>
               <ul className="ai-list">
-                {aiAnalysis.stockAnalysis.balanceSheet.map((item) => (
+                {aiAnalysis.equityAnalysis.balanceSheet.map((item) => (
                   <li key={item}>{item}</li>
                 ))}
               </ul>
             </div>
           ) : null}
 
-          {aiAnalysis.stockAnalysis.returnsAndEfficiency?.length ? (
+          {aiAnalysis.equityAnalysis.returnsAndEfficiency?.length ? (
             <div className="ai-card">
               <h3 className="ai-title">Returns & Efficiency</h3>
               <ul className="ai-list">
-                {aiAnalysis.stockAnalysis.returnsAndEfficiency.map((item) => (
+                {aiAnalysis.equityAnalysis.returnsAndEfficiency.map((item) => (
                   <li key={item}>{item}</li>
                 ))}
               </ul>
             </div>
           ) : null}
 
-          {aiAnalysis.stockAnalysis.estimateSetup?.length ? (
+          {aiAnalysis.equityAnalysis.estimateSetup?.length ? (
             <div className="ai-card">
               <h3 className="ai-title">Estimate Setup</h3>
               <ul className="ai-list">
-                {aiAnalysis.stockAnalysis.estimateSetup.map((item) => (
+                {aiAnalysis.equityAnalysis.estimateSetup.map((item) => (
                   <li key={item}>{item}</li>
                 ))}
               </ul>
@@ -15369,7 +15078,7 @@ return (
           <div className="ai-card bullish-card">
             <h3 className="ai-title">Catalysts</h3>
             <ul className="ai-list">
-              {aiAnalysis.stockAnalysis.catalysts.map((item) => (
+              {aiAnalysis.equityAnalysis.catalysts.map((item) => (
                 <li key={item}>{item}</li>
               ))}
             </ul>
@@ -15378,7 +15087,7 @@ return (
           <div className="ai-card bearish-card">
             <h3 className="ai-title">Risks</h3>
             <ul className="ai-list">
-              {aiAnalysis.stockAnalysis.risks.map((item) => (
+              {aiAnalysis.equityAnalysis.risks.map((item) => (
                 <li key={item}>{item}</li>
               ))}
             </ul>
@@ -15386,7 +15095,7 @@ return (
         </div>
 
         <div className="ai-analysis-grid ai-scenario-grid">
-          {aiAnalysis.stockAnalysis.scenarios.map((scenario) => (
+          {aiAnalysis.equityAnalysis.scenarios.map((scenario) => (
             <div className="ai-card" key={scenario.label}>
               <h3 className="ai-title">{scenario.label} Case</h3>
               <div className="comparison-price">{formatPrice(scenario.price)}</div>
@@ -15402,12 +15111,12 @@ return (
   </div>
 
 </div>
-{/* AI EARNINGS TRANSCRIPT ANALYSIS */}
+{/* AI EARNINGS ANALYSIS */}
 
 <div className="chart-section research-section ai-earnings-section">
 
   <h2 className="section-title">
-    AI Earnings Call Analysis
+    AI Earnings Analysis
   </h2>
 
   <div className="ai-earnings-panel">
@@ -15502,103 +15211,6 @@ return (
       <div className="ai-card"><p className="ai-text">Earnings analysis is temporarily unavailable.</p></div>
     )}
 
-  </div>
-
-</div>
-{/* EARNINGS CALL TRANSCRIPTS */}
-
-<div className="chart-section research-section earnings-call-section" id="earnings-calls">
-
-  <h2 className="section-title">
-    Earnings Call Transcript
-  </h2>
-
-  <div className="earnings-call-panel">
-    <div className="transcript-toolbar">
-      <label htmlFor="transcript-period">
-        Quarter
-      </label>
-      <select
-        id="transcript-period"
-        value={selectedTranscriptPeriod}
-        disabled={isTranscriptPeriodsLoading || !transcriptPeriodOptions.length}
-        onChange={(event) => {
-          stopComputerRead();
-          setEarningsCall(null);
-          setSelectedTranscriptPeriod(event.target.value);
-        }}
-      >
-        {isTranscriptPeriodsLoading ? (
-          <option value="">Loading calls...</option>
-        ) : transcriptPeriodOptions.length ? transcriptPeriodOptions.map((period) => (
-          <option key={period.value} value={period.value}>
-            {period.label}
-          </option>
-        )) : (
-          <option value="">No calls found</option>
-        )}
-      </select>
-    </div>
-
-    {isTranscriptPeriodsLoading || isEarningsCallLoading || (!earningsCall && stockData?.refreshing) ? (
-      <div className="earnings-call-empty">Loading earnings calls...</div>
-    ) : earningsCall?.available && (earningsCall?.transcript?.length || earningsCall?.transcriptUrl) ? (
-      <>
-        <div className="earnings-call-header">
-          <div>
-            <div className="earnings-call-title">
-              {earningsCall.title || `${ticker} earnings call`}
-            </div>
-            <div className="earnings-call-meta">
-              {[earningsCall.fiscalPeriod, earningsCall.fiscalYear, earningsCall.date]
-                .filter(Boolean)
-                .join(" • ")}
-            </div>
-          </div>
-        </div>
-
-        {earningsCall.audioUrl ? (
-          <div className="earnings-call-audio">
-            <div>
-              <span>Earnings Call Audio</span>
-              <small>Conference call replay</small>
-            </div>
-            <audio controls preload="none" src={earningsCall.audioUrl}>
-              Your browser does not support earnings call audio.
-            </audio>
-          </div>
-        ) : null}
-
-        {earningsCall.transcript?.length ? (
-          <div className="transcript-reader">
-            <div className="transcript-content">
-              {earningsCall.transcript.map((section) => (
-                  <div className="transcript-section" key={section.id}>
-                    <div className="transcript-speaker">
-                      {section.speaker}
-                    </div>
-                    <p>{section.text}</p>
-                  </div>
-              ))}
-            </div>
-          </div>
-        ) : earningsCall.transcriptUrl ? (
-          <iframe
-            className="transcript-frame"
-            title={`${ticker} earnings call transcript`}
-            src={earningsCall.transcriptUrl}
-          />
-        ) : (
-          <div className="earnings-call-empty">
-            Transcript is not available for this ticker yet.
-          </div>
-        )}
-      </>
-    ) : (
-      <div className="earnings-call-empty">
-        {earningsCall?.message || "Earnings call transcript is not available for this ticker yet."}
-      </div>
-    )}
   </div>
 
 </div>
