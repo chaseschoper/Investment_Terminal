@@ -3826,6 +3826,28 @@ const storeCalendar = (cacheKey, calendar) => {
   }
 };
 
+const CALENDAR_REPORT_CACHE_PREFIX = "mrktrally-earnings-report-v1:";
+
+const readStoredCalendarReport = (symbol) => {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(`${CALENDAR_REPORT_CACHE_PREFIX}${symbol}`) || "null");
+    return stored?.rows?.length ? stored : null;
+  } catch {
+    return null;
+  }
+};
+
+const storeCalendarReport = (symbol, report) => {
+  try {
+    window.localStorage.setItem(
+      `${CALENDAR_REPORT_CACHE_PREFIX}${symbol}`,
+      JSON.stringify({ ...report, cachedAt: new Date().toISOString() })
+    );
+  } catch {
+    // Earnings reports still work when browser storage is unavailable.
+  }
+};
+
 const formatCalendarMoney = (value, missingLabel = "N/A") => {
   if (!isNumber(value)) return missingLabel;
   const absolute = Math.abs(value);
@@ -4869,6 +4891,8 @@ function App() {
   const calendarRetryTimerRef = useRef(null);
   const calendarRequestRef = useRef(0);
   const calendarDateSelectionRef = useRef({ key: "", userSelected: false });
+  const calendarReportRequestRef = useRef(0);
+  const activeCalendarReportSymbolRef = useRef("");
   const calendarReportRetryTimersRef = useRef({});
   const initialSavedPricesLoaded = useRef(false);
   const firstStockLoadSettled = useRef(false);
@@ -5734,7 +5758,10 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
     useState({});
 
   const [loadingCalendarReportSymbol, setLoadingCalendarReportSymbol] =
-    useState("");
+  useState("");
+
+  const [calendarReportError, setCalendarReportError] =
+  useState("");
 
   const [selectedLiveEarningsEvent, setSelectedLiveEarningsEvent] =
     useState(null);
@@ -7445,11 +7472,26 @@ useEffect(() => {
   }, [activePage, earningsWeekStart, calendarMode]);
 
   useEffect(() => () => {
+    calendarReportRequestRef.current += 1;
+    activeCalendarReportSymbolRef.current = "";
     Object.values(calendarReportRetryTimersRef.current || {}).forEach((timer) => {
       if (timer) window.clearTimeout(timer);
     });
     calendarReportRetryTimersRef.current = {};
   }, []);
+
+  useEffect(() => {
+    if (activePage === "earnings-calendar" && calendarMode === "earnings") return;
+    calendarReportRequestRef.current += 1;
+    activeCalendarReportSymbolRef.current = "";
+    Object.values(calendarReportRetryTimersRef.current || {}).forEach((timer) => {
+      if (timer) window.clearTimeout(timer);
+    });
+    calendarReportRetryTimersRef.current = {};
+    setLoadingCalendarReportSymbol("");
+    setCalendarReportError("");
+    setSelectedCalendarEvent(null);
+  }, [activePage, calendarMode]);
 
   useEffect(() => {
     if (activePage !== "earnings-calendar" || calendarMode !== "live-earnings" || !selectedLiveEarningsEvent?.symbol) return;
@@ -8058,11 +8100,21 @@ const loadUserData = async () => {
     }
   };
 
-  const openCalendarEarningsReport = async (event, attempt = 0) => {
+  const cancelCalendarEarningsReport = () => {
+    calendarReportRequestRef.current += 1;
+    activeCalendarReportSymbolRef.current = "";
+    Object.values(calendarReportRetryTimersRef.current || {}).forEach((timer) => {
+      if (timer) window.clearTimeout(timer);
+    });
+    calendarReportRetryTimersRef.current = {};
+    setLoadingCalendarReportSymbol("");
+    setCalendarReportError("");
+    setSelectedCalendarEvent(null);
+  };
+
+  const loadCalendarEarningsReport = async (event, requestId, attempt = 0) => {
     const symbol = String(event?.symbol || "").trim().toUpperCase();
-    if (!symbol) return;
-    setSelectedCalendarEvent(event);
-    if (calendarEarningsReports[symbol]?.rows?.length) return;
+    if (!symbol || requestId !== calendarReportRequestRef.current || activeCalendarReportSymbolRef.current !== symbol) return;
     if (calendarReportRetryTimersRef.current[symbol]) {
       window.clearTimeout(calendarReportRetryTimersRef.current[symbol]);
       delete calendarReportRetryTimersRef.current[symbol];
@@ -8073,30 +8125,71 @@ const loadUserData = async () => {
         `${API_URL}/api/earnings-report/${encodeURIComponent(symbol)}`,
         { params: { limit: 16, _: Date.now() }, timeout: 9000 }
       );
+      if (requestId !== calendarReportRequestRef.current || activeCalendarReportSymbolRef.current !== symbol) return;
       const rows = Array.isArray(response.data?.rows) ? response.data.rows : [];
       if (rows.length) {
         setCalendarEarningsReports((reports) => ({
           ...reports,
           [symbol]: response.data
         }));
+        storeCalendarReport(symbol, response.data);
+        setCalendarReportError("");
         setLoadingCalendarReportSymbol("");
         return;
       }
-      calendarReportRetryTimersRef.current[symbol] = window.setTimeout(
-        () => openCalendarEarningsReport(event, attempt + 1),
-        Math.min(5000 + attempt * 2000, 20000)
-      );
+      if ((response.data?.pending || response.data?.unavailable) && attempt < 3) {
+        calendarReportRetryTimersRef.current[symbol] = window.setTimeout(
+          () => loadCalendarEarningsReport(event, requestId, attempt + 1),
+          Math.min(4000 + attempt * 3000, 12000)
+        );
+        return;
+      }
+      setCalendarReportError("Earnings history is temporarily unavailable. Please try again.");
+      setLoadingCalendarReportSymbol("");
     } catch (err) {
       console.error(err);
-      calendarReportRetryTimersRef.current[symbol] = window.setTimeout(
-        () => openCalendarEarningsReport(event, attempt + 1),
-        Math.min(5000 + attempt * 2000, 20000)
-      );
+      if (requestId !== calendarReportRequestRef.current || activeCalendarReportSymbolRef.current !== symbol) return;
+      if (attempt < 3) {
+        calendarReportRetryTimersRef.current[symbol] = window.setTimeout(
+          () => loadCalendarEarningsReport(event, requestId, attempt + 1),
+          Math.min(4000 + attempt * 3000, 12000)
+        );
+        return;
+      }
+      setCalendarReportError("Earnings history is temporarily unavailable. Please try again.");
+      setLoadingCalendarReportSymbol("");
     } finally {
-      if (!calendarReportRetryTimersRef.current[symbol]) {
+      if (
+        requestId === calendarReportRequestRef.current &&
+        activeCalendarReportSymbolRef.current === symbol &&
+        !calendarReportRetryTimersRef.current[symbol]
+      ) {
         setLoadingCalendarReportSymbol("");
       }
     }
+  };
+
+  const openCalendarEarningsReport = async (event) => {
+    const symbol = String(event?.symbol || "").trim().toUpperCase();
+    if (!symbol) return;
+    calendarReportRequestRef.current += 1;
+    const requestId = calendarReportRequestRef.current;
+    activeCalendarReportSymbolRef.current = symbol;
+    Object.values(calendarReportRetryTimersRef.current || {}).forEach((timer) => {
+      if (timer) window.clearTimeout(timer);
+    });
+    calendarReportRetryTimersRef.current = {};
+    setSelectedCalendarEvent(event);
+    setCalendarReportError("");
+
+    const cachedReport = calendarEarningsReports[symbol] || readStoredCalendarReport(symbol);
+    if (cachedReport?.rows?.length) {
+      setCalendarEarningsReports((reports) => ({ ...reports, [symbol]: cachedReport }));
+      setLoadingCalendarReportSymbol("");
+      return;
+    }
+
+    await loadCalendarEarningsReport(event, requestId);
   };
 
   const openLiveEarningsEvent = async (event) => {
@@ -18205,7 +18298,7 @@ return (
         role="dialog"
         aria-modal="true"
         aria-label={`${selectedCalendarEvent.symbol} earnings report`}
-        onClick={() => setSelectedCalendarEvent(null)}
+        onClick={cancelCalendarEarningsReport}
       >
         <div
           className="calendar-report-panel"
@@ -18246,7 +18339,7 @@ return (
               <button
                 type="button"
                 aria-label="Close earnings report"
-                onClick={() => setSelectedCalendarEvent(null)}
+                onClick={cancelCalendarEarningsReport}
               >
                 Close
               </button>
@@ -18287,7 +18380,9 @@ return (
               ))}
             </div>
           ) : (
-            <div className="calendar-empty">No earnings report rows available yet.</div>
+            <div className="calendar-empty">
+              {calendarReportError || "No earnings report rows available yet."}
+            </div>
           )}
         </div>
       </div>

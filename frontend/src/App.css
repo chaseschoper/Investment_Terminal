@@ -214,6 +214,8 @@ body {
 
 .home-features-heading {
   width: min(860px, 100%);
+  align-self: flex-start;
+  text-align: left;
 }
 
 .home-features-heading h2 {
