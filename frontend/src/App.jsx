@@ -3793,6 +3793,39 @@ const shiftIsoDate = (isoDate, days) => {
   return toLocalIsoDate(date);
 };
 
+const buildCalendarShell = (weekStart, mode) => ({
+  type: mode,
+  sourceType: mode,
+  weekStart,
+  weekEnd: shiftIsoDate(weekStart, 6),
+  days: Array.from({ length: 7 }, (_, index) => ({
+    date: shiftIsoDate(weekStart, index),
+    events: []
+  }))
+});
+
+const CALENDAR_CACHE_PREFIX = "mrktrally-calendar-v1:";
+
+const readStoredCalendar = (cacheKey) => {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(`${CALENDAR_CACHE_PREFIX}${cacheKey}`) || "null");
+    return stored?.days?.length === 7 ? stored : null;
+  } catch {
+    return null;
+  }
+};
+
+const storeCalendar = (cacheKey, calendar) => {
+  try {
+    window.localStorage.setItem(
+      `${CALENDAR_CACHE_PREFIX}${cacheKey}`,
+      JSON.stringify({ ...calendar, cachedAt: new Date().toISOString() })
+    );
+  } catch {
+    // Calendar rendering should not depend on browser storage being available.
+  }
+};
+
 const formatCalendarMoney = (value, missingLabel = "N/A") => {
   if (!isNumber(value)) return missingLabel;
   const absolute = Math.abs(value);
@@ -5670,11 +5703,13 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [earnings, setEarnings] =
   useState({ days: [] });
 
-  const [calendarDataCache, setCalendarDataCache] =
-    useState({});
+  const calendarDataCacheRef = useRef({});
 
   const [isEarningsLoading, setIsEarningsLoading] =
   useState(false);
+
+  const [calendarLoadNotice, setCalendarLoadNotice] =
+  useState("");
 
   const [calendarMode, setCalendarMode] =
     useState("earnings");
@@ -7894,7 +7929,8 @@ const loadUserData = async () => {
     LOAD EARNINGS
   */
 
-  const loadEarnings = async (weekStart, mode = calendarMode) => {
+  const loadEarnings = async (weekStart, mode = calendarMode, options = {}) => {
+    const { background = false, attempt = 0 } = options;
     const requestId = calendarRequestRef.current + 1;
     calendarRequestRef.current = requestId;
     if (calendarRetryTimerRef.current) {
@@ -7902,20 +7938,30 @@ const loadUserData = async () => {
       calendarRetryTimerRef.current = null;
     }
 
+    const requestMode = mode === "live-earnings" ? "earnings" : mode;
+    const requestStart = mode === "live-earnings" ? getWeekStartIso(toLocalIsoDate(new Date())) : weekStart;
+    const cacheKey = `${mode}:${requestStart}`;
+    const shellCalendar = buildCalendarShell(requestStart, mode);
+    const cachedCalendar = calendarDataCacheRef.current[cacheKey] || readStoredCalendar(cacheKey);
+    const cachedCalendarHasEvents = Boolean(cachedCalendar?.days?.some((day) => day.events?.length));
+    const initialCalendar = cachedCalendar?.days?.length ? cachedCalendar : shellCalendar;
+
+    calendarDataCacheRef.current[cacheKey] = initialCalendar;
+    setEarnings(initialCalendar);
+    if (!background) {
+      setIsEarningsLoading(true);
+      setCalendarLoadNotice("");
+    }
+    setSelectedEarningsDate((current) => {
+      const availableDates = initialCalendar.days.map((day) => day.date);
+      const today = toLocalIsoDate(new Date());
+      if (mode === "live-earnings") return today;
+      if (availableDates.includes(current)) return current;
+      if (availableDates.includes(today)) return today;
+      return availableDates[0] || requestStart;
+    });
+
     try {
-      const requestMode = mode === "live-earnings" ? "earnings" : mode;
-      const requestStart = mode === "live-earnings" ? getWeekStartIso(toLocalIsoDate(new Date())) : weekStart;
-      const cacheKey = `${mode}:${requestStart}`;
-      const cachedCalendar = calendarDataCache[cacheKey];
-      const cachedCalendarHasDays = cachedCalendar?.days?.length > 0;
-      const cachedCalendarHasEvents = cachedCalendar?.days?.some((day) => day.events?.length);
-      if (cachedCalendarHasDays) {
-        setEarnings(cachedCalendar);
-      }
-      setIsEarningsLoading(!cachedCalendarHasDays);
-      if (mode === "live-earnings") {
-        setSelectedEarningsDate(toLocalIsoDate(new Date()));
-      }
 
       const earningsRes =
         await axios.get(
@@ -7933,26 +7979,29 @@ const loadUserData = async () => {
       const calendarHasEvents = (calendar.days || []).some((day) => day.events?.length);
       const calendarHasDays = (calendar.days || []).length > 0;
       const shouldRetryCalendar = Boolean((earningsRes.data?.unavailable || earningsRes.data?.pending) && !calendarHasEvents);
-      if (calendarHasDays || calendarHasEvents) {
+      if (calendarHasEvents || (calendarHasDays && !cachedCalendarHasEvents)) {
         setEarnings(calendar);
-        setCalendarDataCache((cache) => ({
-          ...cache,
-          [cacheKey]: calendar
-        }));
+        calendarDataCacheRef.current[cacheKey] = calendar;
+        if (calendarHasEvents) storeCalendar(cacheKey, calendar);
       }
       if (shouldRetryCalendar) {
-        if (cachedCalendarHasDays) {
+        if (cachedCalendarHasEvents) {
           setEarnings(cachedCalendar);
         }
-        calendarRetryTimerRef.current = window.setTimeout(
-          () => loadEarnings(weekStart, mode),
-          cachedCalendarHasDays ? 12000 : 5000
+        setCalendarLoadNotice(
+          cachedCalendarHasEvents
+            ? "Live data is temporarily limited. Showing saved calendar data."
+            : "Live data is temporarily limited. Calendar dates remain available."
         );
-        if (cachedCalendarHasDays || calendarHasDays) {
-          setIsEarningsLoading(false);
+        if (attempt < 4) {
+          calendarRetryTimerRef.current = window.setTimeout(
+            () => loadEarnings(weekStart, mode, { background: true, attempt: attempt + 1 }),
+            Math.min(15000 + attempt * 15000, 60000)
+          );
         }
         return;
       }
+      setCalendarLoadNotice("");
       const availableDates = (calendar.days || []).map((day) => day.date);
       setSelectedEarningsDate((current) => {
         const today = toLocalIsoDate(new Date());
@@ -7973,21 +8022,24 @@ const loadUserData = async () => {
 
       console.error(err);
       if (requestId !== calendarRequestRef.current) return;
-      const requestMode = mode === "live-earnings" ? "earnings" : mode;
-      const requestStart = mode === "live-earnings" ? getWeekStartIso(toLocalIsoDate(new Date())) : weekStart;
-      const cacheKey = `${mode}:${requestStart}`;
-      const cachedCalendar = calendarDataCache[cacheKey];
-      if (cachedCalendar?.days?.some((day) => day.events?.length)) {
+      if (cachedCalendarHasEvents) {
         setEarnings(cachedCalendar);
       }
-      calendarRetryTimerRef.current = window.setTimeout(
-        () => loadEarnings(weekStart, mode),
-        cachedCalendar?.days?.some((day) => day.events?.length) ? 12000 : 5000
+      setCalendarLoadNotice(
+        cachedCalendarHasEvents
+          ? "Live data could not refresh. Showing saved calendar data."
+          : "Live data could not refresh. Calendar dates remain available."
       );
+      if (attempt < 4) {
+        calendarRetryTimerRef.current = window.setTimeout(
+          () => loadEarnings(weekStart, mode, { background: true, attempt: attempt + 1 }),
+          Math.min(15000 + attempt * 15000, 60000)
+        );
+      }
 
     } finally {
 
-      if (requestId === calendarRequestRef.current && !calendarRetryTimerRef.current) {
+      if (requestId === calendarRequestRef.current) {
         setIsEarningsLoading(false);
       }
 
@@ -10213,7 +10265,7 @@ const isInsiderMovesLoading =
   !insiderMoveRows.length;
 const displayedCalendar = earnings?.type === calendarMode
   ? earnings
-  : { type: calendarMode, weekStart: earningsWeekStart, weekEnd: shiftIsoDate(earningsWeekStart, 6), days: [] };
+  : buildCalendarShell(earningsWeekStart, calendarMode);
 const displayedCalendarDays = displayedCalendar?.days || [];
 const selectedEarningsDay = displayedCalendarDays.find(
   (day) => day.date === selectedEarningsDate
@@ -17733,7 +17785,11 @@ return (
       <p>Track upcoming earnings, dividends, and IPOs by week with estimates, payout details, offering data, and company context.</p>
     </div>
     <span className="market-overview-updated">
-      {isEarningsLoading ? "Refreshing" : `Updated ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`}
+      {isEarningsLoading
+        ? "Refreshing calendar"
+        : calendarLoadNotice
+          ? "Calendar ready"
+          : `Updated ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`}
     </span>
   </div>
 
@@ -17959,13 +18015,15 @@ return (
       })}
     </div>
 
-    {isEarningsLoading && selectedEarningsDay.events?.length ? (
-      <div className="calendar-refreshing-pill">Refreshing latest {activeCalendarConfig.label.toLowerCase()} data...</div>
+    {isEarningsLoading || calendarLoadNotice ? (
+      <div className="calendar-refreshing-pill">
+        {isEarningsLoading
+          ? `Checking latest ${activeCalendarConfig.label.toLowerCase()} data...`
+          : calendarLoadNotice}
+      </div>
     ) : null}
 
-    {isEarningsLoading && !selectedEarningsDay.events?.length ? (
-      <div className="calendar-empty">Loading {activeCalendarConfig.label.toLowerCase()} calendar...</div>
-    ) : selectedEarningsDay.events?.length ? (
+    {selectedEarningsDay.events?.length ? (
       <div className="calendar-company-list" key={selectedEarningsDate}>
         <div className={`calendar-company-header calendar-company-header-${calendarMode}`}>
           {calendarMode === "earnings" ? (

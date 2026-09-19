@@ -397,6 +397,7 @@ body {
 .home-tour-heading h2 {
   max-width: 940px;
   margin: 0;
+  transform: translateX(clamp(-120px, -7vw, -48px));
   color: #f8fafc;
   font-size: clamp(34px, 4.4vw, 64px);
   font-weight: 950;
@@ -7975,6 +7976,7 @@ body {
 
   .home-tour-heading h2 {
     font-size: 34px;
+    transform: none;
   }
 
   .home-tour-heading p,
