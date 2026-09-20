@@ -1022,8 +1022,8 @@ const HOME_FEATURES = [
     id: "etfs",
     icon: "etf",
     label: "ETF Overview",
-    title: "Break down funds fast",
-    text: "Search ETFs and mutual funds to review price, assets, fees, yield, exposure, asset mix, and top holdings when available."
+    title: "Review funds with clean FMP data",
+    text: "Search ETFs and mutual funds to review price history, assets, fees, dividends, fund details, and available sector and country exposure."
   },
   {
     id: "crypto",
@@ -1211,9 +1211,9 @@ const HOME_TOUR_SECTIONS = [
     icon: "etf",
     label: "ETF Overview",
     eyebrow: "Funds and ETFs",
-    title: "Break down funds with the same research flow.",
-    text: "Search ETFs and mutual funds to review price, chart history, assets, fees, yield, holdings, sector exposure, country exposure, and asset mix.",
-    bullets: ["ETF and mutual fund search", "Holdings and exposure breakdowns", "Price chart with time ranges"],
+    title: "Review funds with the same research flow.",
+    text: "Search ETFs and mutual funds to review price history, assets, fees, dividends, fund details, and available sector and country exposure.",
+    bullets: ["ETF and mutual fund search", "Sector and country exposure", "Price chart with time ranges"],
     snapshot: "funds"
   },
   {
@@ -4841,6 +4841,7 @@ function App() {
   const calendarReportRequestRef = useRef(0);
   const activeCalendarReportSymbolRef = useRef("");
   const calendarReportRetryTimersRef = useRef({});
+  const calendarReportAbortRef = useRef(null);
   const initialSavedPricesLoaded = useRef(false);
   const firstStockLoadSettled = useRef(false);
   const previousMarketEventRef = useRef(null);
@@ -7249,6 +7250,8 @@ useEffect(() => {
   useEffect(() => () => {
     calendarReportRequestRef.current += 1;
     activeCalendarReportSymbolRef.current = "";
+    calendarReportAbortRef.current?.abort();
+    calendarReportAbortRef.current = null;
     Object.values(calendarReportRetryTimersRef.current || {}).forEach((timer) => {
       if (timer) window.clearTimeout(timer);
     });
@@ -7259,6 +7262,8 @@ useEffect(() => {
     if (activePage === "earnings-calendar" && calendarMode === "earnings") return;
     calendarReportRequestRef.current += 1;
     activeCalendarReportSymbolRef.current = "";
+    calendarReportAbortRef.current?.abort();
+    calendarReportAbortRef.current = null;
     Object.values(calendarReportRetryTimersRef.current || {}).forEach((timer) => {
       if (timer) window.clearTimeout(timer);
     });
@@ -7878,6 +7883,8 @@ const loadUserData = async () => {
   const cancelCalendarEarningsReport = () => {
     calendarReportRequestRef.current += 1;
     activeCalendarReportSymbolRef.current = "";
+    calendarReportAbortRef.current?.abort();
+    calendarReportAbortRef.current = null;
     Object.values(calendarReportRetryTimersRef.current || {}).forEach((timer) => {
       if (timer) window.clearTimeout(timer);
     });
@@ -7898,7 +7905,17 @@ const loadUserData = async () => {
       setLoadingCalendarReportSymbol(symbol);
       const response = await axios.get(
         `${API_URL}/api/earnings-report/${encodeURIComponent(symbol)}`,
-        { params: { limit: 16, _: Date.now() }, timeout: 9000 }
+        {
+          params: {
+            limit: 16,
+            date: event?.date,
+            epsEstimate: event?.epsEstimate,
+            revenueEstimate: event?.revenueEstimate,
+            _: Date.now()
+          },
+          timeout: 30000,
+          signal: calendarReportAbortRef.current?.signal
+        }
       );
       if (requestId !== calendarReportRequestRef.current || activeCalendarReportSymbolRef.current !== symbol) return;
       const rows = Array.isArray(response.data?.rows) ? response.data.rows : [];
@@ -7912,22 +7929,23 @@ const loadUserData = async () => {
         setLoadingCalendarReportSymbol("");
         return;
       }
-      if ((response.data?.pending || response.data?.unavailable) && attempt < 3) {
+      if ((response.data?.pending || response.data?.unavailable) && attempt < 5) {
         calendarReportRetryTimersRef.current[symbol] = window.setTimeout(
           () => loadCalendarEarningsReport(event, requestId, attempt + 1),
-          Math.min(4000 + attempt * 3000, 12000)
+          Math.min(1500 + attempt * 2500, 12000)
         );
         return;
       }
       setCalendarReportError("Earnings history is temporarily unavailable. Please try again.");
       setLoadingCalendarReportSymbol("");
     } catch (err) {
+      if (axios.isCancel(err) || err?.code === "ERR_CANCELED") return;
       console.error(err);
       if (requestId !== calendarReportRequestRef.current || activeCalendarReportSymbolRef.current !== symbol) return;
-      if (attempt < 3) {
+      if (attempt < 5) {
         calendarReportRetryTimersRef.current[symbol] = window.setTimeout(
           () => loadCalendarEarningsReport(event, requestId, attempt + 1),
-          Math.min(4000 + attempt * 3000, 12000)
+          Math.min(1500 + attempt * 2500, 12000)
         );
         return;
       }
@@ -7950,6 +7968,8 @@ const loadUserData = async () => {
     calendarReportRequestRef.current += 1;
     const requestId = calendarReportRequestRef.current;
     activeCalendarReportSymbolRef.current = symbol;
+    calendarReportAbortRef.current?.abort();
+    calendarReportAbortRef.current = new AbortController();
     Object.values(calendarReportRetryTimersRef.current || {}).forEach((timer) => {
       if (timer) window.clearTimeout(timer);
     });
@@ -10851,7 +10871,6 @@ const displayedMarketIndices = MARKET_INDEX_ORDER.map((item) => ({
 }));
 const etfStats = etfData?.stats || {};
 const etfProfile = etfData?.profile || {};
-const topEtfHoldings = etfData?.holdings || [];
 const etfChartPoints = Array.isArray(etfChartData?.points) ? etfChartData.points : [];
 const etfChartLatest = etfChartData?.latest || {};
 const displayedEtfPrice = isNumber(etfChartLatest?.price) ? etfChartLatest.price : etfData?.price;
@@ -10931,13 +10950,10 @@ const forexCards = [
 const etfOverviewCards = [
   { label: "Assets", value: formatLargeDollars(etfStats.assets) },
   { label: "Expense Ratio", value: formatPercent(etfStats.expenseRatio) },
-  { label: "P/E Ratio", value: formatPlain(etfStats.peRatio) },
-  { label: "Shares Out", value: formatSharesCount(etfStats.sharesOutstanding) },
   { label: "Dividend (ttm)", value: formatPrice(etfStats.dividend) },
   { label: "Dividend Yield", value: formatPercent(etfStats.dividendYield) },
   { label: "Ex-Dividend", value: etfStats.exDividendDate || "N/A" },
   { label: "Payout Frequency", value: etfStats.payoutFrequency || "N/A" },
-  { label: "Payout Ratio", value: formatPercent(etfStats.payoutRatio) },
   { label: "Volume", value: isNumber(etfStats.volume) ? etfStats.volume.toLocaleString() : "N/A" },
   { label: "Open", value: formatPrice(etfStats.open) },
   { label: "Previous Close", value: formatPrice(etfStats.previousClose) },
@@ -10945,12 +10961,10 @@ const etfOverviewCards = [
   { label: "52-Week Low", value: formatPrice(etfStats.fiftyTwoWeekLow) },
   { label: "52-Week High", value: formatPrice(etfStats.fiftyTwoWeekHigh) },
   { label: "Beta", value: formatPlain(etfStats.beta) },
-  { label: "Holdings", value: isNumber(etfStats.holdingsCount) ? etfStats.holdingsCount.toLocaleString() : "N/A" },
-  { label: "Top 10 Weight", value: formatPercent(etfStats.top10Percent) },
   { label: "Inception", value: etfStats.inceptionDate || "N/A" },
   isNumber(etfStats.bondDuration) ? { label: "Bond Duration", value: formatPlain(etfStats.bondDuration) } : null,
   isNumber(etfStats.bondMaturity) ? { label: "Bond Maturity", value: formatPlain(etfStats.bondMaturity) } : null
-].filter(Boolean);
+].filter((card) => card && card.value !== "N/A" && !String(card.value).includes("N/A - N/A"));
 const fundOverviewCards = [
   { label: "NAV / Price", value: formatPrice(etfData?.price) },
   { label: "Daily Move", value: formatSignedPercent(etfData?.percentChange) },
@@ -10961,8 +10975,6 @@ const fundOverviewCards = [
   { label: "1-Year Return", value: formatPercent(etfStats.oneYearReturn) },
   { label: "5-Year Return", value: formatPercent(etfStats.fiveYearReturn) },
   { label: "52W Range", value: `${formatPrice(etfStats.fiftyTwoWeekLow)} - ${formatPrice(etfStats.fiftyTwoWeekHigh)}` },
-  { label: "Holdings", value: isNumber(etfStats.holdingsCount) ? etfStats.holdingsCount.toLocaleString() : "N/A" },
-  { label: "Top 10 Weight", value: formatPercent(etfStats.top10Percent) },
   { label: "Turnover", value: formatPercent(etfStats.turnover) },
   { label: "Dividend Yield", value: formatPercent(etfStats.dividendYield) },
   { label: "Dividend (ttm)", value: formatPlain(etfStats.dividend) },
@@ -10978,8 +10990,8 @@ const fundOverviewCards = [
   { label: "Exchange", value: etfProfile.exchange || "N/A" },
   etfStats.shareClass ? { label: "Share Class", value: etfStats.shareClass } : null,
   etfStats.distributionFrequency ? { label: "Distribution", value: etfStats.distributionFrequency } : null
-].filter(Boolean);
-const etfProfileItems = isMutualFundView
+].filter((card) => card && card.value !== "N/A" && !String(card.value).includes("N/A - N/A"));
+const etfProfileItems = (isMutualFundView
   ? [
       { label: "Exchange", value: etfProfile.exchange },
       { label: "Provider", value: etfProfile.provider },
@@ -10992,8 +11004,8 @@ const etfProfileItems = isMutualFundView
       { label: "Category", value: etfProfile.category },
       { label: "Asset Class", value: etfProfile.assetClass },
       { label: "Index", value: etfProfile.indexTracked }
-    ];
-const hasEtfBreakdownData = [etfData?.sectors, etfData?.countries, etfData?.assetAllocation]
+    ]).filter((item) => item.value);
+const hasEtfBreakdownData = [etfData?.sectors, etfData?.countries]
   .some((rows) => Array.isArray(rows) && rows.length);
 const renderEtfExposureBars = (title, rows = []) => (
   <div className="etf-panel">
@@ -12897,49 +12909,7 @@ return (
               <div className="etf-breakdown-grid">
                 {(!isMutualFundView || etfData.sectors?.length) && renderEtfExposureBars("Sector Exposure", etfData.sectors)}
                 {(!isMutualFundView || etfData.countries?.length) && renderEtfExposureBars("Country Exposure", etfData.countries)}
-                {(!isMutualFundView || etfData.assetAllocation?.length) && renderEtfExposureBars("Asset Mix", etfData.assetAllocation)}
               </div>
-            )}
-
-            {(!isMutualFundView || topEtfHoldings.length > 0) && (
-            <div className="etf-panel etf-holdings-panel">
-              <div className="etf-panel-heading">
-                <h3>Top Holdings</h3>
-                <span>{etfData.holdingsAsOf ? `As of ${etfData.holdingsAsOf}` : "Latest available"}</span>
-              </div>
-              {topEtfHoldings.length ? (
-                <div className="etf-holdings-table">
-                  <div className="etf-holdings-header">
-                    <span>#</span>
-                    <span>Ticker</span>
-                    <span>Name</span>
-                    <span>Weight</span>
-                    <span>Shares</span>
-                  </div>
-                  {topEtfHoldings.map((holding, index) => (
-                    <button
-                      className="etf-holding-row"
-                      type="button"
-                      key={`${holding.symbol}-${index}`}
-                      onClick={() => {
-                        if (!holding.symbol) return;
-                        setSearchInput(holding.symbol);
-                        setTicker(holding.symbol);
-                        setActivePage("overview");
-                      }}
-                    >
-                      <span>{holding.rank || index + 1}</span>
-                      <strong>{holding.symbol || "N/A"}</strong>
-                      <span>{holding.name}</span>
-                      <span>{formatPercent(holding.weight)}</span>
-                      <span>{isNumber(holding.shares) ? holding.shares.toLocaleString() : "N/A"}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="etf-empty">No holdings available yet.</div>
-              )}
-            </div>
             )}
           </>
         ) : (

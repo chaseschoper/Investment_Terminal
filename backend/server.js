@@ -15243,13 +15243,10 @@ async function fetchEtfData(ticker) {
     stats: {
       assets: firstFiniteNumber(info.assetsUnderManagement),
       expenseRatio: firstFiniteNumber(info.expenseRatio),
-      peRatio: null,
-      sharesOutstanding: null,
       dividend: trailingDividend || firstFiniteNumber(latestDividend.adjDividend, latestDividend.dividend),
       dividendYield: firstFiniteNumber(latestDividend.yield),
       exDividendDate: firstText(latestDividend.date),
       payoutFrequency: firstText(latestDividend.frequency),
-      payoutRatio: null,
       volume: firstFiniteNumber(quote.volume),
       open: firstFiniteNumber(quote.open),
       previousClose: firstFiniteNumber(quote.previousClose),
@@ -15257,9 +15254,7 @@ async function fetchEtfData(ticker) {
       fiftyTwoWeekLow: firstFiniteNumber(quote.yearLow),
       fiftyTwoWeekHigh: firstFiniteNumber(quote.yearHigh),
       beta: firstFiniteNumber(profile.beta),
-      holdingsCount: firstFiniteNumber(info.holdingsCount),
-      inceptionDate: firstText(info.inceptionDate),
-      top10Percent: null
+      inceptionDate: firstText(info.inceptionDate)
     },
     profile: {
       assetClass: firstText(info.assetClass, isMutualFund ? "Mutual Fund" : "ETF"),
@@ -15269,12 +15264,8 @@ async function fetchEtfData(ticker) {
       provider: firstText(info.etfCompany),
       indexTracked: null
     },
-    holdings: [],
     sectors,
-    countries,
-    assetAllocation: [],
-    holdingsAsOf: null,
-    holdingsLastUpdated: firstText(info.updatedAt)
+    countries
   };
 
   etfDataCache.set(symbol, { data, fetchedAt: Date.now() });
@@ -21377,71 +21368,105 @@ app.get("/api/earnings-report/:symbol", async (req, res) => {
 
   const cacheKey = `earnings-report:${symbol}:${limit}`;
   const cached = fmpCalendarCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return res.json(cached.data);
+  if (cached?.data?.rows?.length && cached.expiresAt > Date.now()) return res.json(cached.data);
 
   try {
-    if (!process.env.FMP_API_KEY || !canUseFmp()) {
-      if (cached?.data) return res.json({ ...cached.data, stale: true, unavailable: true });
-      return res.json({ symbol, rows: [], unavailable: true, pending: true, updatedAt: new Date().toISOString() });
-    }
-    const rows = await resolveWithin(
-      getFmpData(symbol, "earnings report", [
-        `/stable/earnings?symbol={ticker}&limit=${limit}`
-      ]),
-      4500,
-      []
-    );
-    if (isFmpErrorPayload(rows)) {
-      const error = new Error(firstText(rows["Error Message"], rows.error, rows.Note, rows.Information) || "FMP earnings report unavailable");
-      error.response = { status: 429 };
-      throw error;
-    }
-    const normalizedRows = (Array.isArray(rows) ? rows : rows ? [rows] : [])
-      .filter((row) => !row.symbol || String(row.symbol || "").trim().toUpperCase() === symbol)
-      .map((row) => {
-        const epsActual = parseApiNumber(row.epsActual ?? row.actualEarningResult ?? row.actualEps ?? row.eps);
-        const epsEstimated = parseApiNumber(row.epsEstimated ?? row.epsEstimate ?? row.estimatedEarning ?? row.estimatedEps);
-        const revenueActual = parseApiNumber(row.revenueActual);
-        const revenueEstimated = parseApiNumber(row.revenueEstimated ?? row.revenueEstimate);
-        const epsSurprise = epsActual !== null && epsEstimated !== null
-          ? epsActual - epsEstimated
-          : null;
-        const revenueSurprise = revenueActual !== null && revenueEstimated !== null
-          ? revenueActual - revenueEstimated
-          : null;
-        return {
-          symbol,
-          date: String(row.date || row.period || "").slice(0, 10),
-          epsActual,
-          epsEstimated,
-          revenueActual,
-          revenueEstimated,
-          epsSurprise,
-          epsSurprisePercent: epsSurprise !== null && epsEstimated
-            ? (epsSurprise / Math.abs(epsEstimated)) * 100
-            : null,
-          revenueSurprise,
-          revenueSurprisePercent: revenueSurprise !== null && revenueEstimated
-            ? (revenueSurprise / Math.abs(revenueEstimated)) * 100
-            : null
-        };
-      })
+    const normalizeReportRow = (row = {}) => {
+      const epsActual = parseApiNumber(row.epsActual ?? row.actualEarningResult ?? row.actualEps ?? row.actual);
+      const epsEstimated = parseApiNumber(row.epsEstimated ?? row.epsEstimate ?? row.estimatedEarning ?? row.estimatedEps ?? row.estimate);
+      const revenueActual = parseApiNumber(row.revenueActual);
+      const revenueEstimated = parseApiNumber(row.revenueEstimated ?? row.revenueEstimate);
+      const epsSurprise = parseApiNumber(row.epsSurprise ?? row.surprise) ?? (
+        epsActual !== null && epsEstimated !== null ? epsActual - epsEstimated : null
+      );
+      const revenueSurprise = parseApiNumber(row.revenueSurprise) ?? (
+        revenueActual !== null && revenueEstimated !== null ? revenueActual - revenueEstimated : null
+      );
+      return {
+        symbol,
+        date: String(row.date || row.period || "").slice(0, 10),
+        epsActual,
+        epsEstimated,
+        revenueActual,
+        revenueEstimated,
+        epsSurprise,
+        epsSurprisePercent: parseApiNumber(row.epsSurprisePercent ?? row.surprisePercent) ?? (
+          epsSurprise !== null && epsEstimated ? (epsSurprise / Math.abs(epsEstimated)) * 100 : null
+        ),
+        revenueSurprise,
+        revenueSurprisePercent: parseApiNumber(row.revenueSurprisePercent) ?? (
+          revenueSurprise !== null && revenueEstimated ? (revenueSurprise / Math.abs(revenueEstimated)) * 100 : null
+        ),
+        source: firstText(row.source)
+      };
+    };
+
+    const [fmpRows, finnhubRows, storedStock] = await Promise.all([
+      resolveWithin(
+        getFmpData(symbol, "earnings report", [`/stable/earnings?symbol={ticker}&limit=${limit}`]),
+        9000,
+        []
+      ).catch(() => []),
+      resolveWithin(fetchFinnhubEpsSurprises(symbol), 9000, []).catch(() => []),
+      resolveWithin(
+        Stock.findOne({ ticker: symbol }).select("data.epsBeatMiss").lean(),
+        5000,
+        null
+      ).catch(() => null)
+    ]);
+
+    const clickedEstimate = req.query.date
+      ? [{
+          date: String(req.query.date).slice(0, 10),
+          epsEstimated: parseApiNumber(req.query.epsEstimate),
+          revenueEstimated: parseApiNumber(req.query.revenueEstimate),
+          source: "Earnings calendar"
+        }]
+      : [];
+    const rowsByDate = new Map();
+    [
+      ...clickedEstimate,
+      ...(storedStock?.data?.epsBeatMiss || []),
+      ...(Array.isArray(finnhubRows) ? finnhubRows : []),
+      ...(Array.isArray(fmpRows) ? fmpRows : fmpRows ? [fmpRows] : [])
+        .map((row) => ({ ...row, source: row?.source || "FMP earnings history" }))
+    ].forEach((row) => {
+      if (row?.symbol && String(row.symbol).trim().toUpperCase() !== symbol) return;
+      const normalized = normalizeReportRow(row);
+      if (!normalized.date) return;
+      const existing = rowsByDate.get(normalized.date) || {};
+      rowsByDate.set(normalized.date, Object.fromEntries(
+        Object.entries({ ...existing, ...normalized }).map(([key, value]) => [
+          key,
+          value === null || value === undefined || value === "" ? existing[key] ?? value : value
+        ])
+      ));
+    });
+    const normalizedRows = [...rowsByDate.values()]
       .filter((row) => row.date)
-      .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+      .slice(0, limit);
     const responseData = {
       symbol,
       rows: normalizedRows,
+      source: normalizedRows.some((row) => /^FMP/i.test(row.source || ""))
+        ? "Financial Modeling Prep API"
+        : normalizedRows.some((row) => /Finnhub/i.test(row.source || ""))
+          ? "Finnhub API"
+          : normalizedRows.length
+            ? "Saved market data"
+            : null,
+      pending: !normalizedRows.length,
       updatedAt: new Date().toISOString()
     };
     fmpCalendarCache.set(cacheKey, {
       data: responseData,
-      expiresAt: Date.now() + (normalizedRows.length ? 15 * 60 * 1000 : 90 * 1000)
+      expiresAt: Date.now() + (normalizedRows.length ? 15 * 60 * 1000 : 30 * 1000)
     });
     return res.json(responseData);
   } catch (err) {
-    setFmpCooldown(err, "earnings report", symbol);
-    console.log("FMP earnings report skipped:", symbol, err.response?.status || err.message);
-    if (cached?.data) return res.json({ ...cached.data, stale: true, unavailable: true });
+    console.log("Earnings report endpoint skipped:", symbol, err.response?.status || err.message);
+    if (cached?.data?.rows?.length) return res.json({ ...cached.data, stale: true });
     return res.json({ symbol, rows: [], unavailable: true, pending: true, updatedAt: new Date().toISOString() });
   }
 });

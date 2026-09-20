@@ -95,26 +95,32 @@ body {
   position: relative;
   z-index: 1;
   width: min(1180px, 100%);
+  margin-inline: auto;
+  text-align: center;
 }
 
 .welcome-kicker {
   width: min(660px, 100%);
-  margin-bottom: 14px;
+  margin: 0 auto 22px;
   color: #5eead4;
   font-size: 13px;
   font-weight: 800;
   text-transform: uppercase;
+  text-align: center;
 }
 
 .welcome-title-row {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: clamp(30px, 7vw, 150px);
+  justify-content: center;
+  width: 100%;
 }
 
 .welcome-hero h1 {
   max-width: 660px;
   margin: 0;
+  text-align: center;
   color: #ffffff;
   font-size: clamp(42px, 6vw, 76px);
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
@@ -125,6 +131,8 @@ body {
 }
 
 .welcome-logo {
+  position: absolute;
+  right: 0;
   width: clamp(132px, 16vw, 220px);
   height: clamp(132px, 16vw, 220px);
   flex: 0 0 auto;
@@ -138,11 +146,12 @@ body {
 }
 
 .welcome-hero p {
-  max-width: 590px;
-  margin-top: 20px;
+  max-width: 960px;
+  margin: 26px auto 0;
   color: #d5dde2;
   font-size: 18px;
   line-height: 1.6;
+  text-align: center;
 }
 
 .welcome-actions {
@@ -7863,6 +7872,7 @@ body {
   }
 
   .welcome-logo {
+    position: static;
     order: 2;
     width: 88px;
     height: 88px;
