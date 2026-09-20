@@ -12536,10 +12536,6 @@ return (
     <>
       <section className="welcome-hero" id="home" aria-labelledby="welcome-title">
         <div className="welcome-hero-content">
-          <div className="welcome-brand-lockup" aria-label="MrktRally">
-            <img src="/mrktrally-icon.png" alt="" />
-            <span>MrktRally</span>
-          </div>
           <div className="welcome-kicker">Market research, focused</div>
           <h1 id="welcome-title">
             Investment research for <span>modern markets.</span>

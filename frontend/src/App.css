@@ -83,23 +83,6 @@ body {
   text-align: center;
 }
 
-.welcome-brand-lockup {
-  display: inline-flex;
-  align-items: center;
-  gap: 13px;
-  margin-bottom: 28px;
-  color: #f8fafc;
-  font-size: 25px;
-  font-weight: 800;
-}
-
-.welcome-brand-lockup img {
-  width: 48px;
-  height: 48px;
-  border-radius: 7px;
-  object-fit: contain;
-}
-
 .welcome-kicker {
   width: 100%;
   margin: 0 auto 20px;
@@ -7845,16 +7828,6 @@ body {
   .welcome-hero p {
     order: 3;
     max-width: 100%;
-  }
-
-  .welcome-brand-lockup {
-    margin-bottom: 24px;
-    font-size: 22px;
-  }
-
-  .welcome-brand-lockup img {
-    width: 42px;
-    height: 42px;
   }
 
   .welcome-hero p {
