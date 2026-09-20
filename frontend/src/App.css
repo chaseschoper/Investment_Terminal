@@ -92,7 +92,7 @@ body {
 }
 
 .welcome-hero-content {
-  --welcome-copy-shift: clamp(-96px, -5vw, -48px);
+  --welcome-copy-shift: clamp(-176px, -7vw, -80px);
   position: relative;
   z-index: 1;
   width: min(1180px, 100%);
