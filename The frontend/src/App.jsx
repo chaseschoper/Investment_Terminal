@@ -3888,6 +3888,7 @@ const DEFAULT_PORTFOLIO = {
 };
 const SAVED_LISTS_STORAGE_KEY = "mrktrally-saved-lists";
 const MARKET_INDICES_STORAGE_KEY = "mrktrally-market-indices";
+const MARKET_MOVERS_STORAGE_KEY = "mrktrally-market-movers";
 const SAVED_QUOTES_STORAGE_KEY = "mrktrally-saved-quotes";
 const SAVED_QUOTES_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MARKET_INDEX_ORDER = [
@@ -5351,7 +5352,16 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
     useState(() => !marketIndices.length);
 
   const [broadMarketMovers, setBroadMarketMovers] =
-    useState({ gainers: [], losers: [], updatedAt: null });
+    useState(() => {
+      const cached = readLocalJsonStorage(MARKET_MOVERS_STORAGE_KEY, null);
+      return cached && (Array.isArray(cached.gainers) || Array.isArray(cached.losers))
+        ? {
+            gainers: Array.isArray(cached.gainers) ? cached.gainers : [],
+            losers: Array.isArray(cached.losers) ? cached.losers : [],
+            updatedAt: cached.updatedAt || null
+          }
+        : { gainers: [], losers: [], updatedAt: null };
+    });
 
   const [isBroadMarketMoversLoading, setIsBroadMarketMoversLoading] =
     useState(false);
@@ -6693,11 +6703,19 @@ useEffect(() => {
         const gainers = !isLegacyFallback && Array.isArray(response.data?.gainers) ? response.data.gainers : [];
         const losers = !isLegacyFallback && Array.isArray(response.data?.losers) ? response.data.losers : [];
         nextRefreshMs = gainers.length || losers.length ? 2 * 60 * 1000 : 8000;
-        setBroadMarketMovers({
-          gainers,
-          losers,
-          updatedAt: isLegacyFallback ? null : response.data?.updatedAt || null
-        });
+        if (!isLegacyFallback && (gainers.length || losers.length)) {
+          const nextMovers = {
+            gainers,
+            losers,
+            updatedAt: response.data?.updatedAt || null
+          };
+          setBroadMarketMovers(nextMovers);
+          try {
+            localStorage.setItem(MARKET_MOVERS_STORAGE_KEY, JSON.stringify(nextMovers));
+          } catch {
+            // Keep the in-memory mover snapshot when browser storage is unavailable.
+          }
+        }
       }
     } catch (error) {
       console.error("Market movers failed", error);
@@ -11030,6 +11048,27 @@ const renderEtfExposureBars = (title, rows = []) => (
     )}
   </div>
 );
+const hasBroadMarketMovers = Boolean(
+  broadMarketMovers.gainers.length || broadMarketMovers.losers.length
+);
+const activeMoverFallback = (topTradedStocks.stocks || [])
+  .filter((row) => Number.isFinite(Number(row.percentChange)));
+const displayedMarketGainers = hasBroadMarketMovers
+  ? broadMarketMovers.gainers
+  : [...activeMoverFallback]
+      .filter((row) => Number(row.percentChange) > 0)
+      .sort((a, b) => Number(b.percentChange) - Number(a.percentChange))
+      .slice(0, 5);
+const displayedMarketLosers = hasBroadMarketMovers
+  ? broadMarketMovers.losers
+  : [...activeMoverFallback]
+      .filter((row) => Number(row.percentChange) < 0)
+      .sort((a, b) => Number(a.percentChange) - Number(b.percentChange))
+      .slice(0, 5);
+const displayedMoverScope = hasBroadMarketMovers ? "All Stocks" : "Most Active";
+const displayedMoversUpdatedAt = hasBroadMarketMovers
+  ? broadMarketMovers.updatedAt
+  : topTradedStocks.updatedAt;
 const renderMarketMoverPanel = (title, rows, tone, scope, isLoading = false) => (
   <section className={`market-movers-panel mover-${tone}`} key={`${scope}-${title}`}>
     <div className="market-movers-heading">
@@ -12700,15 +12739,15 @@ return (
         <section className="market-movers-block" aria-labelledby="market-movers-overview-title">
           <div className="market-movers-block-heading">
             <span id="market-movers-overview-title">Entire Market Movers</span>
-            {broadMarketMovers.updatedAt && (
+            {displayedMoversUpdatedAt && (
               <strong>
-                Updated {new Date(broadMarketMovers.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                Updated {new Date(displayedMoversUpdatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
               </strong>
             )}
           </div>
           <div className="market-movers-grid">
-            {renderMarketMoverPanel("Top Gainers", broadMarketMovers.gainers || [], "positive", "All Stocks", isBroadMarketMoversLoading)}
-            {renderMarketMoverPanel("Top Losers", broadMarketMovers.losers || [], "negative", "All Stocks", isBroadMarketMoversLoading)}
+            {renderMarketMoverPanel("Top Gainers", displayedMarketGainers, "positive", displayedMoverScope, isBroadMarketMoversLoading || isTopTradedStocksLoading)}
+            {renderMarketMoverPanel("Top Losers", displayedMarketLosers, "negative", displayedMoverScope, isBroadMarketMoversLoading || isTopTradedStocksLoading)}
           </div>
         </section>
         {renderTopTradedStocks()}
