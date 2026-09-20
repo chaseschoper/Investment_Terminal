@@ -4130,15 +4130,13 @@ async function fetchFmpMarketMoverList(type) {
   if (!process.env.FMP_API_KEY || !canUseFmp()) return [];
   const endpoint =
     type === "losers"
-      ? "losers"
+      ? "biggest-losers"
       : type === "active"
-        ? "actives"
-        : "gainers";
+        ? "most-actives"
+        : "biggest-gainers";
 
   try {
-    const url = type === "active"
-      ? "https://financialmodelingprep.com/stable/most-actives"
-      : `https://financialmodelingprep.com/api/v3/stock_market/${endpoint}`;
+    const url = `https://financialmodelingprep.com/stable/${endpoint}`;
     const response = await axios.get(url, {
       params: { apikey: process.env.FMP_API_KEY },
       timeout: 6000
@@ -15608,30 +15606,6 @@ async function hydrateMoverRowsWithFmpFiveMinute(rows = [], limit = 10) {
   return Promise.all(selectedRows.map((row) => hydrateMoverRowWithFmpFiveMinute(row)));
 }
 
-async function buildSavedMoverRows(symbols = [], limit = 10) {
-  const cleanSymbols = [...new Set(symbols.map((symbol) => String(symbol || "").trim().toUpperCase()).filter(Boolean))];
-  const savedStocks = await Stock.find({ ticker: { $in: cleanSymbols } })
-    .select("ticker data.name data.price data.change data.percentChange data.volume data.marketCap")
-    .lean()
-    .catch(() => []);
-  const savedBySymbol = new Map((savedStocks || []).map((stock) => [stock.ticker, stock.data || {}]));
-  return cleanSymbols
-    .map((symbol) => {
-      const data = savedBySymbol.get(symbol) || {};
-      return normalizeMarketMoverRow({
-        symbol,
-        name: firstText(data.name, FALLBACK_COMPANY_NAMES[symbol], symbol),
-        price: data.price,
-        change: data.change,
-        percentChange: data.percentChange,
-        volume: data.volume,
-        source: "saved FMP quote"
-      });
-    })
-    .filter((row) => row && toNumberOrNull(row.price) !== null)
-    .slice(0, limit);
-}
-
 async function fetchFmpTopVolumeStockRows(limit = 10) {
   if (!process.env.FMP_API_KEY || !canUseFmp()) return [];
   try {
@@ -15702,30 +15676,18 @@ app.get("/api/market-movers", async (req, res) => {
       return [...bySymbol.values()];
     };
 
-    const rawGainers = mergeMoverRows(fmpGainerRows)
-      .map(normalizeMarketMoverRow)
-      .filter(Boolean)
+    const gainers = mergeMoverRows(fmpGainerRows)
+      .filter((row) => toNumberOrNull(row.percentChange) > 0)
       .sort((a, b) => toNumberOrNull(b.percentChange) - toNumberOrNull(a.percentChange))
       .slice(0, 10);
-    const rawLosers = mergeMoverRows(fmpLoserRows)
-      .map(normalizeMarketMoverRow)
-      .filter(Boolean)
+    const losers = mergeMoverRows(fmpLoserRows)
+      .filter((row) => toNumberOrNull(row.percentChange) < 0)
       .sort((a, b) => toNumberOrNull(a.percentChange) - toNumberOrNull(b.percentChange))
       .slice(0, 10);
-    const [gainers, losers] = await Promise.all([
-      hydrateMoverRowsWithFmpFiveMinute(rawGainers, 10),
-      hydrateMoverRowsWithFmpFiveMinute(rawLosers, 10)
-    ]);
-    const fallbackSymbols = ["NVDA", "AMD", "TSLA", "PLTR", "AAPL", "MSFT", "META", "AMZN", "CAKE", "CRM"];
-    const fallbackRows = !gainers.length && !losers.length
-      ? await buildSavedMoverRows(fallbackSymbols, 10)
-      : [];
     const data = {
-      gainers: gainers.length ? gainers : fallbackRows.filter((row) => toNumberOrNull(row.percentChange) >= 0).slice(0, 5),
-      losers: losers.length ? losers : fallbackRows.filter((row) => toNumberOrNull(row.percentChange) < 0).slice(0, 5),
-      source: gainers.length || losers.length
-        ? "FMP market movers with FMP 5-minute quotes"
-        : "saved FMP market movers fallback",
+      gainers,
+      losers,
+      source: "FMP market movers",
       updatedAt: new Date().toISOString()
     };
 
@@ -15754,22 +15716,12 @@ app.get("/api/market-movers", async (req, res) => {
   }
 
   if (cached?.data) return res.json({ ...cached.data, stale: true });
-  const fallbackRows = await buildSavedMoverRows(["NVDA", "AMD", "TSLA", "PLTR", "AAPL", "MSFT", "META", "AMZN", "CAKE", "CRM"], 10);
-  if (fallbackRows.length) {
-    return res.json({
-      gainers: fallbackRows.filter((row) => toNumberOrNull(row.percentChange) >= 0).slice(0, 5),
-      losers: fallbackRows.filter((row) => toNumberOrNull(row.percentChange) < 0).slice(0, 5),
-      source: "saved FMP market movers fallback",
-      updatedAt: new Date().toISOString(),
-      stale: true
-    });
-  }
 
   return res.json({
     gainers: [],
     losers: [],
     source: "FMP market movers",
-    updatedAt: new Date().toISOString(),
+    updatedAt: null,
     stale: true
   });
 });
