@@ -6689,13 +6689,14 @@ useEffect(() => {
         timeout: 9000,
       });
       if (isActive) {
-        const gainers = Array.isArray(response.data?.gainers) ? response.data.gainers : [];
-        const losers = Array.isArray(response.data?.losers) ? response.data.losers : [];
+        const isLegacyFallback = /fallback/i.test(String(response.data?.source || ""));
+        const gainers = !isLegacyFallback && Array.isArray(response.data?.gainers) ? response.data.gainers : [];
+        const losers = !isLegacyFallback && Array.isArray(response.data?.losers) ? response.data.losers : [];
         nextRefreshMs = gainers.length || losers.length ? 2 * 60 * 1000 : 8000;
         setBroadMarketMovers({
           gainers,
           losers,
-          updatedAt: response.data?.updatedAt || null
+          updatedAt: isLegacyFallback ? null : response.data?.updatedAt || null
         });
       }
     } catch (error) {
@@ -13458,8 +13459,10 @@ return (
       <section className="stock-screener-page" id="stock-screener" aria-labelledby="stock-screener-title">
         <div className="section-heading-row market-overview-heading screener-heading">
           <div>
-            <div className="welcome-kicker">Find Market Ideas</div>
-            <h2 id="stock-screener-title">Stock Screener</h2>
+            <div className="page-title-lockup">
+              <div className="welcome-kicker">Find Market Ideas</div>
+              <h2 id="stock-screener-title">Stock Screener</h2>
+            </div>
             <p>Filter active stocks, ETFs, and funds by size, price, sector, industry, dividend, volume, exchange, and country.</p>
           </div>
           {screenerUpdatedAt && (
@@ -13613,8 +13616,10 @@ return (
       <section className="dcf-page" id="dcf-calculator" aria-labelledby="dcf-calculator-title">
             <div className="section-heading-row market-overview-heading screener-heading">
               <div>
-                <div className="welcome-kicker">Fair Value Model</div>
-                <h2 id="dcf-calculator-title">DCF Calculator</h2>
+                <div className="page-title-lockup">
+                  <div className="welcome-kicker">Fair Value Model</div>
+                  <h2 id="dcf-calculator-title">DCF Calculator</h2>
+                </div>
             <p>Search a stock, compare MrktRally fair value data, and run a custom discounted cash flow model with your own assumptions.</p>
           </div>
           {dcfData?.updatedAt && (

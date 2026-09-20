@@ -10225,8 +10225,14 @@ body {
   text-align: left;
 }
 
-.screener-heading .welcome-kicker {
-  justify-content: flex-start;
+.screener-heading .page-title-lockup {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.screener-heading .page-title-lockup .welcome-kicker {
+  margin-inline: 0;
+  text-align: center;
 }
 
 .screener-heading h2 {
