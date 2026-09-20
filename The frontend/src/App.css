@@ -42,8 +42,8 @@ body {
   isolation: isolate;
   overflow: hidden;
   padding: 72px clamp(24px, 7vw, 112px) 84px;
-  background: #02050e;
-  border-bottom: 1px solid #02050e;
+  background: transparent;
+  border-bottom: 1px solid transparent;
   box-shadow: none;
   scroll-margin-top: 114px;
 }
