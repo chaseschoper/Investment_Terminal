@@ -69,7 +69,10 @@ body {
   pointer-events: none;
   background: url("/mrktrally-icon.png") center / contain no-repeat;
   mix-blend-mode: screen;
-  opacity: 0.055;
+  opacity: 0.075;
+  filter:
+    drop-shadow(0 0 30px rgba(32, 213, 150, 0.5))
+    drop-shadow(0 0 72px rgba(37, 99, 235, 0.26));
 }
 
 .welcome-hero-content {
