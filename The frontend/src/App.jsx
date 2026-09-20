@@ -6694,8 +6694,9 @@ useEffect(() => {
       setIsBroadMarketMoversLoading(true);
     }
     let nextRefreshMs = 2 * 60 * 1000;
+    let keepLoading = false;
     try {
-      const response = await axios.get(`${API_URL}/api/market-movers`, {
+      const response = await axios.get(`${API_URL}/api/market-movers-v2`, {
         timeout: 9000,
       });
       if (isActive) {
@@ -6703,6 +6704,8 @@ useEffect(() => {
         const gainers = !isLegacyFallback && Array.isArray(response.data?.gainers) ? response.data.gainers : [];
         const losers = !isLegacyFallback && Array.isArray(response.data?.losers) ? response.data.losers : [];
         nextRefreshMs = gainers.length || losers.length ? 2 * 60 * 1000 : 8000;
+        keepLoading = !gainers.length && !losers.length &&
+          !broadMarketMovers.gainers.length && !broadMarketMovers.losers.length;
         if (!isLegacyFallback && (gainers.length || losers.length)) {
           const nextMovers = {
             gainers,
@@ -6720,9 +6723,10 @@ useEffect(() => {
     } catch (error) {
       console.error("Market movers failed", error);
       nextRefreshMs = 10000;
+      keepLoading = !broadMarketMovers.gainers.length && !broadMarketMovers.losers.length;
     } finally {
       if (isActive) {
-        setIsBroadMarketMoversLoading(false);
+        setIsBroadMarketMoversLoading(keepLoading);
         refreshTimer = window.setTimeout(loadBroadMarketMovers, nextRefreshMs);
       }
     }
@@ -11048,27 +11052,6 @@ const renderEtfExposureBars = (title, rows = []) => (
     )}
   </div>
 );
-const hasBroadMarketMovers = Boolean(
-  broadMarketMovers.gainers.length || broadMarketMovers.losers.length
-);
-const activeMoverFallback = (topTradedStocks.stocks || [])
-  .filter((row) => Number.isFinite(Number(row.percentChange)));
-const displayedMarketGainers = hasBroadMarketMovers
-  ? broadMarketMovers.gainers
-  : [...activeMoverFallback]
-      .filter((row) => Number(row.percentChange) > 0)
-      .sort((a, b) => Number(b.percentChange) - Number(a.percentChange))
-      .slice(0, 5);
-const displayedMarketLosers = hasBroadMarketMovers
-  ? broadMarketMovers.losers
-  : [...activeMoverFallback]
-      .filter((row) => Number(row.percentChange) < 0)
-      .sort((a, b) => Number(a.percentChange) - Number(b.percentChange))
-      .slice(0, 5);
-const displayedMoverScope = hasBroadMarketMovers ? "All Stocks" : "Most Active";
-const displayedMoversUpdatedAt = hasBroadMarketMovers
-  ? broadMarketMovers.updatedAt
-  : topTradedStocks.updatedAt;
 const renderMarketMoverPanel = (title, rows, tone, scope, isLoading = false) => (
   <section className={`market-movers-panel mover-${tone}`} key={`${scope}-${title}`}>
     <div className="market-movers-heading">
@@ -12739,15 +12722,15 @@ return (
         <section className="market-movers-block" aria-labelledby="market-movers-overview-title">
           <div className="market-movers-block-heading">
             <span id="market-movers-overview-title">Entire Market Movers</span>
-            {displayedMoversUpdatedAt && (
+            {broadMarketMovers.updatedAt && (
               <strong>
-                Updated {new Date(displayedMoversUpdatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                Updated {new Date(broadMarketMovers.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
               </strong>
             )}
           </div>
           <div className="market-movers-grid">
-            {renderMarketMoverPanel("Top Gainers", displayedMarketGainers, "positive", displayedMoverScope, isBroadMarketMoversLoading || isTopTradedStocksLoading)}
-            {renderMarketMoverPanel("Top Losers", displayedMarketLosers, "negative", displayedMoverScope, isBroadMarketMoversLoading || isTopTradedStocksLoading)}
+            {renderMarketMoverPanel("Top Gainers", broadMarketMovers.gainers || [], "positive", "All Stocks", isBroadMarketMoversLoading)}
+            {renderMarketMoverPanel("Top Losers", broadMarketMovers.losers || [], "negative", "All Stocks", isBroadMarketMoversLoading)}
           </div>
         </section>
         {renderTopTradedStocks()}

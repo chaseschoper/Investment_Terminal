@@ -15650,7 +15650,7 @@ async function fetchFmpTopVolumeStockRows(limit = 10) {
   }
 }
 
-app.get("/api/market-movers", async (req, res) => {
+app.get(["/api/market-movers", "/api/market-movers-v2"], async (req, res) => {
   const cached = broadMarketMoversCache.get("latest");
   const cachedAge = cached ? Date.now() - cached.fetchedAt : Infinity;
   const freshCacheMs = 90 * 1000;
