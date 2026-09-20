@@ -12566,7 +12566,6 @@ return (
 
       <section className="home-features" aria-labelledby="home-features-title">
         <div className="home-features-heading">
-          <div className="welcome-kicker">Built for sharper research</div>
           <h2 id="home-features-title">Move from market idea to full company view.</h2>
           <p>
             MrktRally keeps the tools you use most close together, so you can move through a stock without losing the thread.
@@ -12596,7 +12595,6 @@ return (
 
       <section className="home-product-tour" aria-labelledby="home-tour-title">
         <div className="home-tour-heading">
-          <div className="welcome-kicker">See the whole terminal</div>
           <h2 id="home-tour-title">Every page has a job. Together, they make the research flow.</h2>
           <p>
             Scroll through the full MrktRally stack, from market overview to company research, statements, charts,
