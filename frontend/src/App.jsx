@@ -12536,16 +12536,15 @@ return (
     <>
       <section className="welcome-hero" id="home" aria-labelledby="welcome-title">
         <div className="welcome-hero-content">
-          <div className="welcome-kicker">Market research, focused</div>
-          <div className="welcome-title-row">
-            <h1 id="welcome-title">Welcome to MrktRally</h1>
-            <img
-              className="welcome-logo"
-              src="/mrktrally-icon.png"
-              alt="MrktRally logo"
-            />
+          <div className="welcome-brand-lockup" aria-label="MrktRally">
+            <img src="/mrktrally-icon.png" alt="" />
+            <span>MrktRally</span>
           </div>
-          <p>Track companies, study the numbers, and keep your market view in one place.</p>
+          <div className="welcome-kicker">Market research, focused</div>
+          <h1 id="welcome-title">
+            Investment research for <span>modern markets.</span>
+          </h1>
+          <p>Charts, company financials, estimates, calendars, filings, market news, and portfolio tools in one focused research terminal.</p>
           <div className="welcome-actions">
             <button className="welcome-action" type="button" onClick={() => openPage("overview")}>
               Explore the market
