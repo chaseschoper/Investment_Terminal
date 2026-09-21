@@ -126,27 +126,34 @@ body {
     0 0 36px rgba(32, 213, 150, 0.18);
 }
 
-.hero-preview-market {
-  left: clamp(24px, 4vw, 78px);
-  top: 15%;
+.hero-preview-revenue {
+  width: 252px;
+  min-height: 202px;
+  left: clamp(30px, 3.8vw, 74px);
+  top: 21%;
   animation: hero-float-one 7.2s ease-in-out infinite;
 }
 
 .hero-preview-dcf {
-  right: clamp(24px, 4vw, 78px);
-  top: 18%;
+  width: 242px;
+  min-height: 170px;
+  right: clamp(34px, 5.5vw, 106px);
+  top: 12%;
   animation: hero-float-two 8.1s ease-in-out -2.4s infinite;
 }
 
 .hero-preview-calendar {
+  width: 220px;
   left: clamp(30px, 7vw, 138px);
-  bottom: 12%;
+  bottom: 8%;
   animation: hero-float-three 7.7s ease-in-out -4.1s infinite;
 }
 
 .hero-preview-financials {
-  right: clamp(30px, 7vw, 138px);
-  bottom: 10%;
+  width: 250px;
+  min-height: 174px;
+  right: clamp(28px, 3.5vw, 68px);
+  bottom: 16%;
   animation: hero-float-four 8.5s ease-in-out -1.2s infinite;
 }
 
@@ -162,6 +169,44 @@ body {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.hero-preview-heading > .hero-preview-company {
+  flex-direction: row;
+  align-items: center;
+  gap: 9px;
+}
+
+.hero-preview-company > span:last-child {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.hero-company-logo {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  border-radius: 6px;
+  background: #08111b;
+  color: #7dd3fc;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.hero-company-logo img {
+  position: absolute;
+  inset: 3px;
+  z-index: 1;
+  width: calc(100% - 6px);
+  height: calc(100% - 6px);
+  object-fit: contain;
 }
 
 .hero-preview-heading small {
@@ -190,58 +235,89 @@ body {
   font-size: 14px;
 }
 
-.hero-market-preview,
+.hero-revenue-preview,
 .hero-financial-preview,
 .hero-dcf-preview {
   display: flex;
   flex-direction: column;
 }
 
-.hero-market-preview {
-  gap: 7px;
+.hero-revenue-preview {
+  gap: 4px;
 }
 
-.hero-market-preview > span {
-  display: grid;
-  grid-template-columns: 7px minmax(0, 1fr) auto;
+.hero-revenue-summary {
+  display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 20px;
-  color: #aebdca;
-  font-size: 10px;
+  justify-content: space-between;
 }
 
-.hero-market-preview i {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #20d596;
-  box-shadow: 0 0 10px rgba(32, 213, 150, 0.55);
+.hero-revenue-summary b {
+  color: #f8fafc;
+  font-size: 18px;
 }
 
-.hero-market-preview > span:nth-child(2) i {
-  background: #fb7185;
-  box-shadow: 0 0 10px rgba(251, 113, 133, 0.45);
-}
-
-.hero-market-preview b,
-.hero-market-preview em {
+.hero-revenue-summary em {
+  color: #94a3b8;
+  font-size: 9px;
   font-style: normal;
-  font-weight: 700;
 }
 
-.hero-market-preview em {
-  color: #7dd3fc;
+.hero-revenue-preview svg {
+  width: 100%;
+  height: 70px;
+  overflow: visible;
+}
+
+.hero-revenue-area {
+  fill: rgba(32, 213, 150, 0.1);
+}
+
+.hero-revenue-line {
+  fill: none;
+  stroke: #20d596;
+  stroke-width: 2.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.hero-revenue-preview circle {
+  fill: #071019;
+  stroke: #5eead4;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.hero-revenue-years {
+  display: flex;
+  justify-content: space-between;
+  color: #64748b;
+  font-size: 8px;
 }
 
 .hero-dcf-preview {
-  gap: 9px;
+  gap: 10px;
 }
 
-.hero-dcf-value {
-  color: #cbd5e1;
-  font-size: 11px;
-  font-weight: 700;
+.hero-dcf-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.hero-dcf-metrics > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.hero-dcf-metrics small {
+  color: #8290a3;
+  font-size: 8px;
+}
+
+.hero-dcf-metrics b {
+  color: #f8fafc;
+  font-size: 15px;
 }
 
 .hero-dcf-track {
@@ -256,7 +332,7 @@ body {
   position: absolute;
   width: 2px;
   height: 14px;
-  left: 57%;
+  left: var(--dcf-position);
   top: -3px;
   background: #ffffff;
   box-shadow: 0 0 8px rgba(255, 255, 255, 0.7);
@@ -310,14 +386,20 @@ body {
 }
 
 .hero-financial-preview {
-  gap: 9px;
+  gap: 0;
 }
 
 .hero-financial-preview > span {
   display: grid;
-  grid-template-columns: 68px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
+  min-height: 30px;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.48);
+}
+
+.hero-financial-preview > span:last-child {
+  border-bottom: 0;
 }
 
 .hero-financial-preview b {
@@ -326,21 +408,10 @@ body {
   font-weight: 700;
 }
 
-.hero-financial-preview i {
-  position: relative;
-  height: 6px;
-  overflow: hidden;
-  border-radius: 3px;
-  background: rgba(51, 65, 85, 0.65);
-}
-
-.hero-financial-preview i::after {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: var(--hero-bar);
-  border-radius: inherit;
-  background: linear-gradient(90deg, #14b8a6, #38bdf8);
+.hero-financial-preview strong {
+  color: #dbeafe;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 @keyframes hero-float-one {
@@ -367,41 +438,44 @@ body {
   65% { transform: translate3d(-10px, -6px, 0); }
 }
 
-@media (min-width: 1081px) and (max-width: 1500px) {
+@media (min-width: 1201px) and (max-width: 1500px) {
   .welcome-hero-content {
-    width: min(700px, calc(100% - 500px));
+    width: min(780px, calc(100% - 500px));
   }
 
-  .welcome-hero h1 {
-    font-size: clamp(52px, 5vw, 70px);
+  .welcome-hero .welcome-hero-content h1 {
+    font-size: clamp(52px, 4.6vw, 64px);
   }
 
   .hero-preview-card {
     width: 210px;
   }
 
-  .hero-preview-market {
-    left: 24px;
-    top: 13%;
+  .hero-preview-revenue {
+    width: 222px;
+    left: 18px;
+    top: 18%;
   }
 
   .hero-preview-dcf {
-    right: 24px;
-    top: 16%;
+    width: 214px;
+    right: 16px;
+    top: 10%;
   }
 
   .hero-preview-calendar {
-    left: 42px;
-    bottom: 11%;
+    left: 52px;
+    bottom: 6%;
   }
 
   .hero-preview-financials {
-    right: 42px;
-    bottom: 9%;
+    width: 230px;
+    right: 26px;
+    bottom: 14%;
   }
 }
 
-@media (max-width: 1080px) {
+@media (max-width: 1200px) {
   .welcome-hero {
     min-height: auto;
     flex-direction: column;

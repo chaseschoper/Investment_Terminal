@@ -12560,34 +12560,58 @@ return (
       <section className="welcome-hero" id="home" aria-labelledby="welcome-title">
         <div className="hero-preview-layer" aria-label="Featured MrktRally tools">
           <button
-            className="hero-preview-card hero-preview-market"
+            className="hero-preview-card hero-preview-revenue"
             type="button"
-            onClick={() => openPage("market-overview")}
+            onClick={() => {
+              openFundamentalChartsForTicker("MSFT");
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
           >
             <span className="hero-preview-heading">
-              <span><small>Market overview</small><strong>Market movers</strong></span>
+              <span className="hero-preview-company">
+                <span className="hero-company-logo"><span>MS</span><img src={getDefaultCompanyLogoUrl("MSFT")} alt="" /></span>
+                <span><small>Revenue chart</small><strong>MSFT · Microsoft</strong></span>
+              </span>
               <span className="hero-preview-arrow" aria-hidden="true">↗</span>
             </span>
-            <span className="hero-market-preview" aria-hidden="true">
-              <span><i /><b>Top gainers</b><em>Live</em></span>
-              <span><i /><b>Top losers</b><em>Live</em></span>
-              <span><i /><b>Most active</b><em>Live</em></span>
+            <span className="hero-revenue-preview" aria-hidden="true">
+              <span className="hero-revenue-summary"><b>$331.8B</b><em>FY 2026</em></span>
+              <svg viewBox="0 0 200 72" preserveAspectRatio="none">
+                <path className="hero-revenue-area" d="M4 62 L52 54 L100 42 L148 27 L196 8 L196 68 L4 68 Z" />
+                <path className="hero-revenue-line" d="M4 62 L52 54 L100 42 L148 27 L196 8" />
+                <circle cx="4" cy="61" r="2.5" />
+                <circle cx="52" cy="54" r="2.5" />
+                <circle cx="100" cy="42" r="2.5" />
+                <circle cx="148" cy="27" r="2.5" />
+                <circle cx="196" cy="8" r="3" />
+              </svg>
+              <span className="hero-revenue-years"><b>2022</b><b>2023</b><b>2024</b><b>2025</b><b>2026</b></span>
             </span>
           </button>
 
           <button
             className="hero-preview-card hero-preview-dcf"
             type="button"
-            onClick={() => openPage("dcf-calculator")}
+            onClick={() => {
+              setDcfTicker("NVDA");
+              setDcfSearchInput("NVDA");
+              openPage("dcf-calculator");
+            }}
           >
             <span className="hero-preview-heading">
-              <span><small>DCF calculator</small><strong>Fair value model</strong></span>
+              <span className="hero-preview-company">
+                <span className="hero-company-logo"><span>NV</span><img src={getDefaultCompanyLogoUrl("NVDA")} alt="" /></span>
+                <span><small>DCF calculator</small><strong>NVDA · NVIDIA</strong></span>
+              </span>
               <span className="hero-preview-arrow" aria-hidden="true">↗</span>
             </span>
             <span className="hero-dcf-preview" aria-hidden="true">
-              <span className="hero-dcf-value">Value per share</span>
-              <span className="hero-dcf-track"><i /></span>
-              <span className="hero-dcf-scale"><b>Bear</b><b>Base</b><b>Bull</b></span>
+              <span className="hero-dcf-metrics">
+                <span><small>Fair value</small><b>$227.41</b></span>
+                <span><small>Stock price</small><b>$222.27</b></span>
+              </span>
+              <span className="hero-dcf-track"><i style={{ "--dcf-position": "51%" }} /></span>
+              <span className="hero-dcf-scale"><b>+2.3% upside</b><b>Per share</b></span>
             </span>
           </button>
 
@@ -12612,16 +12636,23 @@ return (
           <button
             className="hero-preview-card hero-preview-financials"
             type="button"
-            onClick={() => openPage("financial-statements")}
+            onClick={() => {
+              setFinancialStatementInput("AAPL");
+              setFinancialStatementTicker("AAPL");
+              openPage("financial-statements");
+            }}
           >
             <span className="hero-preview-heading">
-              <span><small>Financial statements</small><strong>Company performance</strong></span>
+              <span className="hero-preview-company">
+                <span className="hero-company-logo"><span>AP</span><img src={getDefaultCompanyLogoUrl("AAPL")} alt="" /></span>
+                <span><small>Financial statements</small><strong>AAPL · FY 2025</strong></span>
+              </span>
               <span className="hero-preview-arrow" aria-hidden="true">↗</span>
             </span>
             <span className="hero-financial-preview" aria-hidden="true">
-              <span><b>Revenue</b><i style={{ "--hero-bar": "88%" }} /></span>
-              <span><b>Net income</b><i style={{ "--hero-bar": "62%" }} /></span>
-              <span><b>Free cash flow</b><i style={{ "--hero-bar": "74%" }} /></span>
+              <span><b>Revenue</b><strong>$416.2B</strong></span>
+              <span><b>Net income</b><strong>$112.0B</strong></span>
+              <span><b>Free cash flow</b><strong>$98.8B</strong></span>
             </span>
           </button>
         </div>
