@@ -12558,6 +12558,74 @@ return (
     {activePage === "home" && (
     <>
       <section className="welcome-hero" id="home" aria-labelledby="welcome-title">
+        <div className="hero-preview-layer" aria-label="Featured MrktRally tools">
+          <button
+            className="hero-preview-card hero-preview-market"
+            type="button"
+            onClick={() => openPage("market-overview")}
+          >
+            <span className="hero-preview-heading">
+              <span><small>Market overview</small><strong>Market movers</strong></span>
+              <span className="hero-preview-arrow" aria-hidden="true">↗</span>
+            </span>
+            <span className="hero-market-preview" aria-hidden="true">
+              <span><i /><b>Top gainers</b><em>Live</em></span>
+              <span><i /><b>Top losers</b><em>Live</em></span>
+              <span><i /><b>Most active</b><em>Live</em></span>
+            </span>
+          </button>
+
+          <button
+            className="hero-preview-card hero-preview-dcf"
+            type="button"
+            onClick={() => openPage("dcf-calculator")}
+          >
+            <span className="hero-preview-heading">
+              <span><small>DCF calculator</small><strong>Fair value model</strong></span>
+              <span className="hero-preview-arrow" aria-hidden="true">↗</span>
+            </span>
+            <span className="hero-dcf-preview" aria-hidden="true">
+              <span className="hero-dcf-value">Value per share</span>
+              <span className="hero-dcf-track"><i /></span>
+              <span className="hero-dcf-scale"><b>Bear</b><b>Base</b><b>Bull</b></span>
+            </span>
+          </button>
+
+          <button
+            className="hero-preview-card hero-preview-calendar"
+            type="button"
+            onClick={() => openPage("earnings-calendar")}
+          >
+            <span className="hero-preview-heading">
+              <span><small>Market calendar</small><strong>Upcoming events</strong></span>
+              <span className="hero-preview-arrow" aria-hidden="true">↗</span>
+            </span>
+            <span className="hero-calendar-preview" aria-hidden="true">
+              {["M", "T", "W", "T", "F"].map((day, index) => (
+                <span className={index === 1 || index === 3 ? "has-event" : ""} key={`hero-calendar-${day}-${index}`}>
+                  <b>{day}</b><i />
+                </span>
+              ))}
+            </span>
+          </button>
+
+          <button
+            className="hero-preview-card hero-preview-financials"
+            type="button"
+            onClick={() => openPage("financial-statements")}
+          >
+            <span className="hero-preview-heading">
+              <span><small>Financial statements</small><strong>Company performance</strong></span>
+              <span className="hero-preview-arrow" aria-hidden="true">↗</span>
+            </span>
+            <span className="hero-financial-preview" aria-hidden="true">
+              <span><b>Revenue</b><i style={{ "--hero-bar": "88%" }} /></span>
+              <span><b>Net income</b><i style={{ "--hero-bar": "62%" }} /></span>
+              <span><b>Free cash flow</b><i style={{ "--hero-bar": "74%" }} /></span>
+            </span>
+          </button>
+        </div>
+
         <div className="welcome-hero-content">
           <div className="welcome-kicker">Market research, focused</div>
           <h1 id="welcome-title">
