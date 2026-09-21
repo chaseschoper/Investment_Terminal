@@ -12569,7 +12569,7 @@ return (
           >
             <span className="hero-preview-heading">
               <span className="hero-preview-company">
-                <span className="hero-company-logo"><span>MS</span><img src={getDefaultCompanyLogoUrl("MSFT")} alt="" /></span>
+                <span className="hero-company-logo"><span>MS</span><img src={getDefaultCompanyLogoUrl("MSFT")} alt="" onLoad={(event) => event.currentTarget.parentElement?.classList.add("is-loaded")} /></span>
                 <span><small>Revenue chart</small><strong>MSFT · Microsoft</strong></span>
               </span>
               <span className="hero-preview-arrow" aria-hidden="true">↗</span>
@@ -12600,7 +12600,7 @@ return (
           >
             <span className="hero-preview-heading">
               <span className="hero-preview-company">
-                <span className="hero-company-logo"><span>NV</span><img src={getDefaultCompanyLogoUrl("NVDA")} alt="" /></span>
+                <span className="hero-company-logo"><span>NV</span><img src={getDefaultCompanyLogoUrl("NVDA")} alt="" onLoad={(event) => event.currentTarget.parentElement?.classList.add("is-loaded")} /></span>
                 <span><small>DCF calculator</small><strong>NVDA · NVIDIA</strong></span>
               </span>
               <span className="hero-preview-arrow" aria-hidden="true">↗</span>
@@ -12644,7 +12644,7 @@ return (
           >
             <span className="hero-preview-heading">
               <span className="hero-preview-company">
-                <span className="hero-company-logo"><span>AP</span><img src={getDefaultCompanyLogoUrl("AAPL")} alt="" /></span>
+                <span className="hero-company-logo"><span>AP</span><img src={getDefaultCompanyLogoUrl("AAPL")} alt="" onLoad={(event) => event.currentTarget.parentElement?.classList.add("is-loaded")} /></span>
                 <span><small>Financial statements</small><strong>AAPL · FY 2025</strong></span>
               </span>
               <span className="hero-preview-arrow" aria-hidden="true">↗</span>
