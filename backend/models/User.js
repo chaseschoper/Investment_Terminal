@@ -81,6 +81,11 @@ const UserSchema = new mongoose.Schema({
     type: Object,
     default: {},
   },
+
+  savedDataUpdatedAt: {
+    type: Date,
+    default: null,
+  },
 });
 
 module.exports = mongoose.model(

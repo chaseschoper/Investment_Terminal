@@ -78,6 +78,7 @@ const FMP_MAX_CONCURRENT_REQUESTS = 3;
 const FMP_REQUEST_SPACING_MS = 60;
 const BACKEND_WARMUP_MIN_INTERVAL_MS = 4 * 60 * 1000;
 const BACKEND_WARMUP_REFRESH_MS = 5 * 60 * 1000;
+let lastSavedDataRequestTime = 0;
 let fmpActiveRequestCount = 0;
 let fmpLastRequestStartedAt = 0;
 const fmpRequestQueue = [];
@@ -23180,6 +23181,9 @@ res.status(500).json({ sectors: [], industries: [], exchanges: [], countries: []
 app.post("/api/save-data", authMiddleware, async (req, res) => {
 try {
 const { watchlist, portfolio, portfolios, activePortfolioId, namedWatchlists, projections, profileSettings } = req.body;
+const requestReceivedAtMs = Math.max(Date.now(), lastSavedDataRequestTime + 1);
+lastSavedDataRequestTime = requestReceivedAtMs;
+const requestReceivedAt = new Date(requestReceivedAtMs);
 const cleanSymbols = (symbols, limit = 100) => [...new Set((Array.isArray(symbols) ? symbols : [])
   .map((symbol) => String(symbol).trim().toUpperCase())
   .filter((symbol) => /^[A-Z0-9.-]{1,10}$/.test(symbol)))]
@@ -23264,19 +23268,35 @@ const cleanProfileSettings = {
   watchlistTapeMoves: Boolean(profileSettings?.watchlistTapeMoves)
 };
 
-req.user.watchlist = cleanSymbols(watchlist);
-req.user.portfolios = savedPortfolios;
-req.user.activePortfolioId = savedActivePortfolioId;
-req.user.portfolio = savedPortfolios.find(
+const savedWatchlist = cleanSymbols(watchlist);
+const savedPortfolioPositions = savedPortfolios.find(
   (item) => item.id === savedActivePortfolioId
 )?.positions || [];
-req.user.namedWatchlists = cleanNamedWatchlists;
-req.user.projections = cleanSavedProjections;
-req.user.profileSettings = cleanProfileSettings;
+const updatedUser = await User.findOneAndUpdate(
+  {
+    _id: req.user._id,
+    $or: [
+      { savedDataUpdatedAt: { $exists: false } },
+      { savedDataUpdatedAt: null },
+      { savedDataUpdatedAt: { $lt: requestReceivedAt } }
+    ]
+  },
+  {
+    $set: {
+      watchlist: savedWatchlist,
+      portfolios: savedPortfolios,
+      activePortfolioId: savedActivePortfolioId,
+      portfolio: savedPortfolioPositions,
+      namedWatchlists: cleanNamedWatchlists,
+      projections: cleanSavedProjections,
+      profileSettings: cleanProfileSettings,
+      savedDataUpdatedAt: requestReceivedAt
+    }
+  },
+  { new: true, runValidators: true }
+);
 
-await req.user.save();
-
-res.json({ success: true });
+res.json({ success: true, stale: !updatedUser });
 
 
 } catch (err) {
@@ -23293,7 +23313,8 @@ portfolios: req.user.portfolios || [],
 activePortfolioId: req.user.activePortfolioId || "",
 namedWatchlists: req.user.namedWatchlists || [],
 projections: req.user.projections || {},
-profileSettings: req.user.profileSettings || {}
+profileSettings: req.user.profileSettings || {},
+savedDataUpdatedAt: req.user.savedDataUpdatedAt || null
 });
 });
 

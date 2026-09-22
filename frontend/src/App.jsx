@@ -4003,6 +4003,7 @@ const readSavedListsSnapshot = () => {
     : (portfolios[0]?.id || DEFAULT_PORTFOLIO.id);
 
   return {
+    savedAt: savedLists.savedAt || "",
     watchlist: normalizeSymbolList(savedLists.watchlist || []),
     portfolios: portfolios.length ? portfolios : [DEFAULT_PORTFOLIO],
     activePortfolioId,
@@ -4850,6 +4851,9 @@ function App() {
   const initialSavedListsRef = useRef(null);
   const initialSavedUserRef = useRef(null);
   const initialSavedQuotesRef = useRef(null);
+  const savedDataPendingRef = useRef(null);
+  const savedDataSavingRef = useRef(false);
+  const savedDataRetryTimerRef = useRef(null);
   if (!initialSavedListsRef.current) initialSavedListsRef.current = readSavedListsSnapshot();
   if (!initialSavedUserRef.current) initialSavedUserRef.current = readSavedUserSnapshot();
   if (!initialSavedQuotesRef.current) initialSavedQuotesRef.current = readSavedQuoteSnapshot();
@@ -4875,6 +4879,11 @@ const [activePolicyKey, setActivePolicyKey] = useState(null);
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 
 const handleSignOut = () => {
+  savedDataPendingRef.current = null;
+  if (savedDataRetryTimerRef.current) {
+    window.clearTimeout(savedDataRetryTimerRef.current);
+    savedDataRetryTimerRef.current = null;
+  }
   localStorage.removeItem("token");
   localStorage.removeItem("user");
   setUser(null);
@@ -5048,6 +5057,45 @@ const handleResetPassword = async () => {
     alert(err.response?.data?.error || "Password reset failed");
   } finally {
     setIsAuthSubmitting(false);
+  }
+};
+
+const flushSavedDataQueue = async () => {
+  if (savedDataSavingRef.current || !savedDataPendingRef.current) return;
+
+  const pendingSave = savedDataPendingRef.current;
+  savedDataPendingRef.current = null;
+  savedDataSavingRef.current = true;
+
+  try {
+    await axios.post(
+      `${API_URL}/api/save-data`,
+      pendingSave,
+      {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+        timeout: 15000,
+      }
+    );
+  } catch (err) {
+    console.error("Save failed", err);
+    if (!localStorage.getItem("token")) return;
+    if (!savedDataPendingRef.current) {
+      savedDataPendingRef.current = pendingSave;
+    }
+    if (savedDataRetryTimerRef.current) {
+      window.clearTimeout(savedDataRetryTimerRef.current);
+    }
+    savedDataRetryTimerRef.current = window.setTimeout(() => {
+      savedDataRetryTimerRef.current = null;
+      flushSavedDataQueue();
+    }, 3000);
+  } finally {
+    savedDataSavingRef.current = false;
+    if (savedDataPendingRef.current && !savedDataRetryTimerRef.current) {
+      window.setTimeout(flushSavedDataQueue, 0);
+    }
   }
 };
 
@@ -7614,6 +7662,29 @@ useEffect(() => {
     setHasMeaningfulSavedLists(true);
   }
 
+  const currentSavedContent = JSON.stringify({
+    watchlist,
+    portfolios,
+    activePortfolioId,
+    namedWatchlists,
+    projections: savedProjections,
+    profileSettings,
+  });
+  const initialSavedContent = JSON.stringify({
+    watchlist: initialSavedListsRef.current.watchlist,
+    portfolios: initialSavedListsRef.current.portfolios,
+    activePortfolioId: initialSavedListsRef.current.activePortfolioId,
+    namedWatchlists: initialSavedListsRef.current.namedWatchlists,
+    projections: initialSavedListsRef.current.projections,
+    profileSettings: {
+      watchlistTapeMoves: Boolean(initialSavedListsRef.current.profileSettings.watchlistTapeMoves),
+    },
+  });
+
+  if (user && !hasLoadedRemoteUserData && currentSavedContent === initialSavedContent) {
+    return;
+  }
+
   localStorage.setItem(
     SAVED_LISTS_STORAGE_KEY,
     JSON.stringify({
@@ -7630,45 +7701,18 @@ useEffect(() => {
 
   if (!user || !hasLoadedRemoteUserData) return;
 
-  const saveData = async () => {
-
-    try {
-
-      await axios.post(
-
-    `${API_URL}/api/save-data`,
-
-        {
-          watchlist,
-          portfolio,
-          portfolios,
-          activePortfolioId,
-          namedWatchlists,
-          projections: savedProjections,
-          profileSettings,
-        },
-        {
-          headers: {
-            Authorization:
-              `Bearer ${localStorage.getItem("token")}`,
-          },
-        }
-      );
-
-      console.log("Saved successfully");
-
-    } catch (err) {
-
-      console.error(
-        "Save failed",
-        err
-      );
-
-    }
-  };
-
-  const timeout =
-    setTimeout(saveData, 1000);
+  const timeout = setTimeout(() => {
+    savedDataPendingRef.current = {
+      watchlist,
+      portfolio,
+      portfolios,
+      activePortfolioId,
+      namedWatchlists,
+      projections: savedProjections,
+      profileSettings,
+    };
+    flushSavedDataQueue();
+  }, 500);
 
   return () =>
     clearTimeout(timeout);
@@ -7679,15 +7723,6 @@ useEffect(() => {
 const loadUserData = async () => {
   try {
     const token = localStorage.getItem("token");
-    let localSavedLists = {};
-    try {
-      localSavedLists = JSON.parse(
-        localStorage.getItem(SAVED_LISTS_STORAGE_KEY) || "{}"
-      );
-    } catch (error) {
-      console.error("Local saved lists read failed", error);
-    }
-
     const response = await axios.get(
       `${API_URL}/api/user-data`,
       {
@@ -7696,6 +7731,15 @@ const loadUserData = async () => {
         },
       }
     );
+
+    let localSavedLists = {};
+    try {
+      localSavedLists = JSON.parse(
+        localStorage.getItem(SAVED_LISTS_STORAGE_KEY) || "{}"
+      );
+    } catch (error) {
+      console.error("Local saved lists read failed", error);
+    }
 
     const remoteWatchlist = response.data.watchlist || [];
     const remotePortfolios = Array.isArray(response.data.portfolios) && response.data.portfolios.length
@@ -7708,36 +7752,71 @@ const loadUserData = async () => {
     const localBelongsToUser =
       Boolean(localSavedLists.userId) &&
       localSavedLists.userId === getUserStorageId(savedUser);
-    const mergedWatchlist = localBelongsToUser && Array.isArray(localSavedLists.watchlist)
+    const localIsUnowned = !localSavedLists.userId;
+    const localSavedAt = Date.parse(localSavedLists.savedAt);
+    const remoteSavedAt = Date.parse(response.data.savedDataUpdatedAt);
+    const localHasContent = Boolean(
+      (localSavedLists.watchlist || []).length ||
+      hasPortfolioPositions(localSavedLists.portfolios || []) ||
+      (localSavedLists.namedWatchlists || []).some((list) => (list.symbols || []).length) ||
+      Object.keys(localSavedLists.projections || {}).length
+    );
+    const remoteHasContent = Boolean(
+      remoteWatchlist.length ||
+      hasPortfolioPositions(remotePortfolios) ||
+      (response.data.namedWatchlists || []).some((list) => (list.symbols || []).length) ||
+      Object.keys(response.data.projections || {}).length
+    );
+    const preferLocal = localBelongsToUser && (
+      (Number.isFinite(localSavedAt) && Number.isFinite(remoteSavedAt) && localSavedAt >= remoteSavedAt) ||
+      (!Number.isFinite(remoteSavedAt) && localHasContent) ||
+      !remoteHasContent
+    );
+    const mergedWatchlist = preferLocal && Array.isArray(localSavedLists.watchlist)
       ? normalizeSymbolList(localSavedLists.watchlist)
-      : normalizeSymbolList([
+      : localIsUnowned
+        ? normalizeSymbolList([
           ...(localSavedLists.watchlist || []),
           ...remoteWatchlist
-        ]);
-    const mergedPortfolios = localBelongsToUser && Array.isArray(localSavedLists.portfolios)
+        ])
+        : normalizeSymbolList(remoteWatchlist);
+    const mergedPortfolios = preferLocal && Array.isArray(localSavedLists.portfolios)
       ? normalizePortfolios(localSavedLists.portfolios)
-      : mergePortfolios(
+      : localIsUnowned
+        ? mergePortfolios(
           localSavedLists.portfolios || [],
           remotePortfolios
-        );
-    const mergedNamedWatchlists = localBelongsToUser && Array.isArray(localSavedLists.namedWatchlists)
+        )
+        : normalizePortfolios(remotePortfolios);
+    const mergedNamedWatchlists = preferLocal && Array.isArray(localSavedLists.namedWatchlists)
       ? mergeNamedWatchlists(localSavedLists.namedWatchlists, [])
-      : mergeNamedWatchlists(
+      : localIsUnowned
+        ? mergeNamedWatchlists(
           localSavedLists.namedWatchlists || [],
           response.data.namedWatchlists || []
-        );
-    const mergedProjections = {
-      ...normalizeStockProjections(response.data.projections || {}),
-      ...normalizeStockProjections(localSavedLists.projections || {})
-    };
-    const profileSettings = {
-      ...(response.data.profileSettings || {}),
-      ...(localSavedLists.profileSettings || {})
-    };
-    const preferredActivePortfolioId =
-      localSavedLists.activePortfolioId ||
-      response.data.activePortfolioId ||
-      mergedPortfolios[0].id;
+        )
+        : mergeNamedWatchlists(response.data.namedWatchlists || [], []);
+    const mergedProjections = preferLocal
+      ? normalizeStockProjections(localSavedLists.projections || {})
+      : localIsUnowned
+        ? {
+            ...normalizeStockProjections(response.data.projections || {}),
+            ...normalizeStockProjections(localSavedLists.projections || {})
+          }
+        : normalizeStockProjections(response.data.projections || {});
+    const profileSettings = preferLocal
+      ? (localSavedLists.profileSettings || {})
+      : localIsUnowned
+        ? {
+            ...(response.data.profileSettings || {}),
+            ...(localSavedLists.profileSettings || {})
+          }
+        : (response.data.profileSettings || {});
+    const preferredActivePortfolioId = preferLocal
+      ? (localSavedLists.activePortfolioId || mergedPortfolios[0].id)
+      : localIsUnowned
+        ? (localSavedLists.activePortfolioId || response.data.activePortfolioId || mergedPortfolios[0].id)
+        : (response.data.activePortfolioId || mergedPortfolios[0].id);
     const savedActivePortfolioId = mergedPortfolios.some(
       (item) => item.id === preferredActivePortfolioId
     )
@@ -17058,10 +17137,6 @@ return (
       Number.isFinite(avgCost) && avgCost >= 0
     ) {
 
-      await loadPortfolioPrice(
-        symbol
-      );
-
       const newPosition = {
         id: globalThis.crypto?.randomUUID?.() || `position-${Date.now()}`,
         symbol,
@@ -17073,6 +17148,8 @@ return (
         ...prev,
         newPosition,
       ]);
+
+      loadPortfolioPrice(symbol);
 
       setPortfolioTicker("");
       setPortfolioShares("");
