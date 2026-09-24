@@ -3995,8 +3995,26 @@ const readLocalJsonStorage = (key, fallback) => {
 
 const readSavedUserSnapshot = () => readLocalJsonStorage("user", null);
 
-const readSavedListsSnapshot = () => {
-  const savedLists = readLocalJsonStorage(SAVED_LISTS_STORAGE_KEY, {});
+const getSavedListsStorageKey = (user) => {
+  const userId = getUserStorageId(user);
+  return userId ? `${SAVED_LISTS_STORAGE_KEY}:${userId}` : SAVED_LISTS_STORAGE_KEY;
+};
+
+const readSavedListsStorageForUser = (user) => {
+  const userId = getUserStorageId(user);
+  if (!userId) return readLocalJsonStorage(SAVED_LISTS_STORAGE_KEY, {});
+
+  const accountSnapshot = readLocalJsonStorage(getSavedListsStorageKey(user), null);
+  if (accountSnapshot && typeof accountSnapshot === "object") return accountSnapshot;
+
+  const legacySnapshot = readLocalJsonStorage(SAVED_LISTS_STORAGE_KEY, {});
+  return !legacySnapshot.userId || legacySnapshot.userId === userId
+    ? legacySnapshot
+    : {};
+};
+
+const readSavedListsSnapshot = (user = readSavedUserSnapshot()) => {
+  const savedLists = readSavedListsStorageForUser(user);
   const portfolios = normalizePortfolios(savedLists.portfolios || []);
   const activePortfolioId = portfolios.some((item) => item.id === savedLists.activePortfolioId)
     ? savedLists.activePortfolioId
@@ -4854,8 +4872,8 @@ function App() {
   const savedDataPendingRef = useRef(null);
   const savedDataSavingRef = useRef(false);
   const savedDataRetryTimerRef = useRef(null);
-  if (!initialSavedListsRef.current) initialSavedListsRef.current = readSavedListsSnapshot();
   if (!initialSavedUserRef.current) initialSavedUserRef.current = readSavedUserSnapshot();
+  if (!initialSavedListsRef.current) initialSavedListsRef.current = readSavedListsSnapshot(initialSavedUserRef.current);
   if (!initialSavedQuotesRef.current) initialSavedQuotesRef.current = readSavedQuoteSnapshot();
   const [showAuth, setShowAuth] = useState(false);
   const [authPrompt, setAuthPrompt] = useState("");
@@ -4886,6 +4904,9 @@ const handleSignOut = () => {
   }
   localStorage.removeItem("token");
   localStorage.removeItem("user");
+  localStorage.removeItem(SAVED_LISTS_STORAGE_KEY);
+  initialSavedListsRef.current = readSavedListsSnapshot(null);
+  initialSavedUserRef.current = null;
   setUser(null);
   setHasLoadedRemoteUserData(false);
   setWatchlist([]);
@@ -4910,8 +4931,19 @@ const requireAuth = (message = "Log in or sign up to save this.") => {
 
 const completeAuth = async (data, successMessage) => {
   if (data.user) {
+    const accountSnapshot = readSavedListsSnapshot(data.user);
+    initialSavedUserRef.current = data.user;
+    initialSavedListsRef.current = accountSnapshot;
     setHasLoadedRemoteUserData(false);
     setUser(data.user);
+    setWatchlist(accountSnapshot.watchlist);
+    setPortfolios(accountSnapshot.portfolios);
+    setActivePortfolioId(accountSnapshot.activePortfolioId);
+    setNamedWatchlists(accountSnapshot.namedWatchlists);
+    setSavedProjections(accountSnapshot.projections);
+    if (typeof accountSnapshot.profileSettings.watchlistTapeMoves === "boolean") {
+      setWatchlistTapeMoves(accountSnapshot.profileSettings.watchlistTapeMoves);
+    }
     localStorage.setItem("token", data.token);
     localStorage.setItem("user", JSON.stringify(data.user));
   }
@@ -4926,7 +4958,7 @@ const completeAuth = async (data, successMessage) => {
   setAcceptedPolicies(false);
 
   alert(successMessage);
-  await loadUserData();
+  await loadUserData(data.user, data.token);
 };
 
 const handleAuth = async () => {
@@ -5067,20 +5099,25 @@ const flushSavedDataQueue = async () => {
   savedDataPendingRef.current = null;
   savedDataSavingRef.current = true;
 
+  const sessionStillMatches = () =>
+    localStorage.getItem("token") === pendingSave.token &&
+    getUserStorageId(readSavedUserSnapshot()) === pendingSave.userId;
+
   try {
+    if (!sessionStillMatches()) return;
     await axios.post(
       `${API_URL}/api/save-data`,
-      pendingSave,
+      pendingSave.payload,
       {
         headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
+          Authorization: `Bearer ${pendingSave.token}`,
         },
         timeout: 15000,
       }
     );
   } catch (err) {
     console.error("Save failed", err);
-    if (!localStorage.getItem("token")) return;
+    if (!sessionStillMatches()) return;
     if (!savedDataPendingRef.current) {
       savedDataPendingRef.current = pendingSave;
     }
@@ -7686,7 +7723,7 @@ useEffect(() => {
   }
 
   localStorage.setItem(
-    SAVED_LISTS_STORAGE_KEY,
+    getSavedListsStorageKey(user),
     JSON.stringify({
       userId: getUserStorageId(user),
       savedAt: new Date().toISOString(),
@@ -7702,14 +7739,21 @@ useEffect(() => {
   if (!user || !hasLoadedRemoteUserData) return;
 
   const timeout = setTimeout(() => {
+    const token = localStorage.getItem("token");
+    const userId = getUserStorageId(user);
+    if (!token || !userId) return;
     savedDataPendingRef.current = {
-      watchlist,
-      portfolio,
-      portfolios,
-      activePortfolioId,
-      namedWatchlists,
-      projections: savedProjections,
-      profileSettings,
+      token,
+      userId,
+      payload: {
+        watchlist,
+        portfolio,
+        portfolios,
+        activePortfolioId,
+        namedWatchlists,
+        projections: savedProjections,
+        profileSettings,
+      },
     };
     flushSavedDataQueue();
   }, 500);
@@ -7720,26 +7764,30 @@ useEffect(() => {
 }, [watchlist, portfolios, activePortfolioId, namedWatchlists, savedProjections, watchlistTapeMoves, user, hasLoadedSavedLists, hasLoadedRemoteUserData]);
        
   
-const loadUserData = async () => {
+const loadUserData = async (
+  requestedUser = readSavedUserSnapshot(),
+  requestedToken = localStorage.getItem("token")
+) => {
+  const requestedUserId = getUserStorageId(requestedUser);
+  const sessionStillMatches = () =>
+    Boolean(requestedToken && requestedUserId) &&
+    localStorage.getItem("token") === requestedToken &&
+    getUserStorageId(readSavedUserSnapshot()) === requestedUserId;
+
   try {
-    const token = localStorage.getItem("token");
+    if (!sessionStillMatches()) return;
     const response = await axios.get(
       `${API_URL}/api/user-data`,
       {
         headers: {
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${requestedToken}`,
         },
       }
     );
 
-    let localSavedLists = {};
-    try {
-      localSavedLists = JSON.parse(
-        localStorage.getItem(SAVED_LISTS_STORAGE_KEY) || "{}"
-      );
-    } catch (error) {
-      console.error("Local saved lists read failed", error);
-    }
+    if (!sessionStillMatches()) return;
+
+    const localSavedLists = readSavedListsStorageForUser(requestedUser);
 
     const remoteWatchlist = response.data.watchlist || [];
     const remotePortfolios = Array.isArray(response.data.portfolios) && response.data.portfolios.length
@@ -7748,10 +7796,9 @@ const loadUserData = async () => {
           ...DEFAULT_PORTFOLIO,
           positions: response.data.portfolio || []
         }];
-    const savedUser = JSON.parse(localStorage.getItem("user") || "null");
     const localBelongsToUser =
       Boolean(localSavedLists.userId) &&
-      localSavedLists.userId === getUserStorageId(savedUser);
+      localSavedLists.userId === requestedUserId;
     const localIsUnowned = !localSavedLists.userId;
     const localSavedAt = Date.parse(localSavedLists.savedAt);
     const remoteSavedAt = Date.parse(response.data.savedDataUpdatedAt);
@@ -7843,10 +7890,12 @@ const loadUserData = async () => {
 
     console.log("Loaded user data");
   } catch (err) {
-    console.error(err);
+    if (sessionStillMatches()) console.error(err);
   } finally {
-    setHasLoadedSavedLists(true);
-    setHasLoadedRemoteUserData(true);
+    if (sessionStillMatches()) {
+      setHasLoadedSavedLists(true);
+      setHasLoadedRemoteUserData(true);
+    }
   }
 };
     
