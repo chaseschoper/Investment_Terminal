@@ -21319,7 +21319,17 @@ app.get("/api/earnings-report/:symbol", async (req, res) => {
   const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 12, 1), 40);
   if (!symbol) return res.status(400).json({ symbol, rows: [] });
 
-  const cacheKey = `earnings-report:${symbol}:${limit}`;
+  const requestedDate = String(req.query.date || "").slice(0, 10);
+  const requestedEpsEstimate = parseApiNumber(req.query.epsEstimate);
+  const requestedRevenueEstimate = parseApiNumber(req.query.revenueEstimate);
+  const cacheKey = [
+    "earnings-report",
+    symbol,
+    limit,
+    requestedDate || "history",
+    requestedEpsEstimate ?? "na",
+    requestedRevenueEstimate ?? "na"
+  ].join(":");
   const cached = fmpCalendarCache.get(cacheKey);
   if (cached?.data?.rows?.length && cached.expiresAt > Date.now()) return res.json(cached.data);
 
@@ -21368,11 +21378,11 @@ app.get("/api/earnings-report/:symbol", async (req, res) => {
       ).catch(() => null)
     ]);
 
-    const clickedEstimate = req.query.date
+    const clickedEstimate = requestedDate
       ? [{
-          date: String(req.query.date).slice(0, 10),
-          epsEstimated: parseApiNumber(req.query.epsEstimate),
-          revenueEstimated: parseApiNumber(req.query.revenueEstimate),
+          date: requestedDate,
+          epsEstimated: requestedEpsEstimate,
+          revenueEstimated: requestedRevenueEstimate,
           source: "Earnings calendar"
         }]
       : [];
@@ -21395,8 +21405,100 @@ app.get("/api/earnings-report/:symbol", async (req, res) => {
         ])
       ));
     });
-    const normalizedRows = [...rowsByDate.values()]
-      .filter((row) => row.date)
+    const hasActual = (row) => row.epsActual !== null || row.revenueActual !== null;
+    const dayDistance = (left, right) => {
+      const leftTime = Date.parse(`${left}T00:00:00Z`);
+      const rightTime = Date.parse(`${right}T00:00:00Z`);
+      return Number.isFinite(leftTime) && Number.isFinite(rightTime)
+        ? Math.abs(leftTime - rightTime) / (24 * 60 * 60 * 1000)
+        : Number.POSITIVE_INFINITY;
+    };
+    const closeNumber = (left, right) =>
+      left !== null && right !== null && Math.abs(left - right) <= Math.max(0.0001, Math.abs(left) * 0.0001);
+    const sameReportedQuarter = (left, right) =>
+      hasActual(left) &&
+      hasActual(right) &&
+      dayDistance(left.date, right.date) <= 35 &&
+      (
+        closeNumber(left.epsActual, right.epsActual) ||
+        closeNumber(left.revenueActual, right.revenueActual)
+      );
+    const reportRowScore = (row) =>
+      (row.epsActual !== null ? 4 : 0) +
+      (row.revenueActual !== null ? 4 : 0) +
+      (row.epsEstimated !== null ? 2 : 0) +
+      (row.revenueEstimated !== null ? 2 : 0) +
+      (/FMP earnings history/i.test(row.source || "") ? 5 : 0);
+    const mergeMissingReportValues = (preferred, fallback) => {
+      const merged = { ...fallback, ...preferred };
+      [
+        "epsActual",
+        "epsEstimated",
+        "revenueActual",
+        "revenueEstimated",
+        "epsSurprise",
+        "epsSurprisePercent",
+        "revenueSurprise",
+        "revenueSurprisePercent"
+      ].forEach((field) => {
+        if (merged[field] === null || merged[field] === undefined) merged[field] = fallback[field] ?? null;
+      });
+      if (merged.epsActual !== null && merged.epsEstimated !== null) {
+        merged.epsSurprise = merged.epsActual - merged.epsEstimated;
+        merged.epsSurprisePercent = merged.epsEstimated
+          ? (merged.epsSurprise / Math.abs(merged.epsEstimated)) * 100
+          : null;
+      }
+      if (merged.revenueActual !== null && merged.revenueEstimated !== null) {
+        merged.revenueSurprise = merged.revenueActual - merged.revenueEstimated;
+        merged.revenueSurprisePercent = merged.revenueEstimated
+          ? (merged.revenueSurprise / Math.abs(merged.revenueEstimated)) * 100
+          : null;
+      }
+      return merged;
+    };
+
+    const sourceRows = [...rowsByDate.values()].filter((row) => row.date);
+    const reportedRows = sourceRows
+      .filter(hasActual)
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+      .reduce((deduped, row) => {
+        const duplicateIndex = deduped.findIndex((existing) => sameReportedQuarter(existing, row));
+        if (duplicateIndex < 0) {
+          deduped.push(row);
+          return deduped;
+        }
+        const existing = deduped[duplicateIndex];
+        const preferred = reportRowScore(row) > reportRowScore(existing) ? row : existing;
+        const fallback = preferred === row ? existing : row;
+        deduped[duplicateIndex] = mergeMissingReportValues(preferred, fallback);
+        return deduped;
+      }, []);
+
+    const clickedRow = requestedDate
+      ? sourceRows.find((row) => row.date === requestedDate) || normalizeReportRow(clickedEstimate[0])
+      : null;
+    const nearbyActualIndex = clickedRow
+      ? reportedRows.findIndex((row) => dayDistance(row.date, clickedRow.date) <= 7)
+      : -1;
+    if (nearbyActualIndex >= 0) {
+      reportedRows[nearbyActualIndex] = mergeMissingReportValues(reportedRows[nearbyActualIndex], clickedRow);
+    }
+
+    let upcomingRow = null;
+    if (clickedRow && nearbyActualIndex < 0 && !hasActual(clickedRow)) {
+      upcomingRow = clickedRow;
+    } else if (!clickedRow) {
+      const today = calendarIsoDate(new Date());
+      upcomingRow = sourceRows
+        .filter((row) => !hasActual(row) && row.date >= today)
+        .sort((a, b) => String(a.date).localeCompare(String(b.date)))[0] || null;
+    }
+
+    const normalizedRows = [
+      ...(upcomingRow ? [upcomingRow] : []),
+      ...reportedRows
+    ]
       .sort((a, b) => String(b.date).localeCompare(String(a.date)))
       .slice(0, limit);
     const responseData = {
@@ -21414,7 +21516,13 @@ app.get("/api/earnings-report/:symbol", async (req, res) => {
     };
     fmpCalendarCache.set(cacheKey, {
       data: responseData,
-      expiresAt: Date.now() + (normalizedRows.length ? 15 * 60 * 1000 : 30 * 1000)
+      expiresAt: Date.now() + (
+        upcomingRow
+          ? 60 * 1000
+          : normalizedRows.length
+            ? 15 * 60 * 1000
+            : 30 * 1000
+      )
     });
     return res.json(responseData);
   } catch (err) {

@@ -12325,13 +12325,6 @@ const toggleFundamentalIndicator = (indicatorKey) => {
   );
 };
 
-const addFundamentalIndicator = (indicatorKey) => {
-  if (!indicatorKey) return;
-  setSelectedFundamentalIndicators((current) =>
-    current.includes(indicatorKey) ? current : [...current, indicatorKey]
-  );
-};
-
 const selectFundamentalIndicatorGroup = (groupId) => {
   const group = availableFundamentalIndicatorGroups.find((item) => item.id === groupId);
   if (!group) return;
@@ -14697,7 +14690,7 @@ return (
                         type="button"
                         className={selectedFundamentalIndicators.includes(indicator.key) ? "selected" : ""}
                         onClick={() => {
-                          addFundamentalIndicator(indicator.key);
+                          toggleFundamentalIndicator(indicator.key);
                           setActiveFundamentalIndicatorGroup(indicator.groupId);
                         }}
                       >
