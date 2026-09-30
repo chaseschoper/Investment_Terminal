@@ -20891,7 +20891,7 @@ app.get("/api/earnings", async (req, res) => {
     date.setUTCDate(date.getUTCDate() + index);
     return toIsoDate(date);
   });
-  const cacheKey = `fmp:v12:${dates[0]}`;
+  const cacheKey = `fmp:v13:${dates[0]}`;
   const cached = earningsCalendarCache.get(cacheKey);
   if (cached && Date.now() - cached.cachedAt < 60 * 60 * 1000 && cached.data?.days?.some((day) => day.events?.length)) {
     return res.json(cached.data);
@@ -20936,7 +20936,69 @@ app.get("/api/earnings", async (req, res) => {
         pending: true
       });
     }
-    const fmpList = rawFmpList;
+    const earningsCalendarRowScore = (row) => {
+      const date = String(row?.date || "").slice(0, 10);
+      const day = parseIsoDate(date)?.getUTCDay();
+      return (
+        (parseApiNumber(row?.epsActual) !== null ? 8 : 0) +
+        (parseApiNumber(row?.revenueActual) !== null ? 10 : 0) +
+        (firstFiniteNumber(row?.epsEstimated, row?.epsEstimate) !== null ? 3 : 0) +
+        (firstFiniteNumber(row?.revenueEstimated, row?.revenueEstimate) !== null ? 4 : 0) +
+        (firstText(row?.fiscalDateEnding) ? 2 : 0) +
+        (day !== 0 && day !== 6 ? 2 : 0)
+      );
+    };
+    const mergeCalendarRows = (preferred, fallback) => {
+      const merged = { ...preferred };
+      Object.entries(fallback || {}).forEach(([key, value]) => {
+        if (merged[key] === null || merged[key] === undefined || merged[key] === "") {
+          merged[key] = value;
+        }
+      });
+      return merged;
+    };
+    const rawRowsBySymbol = new Map();
+    rawFmpList.forEach((row) => {
+      const symbol = String(row?.symbol || "").trim().toUpperCase();
+      const date = String(row?.date || "").slice(0, 10);
+      if (!symbol || !dates.includes(date)) return;
+      const rows = rawRowsBySymbol.get(symbol) || [];
+      rows.push(row);
+      rawRowsBySymbol.set(symbol, rows);
+    });
+    const duplicateSymbols = [...rawRowsBySymbol.entries()]
+      .filter(([, rows]) => rows.length > 1)
+      .map(([symbol]) => symbol)
+      .slice(0, 12);
+    const detailedRowsBySymbol = new Map(await Promise.all(
+      duplicateSymbols.map(async (symbol) => {
+        const rows = await resolveWithin(
+          getFmpData(symbol, "earnings calendar reconciliation", [
+            "/stable/earnings?symbol={ticker}&limit=8"
+          ]),
+          4000,
+          []
+        ).catch(() => []);
+        return [
+          symbol,
+          (Array.isArray(rows) ? rows : rows ? [rows] : [])
+            .filter((row) => dates.includes(String(row?.date || "").slice(0, 10)))
+        ];
+      })
+    ));
+    const canonicalRowsBySymbol = new Map();
+    rawRowsBySymbol.forEach((calendarRows, symbol) => {
+      const detailedRows = detailedRowsBySymbol.get(symbol) || [];
+      const candidateRows = detailedRows.length ? detailedRows : calendarRows;
+      const preferred = candidateRows.reduce((best, row) => (
+        !best || earningsCalendarRowScore(row) > earningsCalendarRowScore(best) ? row : best
+      ), null);
+      const fallback = calendarRows.reduce((best, row) => (
+        !best || earningsCalendarRowScore(row) > earningsCalendarRowScore(best) ? row : best
+      ), null);
+      canonicalRowsBySymbol.set(symbol, mergeCalendarRows(preferred, fallback));
+    });
+    const fmpList = [...canonicalRowsBySymbol.values()];
     const calendarSymbols = [...new Set(fmpList
       .map((row) => String(row.symbol || "").trim().toUpperCase())
       .filter(Boolean))];
@@ -21089,7 +21151,7 @@ app.get("/api/calendar-events", async (req, res) => {
     ? String(req.query.type).toLowerCase()
     : "earnings";
   const dates = buildCalendarDates(req.query.start);
-  const cacheKey = `v3:${type}:${dates[0]}:${dates[6]}`;
+  const cacheKey = `v4:${type}:${dates[0]}:${dates[6]}`;
   const cached = fmpCalendarCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return res.json(cached.data);
 
@@ -21386,25 +21448,6 @@ app.get("/api/earnings-report/:symbol", async (req, res) => {
           source: "Earnings calendar"
         }]
       : [];
-    const rowsByDate = new Map();
-    [
-      ...clickedEstimate,
-      ...(storedStock?.data?.epsBeatMiss || []),
-      ...(Array.isArray(finnhubRows) ? finnhubRows : []),
-      ...(Array.isArray(fmpRows) ? fmpRows : fmpRows ? [fmpRows] : [])
-        .map((row) => ({ ...row, source: row?.source || "FMP earnings history" }))
-    ].forEach((row) => {
-      if (row?.symbol && String(row.symbol).trim().toUpperCase() !== symbol) return;
-      const normalized = normalizeReportRow(row);
-      if (!normalized.date) return;
-      const existing = rowsByDate.get(normalized.date) || {};
-      rowsByDate.set(normalized.date, Object.fromEntries(
-        Object.entries({ ...existing, ...normalized }).map(([key, value]) => [
-          key,
-          value === null || value === undefined || value === "" ? existing[key] ?? value : value
-        ])
-      ));
-    });
     const hasActual = (row) => row.epsActual !== null || row.revenueActual !== null;
     const dayDistance = (left, right) => {
       const leftTime = Date.parse(`${left}T00:00:00Z`);
@@ -21413,22 +21456,17 @@ app.get("/api/earnings-report/:symbol", async (req, res) => {
         ? Math.abs(leftTime - rightTime) / (24 * 60 * 60 * 1000)
         : Number.POSITIVE_INFINITY;
     };
-    const closeNumber = (left, right) =>
-      left !== null && right !== null && Math.abs(left - right) <= Math.max(0.0001, Math.abs(left) * 0.0001);
-    const sameReportedQuarter = (left, right) =>
-      hasActual(left) &&
-      hasActual(right) &&
-      dayDistance(left.date, right.date) <= 35 &&
-      (
-        closeNumber(left.epsActual, right.epsActual) ||
-        closeNumber(left.revenueActual, right.revenueActual)
+    const reportRowScore = (row) => {
+      const day = parseCalendarIsoDate(row.date)?.getUTCDay();
+      return (
+        (row.epsActual !== null ? 8 : 0) +
+        (row.revenueActual !== null ? 10 : 0) +
+        (row.epsEstimated !== null ? 3 : 0) +
+        (row.revenueEstimated !== null ? 4 : 0) +
+        (/FMP earnings history/i.test(row.source || "") ? 5 : 0) +
+        (day !== 0 && day !== 6 ? 2 : 0)
       );
-    const reportRowScore = (row) =>
-      (row.epsActual !== null ? 4 : 0) +
-      (row.revenueActual !== null ? 4 : 0) +
-      (row.epsEstimated !== null ? 2 : 0) +
-      (row.revenueEstimated !== null ? 2 : 0) +
-      (/FMP earnings history/i.test(row.source || "") ? 5 : 0);
+    };
     const mergeMissingReportValues = (preferred, fallback) => {
       const merged = { ...fallback, ...preferred };
       [
@@ -21457,6 +21495,45 @@ app.get("/api/earnings-report/:symbol", async (req, res) => {
       }
       return merged;
     };
+    const rowsByDate = new Map();
+    [
+      ...clickedEstimate,
+      ...(storedStock?.data?.epsBeatMiss || []),
+      ...(Array.isArray(finnhubRows) ? finnhubRows : []),
+      ...(Array.isArray(fmpRows) ? fmpRows : fmpRows ? [fmpRows] : [])
+        .map((row) => ({ ...row, source: row?.source || "FMP earnings history" }))
+    ].forEach((row) => {
+      if (row?.symbol && String(row.symbol).trim().toUpperCase() !== symbol) return;
+      const normalized = normalizeReportRow(row);
+      if (!normalized.date) return;
+      const existing = rowsByDate.get(normalized.date);
+      if (!existing) {
+        rowsByDate.set(normalized.date, normalized);
+        return;
+      }
+      const preferred = reportRowScore(normalized) > reportRowScore(existing)
+        ? normalized
+        : existing;
+      rowsByDate.set(
+        normalized.date,
+        mergeMissingReportValues(preferred, preferred === normalized ? existing : normalized)
+      );
+    });
+    const closeNumber = (left, right) =>
+      left !== null && right !== null && Math.abs(left - right) <= Math.max(0.0001, Math.abs(left) * 0.0001);
+    const sameReportedQuarter = (left, right) =>
+      hasActual(left) &&
+      hasActual(right) &&
+      (
+        dayDistance(left.date, right.date) <= 8 ||
+        (
+          dayDistance(left.date, right.date) <= 70 &&
+          (
+            closeNumber(left.epsActual, right.epsActual) ||
+            closeNumber(left.revenueActual, right.revenueActual)
+          )
+        )
+      );
 
     const sourceRows = [...rowsByDate.values()].filter((row) => row.date);
     const reportedRows = sourceRows

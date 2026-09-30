@@ -3774,21 +3774,25 @@ const storeCalendar = (cacheKey, calendar) => {
   }
 };
 
-const CALENDAR_REPORT_CACHE_PREFIX = "mrktrally-earnings-report-v1:";
+const CALENDAR_REPORT_CACHE_PREFIX = "mrktrally-earnings-report-v2:";
+const getCalendarReportCacheKey = (symbol, date) =>
+  `${String(symbol || "").trim().toUpperCase()}:${String(date || "history").slice(0, 10)}`;
 
-const readStoredCalendarReport = (symbol) => {
+const readStoredCalendarReport = (symbol, date) => {
   try {
-    const stored = JSON.parse(window.localStorage.getItem(`${CALENDAR_REPORT_CACHE_PREFIX}${symbol}`) || "null");
+    const cacheKey = getCalendarReportCacheKey(symbol, date);
+    const stored = JSON.parse(window.localStorage.getItem(`${CALENDAR_REPORT_CACHE_PREFIX}${cacheKey}`) || "null");
     return stored?.rows?.length ? stored : null;
   } catch {
     return null;
   }
 };
 
-const storeCalendarReport = (symbol, report) => {
+const storeCalendarReport = (symbol, date, report) => {
   try {
+    const cacheKey = getCalendarReportCacheKey(symbol, date);
     window.localStorage.setItem(
-      `${CALENDAR_REPORT_CACHE_PREFIX}${symbol}`,
+      `${CALENDAR_REPORT_CACHE_PREFIX}${cacheKey}`,
       JSON.stringify({ ...report, cachedAt: new Date().toISOString() })
     );
   } catch {
@@ -8071,11 +8075,12 @@ const loadUserData = async (
       if (requestId !== calendarReportRequestRef.current || activeCalendarReportSymbolRef.current !== symbol) return;
       const rows = Array.isArray(response.data?.rows) ? response.data.rows : [];
       if (rows.length) {
+        const reportKey = getCalendarReportCacheKey(symbol, event?.date);
         setCalendarEarningsReports((reports) => ({
           ...reports,
-          [symbol]: response.data
+          [reportKey]: response.data
         }));
-        storeCalendarReport(symbol, response.data);
+        storeCalendarReport(symbol, event?.date, response.data);
         setCalendarReportError("");
         setLoadingCalendarReportSymbol("");
         return;
@@ -8128,9 +8133,10 @@ const loadUserData = async (
     setSelectedCalendarEvent(event);
     setCalendarReportError("");
 
-    const cachedReport = calendarEarningsReports[symbol] || readStoredCalendarReport(symbol);
+    const reportKey = getCalendarReportCacheKey(symbol, event?.date);
+    const cachedReport = calendarEarningsReports[reportKey] || readStoredCalendarReport(symbol, event?.date);
     if (cachedReport?.rows?.length) {
-      setCalendarEarningsReports((reports) => ({ ...reports, [symbol]: cachedReport }));
+      setCalendarEarningsReports((reports) => ({ ...reports, [reportKey]: cachedReport }));
       setLoadingCalendarReportSymbol("");
       return;
     }
@@ -10323,8 +10329,9 @@ const selectedEarningsDay = displayedCalendarDays.find(
 ) || { date: selectedEarningsDate, events: [] };
 const activeCalendarConfig = CALENDAR_MODES.find((mode) => mode.id === calendarMode) || CALENDAR_MODES[0];
 const selectedCalendarSymbol = String(selectedCalendarEvent?.symbol || "").toUpperCase();
+const selectedCalendarReportKey = getCalendarReportCacheKey(selectedCalendarSymbol, selectedCalendarEvent?.date);
 const selectedCalendarReport = selectedCalendarSymbol
-  ? calendarEarningsReports[selectedCalendarSymbol] || { symbol: selectedCalendarSymbol, rows: [] }
+  ? calendarEarningsReports[selectedCalendarReportKey] || { symbol: selectedCalendarSymbol, rows: [] }
   : null;
 const liveEarningsToday = toLocalIsoDate(new Date());
 const liveEarningsDay = displayedCalendarDays.find((day) => day.date === liveEarningsToday) || { date: liveEarningsToday, events: [] };
