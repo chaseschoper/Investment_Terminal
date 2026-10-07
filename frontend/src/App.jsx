@@ -14908,7 +14908,7 @@ return (
                 <div className="fundamental-chart-card-header">
                   <div>
                     <span>Combined Chart</span>
-                    <h3>Selected Metrics</h3>
+                    <h3>{isFundamentalPriceOverlayEnabled ? "Selected Metrics plus Price Overlay" : "Selected Metrics"}</h3>
                   </div>
                   <div className="fundamental-chart-card-actions">
                     <strong>
@@ -14949,7 +14949,10 @@ return (
                       <div className="fundamental-chart-card-header">
                         <div>
                           <span>{series.indicator.groupLabel}</span>
-                          <h3>{series.indicator.label}</h3>
+                          <h3>
+                            {series.indicator.label}
+                            {isFundamentalPriceOverlayEnabled ? " plus Price Overlay" : ""}
+                          </h3>
                         </div>
                         <div className="fundamental-chart-card-actions">
                           <strong>
@@ -14958,8 +14961,8 @@ return (
                           <button
                             type="button"
                             className="fundamental-chart-maximize"
-                            aria-label={`Maximize ${series.indicator.label} chart`}
-                            title={`Maximize ${series.indicator.label}`}
+                            aria-label={`Maximize ${series.indicator.label}${isFundamentalPriceOverlayEnabled ? " plus Price Overlay" : ""} chart`}
+                            title={`Maximize ${series.indicator.label}${isFundamentalPriceOverlayEnabled ? " plus Price Overlay" : ""}`}
                             onClick={() => setMaximizedFundamentalChartKey(series.indicator.key)}
                           >
                             <span aria-hidden="true" />
@@ -15037,7 +15040,10 @@ return (
           <div className="fundamental-chart-modal-header">
             <div>
               <span className="home-feature-label">{maximizedFundamentalChart.indicator.groupLabel}</span>
-              <h2 id="fundamental-chart-modal-title">{maximizedFundamentalChart.indicator.label}</h2>
+              <h2 id="fundamental-chart-modal-title">
+                {maximizedFundamentalChart.indicator.label}
+                {isFundamentalPriceOverlayEnabled ? " plus Price Overlay" : ""}
+              </h2>
               <p>
                 Showing {maximizedFundamentalChart.indicator.label} · {historyRangeLabel(fundamentalChartRange)} · {fundamentalChartPeriod === "annual" ? "Annual" : "Quarterly"}
                 {isFundamentalPriceOverlayEnabled ? " · Price overlay" : ""}
