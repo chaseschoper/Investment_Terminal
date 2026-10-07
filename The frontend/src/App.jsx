@@ -9589,6 +9589,7 @@ const renderFundamentalLineChart = (series, height = 320) => (
               yAxisId="fundamental"
               dataKey={symbol}
               fill={getFundamentalSeriesColor(symbol, index)}
+              fillOpacity={isFundamentalPriceOverlayEnabled ? 0.62 : 1}
               radius={[5, 5, 0, 0]}
             />
           ))
@@ -9617,7 +9618,21 @@ const renderFundamentalLineChart = (series, height = 320) => (
           />
             );
           })}
-      {fundamentalPriceOverlayLines.map((line) => (
+      {fundamentalPriceOverlayLines.flatMap((line) => [
+        <Line
+          key={`${series.indicator.key}-${line.key}-outline`}
+          yAxisId="price"
+          type="monotone"
+          dataKey={line.key}
+          name={`${line.key}-outline`}
+          stroke="#020617"
+          strokeWidth={7}
+          strokeOpacity={0.92}
+          dot={false}
+          activeDot={false}
+          tooltipType="none"
+          connectNulls
+        />,
         <Line
           key={`${series.indicator.key}-${line.key}`}
           yAxisId="price"
@@ -9625,13 +9640,14 @@ const renderFundamentalLineChart = (series, height = 320) => (
           dataKey={line.key}
           name={line.key}
           stroke={line.color}
-          strokeWidth={2.2}
-          strokeDasharray="7 5"
-          dot={false}
-          activeDot={{ r: 4, fill: "#08111f", stroke: line.color, strokeWidth: 2 }}
+          strokeWidth={fundamentalChartType === "bar" ? 3.6 : 2.8}
+          strokeDasharray={fundamentalChartType === "bar" ? undefined : "7 5"}
+          strokeLinecap="round"
+          dot={fundamentalChartType === "bar" ? { r: 4, fill: "#08111f", stroke: line.color, strokeWidth: 2.5 } : false}
+          activeDot={{ r: 6, fill: "#08111f", stroke: line.color, strokeWidth: 3 }}
           connectNulls
         />
-      ))}
+      ])}
     </ComposedChart>
   </ResponsiveContainer>
 );
@@ -9673,6 +9689,7 @@ const renderCombinedFundamentalLineChart = (height = 560) => (
             dataKey={line.key}
             name={line.key}
             fill={line.color}
+            fillOpacity={isFundamentalPriceOverlayEnabled ? 0.62 : 1}
             radius={[5, 5, 0, 0]}
           />
         )) : combinedFundamentalChartLines.map((line) => (
@@ -9689,7 +9706,21 @@ const renderCombinedFundamentalLineChart = (height = 560) => (
             connectNulls
           />
         ))}
-        {fundamentalPriceOverlayLines.map((line) => (
+        {fundamentalPriceOverlayLines.flatMap((line) => [
+          <Line
+            key={`combined-${line.key}-outline`}
+            yAxisId="price"
+            type="monotone"
+            dataKey={line.key}
+            name={`${line.key}-outline`}
+            stroke="#020617"
+            strokeWidth={7}
+            strokeOpacity={0.92}
+            dot={false}
+            activeDot={false}
+            tooltipType="none"
+            connectNulls
+          />,
           <Line
             key={`combined-${line.key}`}
             yAxisId="price"
@@ -9697,13 +9728,14 @@ const renderCombinedFundamentalLineChart = (height = 560) => (
             dataKey={line.key}
             name={line.key}
             stroke={line.color}
-            strokeWidth={2.4}
-            strokeDasharray="7 5"
-            dot={false}
-            activeDot={{ r: 4, fill: "#08111f", stroke: line.color, strokeWidth: 2 }}
+            strokeWidth={fundamentalChartType === "bar" ? 3.6 : 2.8}
+            strokeDasharray={fundamentalChartType === "bar" ? undefined : "7 5"}
+            strokeLinecap="round"
+            dot={fundamentalChartType === "bar" ? { r: 4, fill: "#08111f", stroke: line.color, strokeWidth: 2.5 } : false}
+            activeDot={{ r: 6, fill: "#08111f", stroke: line.color, strokeWidth: 3 }}
             connectNulls
           />
-        ))}
+        ])}
     </ComposedChart>
   </ResponsiveContainer>
 );
@@ -14899,7 +14931,7 @@ return (
                         </span>
                       ))}
                       {fundamentalPriceOverlayLines.map((line) => (
-                        <span className="price-overlay" key={`legend-${line.key}`} style={{ "--series-color": line.color }}>
+                        <span className={`price-overlay${fundamentalChartType === "bar" ? " solid" : ""}`} key={`legend-${line.key}`} style={{ "--series-color": line.color }}>
                           {line.label}
                         </span>
                       ))}
@@ -14943,7 +14975,7 @@ return (
                         <>
                           {renderFundamentalLineChart(series)}
                           {isFundamentalPriceOverlayEnabled && (
-                            <div className="fundamental-price-overlay-caption">Dashed line: period-end stock price</div>
+                            <div className="fundamental-price-overlay-caption">Outlined line: period-end stock price</div>
                           )}
                         </>
                       ) : (
