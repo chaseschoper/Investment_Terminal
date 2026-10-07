@@ -6,6 +6,7 @@ import {
   PieChart,
   Pie,
   LineChart,
+  ComposedChart,
   Line,
   XAxis,
   YAxis,
@@ -176,6 +177,13 @@ const filterFinancialStatementByHistoryRange = (statementData, rangeId = "5", pe
 
 const historyRangeLabel = (rangeId) =>
   FUNDAMENTAL_HISTORY_RANGES.find((range) => range.id === rangeId)?.label || "5Y";
+
+const fundamentalPriceRange = (rangeId) => {
+  const years = FUNDAMENTAL_HISTORY_RANGES.find((range) => range.id === rangeId)?.years;
+  if (years && years <= 5) return "5Y";
+  if (years && years <= 10) return "10Y";
+  return "MAX";
+};
 
 const parsePeriodDate = (value) => {
   const text = String(value || "").slice(0, 10);
@@ -2012,7 +2020,7 @@ const formatFundamentalAxisValue = (value, indicator = {}) => {
   return formatLargeDollars(value).replace(".00", "");
 };
 
-const FundamentalChartTooltip = ({ active, label, payload, indicator, hoveredPoint }) => {
+const FundamentalChartTooltip = ({ active, label, payload, indicator, hoveredPoint, priceLines = [] }) => {
   if (!active || !Array.isArray(payload) || !payload.length) return null;
 
   const focusedPoint =
@@ -2020,6 +2028,14 @@ const FundamentalChartTooltip = ({ active, label, payload, indicator, hoveredPoi
     (!label || hoveredPoint.period === label || hoveredPoint.periodKey === label)
       ? hoveredPoint
       : null;
+
+  const priceRows = payload
+    .filter((item) => isNumber(item.value))
+    .map((item) => {
+      const line = priceLines.find((candidate) => candidate.key === item.dataKey || candidate.key === item.name);
+      return line ? { ...line, value: item.value } : null;
+    })
+    .filter(Boolean);
 
   if (focusedPoint) {
     return (
@@ -2030,12 +2046,19 @@ const FundamentalChartTooltip = ({ active, label, payload, indicator, hoveredPoi
           <strong>{focusedPoint.symbol}</strong>
           <em>{formatFundamentalChartValue(focusedPoint.value, indicator)}</em>
         </div>
+        {priceRows.map((row) => (
+          <div className="fundamental-tooltip-row" key={`${row.key}-${label}`}>
+            <i style={{ background: row.color }} />
+            <strong>{row.label}</strong>
+            <em>{formatFundamentalChartValue(row.value, row.indicator)}</em>
+          </div>
+        ))}
       </div>
     );
   }
 
   const rows = payload
-    .filter((item) => isNumber(item.value))
+    .filter((item) => isNumber(item.value) && !priceLines.some((line) => line.key === item.dataKey || line.key === item.name))
     .sort((a, b) => b.value - a.value);
   if (!rows.length) return null;
 
@@ -2047,6 +2070,13 @@ const FundamentalChartTooltip = ({ active, label, payload, indicator, hoveredPoi
           <i style={{ background: item.color }} />
           <strong>{item.name}</strong>
           <em>{formatFundamentalChartValue(item.value, indicator)}</em>
+        </div>
+      ))}
+      {priceRows.map((row) => (
+        <div className="fundamental-tooltip-row" key={`${row.key}-${label}`}>
+          <i style={{ background: row.color }} />
+          <strong>{row.label}</strong>
+          <em>{formatFundamentalChartValue(row.value, row.indicator)}</em>
         </div>
       ))}
     </div>
@@ -5683,6 +5713,15 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [fundamentalChartColors, setFundamentalChartColors] =
     useState({});
 
+  const [isFundamentalPriceOverlayEnabled, setIsFundamentalPriceOverlayEnabled] =
+    useState(false);
+
+  const [fundamentalPriceHistory, setFundamentalPriceHistory] =
+    useState({});
+
+  const [isFundamentalPriceLoading, setIsFundamentalPriceLoading] =
+    useState(false);
+
   const [stockOverviewHistoryChartType, setStockOverviewHistoryChartType] =
     useState("line");
 
@@ -6756,6 +6795,44 @@ useEffect(() => {
     isActive = false;
   };
 }, [activePage, fundamentalChartTickers, fundamentalChartPeriod]);
+
+useEffect(() => {
+  if (activePage !== "fundamental-charts" || !isFundamentalPriceOverlayEnabled || !fundamentalChartTickers.length) {
+    setIsFundamentalPriceLoading(false);
+    return undefined;
+  }
+
+  let isActive = true;
+  const loadFundamentalPriceHistory = async () => {
+    setIsFundamentalPriceLoading(true);
+    const range = fundamentalPriceRange(fundamentalChartRange);
+    const results = await Promise.all(fundamentalChartTickers.map(async (symbol) => {
+      try {
+        const response = await axios.get(`${API_URL}/api/price-history/${encodeURIComponent(symbol)}`, {
+          params: { range },
+          timeout: 12000
+        });
+        return [symbol, Array.isArray(response.data?.points) ? response.data.points : []];
+      } catch (error) {
+        console.error("Fundamental price overlay failed", symbol, error);
+        return [symbol, []];
+      }
+    }));
+    if (!isActive) return;
+    setFundamentalPriceHistory(Object.fromEntries(results));
+    setIsFundamentalPriceLoading(false);
+  };
+
+  loadFundamentalPriceHistory();
+  return () => {
+    isActive = false;
+  };
+}, [
+  activePage,
+  isFundamentalPriceOverlayEnabled,
+  fundamentalChartTickers,
+  fundamentalChartRange
+]);
 
 useEffect(() => {
   if (!maximizedFundamentalChartKey) return;
@@ -9041,6 +9118,27 @@ const getFundamentalIndicatorValue = (period, indicator, previousPeriod = null) 
   }
   return value;
 };
+const getFundamentalPriceAtDate = (symbol, dateValue) => {
+  if (!isFundamentalPriceOverlayEnabled || !dateValue) return null;
+  const points = fundamentalPriceHistory[symbol] || [];
+  if (!points.length) return null;
+  const targetTime = new Date(`${String(dateValue).slice(0, 10)}T23:59:59Z`).getTime();
+  if (!Number.isFinite(targetTime)) return null;
+  let low = 0;
+  let high = points.length - 1;
+  let match = null;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const pointTime = Number(points[middle]?.time) || new Date(points[middle]?.date || 0).getTime();
+    if (pointTime <= targetTime) {
+      match = points[middle];
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return isNumber(match?.price) ? match.price : null;
+};
 const fundamentalChartSeries = selectedFundamentalIndicatorDetails.map((indicator) => {
   const rowMap = new Map();
   const latestValues = [];
@@ -9072,6 +9170,10 @@ const fundamentalChartSeries = selectedFundamentalIndicatorDetails.map((indicato
         });
       }
       rowMap.get(periodKey)[tickerResult.symbol] = value;
+      const overlayPrice = getFundamentalPriceAtDate(tickerResult.symbol, period.date);
+      if (isNumber(overlayPrice)) {
+        rowMap.get(periodKey)[`${tickerResult.symbol}__price`] = overlayPrice;
+      }
       latestValue = value;
       latestPeriod = comparablePeriod.label;
     });
@@ -9120,6 +9222,9 @@ const combinedFundamentalChartRows = (() => {
         if (isNumber(row[symbol])) {
           next[`${symbol}__${series.indicator.key}`] = row[symbol];
         }
+        if (isNumber(row[`${symbol}__price`])) {
+          next[`${symbol}__price`] = row[`${symbol}__price`];
+        }
       });
     });
   });
@@ -9158,6 +9263,19 @@ const combinedFundamentalChartLines = fundamentalChartSeries.flatMap((series) =>
     color: getFundamentalSeriesColor(symbol, symbolIndex)
   }))
 );
+const fundamentalPriceOverlayLines = isFundamentalPriceOverlayEnabled
+  ? fundamentalChartTickers.map((symbol, symbolIndex) => ({
+      key: `${symbol}__price`,
+      symbol,
+      indicator: { key: "stockPrice", label: "Stock Price", format: "perShare" },
+      label: `${symbol} · Price`,
+      color: getFundamentalSeriesColor(symbol, symbolIndex)
+    }))
+  : [];
+const combinedFundamentalTooltipLines = [
+  ...combinedFundamentalChartLines,
+  ...fundamentalPriceOverlayLines
+];
 
 const handleDcfSearchSubmit = (event) => {
   event.preventDefault();
@@ -9428,44 +9546,10 @@ const renderFundamentalChartBrand = () => (
 
 const renderFundamentalLineChart = (series, height = 320) => (
   <ResponsiveContainer width="100%" height={height}>
-    {fundamentalChartType === "bar" ? (
-      <BarChart data={series.rows} margin={{ top: 12, right: 18, left: 8, bottom: 8 }}>
-        <CartesianGrid stroke="#1f2937" strokeDasharray="4 4" />
-        <XAxis
-          dataKey="period"
-          tick={{ fill: "#94a3b8", fontSize: 12 }}
-          minTickGap={18}
-        />
-        <YAxis
-          tick={{ fill: "#94a3b8", fontSize: 12 }}
-          tickFormatter={(value) => formatFundamentalAxisValue(value, series.indicator)}
-          width={76}
-        />
-        <Tooltip
-          content={(
-            <FundamentalChartTooltip
-              indicator={series.indicator}
-              hoveredPoint={fundamentalHoveredPoint}
-            />
-          )}
-        />
-        {fundamentalChartTickers.map((symbol, index) => {
-          const color = getFundamentalSeriesColor(symbol, index);
-          return (
-            <Bar
-              key={`${series.indicator.key}-${symbol}`}
-              dataKey={symbol}
-              fill={color}
-              radius={[5, 5, 0, 0]}
-            />
-          );
-        })}
-      </BarChart>
-    ) : (
-      <LineChart
-        data={series.rows}
-        margin={{ top: 12, right: 18, left: 8, bottom: 8 }}
-      >
+    <ComposedChart
+      data={series.rows}
+      margin={{ top: 12, right: isFundamentalPriceOverlayEnabled ? 12 : 18, left: 8, bottom: 8 }}
+    >
       <CartesianGrid stroke="#1f2937" strokeDasharray="4 4" />
       <XAxis
         dataKey="period"
@@ -9473,24 +9557,47 @@ const renderFundamentalLineChart = (series, height = 320) => (
         minTickGap={18}
       />
       <YAxis
+        yAxisId="fundamental"
         tick={{ fill: "#94a3b8", fontSize: 12 }}
         tickFormatter={(value) => formatFundamentalAxisValue(value, series.indicator)}
         width={76}
       />
+      {isFundamentalPriceOverlayEnabled && (
+        <YAxis
+          yAxisId="price"
+          orientation="right"
+          tick={{ fill: "#67e8f9", fontSize: 12 }}
+          tickFormatter={(value) => `$${Number(value).toFixed(0)}`}
+          width={64}
+          domain={["auto", "auto"]}
+        />
+      )}
       <Tooltip
-        shared={false}
+        shared
         content={(
           <FundamentalChartTooltip
             indicator={series.indicator}
             hoveredPoint={fundamentalHoveredPoint}
+            priceLines={fundamentalPriceOverlayLines}
           />
         )}
       />
-      {fundamentalChartTickers.map((symbol, index) => {
-        const color = getFundamentalSeriesColor(symbol, index);
-        return (
+      {fundamentalChartType === "bar"
+        ? fundamentalChartTickers.map((symbol, index) => (
+            <Bar
+              key={`${series.indicator.key}-${symbol}`}
+              yAxisId="fundamental"
+              dataKey={symbol}
+              fill={getFundamentalSeriesColor(symbol, index)}
+              radius={[5, 5, 0, 0]}
+            />
+          ))
+        : fundamentalChartTickers.map((symbol, index) => {
+            const color = getFundamentalSeriesColor(symbol, index);
+            return (
           <Line
             key={`${series.indicator.key}-${symbol}`}
+            yAxisId="fundamental"
             type="monotone"
             dataKey={symbol}
             stroke={color}
@@ -9508,19 +9615,32 @@ const renderFundamentalLineChart = (series, height = 320) => (
             })}
             connectNulls
           />
-        );
-      })}
-      </LineChart>
-    )}
+            );
+          })}
+      {fundamentalPriceOverlayLines.map((line) => (
+        <Line
+          key={`${series.indicator.key}-${line.key}`}
+          yAxisId="price"
+          type="monotone"
+          dataKey={line.key}
+          name={line.key}
+          stroke={line.color}
+          strokeWidth={2.2}
+          strokeDasharray="7 5"
+          dot={false}
+          activeDot={{ r: 4, fill: "#08111f", stroke: line.color, strokeWidth: 2 }}
+          connectNulls
+        />
+      ))}
+    </ComposedChart>
   </ResponsiveContainer>
 );
 const renderCombinedFundamentalLineChart = (height = 560) => (
   <ResponsiveContainer width="100%" height={height}>
-    {fundamentalChartType === "bar" ? (
-      <BarChart
-        data={combinedFundamentalChartRows}
-        margin={{ top: 14, right: 22, left: 8, bottom: 8 }}
-      >
+    <ComposedChart
+      data={combinedFundamentalChartRows}
+      margin={{ top: 14, right: isFundamentalPriceOverlayEnabled ? 12 : 22, left: 8, bottom: 8 }}
+    >
         <CartesianGrid stroke="#1f2937" strokeDasharray="4 4" />
         <XAxis
           dataKey="period"
@@ -9528,45 +9648,37 @@ const renderCombinedFundamentalLineChart = (height = 560) => (
           minTickGap={18}
         />
         <YAxis
+          yAxisId="fundamental"
           tick={{ fill: "#94a3b8", fontSize: 12 }}
           tickFormatter={formatLargeNumber}
           width={82}
         />
+        {isFundamentalPriceOverlayEnabled && (
+          <YAxis
+            yAxisId="price"
+            orientation="right"
+            tick={{ fill: "#67e8f9", fontSize: 12 }}
+            tickFormatter={(value) => `$${Number(value).toFixed(0)}`}
+            width={64}
+            domain={["auto", "auto"]}
+          />
+        )}
         <Tooltip
-          content={<CombinedFundamentalChartTooltip lines={combinedFundamentalChartLines} />}
+          content={<CombinedFundamentalChartTooltip lines={combinedFundamentalTooltipLines} />}
         />
-        {combinedFundamentalChartLines.map((line) => (
+        {fundamentalChartType === "bar" ? combinedFundamentalChartLines.map((line) => (
           <Bar
             key={line.key}
+            yAxisId="fundamental"
             dataKey={line.key}
             name={line.key}
             fill={line.color}
             radius={[5, 5, 0, 0]}
           />
-        ))}
-      </BarChart>
-    ) : (
-      <LineChart
-        data={combinedFundamentalChartRows}
-        margin={{ top: 14, right: 22, left: 8, bottom: 8 }}
-      >
-        <CartesianGrid stroke="#1f2937" strokeDasharray="4 4" />
-        <XAxis
-          dataKey="period"
-          tick={{ fill: "#94a3b8", fontSize: 12 }}
-          minTickGap={18}
-        />
-        <YAxis
-          tick={{ fill: "#94a3b8", fontSize: 12 }}
-          tickFormatter={formatLargeNumber}
-          width={82}
-        />
-        <Tooltip
-          content={<CombinedFundamentalChartTooltip lines={combinedFundamentalChartLines} />}
-        />
-        {combinedFundamentalChartLines.map((line) => (
+        )) : combinedFundamentalChartLines.map((line) => (
           <Line
             key={line.key}
+            yAxisId="fundamental"
             type="monotone"
             dataKey={line.key}
             name={line.key}
@@ -9577,8 +9689,22 @@ const renderCombinedFundamentalLineChart = (height = 560) => (
             connectNulls
           />
         ))}
-      </LineChart>
-    )}
+        {fundamentalPriceOverlayLines.map((line) => (
+          <Line
+            key={`combined-${line.key}`}
+            yAxisId="price"
+            type="monotone"
+            dataKey={line.key}
+            name={line.key}
+            stroke={line.color}
+            strokeWidth={2.4}
+            strokeDasharray="7 5"
+            dot={false}
+            activeDot={{ r: 4, fill: "#08111f", stroke: line.color, strokeWidth: 2 }}
+            connectNulls
+          />
+        ))}
+    </ComposedChart>
   </ResponsiveContainer>
 );
 const renderFundamentalChartDot = (props, options = {}) => {
@@ -14623,6 +14749,18 @@ return (
                 Bar
               </button>
             </div>
+            <label className="fundamental-price-overlay-toggle">
+              <input
+                type="checkbox"
+                checked={isFundamentalPriceOverlayEnabled}
+                onChange={(event) => setIsFundamentalPriceOverlayEnabled(event.target.checked)}
+              />
+              <span className="fundamental-price-overlay-track" aria-hidden="true"><i /></span>
+              <span className="fundamental-price-overlay-copy">
+                <strong>Price overlay</strong>
+                <small>{isFundamentalPriceLoading ? "Loading prices..." : "Period-end close · right axis"}</small>
+              </span>
+            </label>
             <div className="fundamental-color-row">
               {fundamentalChartTickers.map((symbol, index) => {
                 const color = getFundamentalSeriesColor(symbol, index);
@@ -14760,6 +14898,11 @@ return (
                           {line.label}
                         </span>
                       ))}
+                      {fundamentalPriceOverlayLines.map((line) => (
+                        <span className="price-overlay" key={`legend-${line.key}`} style={{ "--series-color": line.color }}>
+                          {line.label}
+                        </span>
+                      ))}
                     </div>
                   </>
                 ) : (
@@ -14797,7 +14940,12 @@ return (
                       </div>
 
                       {series.rows.length ? (
-                        renderFundamentalLineChart(series)
+                        <>
+                          {renderFundamentalLineChart(series)}
+                          {isFundamentalPriceOverlayEnabled && (
+                            <div className="fundamental-price-overlay-caption">Dashed line: period-end stock price</div>
+                          )}
+                        </>
                       ) : (
                         <div className="heatmap-loading">No data yet for this indicator.</div>
                       )}
@@ -14860,6 +15008,7 @@ return (
               <h2 id="fundamental-chart-modal-title">{maximizedFundamentalChart.indicator.label}</h2>
               <p>
                 Showing {maximizedFundamentalChart.indicator.label} · {historyRangeLabel(fundamentalChartRange)} · {fundamentalChartPeriod === "annual" ? "Annual" : "Quarterly"}
+                {isFundamentalPriceOverlayEnabled ? " · Price overlay" : ""}
               </p>
             </div>
             <div className="fundamental-chart-modal-header-actions">

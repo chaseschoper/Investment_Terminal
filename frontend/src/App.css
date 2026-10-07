@@ -11599,6 +11599,77 @@ body {
   gap: 8px;
 }
 
+.fundamental-price-overlay-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 6px 11px;
+  border: 1px solid rgba(96, 165, 250, 0.24);
+  border-radius: 8px;
+  background: rgba(2, 6, 12, 0.46);
+  cursor: pointer;
+}
+
+.fundamental-price-overlay-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.fundamental-price-overlay-track {
+  width: 38px;
+  height: 22px;
+  flex: 0 0 auto;
+  padding: 3px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  border-radius: 999px;
+  background: rgba(30, 41, 59, 0.92);
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.fundamental-price-overlay-track i {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: #94a3b8;
+  transition: transform 160ms ease, background 160ms ease;
+}
+
+.fundamental-price-overlay-toggle input:checked + .fundamental-price-overlay-track {
+  border-color: rgba(45, 212, 191, 0.78);
+  background: rgba(13, 148, 136, 0.36);
+}
+
+.fundamental-price-overlay-toggle input:checked + .fundamental-price-overlay-track i {
+  transform: translateX(16px);
+  background: #5eead4;
+}
+
+.fundamental-price-overlay-toggle input:focus-visible + .fundamental-price-overlay-track {
+  outline: 2px solid #38bdf8;
+  outline-offset: 3px;
+}
+
+.fundamental-price-overlay-copy strong,
+.fundamental-price-overlay-copy small {
+  display: block;
+}
+
+.fundamental-price-overlay-copy strong {
+  color: #e0f2fe;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.fundamental-price-overlay-copy small {
+  margin-top: 2px;
+  color: #7dd3fc;
+  font-size: 10px;
+  font-weight: 800;
+}
+
 .chart-color-control {
   display: inline-flex;
   align-items: center;
@@ -11763,6 +11834,23 @@ body {
   border-radius: 999px;
   background: var(--series-color);
   box-shadow: 0 0 10px var(--series-color);
+}
+
+.fundamental-combined-legend span.price-overlay::before {
+  width: 18px;
+  height: 0;
+  border-top: 2px dashed var(--series-color);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.fundamental-price-overlay-caption {
+  margin-top: -2px;
+  color: #67e8f9;
+  font-size: 11px;
+  font-weight: 850;
+  text-align: right;
 }
 
 .fundamental-chart-card-header {
@@ -12168,6 +12256,20 @@ body {
 
   .fundamental-chart-card-actions {
     justify-content: space-between;
+  }
+
+  .fundamental-chart-card-meta {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .fundamental-chart-card-company {
+    width: 100%;
+    max-width: none;
+  }
+
+  .fundamental-chart-card-brand {
+    align-self: flex-start;
   }
 
   .fundamental-chart-modal-header-actions {
