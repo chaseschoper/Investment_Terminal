@@ -2029,11 +2029,14 @@ const FundamentalChartTooltip = ({ active, label, payload, indicator, hoveredPoi
       ? hoveredPoint
       : null;
 
-  const priceRows = payload
-    .filter((item) => isNumber(item.value))
-    .map((item) => {
-      const line = priceLines.find((candidate) => candidate.key === item.dataKey || candidate.key === item.name);
-      return line ? { ...line, value: item.value } : null;
+  const priceRows = priceLines
+    .map((line) => {
+      const item = payload.find(
+        (candidate) =>
+          isNumber(candidate.value) &&
+          (line.key === candidate.dataKey || line.key === candidate.name)
+      );
+      return item ? { ...line, value: item.value } : null;
     })
     .filter(Boolean);
 
@@ -2057,10 +2060,18 @@ const FundamentalChartTooltip = ({ active, label, payload, indicator, hoveredPoi
     );
   }
 
-  const rows = payload
-    .filter((item) => isNumber(item.value) && !priceLines.some((line) => line.key === item.dataKey || line.key === item.name))
-    .sort((a, b) => b.value - a.value);
-  if (!rows.length) return null;
+  const rows = Array.from(
+    new Map(
+      payload
+        .filter(
+          (item) =>
+            isNumber(item.value) &&
+            !priceLines.some((line) => line.key === item.dataKey || line.key === item.name)
+        )
+        .map((item) => [String(item.dataKey || item.name), item])
+    ).values()
+  ).sort((a, b) => b.value - a.value);
+  if (!rows.length && !priceRows.length) return null;
 
   return (
     <div className="fundamental-tooltip">
@@ -2086,14 +2097,16 @@ const FundamentalChartTooltip = ({ active, label, payload, indicator, hoveredPoi
 const CombinedFundamentalChartTooltip = ({ active, label, payload, lines }) => {
   if (!active || !Array.isArray(payload) || !payload.length) return null;
 
-  const rows = payload
+  const rowsByKey = new Map();
+  payload
     .filter((item) => isNumber(item.value))
-    .map((item) => {
+    .forEach((item) => {
       const line = lines.find((candidate) => candidate.key === item.dataKey || candidate.key === item.name);
-      return line ? { ...line, value: item.value } : null;
-    })
-    .filter(Boolean)
-    .sort((a, b) => b.value - a.value);
+      if (line && !rowsByKey.has(line.key)) {
+        rowsByKey.set(line.key, { ...line, value: item.value });
+      }
+    });
+  const rows = Array.from(rowsByKey.values()).sort((a, b) => b.value - a.value);
 
   if (!rows.length) return null;
 
