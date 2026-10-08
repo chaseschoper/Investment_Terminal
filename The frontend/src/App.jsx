@@ -180,8 +180,8 @@ const historyRangeLabel = (rangeId) =>
 
 const fundamentalPriceRange = (rangeId) => {
   const years = FUNDAMENTAL_HISTORY_RANGES.find((range) => range.id === rangeId)?.years;
-  if (years && years <= 5) return "5Y";
-  if (years && years <= 10) return "10Y";
+  if (years && years <= 3) return "5Y";
+  if (years && years <= 5) return "10Y";
   return "MAX";
 };
 
@@ -2023,8 +2023,14 @@ const formatFundamentalAxisValue = (value, indicator = {}) => {
 const FundamentalChartTooltip = ({ active, label, payload, indicator, hoveredPoint, priceLines = [] }) => {
   if (!active || !Array.isArray(payload) || !payload.length) return null;
 
+  const payloadHasFocusedTicker = payload.some(
+    (item) =>
+      isNumber(item.value) &&
+      (item.dataKey === hoveredPoint?.symbol || item.name === hoveredPoint?.symbol)
+  );
   const focusedPoint =
     hoveredPoint?.indicatorKey === indicator?.key &&
+    payloadHasFocusedTicker &&
     (!label || hoveredPoint.period === label || hoveredPoint.periodKey === label)
       ? hoveredPoint
       : null;
@@ -6808,6 +6814,15 @@ useEffect(() => {
     isActive = false;
   };
 }, [activePage, fundamentalChartTickers, fundamentalChartPeriod]);
+
+useEffect(() => {
+  setFundamentalHoveredPoint(null);
+}, [
+  fundamentalChartTickers,
+  fundamentalChartPeriod,
+  selectedFundamentalIndicators,
+  fundamentalChartType
+]);
 
 useEffect(() => {
   if (activePage !== "fundamental-charts" || !isFundamentalPriceOverlayEnabled || !fundamentalChartTickers.length) {
