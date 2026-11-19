@@ -217,6 +217,20 @@ body {
     radial-gradient(circle at 88% 72%, rgba(var(--holiday-page-accent-two), 0.075), transparent 25%);
 }
 
+/* The homepage uses one continuous cool market-terminal wash. This avoids the
+   previous green-left/red-right split and keeps the hero visually cohesive. */
+.holiday-page-home .holiday-page-scene {
+  background:
+    radial-gradient(ellipse 78% 68% at 50% 44%, rgba(45, 212, 191, 0.075), transparent 72%),
+    radial-gradient(ellipse 92% 80% at 50% 58%, rgba(56, 189, 248, 0.045), transparent 76%),
+    linear-gradient(90deg, rgba(8, 47, 44, 0.16), rgba(4, 18, 31, 0.08) 50%, rgba(7, 39, 46, 0.14));
+}
+
+.holiday-page-home .holiday-page-scene::before,
+.holiday-page-home .holiday-page-scene::after {
+  border-color: rgba(45, 212, 191, 0.07);
+}
+
 .holiday-page-scene::before,
 .holiday-page-scene::after {
   content: "";
@@ -233,6 +247,10 @@ body {
 .holiday-page-glyph,
 .holiday-page-star {
   position: absolute;
+  font-family: "Arial Unicode MS", "Noto Sans Symbols 2", "Times New Roman", sans-serif;
+  font-variant-emoji: text;
+  font-weight: 400;
+  line-height: 1;
   color: rgba(var(--holiday-page-accent), 0.08);
   filter: grayscale(0.35) drop-shadow(0 0 28px rgba(var(--holiday-page-accent), 0.13));
   user-select: none;
@@ -269,16 +287,15 @@ body {
 }
 
 .holiday-theme .welcome-hero::after {
-  background-image: url("/holiday/mrktrally-christmas-logo.png");
-  opacity: 0.085;
-  filter: drop-shadow(0 0 28px rgba(22, 199, 132, 0.18));
+  background-image: url("/mrktrally-icon.png");
+  opacity: 0.065;
+  filter: drop-shadow(0 0 34px rgba(45, 212, 191, 0.16));
 }
 
 .holiday-theme .welcome-hero::before {
   background:
-    radial-gradient(ellipse 42% 42% at 50% 48%, rgba(22, 199, 132, 0.13), transparent 72%),
-    radial-gradient(ellipse 68% 58% at 52% 48%, rgba(185, 28, 28, 0.045), transparent 78%),
-    radial-gradient(ellipse 88% 74% at 50% 48%, rgba(37, 99, 235, 0.07), transparent 78%);
+    radial-gradient(ellipse 46% 46% at 50% 48%, rgba(45, 212, 191, 0.105), transparent 72%),
+    radial-gradient(ellipse 88% 74% at 50% 48%, rgba(56, 189, 248, 0.055), transparent 80%);
 }
 
 .holiday-theme .hero-preview-card,
