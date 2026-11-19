@@ -33,6 +33,39 @@ const formatMoney = (value) => {
 const isNumber = (value) =>
   typeof value === "number" && !Number.isNaN(value);
 
+// Seasonal presentation is intentionally isolated behind one switch. Set this
+// to false (or deploy with VITE_HOLIDAY_THEME=false) to restore the standard UI.
+const HOLIDAY_THEME_ENABLED = import.meta.env.VITE_HOLIDAY_THEME !== "false";
+const MRKTRALLY_LOGO_SRC = HOLIDAY_THEME_ENABLED
+  ? "/holiday/mrktrally-christmas-logo.png"
+  : "/mrktrally-icon.png";
+const HOLIDAY_LIGHT_COLORS = [
+  "red", "gold", "green", "blue", "red", "gold", "green", "blue",
+  "red", "gold", "green", "blue", "red", "gold", "green", "blue",
+  "red", "gold", "green", "blue", "red", "gold", "green", "blue"
+];
+const HOLIDAY_SNOWFLAKES = Array.from({ length: 36 }, (_, index) => index);
+
+const buildStockRangePerformanceMeta = (points = [], latest = null, range = "1D") => {
+  if (range === "1D" || !Array.isArray(points)) return latest;
+  const validPoints = points.filter((point) => Number.isFinite(Number(point?.price)));
+  if (validPoints.length < 2) return latest;
+  const firstPoint = validPoints[0];
+  const lastPoint = validPoints.at(-1);
+  const startPrice = Number(firstPoint.price);
+  const endPrice = Number(lastPoint.price);
+  if (!(startPrice > 0) || !Number.isFinite(endPrice)) return latest;
+  const change = endPrice - startPrice;
+  return {
+    ...(latest || {}),
+    price: endPrice,
+    change,
+    percentChange: (change / startPrice) * 100,
+    rangeStartPrice: startPrice,
+    rangeStartDate: firstPoint.date || null
+  };
+};
+
 const firstNumber = (...values) =>
   values.find((value) => isNumber(value)) ?? null;
 
@@ -6982,7 +7015,11 @@ useEffect(() => {
       setStockChartError("");
       if (cachedChartIsFresh) {
         setStockChartData(cachedChart.points);
-        setStockChartMeta(cachedChart.latest || null);
+        setStockChartMeta(buildStockRangePerformanceMeta(
+          cachedChart.points,
+          cachedChart.latest || null,
+          stockChartRange
+        ));
       } else {
         setStockChartData([]);
         setStockChartMeta(null);
@@ -7006,6 +7043,7 @@ useEffect(() => {
 
       const points = response.data.points || [];
       const latest = response.data.latest || null;
+      const rangeLatest = buildStockRangePerformanceMeta(points, latest, stockChartRange);
       if (stockChartRange === "1D") {
         applyChartLatestToSavedPrice(ticker, latest, {
           marketType: "stock",
@@ -7019,7 +7057,9 @@ useEffect(() => {
           setStockChartData([]);
           keepLoading = attempt < 8;
         }
-        setStockChartMeta(latest);
+        setStockChartMeta(cachedChartIsFresh
+          ? buildStockRangePerformanceMeta(cachedChart.points, cachedChart.latest || latest, stockChartRange)
+          : rangeLatest);
         setStockChartError(cachedChartIsFresh
           ? "Chart history is refreshing..."
           : response.data.error || "Chart history is still loading..."
@@ -7044,7 +7084,9 @@ useEffect(() => {
         );
 
       if (isFallbackHistory) {
-        setStockChartMeta(latest);
+        setStockChartMeta(cachedChartIsFresh
+          ? buildStockRangePerformanceMeta(cachedChart.points, cachedChart.latest || latest, stockChartRange)
+          : rangeLatest);
         if (cachedChartIsFresh) {
           setStockChartData(cachedChart.points);
           setStockChartError("Chart history is refreshing...");
@@ -7060,13 +7102,13 @@ useEffect(() => {
       if (points.length) {
         stockChartMemoryCacheRef.current.set(cacheKey, {
           points,
-          latest,
+          latest: rangeLatest,
           updatedAt: response.data.updatedAt,
           cachedAt: Date.now()
         });
       }
       setStockChartData(points);
-      setStockChartMeta(response.data.latest || null);
+      setStockChartMeta(rangeLatest);
       setStockChartError(response.data.stale ? "Chart history is refreshing..." : "");
       if (response.data.stale) {
         scheduleRetry(attempt);
@@ -9543,7 +9585,7 @@ const renderFundamentalChartCompanies = (prefix = "chart") => (
 
 const renderFundamentalChartBrand = () => (
   <div className="fundamental-chart-card-brand" aria-label="Powered by MrktRally">
-    <img src="/mrktrally-icon.png" alt="" />
+    <img src={MRKTRALLY_LOGO_SRC} alt="" />
     <span>Powered by <strong>MrktRally</strong></span>
   </div>
 );
@@ -10758,7 +10800,7 @@ const downloadWeeklyEarningsImage = async () => {
       if (symbol && logoUrls.length) logoEntries.push([symbol, logoUrls]);
     });
   });
-  logoEntries.push(["MRKTRALLY", "/mrktrally-icon.png"]);
+  logoEntries.push(["MRKTRALLY", MRKTRALLY_LOGO_SRC]);
   const logoMap = new Map();
   await Promise.allSettled(
     [...new Map(logoEntries).entries()].map(async ([symbol, logoUrls]) => {
@@ -12578,7 +12620,35 @@ const openPage = (page) => {
 
 return (
 
-  <div className="app">
+  <div className={`app${HOLIDAY_THEME_ENABLED ? " holiday-theme" : ""}`}>
+
+    {HOLIDAY_THEME_ENABLED && (
+      <div className="holiday-atmosphere" aria-hidden="true">
+        <div className="holiday-light-string">
+          {HOLIDAY_LIGHT_COLORS.map((color, index) => (
+            <span className={`holiday-light holiday-light-${color}`} key={`${color}-${index}`} />
+          ))}
+        </div>
+        <div className="holiday-snowfall">
+          {HOLIDAY_SNOWFLAKES.map((flake) => (
+            <span
+              className="holiday-snowflake"
+              key={flake}
+              style={{
+                "--snow-left": `${(flake * 29 + 7) % 101}%`,
+                "--snow-delay": `${-((flake * 1.37) % 16).toFixed(2)}s`,
+                "--snow-duration": `${10 + (flake % 9)}s`,
+                "--snow-size": `${8 + (flake % 7) * 2}px`,
+                "--snow-drift": `${(flake % 2 ? 1 : -1) * (18 + (flake % 5) * 9)}px`,
+                "--snow-opacity": `${0.2 + (flake % 6) * 0.09}`
+              }}
+            >❄</span>
+          ))}
+        </div>
+        <span className="holiday-evergreen holiday-evergreen-left" />
+        <span className="holiday-evergreen holiday-evergreen-right" />
+      </div>
+    )}
 
     {marketEventToast && (
       <div className={`market-event-toast ${marketEventToast.tone}`} role="status" aria-live="polite">
@@ -12616,7 +12686,7 @@ return (
           onClick={() => setActivePage("home")}
           aria-label="Go to MrktRally home"
         >
-          <img src="/mrktrally-icon.png" alt="" />
+          <img src={MRKTRALLY_LOGO_SRC} alt="" />
           <span>MrktRally</span>
       </button>
 
@@ -12923,7 +12993,7 @@ return (
         <div className="home-rally-content">
           <div className="home-rally-brand">
             <div className="home-rally-brand-row">
-              <img src="/mrktrally-icon.png" alt="MrktRally logo" />
+              <img src={MRKTRALLY_LOGO_SRC} alt="MrktRally holiday logo" />
               <strong>MrktRally<span aria-label="trademark">™</span></strong>
             </div>
             <div className="home-rally-badge">Built for focused market research</div>
@@ -14908,7 +14978,7 @@ return (
             </div>
             <div className="fundamental-chart-modal-header-actions">
               <div className="fundamental-chart-modal-brand" aria-label="Powered by MrktRally">
-                <img src="/mrktrally-icon.png" alt="" />
+                <img src={MRKTRALLY_LOGO_SRC} alt="" />
                 <span>Powered by <strong>MrktRally</strong></span>
               </div>
               <button
@@ -18039,7 +18109,7 @@ return (
             </div>
             <div className="calendar-report-heading-actions">
               <div className="calendar-report-brand" aria-label="Powered by MrktRally">
-                <img src="/mrktrally-icon.png" alt="" />
+                <img src={MRKTRALLY_LOGO_SRC} alt="" />
                 <span>Powered by <strong>MrktRally</strong></span>
               </div>
               <button
@@ -18099,7 +18169,7 @@ return (
     <section className="earnings-week-snapshot" aria-label="Top earnings snapshot">
       <div className="earnings-week-snapshot-header">
         <div className="earnings-week-brand">
-          <img src="/mrktrally-icon.png" alt="MrktRally logo" />
+          <img src={MRKTRALLY_LOGO_SRC} alt="MrktRally holiday logo" />
           <span>MrktRally</span>
         </div>
         <div>

@@ -91,6 +91,193 @@ body {
   font-family: Inter, sans-serif;
 }
 
+/* Reversible site-wide Christmas presentation. All selectors are scoped to
+   .holiday-theme so the regular MrktRally design remains untouched. */
+.holiday-theme {
+  --holiday-red: #ef4444;
+  --holiday-green: #16c784;
+  --holiday-gold: #fbbf24;
+  --holiday-ice: #dff7ff;
+  position: relative;
+  background:
+    radial-gradient(circle at 12% 14%, rgba(22, 199, 132, 0.055), transparent 25%),
+    radial-gradient(circle at 88% 32%, rgba(37, 99, 235, 0.05), transparent 28%),
+    #02040a;
+}
+
+.holiday-atmosphere,
+.holiday-snowfall,
+.holiday-light-string {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.holiday-atmosphere {
+  z-index: 1200;
+  overflow: hidden;
+}
+
+.holiday-snowfall {
+  z-index: 1;
+  overflow: hidden;
+}
+
+.holiday-snowflake {
+  position: absolute;
+  left: var(--snow-left);
+  top: -28px;
+  color: var(--holiday-ice);
+  font-size: var(--snow-size);
+  line-height: 1;
+  opacity: var(--snow-opacity);
+  filter: drop-shadow(0 0 5px rgba(186, 230, 253, 0.35));
+  animation: holiday-snowfall var(--snow-duration) linear var(--snow-delay) infinite;
+}
+
+@keyframes holiday-snowfall {
+  0% { transform: translate3d(0, -4vh, 0) rotate(0deg); }
+  50% { transform: translate3d(var(--snow-drift), 52vh, 0) rotate(180deg); }
+  100% { transform: translate3d(0, 108vh, 0) rotate(360deg); }
+}
+
+.holiday-light-string {
+  z-index: 5;
+  height: 30px;
+  display: flex;
+  justify-content: space-around;
+  padding: 0 1.5vw;
+  border-top: 2px solid rgba(17, 43, 34, 0.98);
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.75));
+}
+
+.holiday-light-string::before {
+  content: "";
+  position: absolute;
+  top: -3px;
+  left: -1%;
+  right: -1%;
+  height: 14px;
+  border-bottom: 2px solid rgba(30, 64, 53, 0.95);
+  border-radius: 0 0 50% 50%;
+}
+
+.holiday-light {
+  position: relative;
+  width: 8px;
+  height: 13px;
+  margin-top: 7px;
+  border-radius: 50% 50% 46% 46%;
+  transform-origin: 50% -8px;
+  animation: holiday-bulb-glow 2.8s ease-in-out infinite alternate;
+}
+
+.holiday-light::before {
+  content: "";
+  position: absolute;
+  width: 6px;
+  height: 5px;
+  left: 1px;
+  top: -4px;
+  border-radius: 2px 2px 0 0;
+  background: #183d31;
+}
+
+.holiday-light:nth-child(3n) { animation-delay: -0.8s; }
+.holiday-light:nth-child(4n) { animation-delay: -1.6s; }
+.holiday-light-red { background: #ff4d5a; box-shadow: 0 0 6px #ff4d5a, 0 0 14px rgba(255, 77, 90, 0.7); }
+.holiday-light-gold { background: #ffd166; box-shadow: 0 0 6px #ffd166, 0 0 14px rgba(255, 209, 102, 0.7); }
+.holiday-light-green { background: #2dd4a1; box-shadow: 0 0 6px #2dd4a1, 0 0 14px rgba(45, 212, 161, 0.7); }
+.holiday-light-blue { background: #60a5fa; box-shadow: 0 0 6px #60a5fa, 0 0 14px rgba(96, 165, 250, 0.7); }
+
+@keyframes holiday-bulb-glow {
+  from { opacity: 0.58; filter: brightness(0.8); }
+  to { opacity: 1; filter: brightness(1.22); }
+}
+
+.holiday-evergreen {
+  position: fixed;
+  z-index: 4;
+  top: 0;
+  width: 92px;
+  height: 56px;
+  opacity: 0.75;
+  filter: drop-shadow(0 5px 8px rgba(0, 0, 0, 0.5));
+  background:
+    radial-gradient(circle at 56% 35%, #dc2626 0 4px, transparent 5px),
+    radial-gradient(circle at 40% 52%, #fbbf24 0 3px, transparent 4px),
+    linear-gradient(145deg, transparent 26%, #0f5132 27% 38%, transparent 39%),
+    linear-gradient(35deg, transparent 30%, #127044 31% 42%, transparent 43%);
+}
+
+.holiday-evergreen-left { left: 0; }
+.holiday-evergreen-right { right: 0; transform: scaleX(-1); }
+
+.holiday-theme .top-watchlist {
+  background:
+    linear-gradient(90deg, rgba(5, 35, 28, 0.98), rgba(4, 15, 28, 0.98) 42%, rgba(30, 9, 16, 0.96));
+  border-bottom-color: rgba(251, 191, 36, 0.2);
+}
+
+.holiday-theme .top-watchlist-brand img,
+.holiday-theme .home-brand-lockup img,
+.holiday-theme .home-rally-footer-brand img {
+  filter: drop-shadow(0 0 10px rgba(22, 199, 132, 0.34));
+}
+
+.holiday-theme .welcome-hero::after {
+  background-image: url("/holiday/mrktrally-christmas-logo.png");
+  opacity: 0.085;
+  filter: drop-shadow(0 0 28px rgba(22, 199, 132, 0.18));
+}
+
+.holiday-theme .welcome-hero::before {
+  background:
+    radial-gradient(ellipse 42% 42% at 50% 48%, rgba(22, 199, 132, 0.13), transparent 72%),
+    radial-gradient(ellipse 68% 58% at 52% 48%, rgba(185, 28, 28, 0.045), transparent 78%),
+    radial-gradient(ellipse 88% 74% at 50% 48%, rgba(37, 99, 235, 0.07), transparent 78%);
+}
+
+.holiday-theme .hero-preview-card,
+.holiday-theme .chart-section,
+.holiday-theme .stock-overview-profile-metrics,
+.holiday-theme .stock-overview-section-picker {
+  border-color: rgba(22, 199, 132, 0.27);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 18px 50px rgba(0, 0, 0, 0.26),
+    0 0 25px rgba(22, 199, 132, 0.045);
+}
+
+.holiday-theme .section-title::after,
+.holiday-theme .home-feature-label::after {
+  content: "  ❄";
+  color: #bae6fd;
+  font-size: 0.75em;
+  text-shadow: 0 0 8px rgba(186, 230, 253, 0.5);
+}
+
+.holiday-theme .home-rally-footer {
+  border-top-color: rgba(22, 199, 132, 0.3);
+  background:
+    radial-gradient(ellipse at 15% 0%, rgba(22, 199, 132, 0.08), transparent 38%),
+    radial-gradient(ellipse at 85% 0%, rgba(220, 38, 38, 0.06), transparent 38%),
+    #030812;
+}
+
+@media (max-width: 720px) {
+  .holiday-light-string { padding-inline: 0; }
+  .holiday-light { width: 6px; height: 10px; }
+  .holiday-light:nth-child(even) { display: none; }
+  .holiday-snowflake:nth-child(3n) { display: none; }
+  .holiday-evergreen { width: 62px; height: 44px; opacity: 0.58; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .holiday-snowflake { animation: none; display: none; }
+  .holiday-light { animation: none; }
+}
+
 :root {
   --company-logo-tile:
     radial-gradient(circle at 28% 18%, rgba(45, 212, 191, 0.14), transparent 42%),

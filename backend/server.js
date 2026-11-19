@@ -3741,7 +3741,9 @@ async function fetchFmpPriceHistory(ticker, requestedRange) {
     const firstPoint = points[0];
     const previousPoint = points.at(-2);
     const latestPrice = latestPoint.price;
-    const changeBase = requestedRange === "1M" ? previousPoint?.price : firstPoint?.price;
+    // Measure every multi-day range from its first visible chart point. The old
+    // 1M special case incorrectly displayed a one-day move for the month view.
+    const changeBase = firstPoint?.price;
     const change = latestPrice !== null && changeBase
       ? latestPrice - changeBase
       : null;
