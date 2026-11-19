@@ -217,13 +217,13 @@ body {
     radial-gradient(circle at 88% 72%, rgba(var(--holiday-page-accent-two), 0.075), transparent 25%);
 }
 
-/* The homepage uses one continuous cool market-terminal wash. This avoids the
-   previous green-left/red-right split and keeps the hero visually cohesive. */
+/* The homepage uses one flat market-terminal tint from edge to edge. */
+.holiday-theme.holiday-page-home {
+  background: #061820;
+}
+
 .holiday-page-home .holiday-page-scene {
-  background:
-    radial-gradient(ellipse 78% 68% at 50% 44%, rgba(45, 212, 191, 0.075), transparent 72%),
-    radial-gradient(ellipse 92% 80% at 50% 58%, rgba(56, 189, 248, 0.045), transparent 76%),
-    linear-gradient(90deg, rgba(8, 47, 44, 0.16), rgba(4, 18, 31, 0.08) 50%, rgba(7, 39, 46, 0.14));
+  background: rgba(8, 32, 40, 0.18);
 }
 
 .holiday-page-home .holiday-page-scene::before,
@@ -296,6 +296,10 @@ body {
   background:
     radial-gradient(ellipse 46% 46% at 50% 48%, rgba(45, 212, 191, 0.105), transparent 72%),
     radial-gradient(ellipse 88% 74% at 50% 48%, rgba(56, 189, 248, 0.055), transparent 80%);
+}
+
+.holiday-page-home .welcome-hero::before {
+  background: rgba(6, 24, 32, 0.08);
 }
 
 .holiday-theme .hero-preview-card,
