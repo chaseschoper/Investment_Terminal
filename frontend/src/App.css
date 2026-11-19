@@ -292,6 +292,12 @@ body {
   filter: drop-shadow(0 0 34px rgba(45, 212, 191, 0.16));
 }
 
+/* The source logo has an opaque square canvas. Hiding the hero watermark keeps
+   the homepage tint truly uniform instead of creating a darker center block. */
+.holiday-page-home .welcome-hero::after {
+  display: none;
+}
+
 .holiday-theme .welcome-hero::before {
   background:
     radial-gradient(ellipse 46% 46% at 50% 48%, rgba(45, 212, 191, 0.105), transparent 72%),
