@@ -117,9 +117,16 @@ body {
   display: contents;
 }
 
-.holiday-theme > :not(.holiday-atmosphere) {
+/* Keep the original sticky positioning and click layers for both toolbars.
+   Only the page content needs a foreground layer above the seasonal scene. */
+.holiday-theme > .main {
   position: relative;
-  z-index: 2;
+  z-index: 1;
+}
+
+.holiday-theme > .top-watchlist,
+.holiday-theme > .section-tabs {
+  pointer-events: auto;
 }
 
 .holiday-snowfall {
