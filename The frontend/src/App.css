@@ -99,13 +99,13 @@ body {
   --holiday-gold: #fbbf24;
   --holiday-ice: #dff7ff;
   position: relative;
+  isolation: isolate;
   background:
     radial-gradient(circle at 12% 14%, rgba(22, 199, 132, 0.055), transparent 25%),
     radial-gradient(circle at 88% 32%, rgba(37, 99, 235, 0.05), transparent 28%),
     #02040a;
 }
 
-.holiday-atmosphere,
 .holiday-snowfall,
 .holiday-light-string {
   position: fixed;
@@ -114,12 +114,16 @@ body {
 }
 
 .holiday-atmosphere {
-  z-index: 1200;
-  overflow: hidden;
+  display: contents;
+}
+
+.holiday-theme > :not(.holiday-atmosphere) {
+  position: relative;
+  z-index: 2;
 }
 
 .holiday-snowfall {
-  z-index: 1;
+  z-index: 0;
   overflow: hidden;
 }
 
@@ -142,7 +146,7 @@ body {
 }
 
 .holiday-light-string {
-  z-index: 5;
+  z-index: 1200;
   height: 30px;
   display: flex;
   justify-content: space-around;
@@ -195,23 +199,55 @@ body {
   to { opacity: 1; filter: brightness(1.22); }
 }
 
-.holiday-evergreen {
+.holiday-page-scene {
   position: fixed;
-  z-index: 4;
-  top: 0;
-  width: 92px;
-  height: 56px;
-  opacity: 0.75;
-  filter: drop-shadow(0 5px 8px rgba(0, 0, 0, 0.5));
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
   background:
-    radial-gradient(circle at 56% 35%, #dc2626 0 4px, transparent 5px),
-    radial-gradient(circle at 40% 52%, #fbbf24 0 3px, transparent 4px),
-    linear-gradient(145deg, transparent 26%, #0f5132 27% 38%, transparent 39%),
-    linear-gradient(35deg, transparent 30%, #127044 31% 42%, transparent 43%);
+    radial-gradient(circle at 14% 30%, rgba(var(--holiday-page-accent), 0.1), transparent 24%),
+    radial-gradient(circle at 88% 72%, rgba(var(--holiday-page-accent-two), 0.075), transparent 25%);
 }
 
-.holiday-evergreen-left { left: 0; }
-.holiday-evergreen-right { right: 0; transform: scaleX(-1); }
+.holiday-page-scene::before,
+.holiday-page-scene::after {
+  content: "";
+  position: absolute;
+  width: min(34vw, 480px);
+  aspect-ratio: 1;
+  border: 1px solid rgba(var(--holiday-page-accent), 0.1);
+  transform: rotate(45deg);
+}
+
+.holiday-page-scene::before { left: -18%; top: 18%; }
+.holiday-page-scene::after { right: -18%; bottom: 8%; border-color: rgba(var(--holiday-page-accent-two), 0.09); }
+
+.holiday-page-glyph,
+.holiday-page-star {
+  position: absolute;
+  color: rgba(var(--holiday-page-accent), 0.08);
+  filter: grayscale(0.35) drop-shadow(0 0 28px rgba(var(--holiday-page-accent), 0.13));
+  user-select: none;
+}
+
+.holiday-page-glyph-primary {
+  left: 3vw;
+  top: 24%;
+  font-size: clamp(84px, 12vw, 190px);
+  transform: rotate(-12deg);
+}
+
+.holiday-page-glyph-secondary {
+  right: 4vw;
+  bottom: 10%;
+  font-size: clamp(64px, 9vw, 150px);
+  opacity: 0.62;
+  transform: rotate(13deg);
+}
+
+.holiday-page-star-one { right: 17%; top: 23%; font-size: clamp(34px, 5vw, 72px); }
+.holiday-page-star-two { left: 19%; bottom: 14%; font-size: clamp(28px, 4vw, 58px); color: rgba(var(--holiday-page-accent-two), 0.08); }
 
 .holiday-theme .top-watchlist {
   background:
@@ -270,7 +306,8 @@ body {
   .holiday-light { width: 6px; height: 10px; }
   .holiday-light:nth-child(even) { display: none; }
   .holiday-snowflake:nth-child(3n) { display: none; }
-  .holiday-evergreen { width: 62px; height: 44px; opacity: 0.58; }
+  .holiday-page-glyph-primary { left: -8vw; opacity: 0.62; }
+  .holiday-page-glyph-secondary { right: -6vw; opacity: 0.4; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -45,6 +45,25 @@ const HOLIDAY_LIGHT_COLORS = [
   "red", "gold", "green", "blue", "red", "gold", "green", "blue"
 ];
 const HOLIDAY_SNOWFLAKES = Array.from({ length: 36 }, (_, index) => index);
+const HOLIDAY_PAGE_DECORATIONS = {
+  home: { glyph: "✦", accent: "34, 197, 94", accentTwo: "239, 68, 68" },
+  overview: { glyph: "🎁", accent: "56, 189, 248", accentTwo: "34, 197, 94" },
+  "financial-statements": { glyph: "🕯", accent: "251, 191, 36", accentTwo: "239, 68, 68" },
+  "fundamental-charts": { glyph: "★", accent: "45, 212, 191", accentTwo: "96, 165, 250" },
+  projections: { glyph: "🔔", accent: "251, 191, 36", accentTwo: "34, 197, 94" },
+  comparison: { glyph: "❄", accent: "125, 211, 252", accentTwo: "239, 68, 68" },
+  "stock-screener": { glyph: "✧", accent: "34, 197, 94", accentTwo: "251, 191, 36" },
+  "dcf-calculator": { glyph: "🎀", accent: "244, 63, 94", accentTwo: "251, 191, 36" },
+  "market-overview": { glyph: "❄", accent: "56, 189, 248", accentTwo: "34, 197, 94" },
+  etfs: { glyph: "♢", accent: "45, 212, 191", accentTwo: "239, 68, 68" },
+  portfolio: { glyph: "🎁", accent: "34, 197, 94", accentTwo: "251, 191, 36" },
+  "earnings-calendar": { glyph: "✦", accent: "239, 68, 68", accentTwo: "34, 197, 94" },
+  "treasury-rates": { glyph: "★", accent: "251, 191, 36", accentTwo: "96, 165, 250" },
+  crypto: { glyph: "❅", accent: "251, 191, 36", accentTwo: "125, 211, 252" },
+  forex: { glyph: "✣", accent: "96, 165, 250", accentTwo: "34, 197, 94" },
+  news: { glyph: "✉", accent: "239, 68, 68", accentTwo: "251, 191, 36" },
+  profile: { glyph: "☃", accent: "125, 211, 252", accentTwo: "34, 197, 94" }
+};
 
 const buildStockRangePerformanceMeta = (points = [], latest = null, range = "1D") => {
   if (range === "1D" || !Array.isArray(points)) return latest;
@@ -12617,10 +12636,19 @@ const openPage = (page) => {
   window.scrollTo({ top: 0, behavior: "smooth" });
 };
 
+const activeHolidayDecoration = HOLIDAY_PAGE_DECORATIONS[activePage]
+  || HOLIDAY_PAGE_DECORATIONS.home;
+
 
 return (
 
-  <div className={`app${HOLIDAY_THEME_ENABLED ? " holiday-theme" : ""}`}>
+  <div
+    className={`app${HOLIDAY_THEME_ENABLED ? ` holiday-theme holiday-page-${activePage}` : ""}`}
+    style={HOLIDAY_THEME_ENABLED ? {
+      "--holiday-page-accent": activeHolidayDecoration.accent,
+      "--holiday-page-accent-two": activeHolidayDecoration.accentTwo
+    } : undefined}
+  >
 
     {HOLIDAY_THEME_ENABLED && (
       <div className="holiday-atmosphere" aria-hidden="true">
@@ -12645,8 +12673,12 @@ return (
             >❄</span>
           ))}
         </div>
-        <span className="holiday-evergreen holiday-evergreen-left" />
-        <span className="holiday-evergreen holiday-evergreen-right" />
+        <div className="holiday-page-scene">
+          <span className="holiday-page-glyph holiday-page-glyph-primary">{activeHolidayDecoration.glyph}</span>
+          <span className="holiday-page-glyph holiday-page-glyph-secondary">{activeHolidayDecoration.glyph}</span>
+          <span className="holiday-page-star holiday-page-star-one">✦</span>
+          <span className="holiday-page-star holiday-page-star-two">✧</span>
+        </div>
       </div>
     )}
 
