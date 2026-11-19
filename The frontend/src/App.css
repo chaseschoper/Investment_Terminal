@@ -287,15 +287,15 @@ body {
 }
 
 .holiday-theme .welcome-hero::after {
-  background-image: url("/mrktrally-icon.png");
+  background-image: url("/mrktrally-mark-transparent.svg");
   opacity: 0.065;
   filter: drop-shadow(0 0 34px rgba(45, 212, 191, 0.16));
 }
 
-/* The source logo has an opaque square canvas. Hiding the hero watermark keeps
-   the homepage tint truly uniform instead of creating a darker center block. */
+/* Use the transparent mark so the watermark stays visible without introducing
+   the opaque square canvas from the app icon. */
 .holiday-page-home .welcome-hero::after {
-  display: none;
+  display: block;
 }
 
 .holiday-theme .welcome-hero::before {

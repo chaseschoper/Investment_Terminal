@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="MrktRally mark">
+  <defs>
+    <linearGradient id="mark-green" x1="112" y1="116" x2="397" y2="397" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#20d99a"/>
+      <stop offset="1" stop-color="#16c784"/>
+    </linearGradient>
+    <linearGradient id="mark-red" x1="253" y1="283" x2="413" y2="120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ff765f"/>
+      <stop offset="1" stop-color="#ff6654"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#mark-green)" d="M112 116h145c39 0 65 16 89 44l-51 52c-11-16-23-24-43-24H112z"/>
+  <path fill="url(#mark-green)" d="m112 320 88-89 50 50 119-123 18 18-138 138-47-47-90 97z"/>
+  <path fill="url(#mark-green)" d="M369 208c1 42-14 74-47 99l75 90h-85l-56-69 30-31c48-43 76-69 83-89z"/>
+  <path fill="url(#mark-red)" d="m350 143 63-23-16 63-15-17-112 117-19-19 118-116z"/>
+</svg>
