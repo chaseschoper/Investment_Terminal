@@ -908,15 +908,13 @@ const TREASURY_RATE_TERMS = [
 ];
 
 const STOCK_OVERVIEW_SECTIONS = [
-  { id: "overview", label: "Header", icon: "header" },
-  { id: "price-chart", label: "Price Chart", icon: "chart" },
-  { id: "financials", label: "Financial Charts", icon: "bars" },
-  { id: "metrics", label: "Metrics", icon: "grid" },
-  { id: "analyst-estimates", label: "Estimates", icon: "target" },
-  { id: "similar-companies", label: "Peers", icon: "peers" },
-  { id: "ai-analysis", label: "AI Analysis", icon: "spark" },
-  { id: "company-documents", label: "Documents", icon: "document" },
-  { id: "stock-news", label: "News", icon: "news" }
+  { id: "charts", label: "Fundamental Charts" },
+  { id: "metrics", label: "Valuation & Metrics" },
+  { id: "estimates", label: "Estimates & Activity" },
+  { id: "profile", label: "Profile & Leadership" },
+  { id: "peers", label: "Industry Peers" },
+  { id: "documents", label: "Company Documents" },
+  { id: "news", label: "Company News" }
 ];
 
 const renderOverviewGuideIcon = (icon) => {
@@ -1024,7 +1022,7 @@ const HOME_FEATURES = [
     icon: "overview",
     label: "Stock Overview",
     title: "Everything on one company page",
-    text: "Search a ticker and review live pricing, financial charts, metrics, estimates, peer comps, AI analysis, and company documents together."
+    text: "Search a ticker and review live pricing, financial charts, metrics, estimates, peer comps, company documents, and news together."
   },
   {
     id: "etfs",
@@ -1104,13 +1102,6 @@ const HOME_FEATURES = [
     text: "Keep your holdings organized, see your portfolio value, and follow performance without leaving your research flow."
   },
   {
-    id: "watchlists",
-    icon: "watchlists",
-    label: "Watchlists",
-    title: "Keep ideas in the top bar",
-    text: "Pin the stocks, ETFs, crypto, or forex pairs you care about in the top watchlist bar so they stay visible while you research."
-  },
-  {
     id: "earnings-calendar",
     icon: "calendar",
     label: "Calendar",
@@ -1140,8 +1131,8 @@ const HOME_TOUR_SECTIONS = [
     label: "Stock Overview",
     eyebrow: "Company command center",
     title: "One page for the full stock story.",
-    text: "Search a company and move through live pricing, financial charts, valuation, estimates, peers, AI analysis, filings, and company news without jumping between tabs.",
-    bullets: ["Price chart and watchlist-aware quote", "Annual and quarterly financial charts", "Metrics, estimates, peers, documents, and news"],
+    text: "Search a company and move through live pricing, financial charts, valuation, estimates, peers, filings, and company news without jumping between tabs.",
+    bullets: ["Live quote and price chart", "Annual and quarterly financial charts", "Metrics, estimates, peers, documents, and news"],
     snapshot: "overview"
   },
   {
@@ -1223,16 +1214,6 @@ const HOME_TOUR_SECTIONS = [
     text: "Search ETFs and mutual funds to review price history, assets, fees, dividends, fund details, and available sector and country exposure.",
     bullets: ["ETF and mutual fund search", "Sector and country exposure", "Price chart with time ranges"],
     snapshot: "funds"
-  },
-  {
-    id: "watchlists",
-    icon: "watchlists",
-    label: "Watchlists",
-    eyebrow: "Top watchlist bar",
-    title: "Keep your highest-priority symbols visible.",
-    text: "Use the top watchlist bar to keep key stocks, ETFs, crypto, and forex pairs in view while you move through the terminal.",
-    bullets: ["Persistent top bar", "Fast add and remove controls", "Stays visible across research pages"],
-    snapshot: "watchlists"
   },
   {
     id: "portfolio",
@@ -1353,7 +1334,7 @@ const POLICY_CONTENT = {
     sections: [
       {
         title: "What MrktRally provides",
-        text: "MrktRally brings together stock charts, financial statements, metrics, analyst estimates, filings, calendars, market maps, ETF and fund research, watchlists, portfolio organization tools, screeners, treasury rates, crypto data, forex data, news, and other market research features. The site is meant to help you study companies and markets more efficiently in one place."
+        text: "MrktRally brings together stock charts, financial statements, metrics, analyst estimates, filings, calendars, market maps, ETF and fund research, portfolio organization tools, screeners, treasury rates, crypto data, forex data, news, and other market research features. The site is meant to help you study companies and markets more efficiently in one place."
       },
       {
         title: "Not a financial service",
@@ -1361,7 +1342,7 @@ const POLICY_CONTENT = {
       },
       {
         title: "Your responsibility",
-        text: "You are responsible for your own research, decisions, account security, saved watchlists, portfolio entries, cost basis, share counts, cash values, and any conclusions you draw from the site. You should verify important information through official filings, company investor relations pages, broker statements, tax documents, and other reliable sources before making decisions."
+        text: "You are responsible for your own research, decisions, account security, portfolio entries, cost basis, share counts, cash values, and any conclusions you draw from the site. You should verify important information through official filings, company investor relations pages, broker statements, tax documents, and other reliable sources before making decisions."
       },
       {
         title: "Account access",
@@ -1369,7 +1350,7 @@ const POLICY_CONTENT = {
       },
       {
         title: "Saved research tools",
-        text: "Watchlists, portfolios, saved symbols, cash entries, allocation charts, and performance calculations are provided for organization and learning. They are not official account statements, tax records, brokerage records, or audited performance reports. You should compare any saved portfolio information with your brokerage or personal records."
+        text: "Portfolios, saved symbols, cash entries, allocation charts, and performance calculations are provided for organization and learning. They are not official account statements, tax records, brokerage records, or audited performance reports. You should compare any saved portfolio information with your brokerage or personal records."
       },
       {
         title: "Market data and provider terms",
@@ -1411,7 +1392,7 @@ const POLICY_CONTENT = {
       },
       {
         title: "Saved user content",
-        text: "MrktRally may store the watchlists, portfolio names, tickers, share counts, cost basis, cash entries, saved symbols, interface choices, and other research information you enter. This information is used to show your saved research again later, calculate portfolio values, display allocations, and personalize your experience."
+        text: "MrktRally may store portfolio names, tickers, share counts, cost basis, cash entries, saved symbols, interface choices, and other research information you enter. This information is used to show your saved research again later, calculate portfolio values, display allocations, and personalize your experience."
       },
       {
         title: "Research requests",
@@ -1435,7 +1416,7 @@ const POLICY_CONTENT = {
       },
       {
         title: "How information is used",
-        text: "Information is used to create and secure accounts, keep you signed in, save watchlists and portfolios, load market data, show charts and calendars, calculate portfolio values, improve speed, debug issues, prevent misuse, respond to support requests, and maintain the site."
+        text: "Information is used to create and secure accounts, keep you signed in, save portfolios, load market data on demand, show charts and calendars, calculate portfolio values, improve speed, debug issues, prevent misuse, respond to support requests, and maintain the site."
       },
       {
         title: "What MrktRally does not do",
@@ -1455,7 +1436,7 @@ const POLICY_CONTENT = {
       },
       {
         title: "Your choices",
-        text: "You can sign out, remove watchlist items, delete portfolio positions, clear browser storage, request account changes, or request account deletion by contacting MrktRally. Some data may remain temporarily in backups, logs, deployment records, or provider systems where necessary."
+        text: "You can sign out, delete portfolio positions, clear browser storage, request account changes, or request account deletion by contacting MrktRally. Some data may remain temporarily in backups, logs, deployment records, or provider systems where necessary."
       },
       {
         title: "Children and students",
@@ -1485,7 +1466,7 @@ const POLICY_CONTENT = {
       },
       {
         title: "Saved interface choices",
-        text: "The site may remember selected pages, watchlist state, chart periods, annual or quarterly views, selected tabs, recently searched tickers, policy acceptance, and other interface choices so the app feels consistent when you return."
+        text: "The site may remember selected pages, chart periods, annual or quarterly views, selected tabs, recently searched tickers, policy acceptance, and other interface choices so the app feels consistent when you return."
       },
       {
         title: "Security and abuse prevention",
@@ -1493,7 +1474,7 @@ const POLICY_CONTENT = {
       },
       {
         title: "Controls",
-        text: "You can block cookies, clear site data, or delete browser storage in your browser settings. Doing so may sign you out, remove cached market data, reset preferences, slow down the site, or prevent saved watchlist and portfolio features from working as expected."
+        text: "You can block cookies, clear site data, or delete browser storage in your browser settings. Doing so may sign you out, remove cached market data, reset preferences, slow down the site, or prevent saved portfolio features from working as expected."
       },
       {
         title: "No ad tracking focus",
@@ -1561,7 +1542,7 @@ const POLICY_CONTENT = {
   }
 };
 
-const CURRENT_POLICY_VERSION = "2026-09-19";
+const CURRENT_POLICY_VERSION = "2026-11-19";
 
 const renderHomeFeatureIcon = (icon) => {
   const commonProps = {
@@ -2429,6 +2410,7 @@ const GUEST_MARKET_TAPE_ITEMS = [
   ...CRYPTO_QUICK_PICKS.slice(0, 6).map((item) => ({ ...item, type: "crypto" })),
   ...FOREX_QUICK_PICKS.slice(0, 6).map((item) => ({ ...item, type: "forex" }))
 ];
+
 const FOREX_CURRENCY_CODES = new Set([
   "USD", "EUR", "JPY", "GBP", "AUD", "CAD", "CHF", "CNY", "HKD", "NZD",
   "SEK", "KRW", "SGD", "NOK", "MXN", "INR", "RUB", "ZAR", "TRY", "BRL",
@@ -3823,15 +3805,22 @@ const storeCalendar = (cacheKey, calendar) => {
   }
 };
 
-const CALENDAR_REPORT_CACHE_PREFIX = "mrktrally-earnings-report-v2:";
+const CALENDAR_REPORT_CACHE_PREFIX = "mrktrally-earnings-report-v3:";
+const CALENDAR_REPORT_CACHE_MAX_AGE_MS = 15 * 60 * 1000;
 const getCalendarReportCacheKey = (symbol, date) =>
   `${String(symbol || "").trim().toUpperCase()}:${String(date || "history").slice(0, 10)}`;
 
 const readStoredCalendarReport = (symbol, date) => {
   try {
     const cacheKey = getCalendarReportCacheKey(symbol, date);
-    const stored = JSON.parse(window.localStorage.getItem(`${CALENDAR_REPORT_CACHE_PREFIX}${cacheKey}`) || "null");
-    return stored?.rows?.length ? stored : null;
+    const storageKey = `${CALENDAR_REPORT_CACHE_PREFIX}${cacheKey}`;
+    const stored = JSON.parse(window.localStorage.getItem(storageKey) || "null");
+    const cachedAt = Date.parse(stored?.cachedAt || "");
+    if (!stored?.rows?.length || !Number.isFinite(cachedAt) || Date.now() - cachedAt > CALENDAR_REPORT_CACHE_MAX_AGE_MS) {
+      window.localStorage.removeItem(storageKey);
+      return null;
+    }
+    return stored;
   } catch {
     return null;
   }
@@ -4904,9 +4893,9 @@ function App() {
   const stockChartMemoryCacheRef = useRef(new Map());
   const stockSidecarRequestRef = useRef("");
   const stockOverviewExtrasRequestRef = useRef("");
+  const stockOverviewFullRequestRef = useRef("");
   const stockSearchBlurTimerRef = useRef(null);
   const latestComparisonRequest = useRef(0);
-  const latestAiRequest = useRef(0);
   const liveEarningsHydratedRef = useRef("");
   const calendarRetryTimerRef = useRef(null);
   const calendarRequestRef = useRef(0);
@@ -5331,6 +5320,8 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const loadedStockSymbol = stockData?.symbol || null;
   const [stockOverviewExtrasExhaustedSymbol, setStockOverviewExtrasExhaustedSymbol] =
     useState("");
+  const [activeStockOverviewSection, setActiveStockOverviewSection] = useState("");
+  const [stockOverviewFullDataReadySymbol, setStockOverviewFullDataReadySymbol] = useState("");
 
   const [isStockLoading, setIsStockLoading] =
     useState(false);
@@ -5358,12 +5349,6 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
 
   const [stockChartError, setStockChartError] =
     useState("");
-
-  const [aiAnalysis, setAiAnalysis] =
-    useState(null);
-
-  const [isAiLoading, setIsAiLoading] =
-    useState(false);
 
   const [mrRallyMessages, setMrRallyMessages] =
     useState([
@@ -6069,29 +6054,16 @@ useEffect(() => {
 
 
 useEffect(() => {
+  if (activePage !== "portfolio") return;
   let isActive = true;
-  let liveRefreshTimer;
   let passiveRefreshTimer;
-  let closeRefreshTimer;
-  const topWatchlistSymbols = [...new Set(watchlist
-    .map((symbol) => String(symbol || "").trim().toUpperCase())
-    .filter(Boolean))];
   const passiveSymbols = [...new Set([
     ...portfolios.flatMap((item) =>
       (item.positions || []).map((position) => position.symbol)
     )
   ]
     .map((symbol) => String(symbol || "").trim().toUpperCase())
-    .filter((symbol) => symbol && !topWatchlistSymbols.includes(symbol)))];
-
-  const refreshTopWatchlistPrices = async () => {
-    if (!isActive) return;
-    refreshTopWatchlistMarketPrices(topWatchlistSymbols);
-    liveRefreshTimer = window.setTimeout(
-      refreshTopWatchlistPrices,
-      5 * 60 * 1000
-    );
-  };
+    .filter(Boolean))];
 
   const refreshPassivePrices = async () => {
     if (!isActive) return;
@@ -6106,34 +6078,21 @@ useEffect(() => {
     if (!initialSavedPricesLoaded.current) {
       initialSavedPricesLoaded.current = true;
       loadSavedPrices(passiveSymbols);
-      refreshTopWatchlistMarketPrices(topWatchlistSymbols);
-      window.setTimeout(() => {
-        if (!isActive) return;
-        refreshTopWatchlistMarketPrices(topWatchlistSymbols);
-      }, 1200);
     } else {
       loadSavedPrices(passiveSymbols);
-      refreshTopWatchlistMarketPrices(topWatchlistSymbols);
     }
   };
 
   loadInitialPrices();
-  liveRefreshTimer = window.setTimeout(refreshTopWatchlistPrices, 5 * 60 * 1000);
   passiveRefreshTimer = window.setTimeout(refreshPassivePrices, 30 * 60 * 1000);
-  closeRefreshTimer = window.setInterval(() => {
-    if (getMarketClock(new Date()).tone !== "open") {
-      loadTopWatchlistClosePrices(topWatchlistSymbols);
-    }
-  }, 60 * 1000);
   return () => {
     isActive = false;
-    window.clearTimeout(liveRefreshTimer);
     window.clearTimeout(passiveRefreshTimer);
-    window.clearInterval(closeRefreshTimer);
   };
-}, [watchlist, portfolios]);
+}, [activePage, portfolios]);
 
 useEffect(() => {
+  if (activePage !== "market-overview") return;
   let isActive = true;
   let refreshTimer;
   let hasLoadedIndices = marketIndices.length > 0;
@@ -6190,7 +6149,7 @@ useEffect(() => {
     isActive = false;
     window.clearTimeout(refreshTimer);
   };
-}, []);
+}, [activePage]);
 
 useEffect(() => {
   if (activePage !== "market-overview") return;
@@ -7152,30 +7111,35 @@ useEffect(() => {
   */
 
   useEffect(() => {
+    if (activePage !== "overview" && activePage !== "projections") return;
     if (stockRetryTimerRef.current) {
       window.clearTimeout(stockRetryTimerRef.current);
       stockRetryTimerRef.current = null;
     }
     const requestId = ++latestStockRequest.current;
     const cachedStock = stockMemoryCacheRef.current.get(ticker) || null;
-    latestAiRequest.current += 1;
     stockSidecarRequestRef.current = "";
     stockOverviewExtrasRequestRef.current = "";
+    stockOverviewFullRequestRef.current = "";
+    setStockOverviewFullDataReadySymbol("");
+    if (activePage === "overview") setActiveStockOverviewSection("");
     setStockData(cachedStock);
     if (cachedStock) firstStockLoadSettled.current = true;
-    setAiAnalysis(null);
     setCompanyDocuments(null);
     setSimilarCompanies([]);
     setActiveCompanyDocumentTab("results");
     setIsStockLoading(!cachedStock);
-    loadSavedPrices([ticker], 0, { live: true });
-    loadStock(ticker, 0, requestId);
+    if (activePage === "overview") {
+      loadStockSummary(ticker, requestId);
+    } else {
+      loadStock(ticker, 0, requestId);
+    }
 
-  }, [ticker]);
+  }, [ticker, activePage]);
 
   useEffect(() => {
     const symbol = String(ticker || "").trim().toUpperCase();
-    if (activePage !== "overview" || !symbol) return;
+    if (activePage !== "overview" || activeStockOverviewSection !== "metrics" || !symbol) return;
     const currentSymbol = String(stockData?.symbol || loadedStockSymbol || "").trim().toUpperCase();
     if (!currentSymbol || currentSymbol !== symbol) return;
     const requestKey = symbol;
@@ -7232,6 +7196,7 @@ useEffect(() => {
     ticker,
     loadedStockSymbol,
     activePage,
+    activeStockOverviewSection,
     stockData?.symbol
   ]);
 
@@ -7243,7 +7208,7 @@ useEffect(() => {
 
   useEffect(() => {
     const symbol = String(ticker || "").trim().toUpperCase();
-    if (activePage !== "overview" || !symbol || isStockLoading) return;
+    if (activePage !== "overview" || activeStockOverviewSection !== "estimates" || !symbol || isStockLoading) return;
     const currentSymbol = String(stockData?.symbol || loadedStockSymbol || "").trim().toUpperCase();
     if (currentSymbol && currentSymbol !== symbol) return;
     const requestKey = `${symbol}:${financialChartMode}`;
@@ -7305,10 +7270,10 @@ useEffect(() => {
       window.clearTimeout(timer);
       if (retryTimer) window.clearTimeout(retryTimer);
     };
-  }, [ticker, loadedStockSymbol, activePage, isStockLoading, stockData?.symbol, financialChartMode]);
+  }, [ticker, loadedStockSymbol, activePage, activeStockOverviewSection, isStockLoading, stockData?.symbol, financialChartMode]);
 
   useEffect(() => {
-    if (activePage !== "overview" || !loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
+    if (activePage !== "overview" || activeStockOverviewSection !== "documents" || !loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
     let isActive = true;
     let retryTimer;
 
@@ -7360,34 +7325,11 @@ useEffect(() => {
       window.clearTimeout(startTimer);
       if (retryTimer) window.clearTimeout(retryTimer);
     };
-  }, [ticker, loadedStockSymbol, isStockLoading, activePage]);
+  }, [ticker, loadedStockSymbol, isStockLoading, activePage, activeStockOverviewSection]);
+
 
   useEffect(() => {
-    if (activePage !== "overview" || !stockData?.price || stockData.symbol !== ticker) return;
-
-    const requestId = ++latestAiRequest.current;
-    const timer = window.setTimeout(() => {
-      setIsAiLoading(true);
-
-      axios.get(`${API_URL}/api/ai-analysis/${ticker}`)
-        .then((response) => {
-          if (requestId === latestAiRequest.current) {
-            setAiAnalysis(response.data);
-          }
-        })
-        .catch((error) => console.error("AI analysis failed", error))
-        .finally(() => {
-          if (requestId === latestAiRequest.current) {
-            setIsAiLoading(false);
-          }
-        });
-    }, 4800);
-
-    return () => window.clearTimeout(timer);
-  }, [ticker, stockData?.price, stockData?.updatedAt, activePage]);
-
-  useEffect(() => {
-    if (activePage !== "overview" || !loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
+    if (activePage !== "overview" || activeStockOverviewSection !== "peers" || !loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
 
     let isActive = true;
     let retryTimer;
@@ -7438,7 +7380,7 @@ useEffect(() => {
       window.clearTimeout(startTimer);
       if (retryTimer) window.clearTimeout(retryTimer);
     };
-  }, [ticker, loadedStockSymbol, isStockLoading, activePage]);
+  }, [ticker, loadedStockSymbol, isStockLoading, activePage, activeStockOverviewSection]);
 
   /*
     LOAD EARNINGS ON START
@@ -7579,7 +7521,7 @@ useEffect(() => {
   }, [activePage]);
 
   useEffect(() => {
-    if (activePage !== "overview" || !loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
+    if (activePage !== "overview" || activeStockOverviewSection !== "news" || !loadedStockSymbol || loadedStockSymbol !== ticker || isStockLoading) return;
 
     let isActive = true;
     setStockNews({ articles: [] });
@@ -7605,7 +7547,7 @@ useEffect(() => {
       isActive = false;
       window.clearTimeout(timer);
     };
-  }, [ticker, loadedStockSymbol, isStockLoading, activePage]);
+  }, [ticker, loadedStockSymbol, isStockLoading, activePage, activeStockOverviewSection]);
 
   /*
     LOAD PORTFOLIO PRICES
@@ -7618,14 +7560,35 @@ useEffect(() => {
   */
 
   useEffect(() => {
+    if (activePage !== "comparison") return;
     const requestId = ++latestComparisonRequest.current;
     loadComparisonStocks(0, requestId);
 
-  }, [compareTickers]);
+  }, [activePage, compareTickers]);
 
   /*
     LOAD SINGLE STOCK
   */
+
+  const loadStockSummary = async (symbol = ticker, requestId = Date.now()) => {
+    try {
+      const response = await axios.get(`${API_URL}/api/stock-summary/${symbol}`, { timeout: 6500 });
+      if (requestId !== latestStockRequest.current) return;
+      const previous = stockMemoryCacheRef.current.get(symbol) || {};
+      const summary = { ...previous, ...(response.data || {}), symbol };
+      stockMemoryCacheRef.current.set(symbol, summary);
+      setStockData(summary);
+      setIsStockLoading(false);
+      firstStockLoadSettled.current = true;
+    } catch (error) {
+      console.error("Stock summary failed", error);
+      if (requestId !== latestStockRequest.current) return;
+      const cached = stockMemoryCacheRef.current.get(symbol);
+      setStockData(cached || { symbol, ticker: symbol, name: symbol, stockLoadError: "Stock summary is temporarily unavailable." });
+      setIsStockLoading(false);
+      firstStockLoadSettled.current = true;
+    }
+  };
 
   const loadStock = async (
     symbol = ticker,
@@ -7692,6 +7655,7 @@ useEffect(() => {
       const stableResponse = stabilizeRefreshingStockData(previousStock, response.data);
       stockMemoryCacheRef.current.set(symbol, stableResponse);
       setStockData(stableResponse);
+      setStockOverviewFullDataReadySymbol(symbol);
       setIsStockLoading(false);
       firstStockLoadSettled.current = true;
 
@@ -7788,6 +7752,18 @@ useEffect(() => {
 
     }
   };
+
+useEffect(() => {
+  if (activePage !== "overview") return;
+  if (!["charts", "estimates", "profile"].includes(activeStockOverviewSection)) return;
+  const symbol = String(ticker || "").trim().toUpperCase();
+  if (!symbol || stockOverviewFullDataReadySymbol === symbol) return;
+  const requestKey = `${symbol}:${financialChartMode}`;
+  if (stockOverviewFullRequestRef.current === requestKey) return;
+  stockOverviewFullRequestRef.current = requestKey;
+  const requestId = ++latestStockRequest.current;
+  loadStock(symbol, 0, requestId);
+}, [activePage, activeStockOverviewSection, ticker, financialChartMode, stockOverviewFullDataReadySymbol]);
 
 useEffect(() => {
 
@@ -10474,6 +10450,8 @@ const groupedMetricCards = metricGroupConfig
     items: renderedMetricCards.filter((item) => group.labels.has(item.label))
   }))
   .filter((group) => group.items.length);
+const profileMetricGroup = groupedMetricCards.find((group) => group.key === "profile");
+const detailedMetricGroups = groupedMetricCards.filter((group) => group.key !== "profile");
 const groupedMetricLabels = new Set(groupedMetricCards.flatMap((group) => group.items.map((item) => item.label)));
 const ungroupedMetricCards = renderedMetricCards.filter((item) => !groupedMetricLabels.has(item.label));
 const estimateValue = (value) =>
@@ -12017,12 +11995,15 @@ const openStockOverviewSymbol = (symbol) => {
   setSearchInput(cleanSymbol);
   setStockSearchSuggestions([]);
   setShowStockSearchSuggestions(false);
+  const wasAlreadyOnOverview = activePage === "overview";
   setActivePage("overview");
+  setActiveStockOverviewSection("");
 
   if (cleanSymbol !== ticker) {
     setTicker(cleanSymbol);
     return;
   }
+  if (!wasAlreadyOnOverview) return;
 
   if (stockRetryTimerRef.current) {
     window.clearTimeout(stockRetryTimerRef.current);
@@ -12032,7 +12013,7 @@ const openStockOverviewSymbol = (symbol) => {
   const cachedStock = stockMemoryCacheRef.current.get(cleanSymbol) || null;
   setStockData(cachedStock);
   setIsStockLoading(!cachedStock);
-  loadStock(cleanSymbol, 0, requestId);
+  loadStockSummary(cleanSymbol, requestId);
 };
 
 const openGuestMarketTapeItem = (item) => {
@@ -12557,6 +12538,8 @@ const handleStockSearchSubmit = async (event, destinationPage = "overview") => {
   if (warnStockOnlySymbol(symbol)) return;
 
   setActivePage(destinationPage);
+  const wasAlreadyOnDestination = activePage === destinationPage;
+  if (destinationPage === "overview") setActiveStockOverviewSection("");
   setSearchInput(symbol);
   setShowStockSearchSuggestions(false);
   setStockSearchSuggestions([]);
@@ -12565,6 +12548,7 @@ const handleStockSearchSubmit = async (event, destinationPage = "overview") => {
     setTicker(symbol);
     return;
   }
+  if (!wasAlreadyOnDestination) return;
 
   if (stockRetryTimerRef.current) {
     window.clearTimeout(stockRetryTimerRef.current);
@@ -12574,7 +12558,11 @@ const handleStockSearchSubmit = async (event, destinationPage = "overview") => {
   const cachedStock = stockMemoryCacheRef.current.get(symbol) || null;
   setStockData(cachedStock);
   setIsStockLoading(!cachedStock);
-  loadStock(symbol, 0, requestId);
+  if (destinationPage === "overview") {
+    loadStockSummary(symbol, requestId);
+  } else {
+    loadStock(symbol, 0, requestId);
+  }
 };
 
 const openPage = (page) => {
@@ -12587,12 +12575,6 @@ const openPage = (page) => {
   window.scrollTo({ top: 0, behavior: "smooth" });
 };
 
-
-const isWatchlistTapeMoving = user && watchlistTapeMoves && watchlist.length > 1;
-const topWatchlistItems = isWatchlistTapeMoving
-  ? [...watchlist, ...watchlist]
-  : watchlist;
- 
 
 return (
 
@@ -12624,12 +12606,11 @@ return (
       </div>
     )}
 
-    {/* TOP WATCHLIST BAR */}
+    {/* STATIC MARKET TAPE */}
 
-    <div className={`top-watchlist ${user ? "" : "top-watchlist-guest"}`}>
+    <div className="top-watchlist top-watchlist-guest">
 
-      {!user && (
-        <button
+      <button
           type="button"
           className="top-watchlist-brand"
           onClick={() => setActivePage("home")}
@@ -12637,11 +12618,9 @@ return (
         >
           <img src="/mrktrally-icon.png" alt="" />
           <span>MrktRally</span>
-        </button>
-      )}
+      </button>
 
-      {!user && (
-        <div className="guest-market-tape" aria-label="Explore popular markets">
+      <div className="guest-market-tape" aria-label="Explore popular markets">
           <div className="guest-market-tape-track">
             {[...GUEST_MARKET_TAPE_ITEMS, ...GUEST_MARKET_TAPE_ITEMS].map((item, index) => (
               <button
@@ -12683,139 +12662,7 @@ return (
               </button>
             ))}
           </div>
-        </div>
-      )}
-
-      {user && (
-        <>
-          <div className="watchlist-label">Watchlist</div>
-
-          <div className={`watchlist-scroll ${isWatchlistTapeMoving ? "watchlist-scroll-moving" : ""}`}>
-
-            <div className={isWatchlistTapeMoving ? "watchlist-scroll-motion-window" : "watchlist-scroll-static-window"}>
-              <div className="watchlist-scroll-track">
-            {topWatchlistItems.map((item, index) => {
-              const marketType = getMarketSymbolType(item);
-              const logoUrl = getMarketLogoUrl(item, marketType);
-              return (
-
-              <div
-                key={`${item}-${index}`}
-                className={`watchlist-stock watchlist-stock-${marketType}`}
-                onClick={() => openWatchlistSymbol(item)}
-              >
-
-                <span className={`watch-logo-shell${logoUrl ? " has-logo" : ""}`} aria-hidden="true">
-                  <span className={`watch-logo-fallback watch-logo-fallback-${marketType}`}>
-                    {renderMarketLogoMark(item, marketType)}
-                  </span>
-                  {logoUrl && (
-                    <img
-                      className="watch-logo"
-                      src={logoUrl}
-                      alt=""
-                      loading="eager"
-                      decoding="async"
-                      crossOrigin="anonymous"
-                      onLoad={(event) => {
-                        if (marketType === "stock") handleCompanyLogoLoad(event);
-                      }}
-                      onError={(event) => {
-                        if (marketType === "stock") {
-                          handleCompanyLogoError(event, item);
-                          return;
-                        }
-                        if (marketType === "crypto") {
-                          handleCryptoLogoError(event, item);
-                          return;
-                        }
-                        event.currentTarget.style.display = "none";
-                      }}
-                    />
-                  )}
-                </span>
-
-                <span className="watch-symbol">
-                  {item}
-                </span>
-
-                <span className="watch-price">
-                  {formatWatchlistMarketPrice(item, marketType)}
-                </span>
-
-                <span className={`watch-session-change ${
-                  savedSymbolDetails[item]?.percentChange > 0
-                    ? "watch-positive"
-                    : savedSymbolDetails[item]?.percentChange < 0
-                      ? "watch-negative"
-                      : "watch-neutral"
-                }`}>
-                  {isNumber(savedSymbolDetails[item]?.percentChange)
-                    ? `${savedSymbolDetails[item].percentChange > 0 ? "+" : ""}${savedSymbolDetails[item].percentChange.toFixed(2)}%`
-                    : "--"}
-                </span>
-
-                <button
-                  className="watch-remove"
-                  onClick={(e) => {
-
-                    e.stopPropagation();
-
-                    setWatchlist((items) =>
-                      items.filter(
-                        (t) => t !== item
-                      )
-                    );
-                  }}
-                >
-                  ×
-                </button>
-
-              </div>
-
-            );
-            })}
-              </div>
-            </div>
-
-            <input
-              className="watchlist-add-input"
-              placeholder="+ Add"
-              value={newTicker}
-              onChange={(e) =>
-                setNewTicker(
-                  e.target.value.toUpperCase()
-                )
-              }
-              onKeyDown={(e) => {
-
-                if (
-                  e.key === "Enter" &&
-                  newTicker
-                ) {
-                  const symbol = String(newTicker || "").trim().toUpperCase();
-
-                  if (
-                    /^[A-Z0-9.-]{1,12}$/.test(symbol) &&
-                    !watchlist.includes(
-                      symbol
-                    )
-                  ) {
-
-                    setWatchlist([
-                      ...watchlist,
-                      symbol,
-                    ]);
-                  }
-
-                  setNewTicker("");
-                }
-              }}
-            />
-
-          </div>
-        </>
-      )}
+      </div>
 
       <button
         className={`auth-top-button ${user ? "signout" : ""}`}
@@ -14539,24 +14386,6 @@ return (
             </button>
           </article>
 
-          <article className="profile-card profile-settings-card">
-            <div className="home-feature-label">Top bar</div>
-            <h3>Watchlist Tape</h3>
-            <p>Choose whether your saved top watchlist stays still or moves like a market tape.</p>
-            <label className="profile-toggle-row">
-              <span>
-                <strong>Move my watchlist tape</strong>
-                <em>Your saved symbols scroll across the top bar and pause when you hover.</em>
-              </span>
-              <input
-                type="checkbox"
-                checked={watchlistTapeMoves}
-                onChange={(event) => setWatchlistTapeMoves(event.target.checked)}
-              />
-              <span className="profile-toggle-switch" aria-hidden="true" />
-            </label>
-          </article>
-
           <article className="profile-card profile-install-card">
             <div className="home-feature-label">Mobile setup</div>
             <h3>Add MrktRally to Your iPhone Home Screen</h3>
@@ -15212,7 +15041,6 @@ return (
     {/* SEARCH */}
     {activePage === "overview" && (
     <>
-{renderOverviewSectionGuide()}
 
 <section className="etf-page stock-overview-page-shell" id="overview" aria-labelledby="stock-overview-title">
   <div className="etf-heading-row">
@@ -15221,7 +15049,7 @@ return (
       <h2 id="stock-overview-title">Stock Overview</h2>
       <p>
         Search a company and review pricing, financial charts, metrics, estimates, peer comps,
-        AI analysis, filings, and news in one focused research view.
+        filings, and news in one focused research view.
       </p>
     </div>
     <form
@@ -15427,226 +15255,49 @@ return (
   </div>
 
 </div>
-{/* AI ANALYSIS */}
 
-<div className="chart-section research-section ai-stock-section" id="ai-analysis">
-
-  <h2 className="section-title">
-    AI Equity Analysis
-  </h2>
-
-  <div className="ai-analysis-box">
-    {isAiLoading && !aiAnalysis ? (
-      <div className="ai-text">Building analysis...</div>
-    ) : aiAnalysis?.verdict && aiAnalysis?.equityAnalysis ? (
-      <>
-        <div className={`ai-brief-hero ${String(aiAnalysis.verdict.stance || "").toLowerCase()}`}>
-          <div>
-            <span className="ai-kicker">MrktRally research brief</span>
-            <div className="ai-sentiment">
-              {aiAnalysis.verdict.stance} · {aiAnalysis.verdict.score}/100
-            </div>
-          </div>
-          <div className="ai-score-ring">
-            <strong>{aiAnalysis.verdict.score}</strong>
-            <span>score</span>
-          </div>
+{profileMetricGroup?.items.some((item) => hasMetricCardValue(item.raw)) && (
+  <section className="stock-overview-profile-metrics" aria-labelledby="company-profile-metrics-title">
+    <div className="metric-group-heading">
+      <h3 id="company-profile-metrics-title">Company Profile Metrics</h3>
+      <span>Always available</span>
+    </div>
+    <div className="grid metric-group-grid">
+      {profileMetricGroup.items.filter((item) => hasMetricCardValue(item.raw)).map((item) => (
+        <div key={item.label} className={`card ${item.className || ""}`.trim()}>
+          <div className="card-title">{item.label}</div>
+          <div className={`card-value ${item.valueClassName || ""}`.trim()}>{item.value}</div>
         </div>
+      ))}
+    </div>
+  </section>
+)}
 
-        <p className="ai-text">{aiAnalysis.verdict.summary}</p>
-
-        <div className="ai-analysis-grid ai-analysis-grid-dense">
-          <div className="ai-card">
-            <h3 className="ai-title">Valuation</h3>
-            <ul className="ai-list">
-              {aiAnalysis.equityAnalysis.valuation.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="ai-card">
-            <h3 className="ai-title">Financial Quality</h3>
-            <ul className="ai-list">
-              {aiAnalysis.equityAnalysis.financialQuality.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </div>
-
-          {aiAnalysis.equityAnalysis.balanceSheet?.length ? (
-            <div className="ai-card">
-              <h3 className="ai-title">Balance Sheet</h3>
-              <ul className="ai-list">
-                {aiAnalysis.equityAnalysis.balanceSheet.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          {aiAnalysis.equityAnalysis.returnsAndEfficiency?.length ? (
-            <div className="ai-card">
-              <h3 className="ai-title">Returns & Efficiency</h3>
-              <ul className="ai-list">
-                {aiAnalysis.equityAnalysis.returnsAndEfficiency.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          {aiAnalysis.equityAnalysis.estimateSetup?.length ? (
-            <div className="ai-card">
-              <h3 className="ai-title">Estimate Setup</h3>
-              <ul className="ai-list">
-                {aiAnalysis.equityAnalysis.estimateSetup.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          <div className="ai-card bullish-card">
-            <h3 className="ai-title">Catalysts</h3>
-            <ul className="ai-list">
-              {aiAnalysis.equityAnalysis.catalysts.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="ai-card bearish-card">
-            <h3 className="ai-title">Risks</h3>
-            <ul className="ai-list">
-              {aiAnalysis.equityAnalysis.risks.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </div>
-        </div>
-
-        <div className="ai-analysis-grid ai-scenario-grid">
-          {aiAnalysis.equityAnalysis.scenarios.map((scenario) => (
-            <div className="ai-card" key={scenario.label}>
-              <h3 className="ai-title">{scenario.label} Case</h3>
-              <div className="comparison-price">{formatPrice(scenario.price)}</div>
-              <p className="ai-text">{scenario.detail}</p>
-            </div>
-          ))}
-        </div>
-      </>
-    ) : (
-      <div className="ai-text">Analysis is temporarily unavailable.</div>
-    )}
-
+<section className="stock-overview-section-picker" aria-labelledby="stock-research-sections-title">
+  <div>
+    <span className="home-feature-label">Load research on demand</span>
+    <h2 id="stock-research-sections-title">Choose one research section</h2>
+    <p>Only the section you open requests its detailed data. Choosing another section switches the view.</p>
   </div>
-
-</div>
-{/* AI EARNINGS ANALYSIS */}
-
-<div className="chart-section research-section ai-earnings-section">
-
-  <h2 className="section-title">
-    AI Earnings Analysis
-  </h2>
-
-  <div className="ai-earnings-panel">
-    {isAiLoading && !aiAnalysis ? (
-      <div className="ai-card"><p className="ai-text">Reviewing earnings data...</p></div>
-    ) : aiAnalysis?.earningsAnalysis ? (
-      <>
-        <div className="ai-earnings-hero">
-          <div>
-            <span className="ai-earnings-kicker">MrktRally earnings brief</span>
-            <h3>{aiAnalysis.earningsAnalysis.period}</h3>
-            <p>{aiAnalysis.earningsAnalysis.summary}</p>
-          </div>
-          <div className="ai-earnings-gauges">
-            <div className="ai-earnings-gauge">
-              <strong>{aiAnalysis.earningsAnalysis.confidence}</strong>
-              <span>confidence</span>
-            </div>
-            <div className="ai-earnings-gauge caution">
-              <strong>{aiAnalysis.earningsAnalysis.caution}</strong>
-              <span>caution</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="ai-earnings-grid">
-          <div className="ai-card earnings-readout-card">
-            <h3 className="ai-title">Reported Highlights</h3>
-            <ul className="ai-list">
-              {aiAnalysis.earningsAnalysis.highlights.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="ai-card bullish-card earnings-signal-card">
-            <h3 className="ai-title">Positive Signals</h3>
-            <ul className="ai-list">
-              {aiAnalysis.earningsAnalysis.positives.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="ai-card bearish-card earnings-signal-card">
-            <h3 className="ai-title">Pressure Points</h3>
-            <ul className="ai-list">
-              {aiAnalysis.earningsAnalysis.risks.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="ai-card ai-momentum-card">
-            <h3 className="ai-title">Earnings Momentum</h3>
-            <div className="sentiment-row">
-              <div className="sentiment-label">Confidence</div>
-              <div className="sentiment-bar">
-                <div
-                  className="sentiment-fill positive"
-                  style={{ width: `${aiAnalysis.earningsAnalysis.confidence}%` }}
-                />
-              </div>
-            </div>
-            <div className="sentiment-row">
-              <div className="sentiment-label">Caution</div>
-              <div className="sentiment-bar">
-                <div
-                  className="sentiment-fill negative"
-                  style={{ width: `${aiAnalysis.earningsAnalysis.caution}%` }}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="ai-card earnings-outlook-card">
-            <h3 className="ai-title">Consensus Outlook</h3>
-            <p className="ai-text">{aiAnalysis.earningsAnalysis.outlook}</p>
-          </div>
-
-          <div className="ai-card management-questions-card">
-            <h3 className="ai-title">Questions for Management</h3>
-            <ul className="ai-list">
-              {aiAnalysis.earningsAnalysis.questions.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      </>
-    ) : (
-      <div className="ai-card"><p className="ai-text">Earnings analysis is temporarily unavailable.</p></div>
-    )}
-
+  <div className="stock-overview-section-buttons">
+    {STOCK_OVERVIEW_SECTIONS.map((section) => (
+      <button
+        key={section.id}
+        type="button"
+        className={activeStockOverviewSection === section.id ? "active" : ""}
+        aria-pressed={activeStockOverviewSection === section.id}
+        onClick={() => setActiveStockOverviewSection((current) => current === section.id ? "" : section.id)}
+      >
+        {section.label}
+      </button>
+    ))}
   </div>
+</section>
 
-</div>
 {/* REVENUE CHART */}
+
+{activeStockOverviewSection === "charts" && (
+<>
 
 <div className="chart-section" id="financials">
 
@@ -16007,10 +15658,14 @@ return (
   </div>
 </div>
 
+</>
+)}
+
         {/* METRICS */}
 
+{activeStockOverviewSection === "metrics" && (
    <div className="metrics-groups section-anchor" id="metrics">
-    {groupedMetricCards.map((group) => (
+    {detailedMetricGroups.map((group) => (
       <section className="metric-group" key={group.key}>
         <div className="metric-group-heading">
           <h3>{group.title}</h3>
@@ -16051,8 +15706,9 @@ return (
       </section>
     )}
   </div>
+)}
 
-  {hasCompanyProfileSection && (
+  {activeStockOverviewSection === "profile" && hasCompanyProfileSection && (
     <section className="company-profile-panel">
       {stockData.description && (
         <div className="company-description-block">
@@ -16533,6 +16189,7 @@ return (
 </div>
 {/* Analyst Estimates */}
 
+{activeStockOverviewSection === "estimates" && (
 <section className="analyst-estimates-panel section-anchor" id="analyst-estimates">
   <div className="analyst-estimates-header">
     <span>Forward Model</span>
@@ -16735,9 +16392,11 @@ return (
   ) : null}
 
 </section>
+)}
 
 {/* SIMILAR COMPANIES */}
 
+{activeStockOverviewSection === "peers" && (
 <section className="similar-companies-section section-anchor" id="similar-companies">
   <div className="similar-companies-header">
     <div>
@@ -16793,9 +16452,11 @@ return (
     </div>
   )}
 </section>
+)}
 
 {/* COMPANY DOCUMENTS */}
 
+{activeStockOverviewSection === "documents" && (
 <section className="chart-section company-documents-section" id="company-documents">
 
   <div className="company-documents-heading">
@@ -16873,7 +16534,9 @@ return (
   </div>
 
 </section>
+)}
 
+{activeStockOverviewSection === "news" && (
 <section className="stock-news-section section-anchor" id="stock-news">
   <div className="similar-companies-header">
     <div>
@@ -16916,6 +16579,7 @@ return (
     </div>
   )}
 </section>
+)}
 
     </>
     )}

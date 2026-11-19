@@ -1147,7 +1147,7 @@ const createAuthResponse = (user) => ({
   user: toSafeUser(user)
 });
 
-const CURRENT_POLICY_VERSION = "2026-07-30";
+const CURRENT_POLICY_VERSION = "2026-11-19";
 
 const hashPasswordResetToken = (token) =>
   crypto.createHash("sha256").update(token).digest("hex");
@@ -17267,6 +17267,55 @@ app.get("/api/commodities/:symbol", async (req, res) => {
   }
 });
 
+app.get("/api/stock-summary/:ticker", async (req, res) => {
+  try {
+    const requestedTicker = String(req.params.ticker || "").trim().toUpperCase();
+    const ticker = TICKER_ALIASES[requestedTicker] || requestedTicker;
+    if (!ticker || ticker.length > 10) return res.status(400).json({ error: "Invalid ticker" });
+    if (isBlockedStockOnlySymbol(ticker)) {
+      return res.status(400).json({ error: "Use the crypto or FOREX page for that symbol" });
+    }
+
+    const stock = await Stock.findOne({ ticker }).select("data").lean().catch(() => null);
+    const cached = stock?.data || buildMinimalStockSnapshot(ticker);
+    const freshProfile = await resolveWithin(fetchFmpStableQuoteProfile(ticker), 4000, {});
+    const merged = { ...cached };
+    Object.entries(freshProfile || {}).forEach(([key, value]) => {
+      if (value !== null && value !== undefined && value !== "") merged[key] = value;
+    });
+    const allowedFields = [
+      "symbol", "ticker", "name", "logo", "price", "change", "percentChange", "previousClose",
+      "high", "low", "open", "volume", "marketCap", "fiftyTwoWeekHigh", "fiftyTwoWeekLow",
+      "priceAvg50", "priceAvg200", "beta", "lastDividend", "dividendYield", "employeeCount",
+      "sector", "industry", "ceo", "country", "exchange", "exchangeFullName", "currency",
+      "financialCurrency", "description", "website", "profileMetricsCheckedAt", "fmpProfileSource",
+      "updatedAt"
+    ];
+    const summary = { symbol: ticker, ticker: requestedTicker };
+    allowedFields.forEach((field) => {
+      if (merged[field] !== undefined) summary[field] = merged[field];
+    });
+    summary.updatedAt = new Date().toISOString();
+
+    if (Object.keys(freshProfile || {}).length) {
+      const setPatch = {};
+      Object.entries(freshProfile).forEach(([key, value]) => {
+        if (value !== null && value !== undefined && value !== "") setPatch[`data.${key}`] = value;
+      });
+      Stock.findOneAndUpdate(
+        { ticker },
+        { $set: { ticker, ...setPatch } },
+        { upsert: true }
+      ).catch(() => {});
+    }
+
+    return res.json(summary);
+  } catch (err) {
+    console.log("Stock summary failed:", req.params.ticker, err.response?.status || err.message);
+    return res.status(502).json({ error: "Stock summary unavailable" });
+  }
+});
+
 app.get("/api/stock-sidecars/:ticker", async (req, res) => {
   try {
     const requestedTicker = req.params.ticker.trim().toUpperCase();
@@ -19427,26 +19476,6 @@ app.post("/api/mr-rally-chat", async (req, res) => {
   }
 });
 
-app.get("/api/ai-analysis/:ticker", async (req, res) => {
-try {
-const ticker = req.params.ticker.toUpperCase();
-
-
-const stock = await Stock.findOne({ ticker });
-
-if (!stock) {
-  return res.status(404).json({ error: "No stock data found" });
-}
-
-res.json(buildResearchAnalysis(stock));
-
-
-} catch (err) {
-console.error(err);
-res.status(500).json({ error: "AI analysis failed" });
-}
-});
-
 async function fetchQuartrEarningsCall(ticker) {
   if (!process.env.QUARTR_API_KEY) return null;
   const config = {
@@ -21385,7 +21414,7 @@ app.get("/api/earnings-report/:symbol", async (req, res) => {
   const requestedEpsEstimate = parseApiNumber(req.query.epsEstimate);
   const requestedRevenueEstimate = parseApiNumber(req.query.revenueEstimate);
   const cacheKey = [
-    "earnings-report",
+    "earnings-report-v2",
     symbol,
     limit,
     requestedDate || "history",
@@ -21426,13 +21455,12 @@ app.get("/api/earnings-report/:symbol", async (req, res) => {
       };
     };
 
-    const [fmpRows, finnhubRows, storedStock] = await Promise.all([
+    const [fmpRows, storedStock] = await Promise.all([
       resolveWithin(
         getFmpData(symbol, "earnings report", [`/stable/earnings?symbol={ticker}&limit=${limit}`]),
         9000,
         []
       ).catch(() => []),
-      resolveWithin(fetchFinnhubEpsSurprises(symbol), 9000, []).catch(() => []),
       resolveWithin(
         Stock.findOne({ ticker: symbol }).select("data.epsBeatMiss").lean(),
         5000,
@@ -21463,7 +21491,7 @@ app.get("/api/earnings-report/:symbol", async (req, res) => {
         (row.revenueActual !== null ? 10 : 0) +
         (row.epsEstimated !== null ? 3 : 0) +
         (row.revenueEstimated !== null ? 4 : 0) +
-        (/FMP earnings history/i.test(row.source || "") ? 5 : 0) +
+        (/FMP earnings report/i.test(row.source || "") ? 20 : /^FMP/i.test(row.source || "") ? 8 : 0) +
         (day !== 0 && day !== 6 ? 2 : 0)
       );
     };
@@ -21498,10 +21526,9 @@ app.get("/api/earnings-report/:symbol", async (req, res) => {
     const rowsByDate = new Map();
     [
       ...clickedEstimate,
-      ...(storedStock?.data?.epsBeatMiss || []),
-      ...(Array.isArray(finnhubRows) ? finnhubRows : []),
+      ...(storedStock?.data?.epsBeatMiss || []).filter((row) => /^FMP/i.test(String(row?.source || ""))),
       ...(Array.isArray(fmpRows) ? fmpRows : fmpRows ? [fmpRows] : [])
-        .map((row) => ({ ...row, source: row?.source || "FMP earnings history" }))
+        .map((row) => ({ ...row, source: "FMP earnings report" }))
     ].forEach((row) => {
       if (row?.symbol && String(row.symbol).trim().toUpperCase() !== symbol) return;
       const normalized = normalizeReportRow(row);
@@ -21556,7 +21583,7 @@ app.get("/api/earnings-report/:symbol", async (req, res) => {
       ? sourceRows.find((row) => row.date === requestedDate) || normalizeReportRow(clickedEstimate[0])
       : null;
     const nearbyActualIndex = clickedRow
-      ? reportedRows.findIndex((row) => dayDistance(row.date, clickedRow.date) <= 7)
+      ? reportedRows.findIndex((row) => dayDistance(row.date, clickedRow.date) <= 45)
       : -1;
     if (nearbyActualIndex >= 0) {
       reportedRows[nearbyActualIndex] = mergeMissingReportValues(reportedRows[nearbyActualIndex], clickedRow);
@@ -21583,11 +21610,9 @@ app.get("/api/earnings-report/:symbol", async (req, res) => {
       rows: normalizedRows,
       source: normalizedRows.some((row) => /^FMP/i.test(row.source || ""))
         ? "Financial Modeling Prep API"
-        : normalizedRows.some((row) => /Finnhub/i.test(row.source || ""))
-          ? "Finnhub API"
-          : normalizedRows.length
-            ? "Saved market data"
-            : null,
+        : normalizedRows.length
+          ? "Saved market data"
+          : null,
       pending: !normalizedRows.length,
       updatedAt: new Date().toISOString()
     };

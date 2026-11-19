@@ -5,6 +5,82 @@
   box-sizing: border-box;
 }
 
+.stock-overview-profile-metrics,
+.stock-overview-section-picker {
+  margin: 28px 0;
+  padding: 24px;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(10, 27, 40, 0.96), rgba(8, 15, 29, 0.98));
+}
+
+.stock-overview-section-picker {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.8fr) minmax(420px, 1.6fr);
+  gap: 28px;
+  align-items: center;
+}
+
+.stock-overview-section-picker h2 {
+  margin: 8px 0;
+  color: #f8fafc;
+}
+
+.stock-overview-section-picker p {
+  margin: 0;
+  color: #94a3b8;
+  line-height: 1.6;
+}
+
+.stock-overview-section-buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.stock-overview-section-buttons button {
+  min-height: 48px;
+  padding: 11px 14px;
+  border: 1px solid rgba(56, 189, 248, 0.24);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.84);
+  color: #cbd5e1;
+  font-weight: 800;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.stock-overview-section-buttons button:hover,
+.stock-overview-section-buttons button:focus-visible {
+  border-color: rgba(45, 212, 191, 0.72);
+  color: #f8fafc;
+  transform: translateY(-1px);
+}
+
+.stock-overview-section-buttons button.active {
+  border-color: #2dd4bf;
+  background: linear-gradient(135deg, rgba(13, 148, 136, 0.35), rgba(37, 99, 235, 0.24));
+  color: #f0fdfa;
+  box-shadow: 0 0 22px rgba(45, 212, 191, 0.12);
+}
+
+@media (max-width: 900px) {
+  .stock-overview-section-picker {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .stock-overview-profile-metrics,
+  .stock-overview-section-picker {
+    padding: 18px;
+  }
+
+  .stock-overview-section-buttons {
+    grid-template-columns: 1fr;
+  }
+}
+
 html {
   scroll-behavior: smooth;
 }
@@ -7456,14 +7532,14 @@ body {
 }
 
 .auth-top-button.signout {
-  border-color: #475569;
-  background: #1b2533;
+  border-color: #374151;
+  background: #172033;
 }
 
 .auth-top-button.signout:hover,
 .auth-top-button.signout:focus-visible {
-  border-color: #fb7185;
-  color: #fecdd3;
+  border-color: #60a5fa;
+  color: #f9fafb;
 }
 
 .watchlist-stock {
