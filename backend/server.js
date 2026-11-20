@@ -2078,12 +2078,25 @@ async function fetchFmpRevenueGeographicSegments(ticker) {
   return normalizeFmpRevenueSegments(rows);
 }
 
-async function buildStockOverviewExtras(ticker, data = {}) {
+async function buildStockOverviewExtras(ticker, data = {}, { scope = "all" } = {}) {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol) return {};
   const checkedAt = new Date().toISOString();
+  const metricScopes = new Set([
+    "valuation",
+    "balance",
+    "perShare",
+    "liquidity",
+    "profitability",
+    "growth",
+    "efficiency",
+    "cashflow"
+  ]);
+  const normalizedScope = metricScopes.has(String(scope || "")) ? String(scope) : "all";
+  const isMetricScope = normalizedScope !== "all";
 
   const needsMetricCards =
+    isMetricScope ||
     !hasCompleteFmpMetricCardSnapshot(data) ||
     hasMissingOverviewMetricCardValues(data);
   const needsProfileMetrics =
@@ -2108,23 +2121,43 @@ async function buildStockOverviewExtras(ticker, data = {}) {
     fmpSharesFloat,
     fmpExecutives
   ] = await Promise.all([
-    resolveWithin(fetchFmpAfterHoursTrade(symbol), 2600, null),
-    resolveWithin(fetchFmpRevenueProductSegments(symbol), 1100, data.revenueProductSegments || null),
-    resolveWithin(fetchFmpRevenueGeographicSegments(symbol), 1100, data.revenueGeographicSegments || null),
-    needsMetricCards ? resolveWithin(fetchFmpMetricCards(symbol), 3600, {}) : {},
-    needsProfileMetrics ? resolveWithin(fetchFmpStableQuoteProfile(symbol), 2400, {}) : {},
-    needsShareFloatMetrics ? resolveWithin(fetchFmpSharesFloat(symbol), 1800, {}) : {},
-    needsExecutives ? resolveWithin(fetchFmpKeyExecutives(symbol), 1800, []) : []
+    isMetricScope ? null : resolveWithin(fetchFmpAfterHoursTrade(symbol), 2600, null),
+    isMetricScope ? data.revenueProductSegments || null : resolveWithin(fetchFmpRevenueProductSegments(symbol), 1100, data.revenueProductSegments || null),
+    isMetricScope ? data.revenueGeographicSegments || null : resolveWithin(fetchFmpRevenueGeographicSegments(symbol), 1100, data.revenueGeographicSegments || null),
+    needsMetricCards ? resolveWithin(fetchFmpMetricCards(symbol, normalizedScope), 4200, {}) : {},
+    !isMetricScope && needsProfileMetrics ? resolveWithin(fetchFmpStableQuoteProfile(symbol), 2400, {}) : {},
+    !isMetricScope && needsShareFloatMetrics ? resolveWithin(fetchFmpSharesFloat(symbol), 1800, {}) : {},
+    !isMetricScope && needsExecutives ? resolveWithin(fetchFmpKeyExecutives(symbol), 1800, []) : []
   ]);
   const regularClose = firstFiniteNumber(data.regularClose, data.close, data.marketClose, data.officialClose);
   const afterHoursTrade = buildAfterHoursSessionQuote(afterHoursTradeRaw, regularClose);
   const productSegments = revenueProductSegments || data.revenueProductSegments || null;
   const geographicSegments = revenueGeographicSegments || data.revenueGeographicSegments || null;
-  const metricPatch = hasFmpMetricCardPayload(metricCards)
+  const cachedMetricPatch = isMetricScope
+    ? Object.fromEntries(
+        [
+          ...FMP_METRIC_CARD_FIELDS,
+          ...FMP_TEXT_METRIC_FIELDS,
+          "balanceSheetAsOf",
+          "balanceSheetSource",
+          "valuationMetricsSource",
+          "metricCardsSource",
+          "valuationMetricsCheckedAt",
+          "valuationMetricsVersion",
+          "balanceSheetCheckedAt",
+          "balanceSheetMetricsVersion"
+        ]
+          .filter((field, index, fields) => fields.indexOf(field) === index)
+          .filter((field) => data[field] !== null && data[field] !== undefined && data[field] !== "")
+          .map((field) => [field, data[field]])
+      )
+    : {};
+  const freshMetricPatch = hasFmpMetricCardPayload(metricCards)
     ? isCompleteFmpMetricCardPayload(metricCards)
       ? preserveExistingFmpMetricCardValues(data, buildFmpMetricCardUpdate(metricCards))
       : buildNonNullFmpMetricCardUpdate(metricCards)
     : {};
+  const metricPatch = { ...cachedMetricPatch, ...freshMetricPatch };
   const profilePatch = Object.fromEntries(
     Object.entries(fmpProfile || {})
       .filter(([, value]) => value !== null && value !== undefined && value !== "")
@@ -2138,14 +2171,16 @@ async function buildStockOverviewExtras(ticker, data = {}) {
     : {};
 
   const patch = {
-    afterHoursTrade,
-    ...(productSegments ? { revenueProductSegments: productSegments } : {}),
-    ...(geographicSegments ? { revenueGeographicSegments: geographicSegments } : {}),
+    ...(!isMetricScope ? { afterHoursTrade } : {}),
+    ...(!isMetricScope && productSegments ? { revenueProductSegments: productSegments } : {}),
+    ...(!isMetricScope && geographicSegments ? { revenueGeographicSegments: geographicSegments } : {}),
     ...metricPatch,
     ...profilePatch,
     ...sharesFloatPatch,
     ...executivesPatch,
-    overviewExtrasCheckedAt: checkedAt
+    ...(isMetricScope
+      ? { metricGroup: normalizedScope, metricGroupCheckedAt: checkedAt }
+      : { overviewExtrasCheckedAt: checkedAt })
   };
 
   if (Object.keys(patch).length > 1) {
@@ -2727,11 +2762,13 @@ function persistFmpMetricCards(ticker, metricCards = {}) {
   });
 }
 
-async function fetchFmpMetricCards(ticker) {
+async function fetchFmpMetricCards(ticker, scope = "all") {
   const symbol = String(ticker || "").trim().toUpperCase();
   if (!symbol || !process.env.FMP_API_KEY || !canUseFmp()) return {};
 
   try {
+    const normalizedScope = String(scope || "all");
+    const wants = (...groups) => normalizedScope === "all" || groups.includes(normalizedScope);
     const metricCardsGet = (label, endpoints, timeoutMs = 1200, fallback = null) =>
       resolveWithin(getFmpData(symbol, label, endpoints), timeoutMs, fallback);
     const [
@@ -2750,20 +2787,48 @@ async function fetchFmpMetricCards(ticker) {
       ratingData,
       priceTargetData
     ] = await Promise.all([
-      metricCardsGet("metric cards quote", ["/stable/quote?symbol={ticker}"], 900),
-      metricCardsGet("metric cards profile", ["/stable/profile?symbol={ticker}"], 900),
-      metricCardsGet("metric cards ratios ttm", ["/stable/ratios-ttm?symbol={ticker}"], 1500),
-      metricCardsGet("metric cards key metrics ttm", ["/stable/key-metrics-ttm?symbol={ticker}"], 1500),
-      metricCardsGet("metric cards balance sheet quarter", ["/stable/balance-sheet-statement?symbol={ticker}&period=quarter&limit=1"], 1500),
-      metricCardsGet("metric cards cash flow quarter", ["/stable/cash-flow-statement?symbol={ticker}&period=quarter&limit=4"], 1500),
-      metricCardsGet("metric cards income quarter", ["/stable/income-statement?symbol={ticker}&period=quarter&limit=4"], 1500),
-      metricCardsGet("metric cards annual income growth fallback", ["/stable/income-statement?symbol={ticker}&period=annual&limit=2"], 1500),
-      metricCardsGet("metric cards annual cash flow growth fallback", ["/stable/cash-flow-statement?symbol={ticker}&period=annual&limit=2"], 1500),
-      metricCardsGet("metric cards annual balance growth fallback", ["/stable/balance-sheet-statement?symbol={ticker}&period=annual&limit=2"], 1500),
-      metricCardsGet("metric cards annual growth", ["/stable/financial-growth?symbol={ticker}&period=annual&limit=2"], 900),
-      metricCardsGet("metric cards analyst estimates", ["/stable/analyst-estimates?symbol={ticker}&period=annual&limit=10"], 1500),
-      metricCardsGet("metric cards rating snapshot", ["/stable/ratings-snapshot?symbol={ticker}"], 700),
-      metricCardsGet("metric cards price target summary", ["/stable/price-target-summary?symbol={ticker}"], 700)
+      wants("valuation", "balance", "perShare", "cashflow")
+        ? metricCardsGet("metric cards quote", ["/stable/quote?symbol={ticker}"], 900)
+        : null,
+      wants("valuation", "balance", "perShare", "cashflow")
+        ? metricCardsGet("metric cards profile", ["/stable/profile?symbol={ticker}"], 900)
+        : null,
+      wants("valuation", "balance", "perShare", "liquidity", "profitability", "growth", "efficiency", "cashflow")
+        ? metricCardsGet("metric cards ratios ttm", ["/stable/ratios-ttm?symbol={ticker}"], 1500)
+        : null,
+      wants("valuation", "balance", "perShare", "liquidity", "profitability", "growth", "efficiency", "cashflow")
+        ? metricCardsGet("metric cards key metrics ttm", ["/stable/key-metrics-ttm?symbol={ticker}"], 1500)
+        : null,
+      wants("balance", "perShare", "liquidity", "efficiency")
+        ? metricCardsGet("metric cards balance sheet quarter", ["/stable/balance-sheet-statement?symbol={ticker}&period=quarter&limit=1"], 1500)
+        : null,
+      wants("perShare", "profitability", "efficiency", "cashflow")
+        ? metricCardsGet("metric cards cash flow quarter", ["/stable/cash-flow-statement?symbol={ticker}&period=quarter&limit=4"], 1500)
+        : null,
+      wants("perShare", "profitability", "efficiency", "cashflow")
+        ? metricCardsGet("metric cards income quarter", ["/stable/income-statement?symbol={ticker}&period=quarter&limit=4"], 1500)
+        : null,
+      wants("growth")
+        ? metricCardsGet("metric cards annual income growth fallback", ["/stable/income-statement?symbol={ticker}&period=annual&limit=2"], 1500)
+        : null,
+      wants("growth")
+        ? metricCardsGet("metric cards annual cash flow growth fallback", ["/stable/cash-flow-statement?symbol={ticker}&period=annual&limit=2"], 1500)
+        : null,
+      wants("growth")
+        ? metricCardsGet("metric cards annual balance growth fallback", ["/stable/balance-sheet-statement?symbol={ticker}&period=annual&limit=2"], 1500)
+        : null,
+      wants("growth")
+        ? metricCardsGet("metric cards annual growth", ["/stable/financial-growth?symbol={ticker}&period=annual&limit=2"], 900)
+        : null,
+      wants("valuation")
+        ? metricCardsGet("metric cards analyst estimates", ["/stable/analyst-estimates?symbol={ticker}&period=annual&limit=10"], 1500)
+        : null,
+      wants("cashflow")
+        ? metricCardsGet("metric cards rating snapshot", ["/stable/ratings-snapshot?symbol={ticker}"], 700)
+        : null,
+      wants("cashflow")
+        ? metricCardsGet("metric cards price target summary", ["/stable/price-target-summary?symbol={ticker}"], 700)
+        : null
     ]);
 
     const quote = Array.isArray(quoteData) ? quoteData[0] || {} : quoteData || {};
@@ -2922,9 +2987,10 @@ async function fetchFmpMetricCards(ticker) {
         };
 
     return {
-      _valuationMetricsComplete: hasQuotePayload && hasValuationPayload,
-      _balanceSheetMetricsComplete: hasBalancePayload,
+      _valuationMetricsComplete: normalizedScope === "all" && hasQuotePayload && hasValuationPayload,
+      _balanceSheetMetricsComplete: normalizedScope === "all" && hasBalancePayload,
       _metricCardSourcesComplete:
+        normalizedScope === "all" &&
         hasQuotePayload &&
         hasValuationPayload &&
         hasStatementPayload &&
@@ -17359,7 +17425,7 @@ app.get("/api/stock-overview-extras/:ticker", async (req, res) => {
 
     const stock = await Stock.findOne({ ticker }).lean().catch(() => null);
     const data = stock?.data || buildMinimalStockSnapshot(ticker);
-    const patch = await buildStockOverviewExtras(ticker, data);
+    const patch = await buildStockOverviewExtras(ticker, data, { scope: req.query.scope });
     return res.json({
       ticker: requestedTicker,
       sourceSymbol: ticker,

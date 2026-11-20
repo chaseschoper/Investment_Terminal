@@ -4283,6 +4283,104 @@ body {
   margin-bottom: 42px;
 }
 
+.metric-group-picker {
+  display: grid;
+  gap: 18px;
+  padding: clamp(18px, 2.4vw, 28px);
+  border: 1px solid rgba(56, 189, 248, 0.24);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at top left, rgba(20, 184, 166, 0.1), transparent 34%),
+    rgba(8, 13, 24, 0.72);
+}
+
+.metric-group-picker h3 {
+  margin: 8px 0 6px;
+  color: #f8fafc;
+  font-size: clamp(22px, 2.4vw, 32px);
+}
+
+.metric-group-picker p {
+  max-width: 760px;
+  margin: 0;
+  color: #9ca9bc;
+  line-height: 1.6;
+}
+
+.metric-group-picker-buttons {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
+  gap: 10px;
+}
+
+.metric-group-picker-buttons button {
+  display: grid;
+  gap: 5px;
+  min-height: 72px;
+  padding: 14px 16px;
+  border: 1px solid rgba(66, 99, 145, 0.52);
+  border-radius: 13px;
+  color: #d9e4f2;
+  background: rgba(10, 18, 32, 0.82);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.metric-group-picker-buttons button:hover,
+.metric-group-picker-buttons button:focus-visible {
+  border-color: rgba(45, 212, 191, 0.72);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.metric-group-picker-buttons button.active {
+  border-color: #2dd4bf;
+  background: linear-gradient(135deg, rgba(13, 148, 136, 0.24), rgba(30, 64, 175, 0.18));
+  box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.12), 0 12px 30px rgba(5, 150, 105, 0.08);
+}
+
+.metric-group-picker-buttons span {
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.metric-group-picker-buttons small {
+  color: #7f91ab;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.metric-group-empty-state,
+.metric-group-error {
+  padding: 24px;
+  border: 1px dashed rgba(74, 108, 157, 0.48);
+  border-radius: 14px;
+  color: #9ca9bc;
+  background: rgba(7, 13, 24, 0.48);
+  text-align: center;
+}
+
+.metric-group-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  border-color: rgba(248, 113, 113, 0.46);
+  color: #fecaca;
+}
+
+.metric-group-error button {
+  padding: 9px 14px;
+  border: 1px solid rgba(248, 113, 113, 0.55);
+  border-radius: 9px;
+  color: #fff;
+  background: rgba(127, 29, 29, 0.42);
+  font-weight: 900;
+  cursor: pointer;
+}
+
 .metric-group {
   border: 1px solid rgba(37, 99, 235, 0.22);
   border-radius: 16px;
@@ -4316,6 +4414,17 @@ body {
 
 .metric-group-grid {
   margin-bottom: 0;
+}
+
+@media (max-width: 640px) {
+  .metric-group-picker-buttons {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .metric-group-error {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 
 /* CARDS */

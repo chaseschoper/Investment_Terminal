@@ -3597,13 +3597,6 @@ const hasShareFloatMetricSnapshot = (stock = {}) =>
     isNumber(stock?.freeFloatShares)
   );
 
-const shouldRetryOverviewExtras = (stock = {}, attempt = 0) =>
-  !stock.overviewExtrasCheckedAt ||
-  !hasCompleteMetricCardVersions(stock) ||
-  hasMissingOverviewMetricCardValues(stock) ||
-  !hasProfileMetricSnapshot(stock) ||
-  !hasShareFloatMetricSnapshot(stock);
-
 const shouldRetrySidecarData = (stock = {}, attempt = 0) =>
   attempt < 2 &&
   (
@@ -4944,7 +4937,7 @@ function App() {
   const stockMemoryCacheRef = useRef(new Map());
   const stockChartMemoryCacheRef = useRef(new Map());
   const stockSidecarRequestRef = useRef("");
-  const stockOverviewExtrasRequestRef = useRef("");
+  const stockMetricGroupRequestsRef = useRef(new Set());
   const stockOverviewFullRequestRef = useRef("");
   const stockSearchBlurTimerRef = useRef(null);
   const latestComparisonRequest = useRef(0);
@@ -5373,6 +5366,9 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
   const [stockOverviewExtrasExhaustedSymbol, setStockOverviewExtrasExhaustedSymbol] =
     useState("");
   const [activeStockOverviewSection, setActiveStockOverviewSection] = useState("");
+  const [activeMetricGroup, setActiveMetricGroup] = useState("");
+  const [metricGroupLoadState, setMetricGroupLoadState] = useState({});
+  const [metricGroupRetryToken, setMetricGroupRetryToken] = useState(0);
   const [stockOverviewFullDataReadySymbol, setStockOverviewFullDataReadySymbol] = useState("");
 
   const [isStockLoading, setIsStockLoading] =
@@ -7180,10 +7176,14 @@ useEffect(() => {
     const requestId = ++latestStockRequest.current;
     const cachedStock = stockMemoryCacheRef.current.get(ticker) || null;
     stockSidecarRequestRef.current = "";
-    stockOverviewExtrasRequestRef.current = "";
+    stockMetricGroupRequestsRef.current.clear();
     stockOverviewFullRequestRef.current = "";
     setStockOverviewFullDataReadySymbol("");
-    if (activePage === "overview") setActiveStockOverviewSection("");
+    if (activePage === "overview") {
+      setActiveStockOverviewSection("");
+      setActiveMetricGroup("");
+      setMetricGroupLoadState({});
+    }
     setStockData(cachedStock);
     if (cachedStock) firstStockLoadSettled.current = true;
     setCompanyDocuments(null);
@@ -7200,24 +7200,46 @@ useEffect(() => {
 
   useEffect(() => {
     const symbol = String(ticker || "").trim().toUpperCase();
-    if (activePage !== "overview" || activeStockOverviewSection !== "metrics" || !symbol) return;
+    if (
+      activePage !== "overview" ||
+      activeStockOverviewSection !== "metrics" ||
+      !activeMetricGroup ||
+      !symbol
+    ) return;
     const currentSymbol = String(stockData?.symbol || loadedStockSymbol || "").trim().toUpperCase();
     if (!currentSymbol || currentSymbol !== symbol) return;
-    const requestKey = symbol;
-    if (stockOverviewExtrasRequestRef.current === requestKey) return;
-    stockOverviewExtrasRequestRef.current = requestKey;
+    const requestKey = `${symbol}:${activeMetricGroup}`;
+    if (stockMetricGroupRequestsRef.current.has(requestKey)) return;
+    stockMetricGroupRequestsRef.current.add(requestKey);
     setStockOverviewExtrasExhaustedSymbol((current) => current === symbol ? "" : current);
+    setMetricGroupLoadState((current) => ({
+      ...current,
+      [requestKey]: { status: "loading", error: "" }
+    }));
 
     let isActive = true;
+    let requestExpired = false;
     let retryTimer;
+    const watchdogTimer = window.setTimeout(() => {
+      if (!isActive) return;
+      requestExpired = true;
+      setMetricGroupLoadState((current) => ({
+        ...current,
+        [requestKey]: {
+          status: "error",
+          error: "This metric group took too long to load. Try again."
+        }
+      }));
+    }, 16000);
     const loadOverviewExtras = async (attempt = 0) => {
       try {
         const response = await axios.get(`${API_URL}/api/stock-overview-extras/${symbol}`, {
-          timeout: 6500
+          params: { scope: activeMetricGroup },
+          timeout: 7000
         });
-        if (!isActive) return;
+        if (!isActive || requestExpired) return;
         const patch = response.data || {};
-        let mergedSnapshot = null;
+        if (patch.error) throw new Error(patch.error);
         setStockData((current) => {
           if (!current || String(current.symbol || "").toUpperCase() !== symbol) return current;
           const merged = stabilizeRefreshingStockData(current, {
@@ -7226,23 +7248,29 @@ useEffect(() => {
             refreshing: current.refreshing
           });
           stockMemoryCacheRef.current.set(symbol, merged);
-          mergedSnapshot = merged;
           return merged;
         });
-        const shouldRetry = shouldRetryOverviewExtras(mergedSnapshot || patch, attempt);
-        if (isActive && shouldRetry) {
-          retryTimer = window.setTimeout(
-            () => loadOverviewExtras(attempt + 1),
-            Math.min(10000, 900 + attempt * 450)
-          );
-        }
+        setMetricGroupLoadState((current) => ({
+          ...current,
+          [requestKey]: { status: "ready", error: "" }
+        }));
+        window.clearTimeout(watchdogTimer);
       } catch (error) {
         console.error("Stock overview extras failed", error);
-        if (isActive) {
+        if (isActive && !requestExpired && attempt < 1) {
           retryTimer = window.setTimeout(
             () => loadOverviewExtras(attempt + 1),
-            Math.min(10000, 1000 + attempt * 500)
+            900
           );
+        } else if (isActive && !requestExpired) {
+          setMetricGroupLoadState((current) => ({
+            ...current,
+            [requestKey]: {
+              status: "error",
+              error: "This metric group did not finish loading. Try again."
+            }
+          }));
+          window.clearTimeout(watchdogTimer);
         }
       }
     };
@@ -7250,6 +7278,7 @@ useEffect(() => {
 
     return () => {
       isActive = false;
+      window.clearTimeout(watchdogTimer);
       window.clearTimeout(timer);
       if (retryTimer) window.clearTimeout(retryTimer);
     };
@@ -7258,6 +7287,8 @@ useEffect(() => {
     loadedStockSymbol,
     activePage,
     activeStockOverviewSection,
+    activeMetricGroup,
+    metricGroupRetryToken,
     stockData?.symbol
   ]);
 
@@ -10065,6 +10096,15 @@ const isInitialStockLoad = isStockLoading && (!stockData?.symbol || stockData?.i
 const hasOverviewExtrasExhausted =
   stockOverviewExtrasExhaustedSymbol &&
   stockOverviewExtrasExhaustedSymbol === String(stockData?.symbol || ticker || "").trim().toUpperCase();
+const activeMetricGroupRequestKey = `${String(stockData?.symbol || ticker || "").trim().toUpperCase()}:${activeMetricGroup}`;
+const activeMetricGroupRequest = metricGroupLoadState[activeMetricGroupRequestKey] || { status: "idle", error: "" };
+const isDetailedMetricGroupView =
+  activePage === "overview" &&
+  activeStockOverviewSection === "metrics" &&
+  Boolean(activeMetricGroup);
+const isActiveMetricGroupLoading =
+  isDetailedMetricGroupView &&
+  ["idle", "loading"].includes(activeMetricGroupRequest.status);
 const hasCurrentFmpValuationMetrics = stockData?.valuationMetricsVersion === VALUATION_METRICS_VERSION;
 const hasCurrentFmpBalanceMetrics = stockData?.balanceSheetMetricsVersion === BALANCE_SHEET_METRICS_VERSION;
 const hasValuationMetricRequestFinished = hasValuationMetricRequestSettled(stockData || {});
@@ -10104,14 +10144,19 @@ const stockValue = (value) =>
     ? "Loading..."
     : value;
 const metricValue = (value) =>
-  (areMetricsRefreshing || keepMissingMetricCardLoading) && isMissingDisplayValue(value)
-    ? "Loading..."
-    : stockValue(value);
-const balanceSheetValue = (value) =>
-  (areMetricsRefreshing || isBalanceSheetMetricsRefreshing || keepMissingMetricCardLoading) &&
   isMissingDisplayValue(value)
-    ? "Loading..."
-    : stockValue(value);
+    ? isDetailedMetricGroupView
+      ? isActiveMetricGroupLoading ? "Loading..." : "N/A"
+      : (areMetricsRefreshing || keepMissingMetricCardLoading) ? "Loading..." : value
+    : value;
+const balanceSheetValue = (value) =>
+  isMissingDisplayValue(value)
+    ? isDetailedMetricGroupView
+      ? isActiveMetricGroupLoading ? "Loading..." : "N/A"
+      : (areMetricsRefreshing || isBalanceSheetMetricsRefreshing || keepMissingMetricCardLoading)
+        ? "Loading..."
+        : value
+    : value;
 const profileMetricValue = (value) =>
   (isProfileMetricsRefreshing || keepMissingMetricCardLoading) && isMissingDisplayValue(value)
     ? "Loading..."
@@ -10513,8 +10558,7 @@ const groupedMetricCards = metricGroupConfig
   .filter((group) => group.items.length);
 const profileMetricGroup = groupedMetricCards.find((group) => group.key === "profile");
 const detailedMetricGroups = groupedMetricCards.filter((group) => group.key !== "profile");
-const groupedMetricLabels = new Set(groupedMetricCards.flatMap((group) => group.items.map((item) => item.label)));
-const ungroupedMetricCards = renderedMetricCards.filter((item) => !groupedMetricLabels.has(item.label));
+const activeDetailedMetricGroup = detailedMetricGroups.find((group) => group.key === activeMetricGroup) || null;
 const estimateValue = (value) =>
   (isInitialStockLoad || areEstimatesRefreshing) && (value === "N/A" || value === null || value === undefined)
     ? "Loading..."
@@ -15767,34 +15811,63 @@ return (
 
 {activeStockOverviewSection === "metrics" && (
    <div className="metrics-groups section-anchor" id="metrics">
-    {detailedMetricGroups.map((group) => (
-      <section className="metric-group" key={group.key}>
+    <section className="metric-group-picker" aria-labelledby="metric-group-picker-title">
+      <div>
+        <span className="home-feature-label">Load fewer metrics at once</span>
+        <h3 id="metric-group-picker-title">Choose a metric group</h3>
+        <p>Each group loads independently. Opening another group switches the cards and avoids one large request.</p>
+      </div>
+      <div className="metric-group-picker-buttons">
+        {detailedMetricGroups.map((group) => (
+          <button
+            key={group.key}
+            type="button"
+            className={activeMetricGroup === group.key ? "active" : ""}
+            aria-pressed={activeMetricGroup === group.key}
+            onClick={() => setActiveMetricGroup((current) => current === group.key ? "" : group.key)}
+          >
+            <span>{group.title}</span>
+            <small>{group.items.length} metrics</small>
+          </button>
+        ))}
+      </div>
+    </section>
+
+    {!activeDetailedMetricGroup && (
+      <div className="metric-group-empty-state">
+        Select a group above to load its cards.
+      </div>
+    )}
+
+    {activeMetricGroupRequest.status === "error" && (
+      <div className="metric-group-error" role="status">
+        <span>{activeMetricGroupRequest.error}</span>
+        <button
+          type="button"
+          onClick={() => {
+            stockMetricGroupRequestsRef.current.delete(activeMetricGroupRequestKey);
+            setMetricGroupLoadState((current) => ({
+              ...current,
+              [activeMetricGroupRequestKey]: { status: "idle", error: "" }
+            }));
+            setMetricGroupRetryToken((current) => current + 1);
+          }}
+        >
+          Try again
+        </button>
+      </div>
+    )}
+
+    {activeDetailedMetricGroup && (
+      <section className="metric-group" key={activeDetailedMetricGroup.key}>
         <div className="metric-group-heading">
-          <h3>{group.title}</h3>
-          <span>{group.items.length} metrics</span>
+          <h3>{activeDetailedMetricGroup.title}</h3>
+          <span>
+            {isActiveMetricGroupLoading ? "Loading" : `${activeDetailedMetricGroup.items.length} metrics`}
+          </span>
         </div>
         <div className="grid metric-group-grid">
-          {group.items.map((item) => (
-            <div key={item.label} className={`card ${item.className || ""}`.trim()}>
-              <div className="card-title">
-                {item.label}
-              </div>
-              <div className={`card-value ${item.valueClassName || ""}`.trim()}>
-                {item.value}
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-    ))}
-    {ungroupedMetricCards.length > 0 && (
-      <section className="metric-group">
-        <div className="metric-group-heading">
-          <h3>Other Metrics</h3>
-          <span>{ungroupedMetricCards.length} metrics</span>
-        </div>
-        <div className="grid metric-group-grid">
-          {ungroupedMetricCards.map((item) => (
+          {activeDetailedMetricGroup.items.map((item) => (
             <div key={item.label} className={`card ${item.className || ""}`.trim()}>
               <div className="card-title">
                 {item.label}
