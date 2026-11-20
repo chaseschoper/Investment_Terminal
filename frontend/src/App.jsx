@@ -4159,6 +4159,45 @@ const STOCK_ESTIMATE_VERSION = 23;
 const INTERIM_HISTORY_VERSION = 6;
 const VALUATION_METRICS_VERSION = 24;
 const BALANCE_SHEET_METRICS_VERSION = 14;
+const METRIC_GROUP_VALUE_FIELDS = {
+  valuation: [
+    "pe", "forwardPE", "forwardPS", "pegRatio", "forwardPegRatio",
+    "priceToSales", "priceToBook", "priceToFreeCashflow", "enterpriseValue"
+  ],
+  balance: [
+    "totalCash", "totalDebt", "cashAndCashEquivalents", "netCash",
+    "netCashPerShare", "equityBookValue", "bookValuePerShare", "workingCapital"
+  ],
+  perShare: [
+    "revenuePerShare", "netIncomePerShare", "cashPerShare", "freeCashflowPerShare",
+    "operatingCashflowPerShare", "tangibleBookValuePerShare", "dividendPerShare"
+  ],
+  liquidity: [
+    "currentRatio", "quickRatio", "cashRatio", "debtToEquity", "debtToAssets",
+    "interestCoverage", "solvencyRatio"
+  ],
+  profitability: [
+    "grossMargins", "operatingMargins", "profitMargins", "pretaxMargin",
+    "ebitdaMargin", "returnOnEquity", "returnOnAssets", "returnOnInvestedCapital"
+  ],
+  growth: [
+    "revenueGrowth", "earningsGrowth", "freeCashflowGrowth",
+    "operatingCashflowGrowth", "ebitdaGrowth", "debtGrowth"
+  ],
+  efficiency: [
+    "assetTurnover", "inventoryTurnover", "receivablesTurnover",
+    "payablesTurnover", "cashConversionCycle", "effectiveTaxRate"
+  ],
+  cashflow: [
+    "freeCashflow", "operatingCashflow", "annualCashChange",
+    "targetMean", "analystRatingText", "recommendationKey"
+  ]
+};
+const hasMetricGroupPayload = (payload, group) =>
+  (METRIC_GROUP_VALUE_FIELDS[group] || []).some((field) => {
+    const value = payload?.[field];
+    return value !== null && value !== undefined && value !== "" && value !== "N/A";
+  });
 const MIN_USABLE_INTERIM_HISTORY_ROWS = 8;
 const MIN_DISPLAY_INTERIM_HISTORY_ROWS = 4;
 
@@ -7240,11 +7279,19 @@ useEffect(() => {
         if (!isActive || requestExpired) return;
         const patch = response.data || {};
         if (patch.error) throw new Error(patch.error);
+        if (!hasMetricGroupPayload(patch, activeMetricGroup)) {
+          throw new Error("The selected metric group returned no usable values.");
+        }
         setStockData((current) => {
-          if (!current || String(current.symbol || "").toUpperCase() !== symbol) return current;
+          if (!current) return current;
+          const currentSymbol = String(current.symbol || current.ticker || loadedStockSymbol || "")
+            .trim()
+            .toUpperCase();
+          if (currentSymbol && currentSymbol !== symbol) return current;
           const merged = stabilizeRefreshingStockData(current, {
             ...current,
             ...patch,
+            symbol: current.symbol || patch.symbol || patch.ticker || symbol,
             refreshing: current.refreshing
           });
           stockMemoryCacheRef.current.set(symbol, merged);
@@ -15858,7 +15905,7 @@ return (
       </div>
     )}
 
-    {activeDetailedMetricGroup && (
+    {activeDetailedMetricGroup && activeMetricGroupRequest.status !== "error" && (
       <section className="metric-group" key={activeDetailedMetricGroup.key}>
         <div className="metric-group-heading">
           <h3>{activeDetailedMetricGroup.title}</h3>
