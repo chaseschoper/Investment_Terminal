@@ -3974,7 +3974,8 @@ const DEFAULT_PORTFOLIO = {
   positions: []
 };
 const SAVED_LISTS_STORAGE_KEY = "mrktrally-saved-lists";
-const MARKET_INDICES_STORAGE_KEY = "mrktrally-market-indices";
+const MARKET_INDICES_STORAGE_KEY = "mrktrally-market-indices-v2";
+const MARKET_INDICES_CACHE_TTL_MS = 5 * 60 * 1000;
 const MARKET_MOVERS_STORAGE_KEY = "mrktrally-market-movers";
 const SAVED_QUOTES_STORAGE_KEY = "mrktrally-saved-quotes";
 const SAVED_QUOTES_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -5552,7 +5553,10 @@ const [hasMeaningfulSavedLists, setHasMeaningfulSavedLists] =
     useState(() => {
       try {
         const cached = JSON.parse(localStorage.getItem(MARKET_INDICES_STORAGE_KEY) || "[]");
-        return Array.isArray(cached) ? cached : [];
+        const cachedAt = Math.max(...(Array.isArray(cached) ? cached : []).map((item) => Number(item?.cachedAt) || 0));
+        return Array.isArray(cached) && cachedAt > 0 && Date.now() - cachedAt < MARKET_INDICES_CACHE_TTL_MS
+          ? cached
+          : [];
       } catch {
         return [];
       }
@@ -6191,7 +6195,7 @@ useEffect(() => {
     }
     try {
       const response = await axios.get(`${API_URL}/api/market-indices`, {
-        timeout: 3500,
+        timeout: 7500,
       });
       if (isActive) {
         const indices = response.data.indices || [];
@@ -6208,7 +6212,8 @@ useEffect(() => {
                   ...item,
                   ...(previousIndex || {}),
                   ...(freshIndex || {}),
-                  futures: null
+                  futures: null,
+                  cachedAt: Date.now()
                 };
               });
             localStorage.setItem(MARKET_INDICES_STORAGE_KEY, JSON.stringify(ordered));

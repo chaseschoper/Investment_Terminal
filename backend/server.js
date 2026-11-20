@@ -738,7 +738,7 @@ const KNOWN_FINANCIAL_INSTITUTIONS = new Set([
 const MARKET_INDICES = [
   { key: "sp500", label: "S&P 500", yahooSymbol: "^GSPC", fmpSymbol: "^GSPC", investingPath: "us-spx-500" },
   { key: "dow", label: "Dow Jones", yahooSymbol: "^DJI", fmpSymbol: "^DJI", investingPath: "us-30" },
-  { key: "nasdaq", label: "Nasdaq", yahooSymbol: "^NDX", fmpSymbol: "^IXIC", investingPath: "nq-100" },
+  { key: "nasdaq", label: "Nasdaq 100", yahooSymbol: "^NDX", fmpSymbol: "^NDX", investingPath: "nq-100" },
   { key: "russell2000", label: "Russell 2000", yahooSymbol: "^RUT", fmpSymbol: "^RUT", investingPath: "smallcap-2000" }
 ];
 
@@ -15945,14 +15945,24 @@ app.get("/api/market-indices", async (req, res) => {
   const fetchFmpIndex = async (index) => {
     if (!process.env.FMP_API_KEY || !canUseFmp()) return null;
     const symbol = index.fmpSymbol || index.yahooSymbol;
-    const intraday = await getFmpAxios("https://financialmodelingprep.com/stable/historical-chart/5min", {
-      params: {
-        symbol,
-        apikey: process.env.FMP_API_KEY
-      },
-      timeout: 1800,
-      validateStatus: () => true
-    }).catch(() => null);
+    const [intraday, response] = await Promise.all([
+      getFmpAxios("https://financialmodelingprep.com/stable/historical-chart/5min", {
+        params: {
+          symbol,
+          apikey: process.env.FMP_API_KEY
+        },
+        timeout: 1800,
+        validateStatus: () => true
+      }).catch(() => null),
+      getFmpAxios("https://financialmodelingprep.com/stable/quote", {
+        params: {
+          symbol,
+          apikey: process.env.FMP_API_KEY
+        },
+        timeout: 1800,
+        validateStatus: () => true
+      })
+    ]);
     const latestIntradayRow = (Array.isArray(intraday?.data) ? intraday.data : [])
       .map((row) => {
         const price = firstFiniteNumber(row.close, row.price, row.adjClose);
@@ -15963,14 +15973,6 @@ app.get("/api/market-indices", async (req, res) => {
       .filter(Boolean)
       .sort((a, b) => a.time - b.time)
       .at(-1);
-    const response = await getFmpAxios("https://financialmodelingprep.com/stable/quote", {
-      params: {
-        symbol,
-        apikey: process.env.FMP_API_KEY
-      },
-      timeout: 1600,
-      validateStatus: () => true
-    });
     if (response.status >= 400) {
       const error = new Error(`FMP index quote ${response.status}`);
       error.response = response;
@@ -15991,7 +15993,8 @@ app.get("/api/market-indices", async (req, res) => {
       price,
       change,
       change !== null && previousClose > 0 ? (change / previousClose) * 100 : quote?.changePercentage,
-      latestIntradayRow?.price && isLikelyUsMarketSession() ? "FMP 5-minute chart" : "FMP quote close"
+      latestIntradayRow?.price && isLikelyUsMarketSession() ? "FMP 5-minute chart" : "FMP quote close",
+      { previousClose }
     );
     if (!indexQuote) throw new Error(`Missing ${index.label} FMP quote`);
     return indexQuote;
@@ -16043,14 +16046,18 @@ app.get("/api/market-indices", async (req, res) => {
     );
     const result = response.data?.chart?.result?.[0];
     const meta = result?.meta || {};
-    const closes = result?.indicators?.quote?.[0]?.close || [];
+    const closes = (result?.indicators?.quote?.[0]?.close || [])
+      .map((value) => toNumberOrNull(value))
+      .filter((value) => value !== null);
     const currentPrice = firstFiniteNumber(
       meta.regularMarketPrice,
-      [...closes].reverse().find((value) => toNumberOrNull(value) !== null)
+      closes.at(-1)
     );
     const previousClose = firstFiniteNumber(
-      meta.chartPreviousClose,
-      closes.length > 1 ? closes[closes.length - 2] : null
+      meta.regularMarketPreviousClose,
+      meta.previousClose,
+      closes.length > 1 ? closes.at(-2) : null,
+      meta.chartPreviousClose
     );
     const change = currentPrice !== null && previousClose !== null
       ? currentPrice - previousClose
@@ -16064,7 +16071,8 @@ app.get("/api/market-indices", async (req, res) => {
       currentPrice,
       change,
       percentChange,
-      "Yahoo Chart"
+      "Yahoo Chart",
+      { previousClose }
     );
     if (!indexQuote) throw new Error(`Missing ${index.label} chart price`);
     return indexQuote;
@@ -16079,32 +16087,68 @@ app.get("/api/market-indices", async (req, res) => {
       null
     );
     if (!quote) return null;
+    const price = firstYahooNumber(quote.regularMarketPrice);
+    const previousClose = firstYahooNumber(quote.regularMarketPreviousClose);
+    const change = price !== null && previousClose !== null
+      ? price - previousClose
+      : firstFiniteNumber(quote.regularMarketChange);
+    const percentChange = change !== null && previousClose > 0
+      ? (change / previousClose) * 100
+      : firstFiniteNumber(quote.regularMarketChangePercent);
     const indexQuote = buildIndexQuote(
       index,
       index.yahooSymbol,
-      firstYahooNumber(quote.regularMarketPrice),
-      firstFiniteNumber(quote.regularMarketChange),
-      firstFiniteNumber(quote.regularMarketChangePercent),
-      "Yahoo"
+      price,
+      change,
+      percentChange,
+      "Yahoo",
+      { previousClose }
     );
     if (!indexQuote) throw new Error(`Missing ${index.label} price`);
     return indexQuote;
   };
 
   const fetchBestIndexQuote = async (index) => {
-    return resolveWithin(Promise.resolve()
-      .then(() => fetchFmpIndex(index))
-      .then((quote) => {
-        if (!quote) throw new Error(`Missing ${index.label} FMP quote`);
-        return quote;
-      })
-      .catch((err) => {
+    const fmpQuote = await resolveWithin(
+      fetchFmpIndex(index).catch((err) => {
         if (err?.response?.status !== 402 && err?.response?.status !== 403) {
           setFmpCooldown(err, "market index", index.label);
         }
         console.log("Market index FMP skipped:", index.label, err.response?.status || err.message);
         return null;
-      }), 1800, null);
+      }),
+      2600,
+      null
+    );
+    if (fmpQuote) return fmpQuote;
+
+    const [yahooChartQuote, yahooQuote, investingQuote] = await Promise.all([
+      resolveWithin(
+        fetchYahooChartIndex(index).catch((err) => {
+          console.log("Market index Yahoo chart skipped:", index.label, err.response?.status || err.message);
+          return null;
+        }),
+        3600,
+        null
+      ),
+      resolveWithin(
+        fetchYahooIndex(index).catch((err) => {
+          console.log("Market index Yahoo quote skipped:", index.label, err.response?.status || err.message);
+          return null;
+        }),
+        3600,
+        null
+      ),
+      resolveWithin(
+        fetchInvestingIndex(index).catch((err) => {
+          console.log("Market index Investing.com skipped:", index.label, err.response?.status || err.message);
+          return null;
+        }),
+        3600,
+        null
+      )
+    ]);
+    return yahooChartQuote || yahooQuote || investingQuote || null;
   };
 
   const fetchFreshIndices = async () => {
@@ -16151,7 +16195,7 @@ app.get("/api/market-indices", async (req, res) => {
   }
 
   try {
-    const data = await resolveWithin(fetchFreshIndices(), 3800, null);
+    const data = await resolveWithin(fetchFreshIndices(), 6500, null);
     if (data?.indices?.length) return res.json(data);
   } catch (err) {
     console.log("Market indices refresh failed:", err.message);
